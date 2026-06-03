@@ -100,7 +100,7 @@ router.beforeEach(async (to) => {
 
 router.afterEach((to) => {
   const title = to.meta?.title
-  document.title = title ? `${title} · SCADA` : 'SCADA Dashboard'
+  document.title = title ? `${title} · SCADA` : 'MML Portal'
 })
 
 export default router

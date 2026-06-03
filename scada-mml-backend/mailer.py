@@ -1,17 +1,17 @@
 """Outbound email for password reset.
 
-Real delivery via an SMTP relay when ``config.SMTP_HOST`` is set; otherwise the
-reset link is logged (dev console mode). Configure the relay in ``.env``:
+Real delivery via an SMTP relay when "config.SMTP_HOST" is set; otherwise the
+reset link is logged (dev console mode). Configure the relay in ".env":
 
     SMTP_HOST=smtp.example.com
     SMTP_PORT=587
     SMTP_USER=apikey-or-username
     SMTP_PASS=secret
     SMTP_FROM="SCADA <no-reply@example.com>"
-    SMTP_SECURITY=starttls   # starttls | ssl | none
+    SMTP_SECURITY=starttls # starttls | ssl | none
 
-Sending failures are logged and swallowed so the API still returns its generic
-"if that email is registered…" response (no information leak, no 500).
+Sending failures are logged and swallowed, so the API still returns its generic
+"if that email is registered…" response (no information leak, no. 500).
 """
 import logging
 import smtplib
@@ -41,7 +41,7 @@ def _build_message(to_addr: str, reset_link: str) -> EmailMessage:
 
 
 def _send_smtp(msg: EmailMessage) -> None:
-    """Send via the configured SMTP relay. Raises on failure."""
+    """Send it via the configured SMTP relay. Rise on failure."""
     if config.SMTP_SECURITY == "ssl":
         context = ssl.create_default_context()
         with smtplib.SMTP_SSL(
@@ -56,7 +56,7 @@ def _send_smtp(msg: EmailMessage) -> None:
     with smtplib.SMTP(
         config.SMTP_HOST, config.SMTP_PORT, timeout=config.SMTP_TIMEOUT
     ) as server:
-        if config.SMTP_SECURITY == "starttls":
+        if config.SMTP_SECURITY == "STARTTLS":
             server.starttls(context=ssl.create_default_context())
         if config.SMTP_USER:
             server.login(config.SMTP_USER, config.SMTP_PASS)
@@ -64,10 +64,10 @@ def _send_smtp(msg: EmailMessage) -> None:
 
 
 def send_password_reset(email: str, reset_link: str) -> None:
-    """Deliver a password-reset link to ``email``.
+    """Deliver a password-reset link to `email`.
 
-    Sends via SMTP when configured; otherwise logs the link (dev mode).
-    Never raises — delivery problems are logged so the endpoint stays generic.
+    Send via SMTP when configured; otherwise logs the link (dev mode).
+    Never raises — delivery problems log so the endpoint stays generic.
     """
     if not config.SMTP_HOST:
         logger.info("PASSWORD RESET for %s -> %s", email, reset_link)
