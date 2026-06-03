@@ -57,12 +57,14 @@ behind IIS.
 ```
 C:\dev\
 ├── scada-mml-backend\            # FastAPI backend
-│   ├── main.py                   # App factory: mounts auth router, /health, port 8088
-│   ├── config.py                 # Loads .env (DB + JWT settings)
-│   ├── db.py                     # psycopg 3 access layer (get_user_by_username/id)
-│   ├── security.py               # scrypt hashing + JWT create/decode
-│   ├── auth.py                   # /api/auth router (login, me, refresh, logout)
-│   ├── seed_users.py             # Creates users table + seeds mock users
+│   ├── main.py                   # App factory: CORS (explicit origins, credentials=true), mounts auth + users routers, /health, port 8088
+│   ├── config.py                 # Loads .env (DB, JWT, account, SMTP, cookie)
+│   ├── db.py                     # psycopg 3 access layer (users CRUD + lookups by id/username/email)
+│   ├── security.py               # scrypt hashing + JWT create/decode (access/refresh/reset)
+│   ├── auth.py                   # /api/auth router: login, register, me, refresh, logout, change-password, forgot-password, reset-password
+│   ├── users.py                  # /api/users router: admin CRUD with last-admin guards
+│   ├── mailer.py                 # SMTP-or-log password-reset email delivery
+│   ├── seed_users.py             # Creates/migrates users table + seeds mock users
 │   ├── requirements.txt
 │   ├── .env                      # Local secrets (NOT committed)
 │   ├── .env.example
@@ -70,17 +72,18 @@ C:\dev\
 │
 ├── scada-frontend\               # Vue 3 + Vite SPA
 │   ├── src\
-│   │   ├── api\                  # client.js (axios+interceptors), auth.js, devices.js, alarms.js
-│   │   ├── stores\               # Pinia: auth.js, devices.js, alarms.js, connection.js
-│   │   ├── pages\                # LoginPage.vue, OverviewPage.vue, ...
-│   │   ├── router\index.js       # Routes + requiresAuth guard
+│   │   ├── api\                  # client.js (axios; access-token in module memory), auth.js, users.js, devices.js, alarms.js
+│   │   ├── stores\               # Pinia: auth.js, users.js, devices.js, alarms.js, connection.js
+│   │   ├── pages\                # LoginPage, ResetPasswordPage (public); Overview, Devices, Alarms, Trends, Settings, AccountsPage (admin), NotFoundPage
+│   │   ├── router\index.js       # Routes + requiresAuth + requiresRole guards; auth.initialize() on first navigation
 │   │   └── ...
 │   ├── public\web.config         # IIS config (copied into dist on build)
 │   ├── dist\                     # Production build output (deploy this to IIS)
 │   ├── vite.config.js            # Dev proxy /api,/ws → 127.0.0.1:8088
 │   └── package.json
 │
-├── DEVELOPMENT.md                # This file
+├── README.md                     # Deployment guide (install / configure / deploy / troubleshoot)
+├── DEVELOPMENT.md                # This file — developer reference (architecture, internals)
 └── verify_prod.ps1               # Admin script: verifies service + IIS reverse proxy
 ```
 
@@ -120,22 +123,26 @@ fully starts the server (important — a bare FastAPI app object does nothing on
 
 ### `.env` reference
 
+The full reference (~20 keys, grouped DB / JWT / Account / SMTP / CORS / Cookie) lives in
+[`README.md` §4 Configuration](README.md#4-configuration). The bare minimum to start the backend:
+
 | Key                  | Default     | Purpose |
 |----------------------|-------------|---------|
-| `DB_HOST`            | `localhost` | Postgres host |
-| `DB_PORT`            | `5432`      | Postgres port |
-| `DB_NAME`            | `postgres`  | Database name |
-| `DB_USER`            | `postgres`  | Database user |
 | `DB_PASSWORD`        | *(blank)*   | **Required** — Postgres password |
 | `JWT_SECRET`         | dev value   | HMAC secret — generate with `python -c "import secrets;print(secrets.token_hex(32))"` |
-| `ACCESS_EXPIRE_MIN`  | `30`        | Access-token lifetime (minutes) |
-| `REFRESH_EXPIRE_DAYS`| `7`         | Refresh-token lifetime (days) |
+| `APP_BASE_URL`       | `http://localhost:5173` | Base URL used to build password-reset links in emails |
+
+Optional sections covered in the README: token lifetimes (`ACCESS_EXPIRE_MIN`, `REFRESH_EXPIRE_DAYS`,
+`RESET_EXPIRE_MIN`, `MIN_PASSWORD_LEN`), SMTP relay (`SMTP_*` — leave `SMTP_HOST` blank to log the
+reset link instead of sending), CORS allow-list (`CORS_ORIGINS`), and the HTTPS-only cookie flag
+(`COOKIE_SECURE`).
 
 ---
 
 ## 6. Database
 
-`seed_users.py` creates the table and seeds test accounts (idempotent — safe to re-run):
+`seed_users.py` creates the table, applies migrations, and seeds test accounts (idempotent — safe
+to re-run; each statement is an `IF NOT EXISTS` or `ON CONFLICT` upsert):
 
 ```sql
 CREATE TABLE IF NOT EXISTS users (
@@ -146,20 +153,28 @@ CREATE TABLE IF NOT EXISTS users (
   display_name  TEXT NOT NULL,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Migration: optional email column for account management + password reset
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_key
+  ON users (lower(email)) WHERE email IS NOT NULL;
 ```
+
+The unique index is **partial** (only enforced where `email IS NOT NULL`) and case-insensitive,
+which matches `db.get_user_by_email()`'s `lower(email) = lower(%s)` lookup.
 
 ### Mock users (for testing)
 
-| Username   | Password      | Role      | Display name   |
-|------------|---------------|-----------|----------------|
-| `admin`    | `admin123`    | `admin`   | Administrator  |
-| `operator` | `operator123` | `operator`| Line Operator  |
+| Username   | Password      | Role      | Display name   | Email                   |
+|------------|---------------|-----------|----------------|-------------------------|
+| `admin`    | `admin123`    | `admin`   | Administrator  | `admin@scada.local`     |
+| `operator` | `operator123` | `operator`| Line Operator  | `operator@scada.local`  |
 
 Inspect from a shell:
 
 ```powershell
 & "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U postgres -d postgres -h localhost `
-  -c "SELECT id, username, role, display_name FROM users ORDER BY id;"
+  -c "SELECT id, username, role, display_name, email FROM users ORDER BY id;"
 ```
 
 To add a user programmatically, hash with `security.hash_password()` and insert; or add an entry
@@ -167,28 +182,57 @@ to `MOCK_USERS` in `seed_users.py` and re-run it.
 
 ---
 
-## 7. Auth API reference
+## 7. API reference
 
-Base path: **`/api/auth`** (all JSON). Access tokens are sent as `Authorization: Bearer <token>`.
+All endpoints return JSON. Access tokens are sent as `Authorization: Bearer <token>`. The refresh
+token is **never** in the response body or any request body — it lives in an HttpOnly cookie that
+the browser sends automatically to `/api/auth/refresh` and `/api/auth/logout`.
 
-| Method | Path                | Body                       | Success response |
-|--------|---------------------|----------------------------|------------------|
-| POST   | `/api/auth/login`   | `{username, password}`     | `{access_token, refresh_token, expires_in, user:{id,username,role,display_name}}` |
-| GET    | `/api/auth/me`      | — (Bearer)                 | `{id, username, role, display_name}` |
-| POST   | `/api/auth/refresh` | `{refresh_token}`          | `{access_token, expires_in}` |
-| POST   | `/api/auth/logout`  | `{refresh_token}`          | `204 No Content` |
+### 7.1 `/api/auth` — authentication & self-service
 
-**Errors:**
-- Bad credentials → `401 {"message": "Invalid username or password"}` (the frontend reads
-  `error.response.data.message`).
-- Missing/expired/invalid token → `401 {"detail": "..."}`.
+| Method | Path                          | Body                                          | Success response |
+|--------|-------------------------------|-----------------------------------------------|------------------|
+| POST   | `/api/auth/login`             | `{username, password}`                        | `{access_token, expires_in, user:{id,username,role,display_name}}` (refresh → cookie) |
+| POST   | `/api/auth/register`          | `{username, password, display_name, email?}` | `201` + same shape as login. **Always** creates an operator (never admin). |
+| GET    | `/api/auth/me`                | — (Bearer)                                    | `{id, username, role, display_name}` |
+| POST   | `/api/auth/refresh`           | — (HttpOnly cookie only)                      | `{access_token, expires_in, user}` |
+| POST   | `/api/auth/logout`            | — (HttpOnly cookie only)                      | `204 No Content` (server clears the cookie + denylists the refresh `jti`) |
+| POST   | `/api/auth/change-password`   | `{old_password, new_password}` (Bearer)       | `{message}` |
+| POST   | `/api/auth/forgot-password`   | `{email}`                                     | `{message}` — generic (no email-exists leak). Sends/logs a reset link. |
+| POST   | `/api/auth/reset-password`    | `{token, new_password}`                       | `{message}`; **400** on bad/expired/used token (not 401, so the public reset page shows the real error). |
 
-**Tokens:** HS256 JWTs. Access token carries `sub` (user id), `role`, `type:"access"`, `exp`,
-`jti`. Refresh token carries `sub`, `type:"refresh"`, `exp`, `jti`. `logout` adds the refresh
-token's `jti` to an **in-memory** denylist (resets on restart — acceptable for current scope; use
-a persistent store if you need durable revocation).
+### 7.2 `/api/users` — admin user management
 
-Quick smoke test:
+All endpoints require `Authorization: Bearer <admin-access-token>` (`require_admin` dependency
+returns **403** for non-admins). Guards prevent self-delete and removing/demoting the last admin.
+
+| Method | Path                  | Body                                          | Success response |
+|--------|-----------------------|-----------------------------------------------|------------------|
+| GET    | `/api/users`          | —                                             | `[{id, username, role, display_name, email?, created_at}, ...]` |
+| POST   | `/api/users`          | `{username, password, role, display_name, email?}` | `201` + user object |
+| PUT    | `/api/users/{id}`     | `{role, display_name, email?}`                | user object (200) |
+| DELETE | `/api/users/{id}`     | —                                             | `204 No Content` |
+
+Validation: `role ∈ {admin, operator}`; `password` length ≥ `MIN_PASSWORD_LEN`; duplicate
+username/email → `409 Conflict`.
+
+### 7.3 Errors
+
+- Bad credentials → `401 {"message": "Invalid username or password"}`.
+- Missing/expired/invalid access token → `401 {"detail": "..."}`.
+- Missing/invalid refresh cookie on `/refresh` → `401 {"detail": "..."}`.
+- Bad/expired/single-use-already-consumed reset token → `400 {"detail": "..."}`.
+- Admin-only route accessed by a non-admin → `403 {"detail": "Admin access required"}`.
+
+### 7.4 Tokens
+
+HS256 JWTs. Each carries `sub` (user id), `type` (`access` / `refresh` / `reset`), `iat`, `exp`,
+`jti`; access tokens additionally carry `role`. Lifetimes are governed by `ACCESS_EXPIRE_MIN` /
+`REFRESH_EXPIRE_DAYS` / `RESET_EXPIRE_MIN`. Revocation lists are **in-memory** (refresh `jti`
+denylist, reset `jti` used-set) — they reset on service restart, which is acceptable for the
+current single-process deployment.
+
+### 7.5 Smoke test
 
 ```powershell
 curl -s -X POST http://localhost:8088/api/auth/login `
@@ -216,18 +260,34 @@ npm run build        # outputs to dist\ (includes web.config from public\)
 
 ### Auth flow (frontend)
 
-1. `LoginPage.vue` → `auth.signIn()` (Pinia store `src/stores/auth.js`) → `POST /api/auth/login`.
-2. Access + refresh tokens saved to `localStorage` (`scada_token`, `scada_refresh`).
-3. `src/api/client.js` axios interceptor attaches `Authorization: Bearer` to every request and,
-   on a `401`, transparently calls `/api/auth/refresh` once and retries.
-4. `router/index.js` `beforeEach` guard enforces `meta.requiresAuth`; if a token exists but the
-   user object isn't loaded it calls `/api/auth/me`.
+**Token storage model (changed):** access tokens live in **module memory** in `src/api/client.js`
+(set via `setAccessToken()` / `clearAccessToken()`); the Pinia auth store keeps only a boolean
+`_hasToken` so components can reactively check `isLoggedIn`. The refresh token is **never** visible
+to JavaScript — it's set by the server as an **HttpOnly cookie** at path `/api/auth`, so XSS
+cannot exfiltrate it. Nothing auth-related is in `localStorage`.
 
-> **Known caveat:** the 401 interceptor fires on **any** 401, including `/api/auth/login`. A
-> wrong-password attempt therefore triggers a refresh that fails and hard-redirects to `/login`,
-> showing a generic "Login failed" instead of the server message. Optional one-line fix in
-> `src/api/client.js` (the 401 condition): add `&& !original.url?.includes('/auth/')`. The
-> happy-path login is unaffected.
+Sign-in & session lifecycle:
+
+1. `LoginPage.vue` → `auth.signIn()` (Pinia `src/stores/auth.js`) → `POST /api/auth/login`.
+   The response body has the access token; the server sets the refresh cookie via `Set-Cookie`.
+2. `src/api/client.js` request interceptor attaches `Authorization: Bearer <access>` to every
+   request from its in-memory copy.
+3. On a `401`, the response interceptor transparently calls `/api/auth/refresh` once (the browser
+   sends the cookie automatically), updates the in-memory access token, and retries — **except**
+   for requests whose URL contains `/auth/` (`isAuthCall` skip), so a wrong-password login surfaces
+   the real `401 {"message": "Invalid username or password"}` instead of bouncing through refresh.
+4. On first navigation after a page reload, `router/index.js` calls `auth.initialize()` which
+   silently invokes `/api/auth/refresh` using the cookie. If the cookie is still valid the session
+   is restored without a visible login; if not, the user lands on `/login`.
+5. `auth.signOut()` calls `POST /api/auth/logout` — the server clears the cookie and adds the
+   refresh `jti` to the in-memory denylist.
+
+Public routes (no auth): `/login`, `/reset-password`. Admin-only route: `/accounts`
+(`meta.requiresRole: 'admin'` in `router/index.js`; non-admins are redirected to `/overview`).
+
+> **Security note for prod:** set `COOKIE_SECURE=true` once the site is served over HTTPS, so the
+> refresh cookie has the `Secure` flag. Without it, browsers will refuse to send the cookie back
+> over plain HTTP — login appears to succeed but `/auth/refresh` fails on reload.
 
 ---
 
@@ -295,15 +355,41 @@ written to `C:\dev\verify_prod.log`.
 | `Failed to fetch dynamically imported module …Page.vue` (dev) | Two Vite dev servers fighting over port 5173. Kill stray `node` processes and start one instance. |
 | `psql` not found | It's at `C:\Program Files\PostgreSQL\18\bin\psql.exe` (not on PATH by default). |
 | Starting/stopping the service fails with "Cannot open … service" | The shell isn't elevated. Run PowerShell **as Administrator**. |
+| `/forgot-password` returns OK but no email arrives | `SMTP_HOST` is blank → the link is **logged**, not sent. Grep `C:\inetpub\scada-api\logs\stdout.log` for `PASSWORD RESET for`. If SMTP is configured, look for `Failed to send password-reset email` in stderr. With Brevo, the host's public IP must be **authorized** in your Brevo SMTP settings. |
+| Edits to `.env` are not picked up | The service reads env at startup. `Restart-Service scada-api` *(admin)*. |
+| Reset link says "Invalid or expired" | Reset tokens are **single-use** and expire after `RESET_EXPIRE_MIN` minutes. Request a fresh link. |
+| Login works in dev, then "Not authenticated" after page reload in prod | `COOKIE_SECURE=true` requires HTTPS — the browser refuses to send the refresh cookie over plain HTTP. Move the IIS binding to HTTPS, or temporarily set `COOKIE_SECURE=false`. |
+| `/accounts` redirects to `/overview` | The current user is not `role='admin'`. Sign in as `admin`, or `UPDATE users SET role='admin' WHERE username='you';`. |
+| CORS error in browser console (prod) | Add the prod origin to `CORS_ORIGINS` in `.env` and restart. Wildcards aren't allowed because `allow_credentials=True`. |
 
 ---
 
 ## 11. Security notes / follow-ups
 
-- `CORSMiddleware` is currently `allow_origins=["*"]` — fine for a LAN tool, tighten for exposure.
-- Refresh-token revocation (`logout`) is in-memory only; move to Postgres/Redis for durability.
-- `.env` holds the DB password and JWT secret — keep it out of version control; rotate `JWT_SECRET`
-  for production.
-- Optional frontend interceptor fix for wrong-password UX (see §8).
-- Next milestone: MQTT ingest → Postgres writer endpoints on the same FastAPI app, then Grafana
-  dashboards reading Postgres.
+**Already hardened**
+
+- Refresh token is delivered as an **HttpOnly, SameSite=Strict cookie** at path `/api/auth` (XSS
+  can't read it), not stored in `localStorage`.
+- Access token lives only in module memory (cleared on logout / refresh failure).
+- CORS uses an explicit origin allow-list (`CORS_ORIGINS`), not `"*"` — required for
+  `allow_credentials=True`.
+- Public self-registration always returns `role='operator'`; admin creation requires an existing
+  admin via `/api/users`. Admin-only routes are double-checked client-side (`requiresRole`) and
+  server-side (`require_admin`).
+- `forgot-password` returns a generic response regardless of whether the email exists (no
+  enumeration leak); reset tokens are single-use JWTs with their own `jti`/denylist.
+- Self-delete and last-admin removal/demotion are blocked server-side in `/api/users`.
+
+**Outstanding**
+
+- Refresh-token revocation (`logout`) and reset-token consumption are **in-memory only** — they
+  reset on service restart and assume a single worker process. Move to Postgres/Redis if you scale
+  to multiple workers or need durable revocation.
+- Rotate `JWT_SECRET` for production; existing tokens become invalid (intended).
+- `.env` holds the DB password and JWT/SMTP secrets — keep it out of version control.
+- Set `COOKIE_SECURE=true` once the site is served over HTTPS.
+- Add rate-limiting on `/auth/login`, `/auth/forgot-password`, and `/auth/reset-password`
+  (e.g. `slowapi`) before exposing the service to the public internet.
+
+**Next milestone:** MQTT ingest → Postgres writer endpoints on the same FastAPI app, then Grafana
+dashboards reading Postgres directly.
