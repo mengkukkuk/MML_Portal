@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { reactive, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
@@ -16,6 +16,15 @@ const forgotVisible = ref(false)
 const forgotEmail = ref('')
 const forgotLoading = ref(false)
 
+const registerVisible = ref(false)
+const registerForm = reactive({
+  username: '',
+  password: '',
+  display_name: '',
+  email: '',
+})
+const registerError = ref('')
+
 async function handleLogin() {
   try {
     await auth.signIn(username.value, password.value)
@@ -25,6 +34,40 @@ async function handleLogin() {
     router.push(redirect)
   } catch {
     // error is in auth.error
+  }
+}
+
+function openRegister() {
+  registerError.value = ''
+  registerForm.username = ''
+  registerForm.password = ''
+  registerForm.display_name = ''
+  registerForm.email = ''
+  registerVisible.value = true
+}
+
+async function handleRegister() {
+  registerError.value = ''
+  if (!registerForm.username.trim() || !registerForm.display_name.trim()) {
+    registerError.value = 'Username and display name are required'
+    return
+  }
+  if (registerForm.password.length < 8) {
+    registerError.value = 'Password must be at least 8 characters'
+    return
+  }
+  try {
+    await auth.signUp({
+      username: registerForm.username.trim(),
+      password: registerForm.password,
+      display_name: registerForm.display_name.trim(),
+      email: registerForm.email.trim() || null,
+    })
+    ElMessage.success('Account created')
+    registerVisible.value = false
+    router.push('/')
+  } catch {
+    registerError.value = auth.error || 'Registration failed'
   }
 }
 
@@ -98,11 +141,61 @@ async function handleForgot() {
           Sign in
         </el-button>
 
+        <el-button
+          size="large"
+          class="login-box__register"
+          style="width: 100%"
+          @click="openRegister"
+        >
+          Create an account
+        </el-button>
+
         <el-button text type="primary" class="login-box__forgot" @click="forgotVisible = true">
           Forgot password?
         </el-button>
       </el-form>
     </div>
+
+    <el-dialog v-model="registerVisible" title="Create an account" width="400px">
+      <el-form @submit.prevent="handleRegister" label-position="top">
+        <el-form-item label="Username">
+          <el-input v-model="registerForm.username" placeholder="Choose a username" autocomplete="username" />
+        </el-form-item>
+        <el-form-item label="Display name">
+          <el-input v-model="registerForm.display_name" placeholder="Your full name" />
+        </el-form-item>
+        <el-form-item label="Password">
+          <el-input
+            v-model="registerForm.password"
+            type="password"
+            show-password
+            placeholder="At least 8 characters"
+            autocomplete="new-password"
+          />
+        </el-form-item>
+        <el-form-item label="Email (optional)">
+          <el-input
+            v-model="registerForm.email"
+            placeholder="name@example.com"
+            autocomplete="email"
+            @keyup.enter="handleRegister"
+          />
+        </el-form-item>
+        <el-alert
+          v-if="registerError"
+          :title="registerError"
+          type="error"
+          show-icon
+          :closable="false"
+        />
+      </el-form>
+      <template #footer>
+        <el-button @click="registerVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="auth.loading" @click="handleRegister">
+          Create account
+        </el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="forgotVisible" title="Reset password" width="400px">
       <p class="forgot-hint">
@@ -167,9 +260,14 @@ async function handleForgot() {
   margin: 0;
 }
 
+.login-box__register {
+  margin-top: var(--space-3);
+  margin-left: 0;
+}
+
 .login-box__forgot {
   width: 100%;
-  margin-top: var(--space-3);
+  margin-top: var(--space-2);
 }
 
 .forgot-hint {

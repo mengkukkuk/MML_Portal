@@ -7,6 +7,13 @@ export async function login(username, password) {
   return data
 }
 
+export async function register(payload) {
+  // payload: { username, password, display_name, email? }
+  // Server forces role=operator and signs the user in (sets refresh cookie).
+  const { data } = await apiClient.post('/auth/register', payload)
+  return data // { access_token, expires_in, user }
+}
+
 export async function refreshToken() {
   // No body needed — browser sends the HttpOnly refresh_token cookie automatically
   const { data } = await apiClient.post('/auth/refresh')

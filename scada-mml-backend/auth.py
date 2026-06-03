@@ -14,6 +14,7 @@ import logging
 import os
 
 import jwt
+import psycopg
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -23,6 +24,9 @@ import config
 import db
 import mailer
 import security
+
+# Public self-registration always creates an operator — never an admin.
+SELF_REGISTER_ROLE = "operator"
 
 logger = logging.getLogger("scada-api.auth")
 
@@ -45,6 +49,13 @@ _REFRESH_COOKIE = "refresh_token"
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    display_name: str
+    email: str | None = None
 
 
 class UserOut(BaseModel):
@@ -161,6 +172,47 @@ def login(body: LoginRequest, response: Response):
         "expires_in": security.access_expires_seconds(),
         "user": _user_out(user),
         # NOTE: refresh_token intentionally omitted from body
+    }
+
+
+@router.post("/register", status_code=status.HTTP_201_CREATED)
+def register(body: RegisterRequest, response: Response):
+    """Public self-registration. Always creates an operator (never an admin),
+    then signs the new user in (same response shape as /login)."""
+    username = body.username.strip()
+    display_name = body.display_name.strip()
+    if not username or not display_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username and display name are required",
+        )
+    if len(body.password) < config.MIN_PASSWORD_LEN:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Password must be at least {config.MIN_PASSWORD_LEN} characters",
+        )
+    email = (body.email or "").strip() or None
+    try:
+        user = db.create_user(
+            username,
+            security.hash_password(body.password),
+            SELF_REGISTER_ROLE,
+            display_name,
+            email,
+        )
+    except psycopg.errors.UniqueViolation as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username or email already exists",
+        ) from exc
+
+    access = security.create_access_token(user["id"], user["role"])
+    _set_refresh_cookie(response, security.create_refresh_token(user["id"]))
+    logger.info("New user %r self-registered (role=%s)", username, user["role"])
+    return {
+        "access_token": access,
+        "expires_in": security.access_expires_seconds(),
+        "user": _user_out(user),
     }
 
 

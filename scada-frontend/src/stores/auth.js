@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { login, logout, refreshToken, getProfile } from '@/api/auth'
+import { login, logout, refreshToken, getProfile, register } from '@/api/auth'
 import { setAccessToken, clearAccessToken } from '@/api/client'
 
 export const useAuthStore = defineStore('auth', {
@@ -42,6 +42,22 @@ export const useAuthStore = defineStore('auth', {
         this.user = data.user
       } catch (e) {
         this.error = e?.response?.data?.message || 'Login failed'
+        throw e
+      } finally {
+        this.loading = false
+      }
+    },
+
+    async signUp(payload) {
+      this.loading = true
+      this.error = null
+      try {
+        const data = await register(payload)
+        setAccessToken(data.access_token)
+        this._hasToken = true
+        this.user = data.user
+      } catch (e) {
+        this.error = e?.response?.data?.detail || 'Registration failed'
         throw e
       } finally {
         this.loading = false
