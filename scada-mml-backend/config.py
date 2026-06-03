@@ -38,3 +38,16 @@ RESET_EXPIRE_MIN = int(os.getenv("RESET_EXPIRE_MIN", "30"))
 APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:5173")
 # Minimum length enforced on new passwords (change-password / reset / admin create).
 MIN_PASSWORD_LEN = int(os.getenv("MIN_PASSWORD_LEN", "8"))
+
+# --- SMTP (outbound email for password reset) ---
+# When SMTP_HOST is empty, mailer.py falls back to logging the reset link
+# (dev console mode). Set these in .env to enable real delivery via an SMTP relay.
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASS = os.getenv("SMTP_PASS", "")
+# From header; defaults to SMTP_USER when blank.
+SMTP_FROM = os.getenv("SMTP_FROM", "") or SMTP_USER
+# "starttls" (default, port 587), "ssl" (port 465), or "none" (plaintext).
+SMTP_SECURITY = os.getenv("SMTP_SECURITY", "starttls").lower()
+SMTP_TIMEOUT = int(os.getenv("SMTP_TIMEOUT", "10"))
