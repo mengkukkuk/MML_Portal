@@ -58,13 +58,18 @@ const router = createRouter({
   routes,
 })
 
-// Auth guard
+// Run once on first navigation — try to restore session from HttpOnly cookie
+let _initialized = false
+
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
-  // Load user profile if we have a token but no user yet
-  if (auth.isLoggedIn && !auth.user) {
-    await auth.loadUser()
+  // On first load: silently try to refresh. This restores session after page reload.
+  if (!_initialized) {
+    _initialized = true
+    if (!auth.isLoggedIn) {
+      await auth.initialize() // calls /auth/refresh with cookie
+    }
   }
 
   if (to.meta.requiresAuth && !auth.isLoggedIn) {

@@ -2,16 +2,20 @@ import { apiClient } from './client'
 
 export async function login(username, password) {
   const { data } = await apiClient.post('/auth/login', { username, password })
-  return data // { access_token, refresh_token, expires_in, user }
+  // Server now sets refresh_token as HttpOnly cookie automatically
+  // Response body: { access_token, expires_in, user }
+  return data
 }
 
-export async function refreshToken(token) {
-  const { data } = await apiClient.post('/auth/refresh', { refresh_token: token })
-  return data // { access_token, expires_in }
+export async function refreshToken() {
+  // No body needed — browser sends the HttpOnly refresh_token cookie automatically
+  const { data } = await apiClient.post('/auth/refresh')
+  return data // { access_token, expires_in, user }
 }
 
-export async function logout(token) {
-  await apiClient.post('/auth/logout', { refresh_token: token })
+export async function logout() {
+  // No body needed — server reads cookie and clears it
+  await apiClient.post('/auth/logout')
 }
 
 export async function getProfile() {

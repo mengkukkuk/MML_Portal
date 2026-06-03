@@ -1,4 +1,5 @@
 import logging
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,9 +14,16 @@ logger = logging.getLogger("scada-api")
 
 app = FastAPI(title="SCADA MML API")
 
+# Allowed origins — must be explicit when allow_credentials=True (cannot use "*")
+_ORIGINS = [o.strip() for o in os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173"  # Vite dev server
+).split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_ORIGINS,
+    allow_credentials=True,   # required for cookies
     allow_methods=["*"],
     allow_headers=["*"],
 )

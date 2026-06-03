@@ -6,16 +6,30 @@ export const apiClient = axios.create({
   baseURL,
   timeout: 10_000,
   headers: { 'Content-Type': 'application/json' },
+  // Required: browser must send the HttpOnly refresh_token cookie on /auth/refresh
+  withCredentials: true,
 })
 
-// Attach JWT token to every request
+// ── In-memory access token ────────────────────────────────────────────────
+// Stored here (module scope) so it survives navigations but not page reloads.
+// Never written to localStorage — only readable by JS in this session.
+let _accessToken = null
+
+export function setAccessToken(token) {
+  _accessToken = token
+}
+
+export function clearAccessToken() {
+  _accessToken = null
+}
+
+// Attach access token to every request as Bearer header
 apiClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('scada_token')
-  if (token) config.headers.Authorization = `Bearer ${token}`
+  if (_accessToken) config.headers.Authorization = `Bearer ${_accessToken}`
   return config
 })
 
-// On 401: try refresh once, then redirect to login
+// ── 401 auto-refresh ──────────────────────────────────────────────────────
 let isRefreshing = false
 let pendingQueue = []
 
@@ -29,7 +43,7 @@ apiClient.interceptors.response.use(
   async (error) => {
     const original = error.config
 
-    // Skip the refresh logic for the refresh endpoint itself (prevents infinite loop)
+    // Skip refresh loop for the refresh endpoint itself
     const isRefreshCall = original.url?.includes('/auth/refresh')
     if (error.response?.status === 401 && !original._retry && !isRefreshCall) {
       original._retry = true
@@ -45,7 +59,6 @@ apiClient.interceptors.response.use(
 
       isRefreshing = true
       try {
-        // Lazy import to avoid circular dep
         const { useAuthStore } = await import('@/stores/auth')
         const auth = useAuthStore()
         const newToken = await auth.refresh()
@@ -56,7 +69,7 @@ apiClient.interceptors.response.use(
         drainQueue(null, refreshError)
         const { useAuthStore } = await import('@/stores/auth')
         const auth = useAuthStore()
-        auth._clearTokens()
+        auth._clearSession()
         window.location.href = '/login'
         return Promise.reject(refreshError)
       } finally {
