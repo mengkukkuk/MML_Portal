@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="DataSourcePerFileMappings">
+    <file url="file://$PROJECT_DIR$/scada-mml-backend/db.py" value="56f0c396-d46d-4252-a2ba-29e5b26a0b3d" />
+    <file url="file://$PROJECT_DIR$/scada-mml-backend/simulate_data.py" value="56f0c396-d46d-4252-a2ba-29e5b26a0b3d" />
+  </component>
+</project>

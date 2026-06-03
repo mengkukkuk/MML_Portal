@@ -1,0 +1,51 @@
+@import './tokens.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg-app);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Element Plus dark-mode tweaks for SCADA palette */
+html.dark {
+  --el-bg-color: var(--bg-app);
+  --el-bg-color-page: var(--bg-app);
+  --el-bg-color-overlay: var(--bg-elev);
+  --el-text-color-primary: var(--fg);
+  --el-text-color-regular: var(--fg);
+  --el-text-color-secondary: var(--fg-muted);
+  --el-border-color: var(--border);
+  --el-border-color-light: var(--border-soft);
+  --el-color-primary: var(--accent);
+}
