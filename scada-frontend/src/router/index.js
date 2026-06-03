@@ -10,6 +10,12 @@ const routes = [
     meta: { public: true },
   },
   {
+    path: '/reset-password',
+    name: 'reset-password',
+    component: () => import('@/pages/ResetPasswordPage.vue'),
+    meta: { public: true },
+  },
+  {
     path: '/',
     component: AppShell,
     meta: { requiresAuth: true },
@@ -44,6 +50,12 @@ const routes = [
         component: () => import('@/pages/SettingsPage.vue'),
         meta: { title: 'Settings', icon: 'Setting' },
       },
+      {
+        path: 'accounts',
+        name: 'accounts',
+        component: () => import('@/pages/AccountsPage.vue'),
+        meta: { title: 'Accounts', icon: 'User', requiresRole: 'admin' },
+      },
     ],
   },
   {
@@ -74,6 +86,11 @@ router.beforeEach(async (to) => {
 
   if (to.meta.requiresAuth && !auth.isLoggedIn) {
     return { name: 'login', query: { redirect: to.fullPath } }
+  }
+
+  // Role-gated routes (e.g. admin-only Accounts) — redirect non-matching roles home.
+  if (to.meta.requiresRole && auth.role !== to.meta.requiresRole) {
+    return { name: 'overview' }
   }
 
   if (to.name === 'login' && auth.isLoggedIn) {

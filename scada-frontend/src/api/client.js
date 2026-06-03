@@ -43,9 +43,11 @@ apiClient.interceptors.response.use(
   async (error) => {
     const original = error.config
 
-    // Skip refresh loop for the refresh endpoint itself
-    const isRefreshCall = original.url?.includes('/auth/refresh')
-    if (error.response?.status === 401 && !original._retry && !isRefreshCall) {
+    // Skip refresh for all /auth/ calls (login, refresh, forgot/reset-password).
+    // These are public or unauthenticated flows — a 401/400 there is the real
+    // error and must surface to the caller, not trigger a doomed token refresh.
+    const isAuthCall = original.url?.includes('/auth/')
+    if (error.response?.status === 401 && !original._retry && !isAuthCall) {
       original._retry = true
 
       if (isRefreshing) {

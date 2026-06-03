@@ -22,3 +22,25 @@ export async function getProfile() {
   const { data } = await apiClient.get('/auth/me')
   return data // { id, username, role, display_name }
 }
+
+export async function changePassword(oldPassword, newPassword) {
+  const { data } = await apiClient.post('/auth/change-password', {
+    old_password: oldPassword,
+    new_password: newPassword,
+  })
+  return data // { message }
+}
+
+export async function forgotPassword(email) {
+  // Always resolves with a generic message (server never reveals if email exists)
+  const { data } = await apiClient.post('/auth/forgot-password', { email })
+  return data // { message }
+}
+
+export async function resetPassword(token, newPassword) {
+  const { data } = await apiClient.post('/auth/reset-password', {
+    token,
+    new_password: newPassword,
+  })
+  return data // { message }
+}

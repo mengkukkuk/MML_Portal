@@ -19,7 +19,9 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
+import config
 import db
+import mailer
 import security
 
 logger = logging.getLogger("scada-api.auth")
@@ -29,6 +31,9 @@ bearer_scheme = HTTPBearer(auto_error=True)
 
 # In-memory denylist of revoked refresh-token JTIs (resets on restart — fine for dev).
 _revoked_refresh: set[str] = set()
+# In-memory set of consumed reset-token JTIs, for single-use reset links.
+# Dev-only: resets on restart and assumes a single worker process.
+_used_reset: set[str] = set()
 
 # Cookie settings — set Secure=True in production (HTTPS only)
 _COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
@@ -47,6 +52,20 @@ class UserOut(BaseModel):
     username: str
     role: str
     display_name: str
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
 
 
 def _user_out(row: dict) -> dict:
@@ -106,6 +125,15 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
         )
     return user
+
+
+def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    """Allow only admins through. Use as a dependency on admin-only endpoints."""
+    if current_user["role"] != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required"
+        )
+    return current_user
 
 
 # --- Endpoints -------------------------------------------------------------
@@ -203,3 +231,84 @@ def logout(
 
     _clear_refresh_cookie(response)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/change-password")
+def change_password(
+    body: ChangePasswordRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Change the logged-in user's own password (verifies the old password)."""
+    if not security.verify_password(body.old_password, current_user["password_hash"]):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect",
+        )
+    if len(body.new_password) < config.MIN_PASSWORD_LEN:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"New password must be at least {config.MIN_PASSWORD_LEN} characters",
+        )
+    db.set_password(current_user["id"], security.hash_password(body.new_password))
+    logger.info("User %r changed their password", current_user["username"])
+    return {"message": "Password changed"}
+
+
+@router.post("/forgot-password")
+def forgot_password(body: ForgotPasswordRequest):
+    """Email a reset link if the address matches a user.
+
+    Always returns 200 with a generic message so the response does not reveal
+    whether an email is registered.
+    """
+    generic = {
+        "message": "If that email is registered, a reset link has been sent.",
+    }
+    email = body.email.strip()
+    if not email:
+        return generic
+
+    user = db.get_user_by_email(email)
+    if user is not None:
+        token = security.create_reset_token(user["id"])
+        reset_link = f"{config.APP_BASE_URL}/reset-password?token={token}"
+        mailer.send_password_reset(user["email"], reset_link)
+    else:
+        logger.info("Forgot-password requested for unknown email=%r", email)
+    return generic
+
+
+@router.post("/reset-password")
+def reset_password(body: ResetPasswordRequest):
+    """Consume a single-use reset token and set a new password.
+
+    Invalid/expired tokens return 400 (NOT 401) so the public reset page's
+    error is shown instead of triggering the axios refresh-on-401 interceptor.
+    """
+    if len(body.new_password) < config.MIN_PASSWORD_LEN:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"New password must be at least {config.MIN_PASSWORD_LEN} characters",
+        )
+    try:
+        payload = security.decode_token(body.token)
+        if payload.get("type") != "reset":
+            raise jwt.InvalidTokenError("not a reset token")
+        jti = payload.get("jti")
+        if not jti or jti in _used_reset:
+            raise jwt.InvalidTokenError("reset token already used")
+        user_id = int(payload["sub"])
+    except (jwt.PyJWTError, KeyError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset link",
+        ) from exc
+
+    if not db.set_password(user_id, security.hash_password(body.new_password)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset link",
+        )
+    _used_reset.add(jti)
+    logger.info("Password reset completed for user id=%s", user_id)
+    return {"message": "Password has been reset"}

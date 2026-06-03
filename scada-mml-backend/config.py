@@ -31,3 +31,10 @@ JWT_SECRET = os.getenv("JWT_SECRET", "dev-insecure-change-me")
 JWT_ALGORITHM = "HS256"
 ACCESS_EXPIRE_MIN = int(os.getenv("ACCESS_EXPIRE_MIN", "30"))
 REFRESH_EXPIRE_DAYS = int(os.getenv("REFRESH_EXPIRE_DAYS", "7"))
+RESET_EXPIRE_MIN = int(os.getenv("RESET_EXPIRE_MIN", "30"))
+
+# --- Account management ---
+# Base URL of the frontend, used to build password-reset links.
+APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:5173")
+# Minimum length enforced on new passwords (change-password / reset / admin create).
+MIN_PASSWORD_LEN = int(os.getenv("MIN_PASSWORD_LEN", "8"))

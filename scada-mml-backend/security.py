@@ -76,6 +76,14 @@ def create_refresh_token(user_id: int) -> str:
     )
 
 
+def create_reset_token(user_id: int) -> str:
+    """Short-lived single-use token for password reset (carries a jti for denylisting)."""
+    return _encode(
+        {"sub": str(user_id), "type": "reset"},
+        timedelta(minutes=config.RESET_EXPIRE_MIN),
+    )
+
+
 def decode_token(token: str) -> dict:
     """Decode and validate a JWT. Raises jwt.PyJWTError on failure."""
     return jwt.decode(token, config.JWT_SECRET, algorithms=[config.JWT_ALGORITHM])

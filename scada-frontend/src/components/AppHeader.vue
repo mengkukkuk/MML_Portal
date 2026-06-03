@@ -1,8 +1,10 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import ConnectionPill from '@/components/ConnectionPill.vue'
 import { useAuthStore } from '@/stores/auth'
+import { changePassword } from '@/api/auth'
 
 defineProps({
   collapsed: { type: Boolean, default: false },
@@ -19,6 +21,42 @@ const displayName = computed(() => auth.user?.display_name || auth.user?.usernam
 async function handleSignOut() {
   await auth.signOut()
   router.push('/login')
+}
+
+// --- Change password dialog ---
+const pwVisible = ref(false)
+const pwLoading = ref(false)
+const pwError = ref('')
+const pwForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
+
+function openChangePassword() {
+  pwError.value = ''
+  pwForm.oldPassword = ''
+  pwForm.newPassword = ''
+  pwForm.confirmPassword = ''
+  pwVisible.value = true
+}
+
+async function submitChangePassword() {
+  pwError.value = ''
+  if (pwForm.newPassword.length < 8) {
+    pwError.value = 'New password must be at least 8 characters'
+    return
+  }
+  if (pwForm.newPassword !== pwForm.confirmPassword) {
+    pwError.value = 'Passwords do not match'
+    return
+  }
+  pwLoading.value = true
+  try {
+    await changePassword(pwForm.oldPassword, pwForm.newPassword)
+    ElMessage.success('Password changed')
+    pwVisible.value = false
+  } catch (e) {
+    pwError.value = e?.response?.data?.detail || 'Password change failed'
+  } finally {
+    pwLoading.value = false
+  }
 }
 </script>
 
@@ -44,12 +82,56 @@ async function handleSignOut() {
         </el-button>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item>Profile</el-dropdown-item>
+            <el-dropdown-item @click="openChangePassword">Change password</el-dropdown-item>
             <el-dropdown-item divided @click="handleSignOut">Sign out</el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
     </div>
+
+    <el-dialog v-model="pwVisible" title="Change password" width="400px">
+      <el-form @submit.prevent="submitChangePassword" label-position="top">
+        <el-form-item label="Current password">
+          <el-input
+            v-model="pwForm.oldPassword"
+            type="password"
+            show-password
+            autocomplete="current-password"
+          />
+        </el-form-item>
+        <el-form-item label="New password">
+          <el-input
+            v-model="pwForm.newPassword"
+            type="password"
+            show-password
+            placeholder="At least 8 characters"
+            autocomplete="new-password"
+          />
+        </el-form-item>
+        <el-form-item label="Confirm new password">
+          <el-input
+            v-model="pwForm.confirmPassword"
+            type="password"
+            show-password
+            autocomplete="new-password"
+            @keyup.enter="submitChangePassword"
+          />
+        </el-form-item>
+        <el-alert
+          v-if="pwError"
+          :title="pwError"
+          type="error"
+          show-icon
+          :closable="false"
+        />
+      </el-form>
+      <template #footer>
+        <el-button @click="pwVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="pwLoading" @click="submitChangePassword">
+          Change password
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 

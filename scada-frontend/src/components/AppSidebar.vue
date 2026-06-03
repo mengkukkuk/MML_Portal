@@ -1,21 +1,29 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 
 defineProps({
   collapsed: { type: Boolean, default: false },
 })
 
 const route = useRoute()
+const auth = useAuthStore()
 const activeIndex = computed(() => '/' + (route.path.split('/')[1] || ''))
 
-const items = [
-  { path: '/', title: 'Overview', icon: 'Odometer' },
-  { path: '/devices', title: 'Devices', icon: 'Cpu' },
-  { path: '/alarms', title: 'Alarms', icon: 'WarningFilled' },
-  { path: '/trends', title: 'Trends', icon: 'TrendCharts' },
-  { path: '/settings', title: 'Settings', icon: 'Setting' },
-]
+const items = computed(() => {
+  const base = [
+    { path: '/', title: 'Overview', icon: 'Odometer' },
+    { path: '/devices', title: 'Devices', icon: 'Cpu' },
+    { path: '/alarms', title: 'Alarms', icon: 'WarningFilled' },
+    { path: '/trends', title: 'Trends', icon: 'TrendCharts' },
+    { path: '/settings', title: 'Settings', icon: 'Setting' },
+  ]
+  if (auth.role === 'admin') {
+    base.push({ path: '/accounts', title: 'Accounts', icon: 'User' })
+  }
+  return base
+})
 </script>
 
 <template>

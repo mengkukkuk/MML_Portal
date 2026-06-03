@@ -1,7 +1,9 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
+import { forgotPassword } from '@/api/auth'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -9,6 +11,10 @@ const route = useRoute()
 
 const username = ref('')
 const password = ref('')
+
+const forgotVisible = ref(false)
+const forgotEmail = ref('')
+const forgotLoading = ref(false)
 
 async function handleLogin() {
   try {
@@ -19,6 +25,26 @@ async function handleLogin() {
     router.push(redirect)
   } catch {
     // error is in auth.error
+  }
+}
+
+async function handleForgot() {
+  if (!forgotEmail.value.trim()) {
+    ElMessage.warning('Enter your email address')
+    return
+  }
+  forgotLoading.value = true
+  try {
+    const { message } = await forgotPassword(forgotEmail.value.trim())
+    ElMessage.success(message || 'If that email is registered, a reset link has been sent.')
+    forgotVisible.value = false
+    forgotEmail.value = ''
+  } catch {
+    // Endpoint is generic by design; show a neutral message on transport error
+    ElMessage.info('If that email is registered, a reset link has been sent.')
+    forgotVisible.value = false
+  } finally {
+    forgotLoading.value = false
   }
 }
 </script>
@@ -71,8 +97,34 @@ async function handleLogin() {
         >
           Sign in
         </el-button>
+
+        <el-button text type="primary" class="login-box__forgot" @click="forgotVisible = true">
+          Forgot password?
+        </el-button>
       </el-form>
     </div>
+
+    <el-dialog v-model="forgotVisible" title="Reset password" width="400px">
+      <p class="forgot-hint">
+        Enter your account email. If it matches a user, a reset link will be sent.
+      </p>
+      <el-form @submit.prevent="handleForgot" label-position="top">
+        <el-form-item label="Email">
+          <el-input
+            v-model="forgotEmail"
+            placeholder="name@example.com"
+            autocomplete="email"
+            @keyup.enter="handleForgot"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="forgotVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="forgotLoading" @click="handleForgot">
+          Send reset link
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -113,5 +165,16 @@ async function handleLogin() {
   font-weight: 600;
   color: var(--fg);
   margin: 0;
+}
+
+.login-box__forgot {
+  width: 100%;
+  margin-top: var(--space-3);
+}
+
+.forgot-hint {
+  margin: 0 0 var(--space-3);
+  color: var(--fg-muted);
+  font-size: 13px;
 }
 </style>
