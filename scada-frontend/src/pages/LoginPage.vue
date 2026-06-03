@@ -128,8 +128,8 @@ async function handleForgot() {
           </svg>
         </div>
 
-        <h1 class="brand-title">MML SCADA</h1>
-        <p class="brand-subtitle">Unified Industrial Control System</p>
+        <h1 class="brand-title">MML Portal</h1>
+        <p class="brand-subtitle">MML Unified Systems</p>
 
         <!-- System status block -->
         <div class="sys-status">

@@ -15,7 +15,7 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
-const pageTitle = computed(() => route.meta?.title || 'SCADA')
+const pageTitle = computed(() => route.meta?.title || 'MML Portal')
 const displayName = computed(() => auth.user?.display_name || auth.user?.username || 'Operator')
 
 async function handleSignOut() {

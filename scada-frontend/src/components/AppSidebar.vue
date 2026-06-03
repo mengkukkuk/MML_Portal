@@ -30,7 +30,7 @@ const items = computed(() => {
   <div class="sidebar">
     <div class="sidebar__brand">
       <span class="sidebar__logo" aria-hidden="true">⚙</span>
-      <span v-show="!collapsed" class="sidebar__title">SCADA</span>
+      <span v-show="!collapsed" class="sidebar__title">MML Portal</span>
     </div>
     <el-menu
       class="sidebar__menu"
