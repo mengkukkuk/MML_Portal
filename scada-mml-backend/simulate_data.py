@@ -90,8 +90,8 @@ def insert_readings(
 
     with conn.cursor() as cur:
         cur.executemany(
-            "INSERT INTO sensor_readings (device_id, metric, value, unit, ts) "
-            "VALUES (%s, %s, %s, %s, %s)",
+            """INSERT INTO sensor_readings (device_id, metric, value, unit, ts)
+            VALUES (%s, %s, %s, %s, %s)""",
             rows,
         )
     conn.commit()
