@@ -64,9 +64,8 @@ def create_user(
     with get_connection() as conn:
         row = conn.execute(
             """INSERT INTO users (username, password_hash, role, display_name, email)
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING id, username, role, display_name, email, created_at""",
-            (username, password_hash, role, display_name, email),
+            VALUES (%s, %s, %s, %s, %s) RETURNING id, username, role, display_name, email, created_at,
+            (username, password_hash, role, display_name, email)""",
         ).fetchone()
         conn.commit()
     return row
@@ -82,9 +81,8 @@ def update_user(
     with get_connection() as conn:
         row = conn.execute(
             """UPDATE users SET role = %s, display_name = %s, email = %s
-            WHERE id = %s
-            RETURNING id, username, role, display_name, email, created_at""",
-            (role, display_name, email, user_id),
+            WHERE id = %s RETURNING id, username, role, display_name, email, created_at,
+            (role, display_name, email, user_id)""",
         ).fetchone()
         conn.commit()
     return row

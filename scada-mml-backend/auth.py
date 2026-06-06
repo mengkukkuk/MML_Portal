@@ -28,7 +28,7 @@ import security
 # Public self-registration always creates an operator — never an admin.
 SELF_REGISTER_ROLE = "operator"
 
-logger = logging.getLogger("scada-api.auth")
+logger = logging.getLogger("mml-api.auth")
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 bearer_scheme = HTTPBearer(auto_error=True)

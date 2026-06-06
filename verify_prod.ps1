@@ -11,9 +11,9 @@ Line "===== SCADA PROD VERIFY  $(Get-Date -Format s) ====="
 # --- 1. Service ---
 Line ""
 Line "## 1. NSSM backend service"
-Start-Service scada-api -ErrorAction SilentlyContinue
+Start-Service mml-api -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 3
-$svc = Get-Service scada-api -ErrorAction SilentlyContinue
+$svc = Get-Service mml-api -ErrorAction SilentlyContinue
 Line ("   service status : {0}" -f $svc.Status)
 $lis = Get-NetTCPConnection -LocalPort 8088 -State Listen -ErrorAction SilentlyContinue
 Line ("   8088 listening : {0}" -f [bool]$lis)

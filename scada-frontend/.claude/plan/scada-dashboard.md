@@ -88,7 +88,7 @@ src/
 - `useDevicesStore` — `{ list, byId, loading, error, fetchAll() }`.
 - `useAlarmsStore` — `{ active, history, loading, error, fetchActive() }`.
 
-Real fetching is **stubbed** in this scaffold (returns mock arrays after 200 ms). The axios client and a `VITE_API_BASE` placeholder are wired up so plugging in `C:\inetpub\scada-api` later is a one-line change in `.env`.
+Real fetching is **stubbed** in this scaffold (returns mock arrays after 200 ms). The axios client and a `VITE_API_BASE` placeholder are wired up so plugging in `C:\inetpub\mml-api` later is a one-line change in `.env`.
 
 ## 6. Files removed / changed from starter
 
@@ -98,7 +98,7 @@ Real fetching is **stubbed** in this scaffold (returns mock arrays after 200 ms)
 - `src/style.css` — replaced by `src/styles/index.css`.
 - `vite.config.js` — created; adds the two unplugin auto-imports.
 - `index.html` — title → "SCADA Dashboard", `<html class="dark">`.
-- `.env.example` — `VITE_API_BASE=http://localhost/scada-api`.
+- `.env.example` — `VITE_API_BASE=http://localhost/mml-api`.
 
 ## 7. Out of scope (future)
 

@@ -57,7 +57,7 @@ C:\dev\
 | **Python** | 3.14.x | Runs the FastAPI backend |
 | **Node.js + npm** | Node 20+ / npm 10+ | Builds the Vue SPA |
 | **PostgreSQL** | 18 (`postgresql-x64-18` Windows service) | Stores the `users` table and (later) device telemetry |
-| **NSSM** | any recent build (`nssm.exe` on PATH or in `System32`) | Runs uvicorn as a Windows service `scada-api` |
+| **NSSM** | any recent build (`nssm.exe` on PATH or in `System32`) | Runs uvicorn as a Windows service `mml-api` |
 | **IIS** | 10+ on Windows Server / Windows 11 Pro | Serves the SPA and reverse-proxies `/api` and `/ws` |
 | **IIS — URL Rewrite Module** | 2.x | Required by the `<rewrite>` rules in `web.config` |
 | **IIS — Application Request Routing (ARR)** | 3.x | Performs the actual reverse-proxy forwarding to `127.0.0.1:8088` |
@@ -158,14 +158,14 @@ For local dev instead: `npm run dev` → `http://localhost:5173` (the dev server
 Install the service with the exact arguments used in production:
 
 ```powershell
-nssm install scada-api `
+nssm install mml-api `
   "C:\dev\scada-mml-backend\venv\Scripts\python.exe" `
   "-m uvicorn main:app --host 127.0.0.1 --port 8088"
-nssm set scada-api AppDirectory "C:\dev\scada-mml-backend"
-nssm set scada-api AppStdout    "C:\inetpub\scada-api\logs\stdout.log"
-nssm set scada-api AppStderr    "C:\inetpub\scada-api\logs\stderr.log"
-New-Item -Force -ItemType Directory C:\inetpub\scada-api\logs | Out-Null
-Start-Service scada-api
+nssm set mml-api AppDirectory "C:\dev\scada-mml-backend"
+nssm set mml-api AppStdout    "C:\inetpub\mml-api\logs\stdout.log"
+nssm set mml-api AppStderr    "C:\inetpub\mml-api\logs\stderr.log"
+New-Item -Force -ItemType Directory C:\inetpub\mml-api\logs | Out-Null
+Start-Service mml-api
 ```
 
 Binding to `127.0.0.1` is intentional — the service is only reached via the IIS reverse proxy.
@@ -263,7 +263,7 @@ SMTP_SECURITY=starttls
 ```
 
 After editing `.env`, **restart the service** so the new vars are loaded:
-`Restart-Service scada-api` *(admin)*.
+`Restart-Service mml-api` *(admin)*.
 
 ### 4.5 CORS + cookie security (read by `main.py` / `auth.py`)
 
@@ -297,11 +297,11 @@ Open `http://localhost:5173/login` and sign in with `admin` / `admin123`. Swagge
 
 The flow is exactly steps 3.7 and 3.8 above. After both are in place:
 
-1. `Get-Service scada-api` → **Running**.
+1. `Get-Service mml-api` → **Running**.
 2. The IIS site responds at its binding URL (e.g. `https://scada.example.local`).
 3. Open the binding URL in a browser → login page renders, sign-in works.
 
-To pick up backend code or `.env` changes: `Restart-Service scada-api` *(admin)*.
+To pick up backend code or `.env` changes: `Restart-Service mml-api` *(admin)*.
 To redeploy the frontend: `npm run build` then copy `scada-frontend\dist\*` to the IIS site folder.
 
 ### 5.3 Production verification
@@ -332,14 +332,14 @@ step 3.8.3 above.
 
 | Symptom | Cause / Fix |
 |---|---|
-| **NSSM "unexpected error" starting `scada-api`** | A bare `python` of `main.py` works because of the `__main__` block, but the canonical config uses `-m uvicorn main:app --host 127.0.0.1 --port 8088`. Check `C:\inetpub\scada-api\logs\stderr.log` for the actual traceback. |
+| **NSSM "unexpected error" starting `mml-api`** | A bare `python` of `main.py` works because of the `__main__` block, but the canonical config uses `-m uvicorn main:app --host 127.0.0.1 --port 8088`. Check `C:\inetpub\mml-api\logs\stderr.log` for the actual traceback. |
 | **`WinError 10013` binding 8088** | Another process holds 8088, or it's in a Windows reserved range. Check with `Get-NetTCPConnection -LocalPort 8088`. The Vite dev proxy and `web.config` both hard-code 8088. |
 | **`/api/*` returns `404` through IIS** | ARR proxy not enabled at the server level. See step 3.8.3 — the single toggle that fixes most prod proxy issues. |
-| **`/api/*` returns `502` through IIS** | Backend isn't running or not bound to `127.0.0.1:8088`. `Get-Service scada-api`; check stderr log. |
+| **`/api/*` returns `502` through IIS** | Backend isn't running or not bound to `127.0.0.1:8088`. `Get-Service mml-api`; check stderr log. |
 | **`500.52` on every IIS request** | A rewrite rule sets a server variable (e.g. `X-Forwarded-*`) that wasn't registered in `allowedServerVariables`. Comment block at the top of `dist\web.config` shows the `appcmd` invocation. |
-| **Forgot-password says "if that email is registered…" but no email arrives** | `SMTP_HOST` is blank — that's *log-only* mode. Grep `C:\inetpub\scada-api\logs\stdout.log` for `PASSWORD RESET for`. If `SMTP_HOST` *is* set, look for `Failed to send password-reset email` in the stderr log (auth, IP allowlist, port). Brevo in particular requires the host's public IP to be **authorized** in your Brevo SMTP settings. |
-| **Edits to `.env` (e.g. SMTP creds) appear ignored** | The service caches env at startup. `Restart-Service scada-api` *(admin)*. |
-| **`Restart-Service` says "Cannot open scada-api service"** | The shell isn't elevated. Open PowerShell *as Administrator*. |
+| **Forgot-password says "if that email is registered…" but no email arrives** | `SMTP_HOST` is blank — that's *log-only* mode. Grep `C:\inetpub\mml-api\logs\stdout.log` for `PASSWORD RESET for`. If `SMTP_HOST` *is* set, look for `Failed to send password-reset email` in the stderr log (auth, IP allowlist, port). Brevo in particular requires the host's public IP to be **authorized** in your Brevo SMTP settings. |
+| **Edits to `.env` (e.g. SMTP creds) appear ignored** | The service caches env at startup. `Restart-Service mml-api` *(admin)*. |
+| **`Restart-Service` says "Cannot open mml-api service"** | The shell isn't elevated. Open PowerShell *as Administrator*. |
 | **Reset link says "Invalid or expired"** | Reset tokens are **single-use** and expire after `RESET_EXPIRE_MIN` minutes. Request a fresh one. (The reset endpoints intentionally return **400**, not 401, so the public reset page shows the real message instead of being bounced to `/login` by the axios interceptor.) |
 | **Login OK in dev, then "Not authenticated" after page reload in prod** | `COOKIE_SECURE=true` requires HTTPS for the refresh-cookie to be sent. Either switch the IIS binding to HTTPS or set `COOKIE_SECURE=false` (dev only). |
 | **CORS error in the browser console (prod)** | Add your prod origin to `CORS_ORIGINS` in `.env` and restart. Wildcards aren't allowed because `allow_credentials=True`. |

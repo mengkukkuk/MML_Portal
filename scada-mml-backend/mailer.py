@@ -20,7 +20,7 @@ from email.message import EmailMessage
 
 import config
 
-logger = logging.getLogger("scada-api.mailer")
+logger = logging.getLogger("mml-api.mailer")
 
 _SUBJECT = "Reset your SCADA password"
 

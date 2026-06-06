@@ -13,7 +13,7 @@ behind IIS.
                  Browser
                     │
         ┌───────────▼────────────┐         ┌──────────────────────────┐
-        │   IIS site (prod)       │  /api/* │  scada-api (FastAPI)      │
+        │   IIS site (prod)       │  /api/* │  mml-api (FastAPI)      │
         │   serves dist/ (SPA)    ├────────▶│  uvicorn @ 127.0.0.1:8088 │
         │   ARR reverse proxy     │  /ws    │  NSSM Windows service     │
         └─────────────────────────┘         └────────────┬─────────────┘
@@ -26,7 +26,7 @@ behind IIS.
                                               └──────────────────────────┘
 
   Planned data path (not yet implemented):
-      field devices ──MQTT──▶ scada-api ──▶ PostgreSQL ──▶ Grafana dashboards
+      field devices ──MQTT──▶ mml-api ──▶ PostgreSQL ──▶ Grafana dashboards
 ```
 
 - **Backend** terminates auth, will later ingest device data over MQTT and write to Postgres.
@@ -295,22 +295,22 @@ Public routes (no auth): `/login`, `/reset-password`. Admin-only route: `/accoun
 
 ### 9a. Backend as a Windows service (NSSM)
 
-The backend runs under NSSM as service **`scada-api`**:
+The backend runs under NSSM as service **`mml-api`**:
 
 | NSSM setting   | Value |
 |----------------|-------|
 | Application    | `C:\dev\scada-mml-backend\venv\Scripts\python.exe` |
 | Arguments      | `-m uvicorn main:app --host 127.0.0.1 --port 8088` |
 | AppDirectory   | `C:\dev\scada-mml-backend` |
-| AppStdout/Stderr | `C:\inetpub\scada-api\logs\stdout.log` / `stderr.log` |
+| AppStdout/Stderr | `C:\inetpub\mml-api\logs\stdout.log` / `stderr.log` |
 
 Binding to `127.0.0.1` is intentional — the service is only reached via the IIS reverse proxy.
 
 ```powershell
 # manage the service (Administrator)
-Start-Service scada-api
-Restart-Service scada-api
-Get-Service scada-api
+Start-Service mml-api
+Restart-Service mml-api
+Get-Service mml-api
 ```
 
 ### 9b. Frontend on IIS with reverse proxy
@@ -350,13 +350,13 @@ written to `C:\dev\verify_prod.log`.
 | NSSM service "unexpected error to start" | A bare FastAPI app starts no server. Use `-m uvicorn main:app ...` (current config) or `python main.py` (has a `__main__` block). |
 | `WinError 10013` binding a port | Port is reserved/blocked (e.g. 8000 on this host) or already in use. Use 8088, or check `netsh interface ipv4 show excludedportrange protocol=tcp`. |
 | `/api/...` returns **404** through IIS | ARR proxy not enabled (§9b step 3), or the rewrite rule didn't match. |
-| `/api/...` returns **502** through IIS | Backend (`scada-api`) is not running / not listening on 127.0.0.1:8088. |
+| `/api/...` returns **502** through IIS | Backend (`mml-api`) is not running / not listening on 127.0.0.1:8088. |
 | `500.52` on every IIS request | A rewrite rule sets a server variable (e.g. `X-Forwarded-*`) that isn't registered in `allowedServerVariables`. See the comment block in `web.config`. |
 | `Failed to fetch dynamically imported module …Page.vue` (dev) | Two Vite dev servers fighting over port 5173. Kill stray `node` processes and start one instance. |
 | `psql` not found | It's at `C:\Program Files\PostgreSQL\18\bin\psql.exe` (not on PATH by default). |
 | Starting/stopping the service fails with "Cannot open … service" | The shell isn't elevated. Run PowerShell **as Administrator**. |
-| `/forgot-password` returns OK but no email arrives | `SMTP_HOST` is blank → the link is **logged**, not sent. Grep `C:\inetpub\scada-api\logs\stdout.log` for `PASSWORD RESET for`. If SMTP is configured, look for `Failed to send password-reset email` in stderr. With Brevo, the host's public IP must be **authorized** in your Brevo SMTP settings. |
-| Edits to `.env` are not picked up | The service reads env at startup. `Restart-Service scada-api` *(admin)*. |
+| `/forgot-password` returns OK but no email arrives | `SMTP_HOST` is blank → the link is **logged**, not sent. Grep `C:\inetpub\mml-api\logs\stdout.log` for `PASSWORD RESET for`. If SMTP is configured, look for `Failed to send password-reset email` in stderr. With Brevo, the host's public IP must be **authorized** in your Brevo SMTP settings. |
+| Edits to `.env` are not picked up | The service reads env at startup. `Restart-Service mml-api` *(admin)*. |
 | Reset link says "Invalid or expired" | Reset tokens are **single-use** and expire after `RESET_EXPIRE_MIN` minutes. Request a fresh link. |
 | Login works in dev, then "Not authenticated" after page reload in prod | `COOKIE_SECURE=true` requires HTTPS — the browser refuses to send the refresh cookie over plain HTTP. Move the IIS binding to HTTPS, or temporarily set `COOKIE_SECURE=false`. |
 | `/accounts` redirects to `/overview` | The current user is not `role='admin'`. Sign in as `admin`, or `UPDATE users SET role='admin' WHERE username='you';`. |

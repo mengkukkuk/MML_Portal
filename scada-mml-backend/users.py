@@ -15,7 +15,7 @@ import db
 import security
 from auth import require_admin
 
-logger = logging.getLogger("scada-api.users")
+logger = logging.getLogger("mml-api.users")
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
