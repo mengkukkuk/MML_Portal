@@ -17,11 +17,12 @@ const grafanaFrom = computed(() => ({
 
 // Whether Grafana panels are configured (set VITE_GRAFANA_DASHBOARD_UID in .env)
 const dashboardUid = import.meta.env.VITE_GRAFANA_DASHBOARD_UID || ''
+const dashboardSlug = import.meta.env.VITE_GRAFANA_DASHBOARD_SLUG || dashboardUid
 
 // Build embed URL for a specific panel
 // Grafana d-solo URL format: /d-solo/<uid>/<slug>
 function panelUrl(panelId) {
-  return `${GRAFANA_URL}/d-solo/${dashboardUid}/${dashboardUid}?orgId=1&panelId=${panelId}`
+  return `${GRAFANA_URL}/d-solo/${dashboardUid}/${dashboardSlug}?orgId=1&panelId=${panelId}`
 }
 
 // Fallback mock data (used when Grafana not yet configured)

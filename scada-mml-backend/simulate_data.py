@@ -73,6 +73,33 @@ def get_device_ids(conn: psycopg.Connection) -> dict[str, int]:
     return {r["name"]: r["id"] for r in rows}
 
 
+def ensure_devices(conn: psycopg.Connection) -> None:
+    """Create any devices referenced by the simulator if they do not yet exist."""
+    device_defs = []
+    for device_name in SENSORS:
+        if "Boiler" in device_name:
+            dev_type = "boiler"
+        elif "Compressor" in device_name:
+            dev_type = "compressor"
+        elif "Tank" in device_name:
+            dev_type = "tank"
+        elif "Pump" in device_name:
+            dev_type = "pump"
+        elif "Cooling" in device_name:
+            dev_type = "cooling"
+        else:
+            dev_type = "device"
+        device_defs.append((device_name, dev_type, "Main plant", "online"))
+
+    with conn.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO devices (name, type, location, status) VALUES (%s, %s, %s, %s) "
+            "ON CONFLICT (name) DO NOTHING",
+            device_defs,
+        )
+    conn.commit()
+
+
 def insert_readings(
     conn: psycopg.Connection,
     device_ids: dict[str, int],
@@ -132,6 +159,7 @@ def main() -> None:
 
     print("Connecting to PostgreSQL …", flush=True)
     with psycopg.connect(config.DATABASE_URL, row_factory=psycopg.rows.dict_row) as conn:
+        ensure_devices(conn)
         device_ids = get_device_ids(conn)
         print(f"Found devices: {list(device_ids.keys())}", flush=True)
 
