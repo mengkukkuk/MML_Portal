@@ -70,13 +70,13 @@ const router = createRouter({
   routes,
 })
 
-// Run once on first navigation — try to restore session from HttpOnly cookie
+// Run once on the first navigation — try to restore the session from HttpOnly cookie
 let _initialized = false
 
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
-  // On first load: silently try to refresh. This restores session after page reload.
+  // On the first load: silently try to refresh. This restores the session after the page reloads.
   if (!_initialized) {
     _initialized = true
     if (!auth.isLoggedIn) {

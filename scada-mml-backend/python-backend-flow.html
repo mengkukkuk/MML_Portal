@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SCADA MML — Python Backend Flow</title>
+<style>
+  :root {
+    --bg:     #0d1117;
+    --bg2:    #161b22;
+    --bg3:    #1c2333;
+    --border: #30363d;
+    --text:   #e6edf3;
+    --muted:  #8b949e;
+    --accent: #58a6ff;
+    --green:  #3fb950;
+    --orange: #f0883e;
+    --purple: #d2a8ff;
+    --red:    #f85149;
+    --yellow: #e3b341;
+    --teal:   #39d353;
+    --pink:   #f778ba;
+    --cyan:   #76e3ea;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size:14px;
+    min-height:100vh;
+    overflow-x:hidden;
+  }
+
+  /* ── HEADER ── */
+  header {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 18px 32px;
+  }
+  .badges { display:flex; gap:8px; margin-bottom:6px; flex-wrap:wrap; }
+  .badge {
+    border-radius:6px; padding:3px 10px;
+    font-size:11px; font-weight:700; letter-spacing:.5px; text-transform:uppercase;
+    border: 1px solid;
+  }
+  .badge-py  { background:#1a2d1a; color:var(--green);  border-color:#2a5a2a; }
+  .badge-api { background:#1a1a3a; color:var(--accent); border-color:#2a2a6a; }
+  .badge-pg  { background:#1a2a3a; color:var(--cyan);   border-color:#1a4a6a; }
+  header h1  { font-size:18px; font-weight:700; }
+  header p   { color:var(--muted); font-size:13px; margin-top:2px; }
+
+  /* ── CONTROLS ── */
+  .controls {
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding:14px 32px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-btn {
+    background:var(--accent); color:#000; border:none;
+    border-radius:6px; padding:7px 18px; cursor:pointer;
+    font-size:13px; font-weight:700; transition:opacity .15s; min-width:80px;
+  }
+  .nav-btn:hover { opacity:.85; }
+  .nav-btn:disabled { opacity:.3; cursor:not-allowed; }
+  .step-btn {
+    background:var(--bg3); border:1px solid var(--border); color:var(--text);
+    border-radius:6px; padding:5px 11px; cursor:pointer;
+    font-size:12px; font-weight:600; transition:all .15s;
+  }
+  .step-btn:hover { border-color:var(--accent); color:var(--accent); }
+  .step-btn.active { background:#0d2340; border-color:var(--accent); color:var(--accent); }
+  .step-counter { color:var(--muted); font-size:12px; }
+  .auto-btn {
+    background:transparent; border:1px solid var(--green); color:var(--green);
+    border-radius:6px; padding:6px 14px; cursor:pointer;
+    font-size:12px; font-weight:600; transition:all .15s; margin-left:auto;
+  }
+  .auto-btn:hover { background:rgba(63,185,80,.1); }
+  .auto-btn.running { border-color:var(--orange); color:var(--orange); }
+
+  /* ── CANVAS ── */
+  .canvas { padding:28px 32px; display:flex; flex-direction:column; gap:16px; }
+
+  /* ── LAYER ── */
+  .layer { display:flex; flex-direction:column; gap:6px; }
+  .layer-label {
+    font-size:10px; font-weight:700; letter-spacing:1px;
+    text-transform:uppercase; color:var(--muted);
+    padding:4px 0 4px 0; border-top:1px solid var(--border); margin-top:2px;
+  }
+  .row { display:flex; align-items:stretch; gap:8px; flex-wrap:wrap; }
+
+  /* ── NODE ── */
+  .node {
+    border-radius:8px; border:1.5px solid var(--border); background:var(--bg2);
+    padding:10px 14px; display:flex; flex-direction:column; gap:3px;
+    opacity:.22; transition:opacity .4s, border-color .4s, background .4s, transform .3s, box-shadow .4s;
+    cursor:default; position:relative; min-width:110px; flex:0 0 auto;
+  }
+  .node.lit  { opacity:1; }
+  .node.active { opacity:1; transform:translateY(-2px); box-shadow:0 4px 20px rgba(0,0,0,.55); }
+  .node .tag  { font-size:9px; font-weight:700; letter-spacing:.8px; text-transform:uppercase; color:var(--muted); margin-bottom:2px; }
+  .node .name { font-size:13px; font-weight:700; color:var(--text); }
+  .node .detail { font-size:11px; color:var(--muted); line-height:1.5; margin-top:2px; }
+  .node code  { background:var(--bg3); border:1px solid var(--border); border-radius:3px; padding:0 5px; font-family:'Cascadia Code','Fira Code',monospace; font-size:10px; color:var(--orange); }
+
+  /* color variants */
+  .node.c-blue.active   { border-color:var(--accent); background:#0d2340; }
+  .node.c-green.active  { border-color:var(--green);  background:#0d2218; }
+  .node.c-orange.active { border-color:var(--orange); background:#2d1a08; }
+  .node.c-purple.active { border-color:var(--purple); background:#201634; }
+  .node.c-red.active    { border-color:var(--red);    background:#2d0d0d; }
+  .node.c-yellow.active { border-color:var(--yellow); background:#2a1f08; }
+  .node.c-teal.active   { border-color:var(--teal);   background:#0d2215; }
+  .node.c-pink.active   { border-color:var(--pink);   background:#2d1226; }
+  .node.c-cyan.active   { border-color:var(--cyan);   background:#0d2530; }
+
+  .node.c-blue.lit   { border-color:#1a3a5c; }
+  .node.c-green.lit  { border-color:#1a3a20; }
+  .node.c-orange.lit { border-color:#3d2008; }
+  .node.c-purple.lit { border-color:#2a1e40; }
+  .node.c-teal.lit   { border-color:#0d2a20; }
+  .node.c-cyan.lit   { border-color:#0d2535; }
+  .node.c-yellow.lit { border-color:#2a1f08; }
+
+  /* ── ARROW ── */
+  .v-arrow { display:flex; flex-direction:column; align-items:center; padding:2px 0; opacity:.12; transition:opacity .4s; }
+  .v-arrow.lit { opacity:.55; }
+  .v-arrow.active { opacity:1; }
+  .v-arrow .line {
+    width:2px; background:var(--accent); height:22px; border-radius:1px; position:relative; overflow:hidden;
+  }
+  .v-arrow.flowing .line::after {
+    content:''; position:absolute; top:-100%; width:100%; height:50%;
+    background:linear-gradient(transparent,#fff,transparent); animation:flow 1s linear infinite;
+  }
+  @keyframes flow { 0%{top:-50%} 100%{top:150%} }
+  .v-arrow .tip {
+    width:0; height:0; border-left:5px solid transparent; border-right:5px solid transparent; border-top:7px solid var(--accent);
+  }
+  .v-arrow .label { font-size:9px; color:var(--muted); text-align:center; margin-top:2px; max-width:160px; }
+
+  .h-arrow { display:flex; align-items:center; gap:3px; opacity:.12; transition:opacity .4s; flex-shrink:0; }
+  .h-arrow.lit { opacity:.55; }
+  .h-arrow.active { opacity:1; }
+  .h-arrow .h-line { width:28px; height:2px; background:var(--accent); position:relative; overflow:hidden; }
+  .h-arrow.flowing .h-line::after {
+    content:''; position:absolute; left:-100%; height:100%; width:50%;
+    background:linear-gradient(90deg,transparent,#fff,transparent); animation:hflow 1s linear infinite;
+  }
+  @keyframes hflow { 0%{left:-50%} 100%{left:150%} }
+  .h-arrow .h-tip { width:0; height:0; border-top:5px solid transparent; border-bottom:5px solid transparent; border-left:7px solid var(--accent); }
+
+  /* ── CHIP GRID ── */
+  .chip-grid { display:flex; gap:7px; flex-wrap:wrap; }
+  .chip {
+    border-radius:6px; border:1.5px solid var(--border); background:var(--bg3);
+    padding:7px 12px; font-size:11px; font-weight:600; line-height:1.4;
+    opacity:.22; transition:all .4s; cursor:default;
+  }
+  .chip small { font-weight:400; color:var(--muted); display:block; font-size:10px; }
+  .chip.lit  { opacity:1; }
+  .chip.active { opacity:1; }
+  .chip.c-green.active  { border-color:var(--green);  color:var(--green);  background:#0d2218; }
+  .chip.c-purple.active { border-color:var(--purple); color:var(--purple); background:#201634; }
+  .chip.c-orange.active { border-color:var(--orange); color:var(--orange); background:#2d1a08; }
+  .chip.c-teal.active   { border-color:var(--teal);   color:var(--teal);   background:#0d2215; }
+  .chip.c-yellow.active { border-color:var(--yellow); color:var(--yellow); background:#2a1f08; }
+  .chip.c-cyan.active   { border-color:var(--cyan);   color:var(--cyan);   background:#0d2530; }
+  .chip.c-pink.active   { border-color:var(--pink);   color:var(--pink);   background:#2d1226; }
+  .chip.c-red.active    { border-color:var(--red);    color:var(--red);    background:#2d0d0d; }
+
+  /* ── DB TABLE ── */
+  .db-table {
+    border:1.5px solid var(--border); border-radius:8px; overflow:hidden;
+    opacity:.22; transition:opacity .4s, border-color .4s;
+    min-width:130px; flex:0 0 auto;
+  }
+  .db-table.lit { opacity:1; }
+  .db-table.active { opacity:1; border-color:var(--cyan); }
+  .db-table-head {
+    background:var(--bg3); padding:6px 10px;
+    font-size:10px; font-weight:700; letter-spacing:.6px; text-transform:uppercase;
+    color:var(--cyan); border-bottom:1px solid var(--border);
+    display:flex; align-items:center; gap:6px;
+  }
+  .db-table-body { padding:6px 10px; background:var(--bg2); }
+  .db-col { font-size:10px; color:var(--muted); padding:1px 0; display:flex; gap:6px; align-items:center; }
+  .db-col .col-name { color:var(--text); font-weight:600; min-width:80px; font-family:'Cascadia Code','Fira Code',monospace; }
+  .db-col .col-type { color:var(--purple); font-family:'Cascadia Code','Fira Code',monospace; font-size:9px; }
+  .db-col .col-pk { color:var(--yellow); font-size:9px; font-weight:700; }
+
+  /* ── ENDPOINT BADGE ── */
+  .method {
+    font-size:9px; font-weight:800; letter-spacing:.5px; border-radius:3px; padding:1px 5px;
+    font-family:'Cascadia Code','Fira Code',monospace; flex-shrink:0;
+  }
+  .get    { background:#0d2818; color:#3fb950; border:1px solid #1a4a28; }
+  .post   { background:#1a2d1a; color:#f0883e; border:1px solid #3a3010; }
+  .put    { background:#1a1a3a; color:#58a6ff; border:1px solid #2a2a6a; }
+  .delete { background:#2d0d0d; color:#f85149; border:1px solid #5a1010; }
+
+  /* ── EXPLAIN ── */
+  .explain {
+    background:var(--bg2); border:1px solid var(--border); border-left:3px solid var(--accent);
+    border-radius:8px; padding:16px 20px; min-height:110px; transition:all .3s;
+  }
+  .explain h3 {
+    font-size:14px; font-weight:700; color:var(--accent);
+    margin-bottom:8px; display:flex; align-items:center; gap:8px;
+  }
+  .explain h3 .sn {
+    background:var(--accent); color:#000; font-size:11px; font-weight:800;
+    border-radius:100px; width:20px; height:20px;
+    display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;
+  }
+  .explain p { color:var(--muted); line-height:1.75; font-size:13px; }
+  .explain code {
+    background:var(--bg3); border:1px solid var(--border); border-radius:4px;
+    padding:1px 6px; font-family:'Cascadia Code','Fira Code',monospace;
+    font-size:12px; color:var(--orange);
+  }
+  .explain b { color:var(--text); }
+
+  /* ── TOOLTIP ── */
+  .node:hover .tt, .chip:hover .tt, .db-table:hover .tt { display:block; }
+  .tt {
+    display:none; position:absolute; z-index:200;
+    bottom:calc(100% + 8px); left:50%; transform:translateX(-50%);
+    background:#1c2333; border:1px solid var(--border); border-radius:6px;
+    padding:8px 12px; font-size:11px; color:var(--text); line-height:1.5;
+    white-space:nowrap; pointer-events:none; box-shadow:0 4px 16px rgba(0,0,0,.6);
+  }
+  .tt::after {
+    content:''; position:absolute; top:100%; left:50%; transform:translateX(-50%);
+    border:5px solid transparent; border-top-color:var(--border);
+  }
+
+  /* ── SECTION BOX ── */
+  .section-box {
+    border:1.5px dashed var(--border); border-radius:10px;
+    padding:12px; flex:1; opacity:.22; transition:opacity .4s, border-color .4s;
+  }
+  .section-box.lit { opacity:1; border-color:var(--border); }
+  .section-box.active-auth { opacity:1; border-color:var(--green); }
+  .section-box.active-users { opacity:1; border-color:var(--purple); }
+  .section-box.active-sec { opacity:1; border-color:var(--orange); }
+  .section-box .sec-title {
+    font-size:10px; text-transform:uppercase; font-weight:700; letter-spacing:.8px; margin-bottom:8px;
+  }
+  .section-box.active-auth  .sec-title { color:var(--green);  }
+  .section-box.active-users .sec-title { color:var(--purple); }
+  .section-box.active-sec   .sec-title { color:var(--orange); }
+
+  @media(max-width:700px){
+    .canvas{padding:14px;}
+    .controls{padding:10px 14px;}
+    header{padding:14px;}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="badges">
+    <span class="badge badge-py">Python 3.12</span>
+    <span class="badge badge-api">FastAPI + Uvicorn</span>
+    <span class="badge badge-pg">PostgreSQL + psycopg3</span>
+  </div>
+  <h1>Backend Request Flow — SCADA MML API</h1>
+  <p>From HTTP request → Uvicorn → FastAPI → Routers → Deps → DB → Response</p>
+</header>
+
+<div class="controls">
+  <button class="nav-btn" id="prevBtn" onclick="prev()" disabled>← Prev</button>
+  <button class="nav-btn" id="nextBtn" onclick="next()">Next →</button>
+  <span class="step-counter" id="stepCounter">Step 1 / 12</span>
+  <div id="pills" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+  <button class="auto-btn" id="autoBtn" onclick="toggleAuto()">▶ Auto Play</button>
+</div>
+
+<div class="canvas">
+
+  <!-- ════ L0: ENTRY ════ -->
+  <div class="layer">
+    <div class="layer-label">① Entry — ASGI Server</div>
+    <div class="row" style="align-items:center;">
+      <div class="node c-blue" id="n-client">
+        <div class="tag">Caller</div>
+        <div class="name">Vue Frontend</div>
+        <div class="detail">Axios + Bearer header<br>HttpOnly cookie auto-sent</div>
+        <div class="tt">Axios apiClient sends<br>Authorization: Bearer &lt;token&gt;<br>Browser auto-attaches refresh cookie</div>
+      </div>
+      <div class="h-arrow" id="ha-client-uvi">
+        <div class="h-line"></div><div class="h-tip"></div>
+      </div>
+      <div class="node c-blue" id="n-uvicorn">
+        <div class="tag">ASGI Server</div>
+        <div class="name">Uvicorn</div>
+        <div class="detail">0.0.0.0:8088<br>async event loop<br>lifespan protocol</div>
+        <div class="tt">uvicorn.run(app, host='0.0.0.0', port=8088)<br>Handles HTTP/1.1 keep-alive.<br>Passes requests to FastAPI ASGI app.</div>
+      </div>
+      <div class="h-arrow" id="ha-uvi-app">
+        <div class="h-line"></div><div class="h-tip"></div>
+      </div>
+      <div class="node c-blue" id="n-fastapi">
+        <div class="tag">Framework</div>
+        <div class="name">FastAPI app</div>
+        <div class="detail">main.py<br>title="SCADA MML API"<br>OpenAPI auto-docs</div>
+        <div class="tt">FastAPI wraps Starlette.<br>Auto-generates /docs (Swagger)<br>and /redoc from type hints.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="v-arrow" id="va-cors">
+    <div class="line"></div><div class="tip"></div>
+    <div class="label">every request passes through middleware stack</div>
+  </div>
+
+  <!-- ════ L1: MIDDLEWARE ════ -->
+  <div class="layer">
+    <div class="layer-label">② Middleware Stack</div>
+    <div class="row" style="align-items:stretch; gap:10px;">
+      <div class="node c-yellow" id="n-cors">
+        <div class="tag">Middleware</div>
+        <div class="name">CORSMiddleware</div>
+        <div class="detail">
+          allow_origins: [<br>
+          &nbsp;&nbsp;localhost:5173<br>
+          &nbsp;&nbsp;(from CORS_ORIGINS)<br>
+          ]<br>
+          allow_credentials: <code>True</code>
+        </div>
+        <div class="tt">Must be explicit origins (not "*")<br>because allow_credentials=True.<br>Handles OPTIONS preflight.<br>Adds Access-Control-* headers.</div>
+      </div>
+      <div class="node c-yellow" id="n-health">
+        <div class="tag">GET /health</div>
+        <div class="name">Health Probe</div>
+        <div class="detail">NSSM / monitoring<br>liveness check<br>→ {"status":"ok"}</div>
+        <div class="tt">Simple endpoint for NSSM service<br>manager or monitoring to verify<br>the process is alive.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="v-arrow" id="va-route">
+    <div class="line"></div><div class="tip"></div>
+    <div class="label">URL matched → dispatched to router</div>
+  </div>
+
+  <!-- ════ L2: ROUTERS ════ -->
+  <div class="layer">
+    <div class="layer-label">③ APIRouter Registration</div>
+    <div class="row" style="gap:12px; align-items:flex-start;">
+
+      <!-- auth router -->
+      <div class="section-box" id="box-auth">
+        <div class="sec-title">🔑 auth.router — prefix /api/auth</div>
+        <div class="chip-grid">
+          <div class="chip c-green" id="ep-login">
+            <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">
+              <span class="method post">POST</span><span>/login</span>
+            </div>
+            <small>verify password → issue tokens</small>
+            <div class="tt">LoginRequest(username, password)<br>db.get_user_by_username()<br>security.verify_password()<br>→ access_token + refresh cookie</div>
+          </div>
+          <div class="chip c-green" id="ep-register">
+            <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">
+              <span class="method post">POST</span><span>/register</span>
+            </div>
+            <small>self-register as operator</small>
+            <div class="tt">Always role=operator.<br>db.create_user() → may raise<br>UniqueViolation (409 Conflict)</div>
+          </div>
+          <div class="chip c-green" id="ep-me">
+            <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">
+              <span class="method get">GET</span><span>/me</span>
+            </div>
+            <small>return current user profile</small>
+            <div class="tt">Depends(get_current_user)<br>Validates Bearer token first,<br>then returns user dict.</div>
+          </div>
+          <div class="chip c-green" id="ep-refresh">
+            <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">
+              <span class="method post">POST</span><span>/refresh</span>
+            </div>
+            <small>rotate refresh → new access token</small>
+            <div class="tt">Reads HttpOnly cookie<br>Validates refresh JWT<br>Checks JTI denylist (_revoked_refresh)<br>Issues new pair, rotates cookie</div>
+          </div>
+          <div class="chip c-green" id="ep-logout">
+            <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">
+              <span class="method post">POST</span><span>/logout</span>
+            </div>
+            <small>revoke JTI + clear cookie</small>
+            <div class="tt">Decodes refresh cookie,<br>adds JTI to _revoked_refresh set,<br>deletes cookie. Returns 204.</div>
+          </div>
+          <div class="chip c-green" id="ep-chpw">
+            <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">
+              <span class="method post">POST</span><span>/change-password</span>
+            </div>
+            <small>verify old → hash + save new</small>
+          </div>
+          <div class="chip c-green" id="ep-forgot">
+            <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">
+              <span class="method post">POST</span><span>/forgot-password</span>
+            </div>
+            <small>email reset link (no info leak)</small>
+            <div class="tt">Always returns generic message.<br>create_reset_token() → mailer<br>SMTP or console log in dev.</div>
+          </div>
+          <div class="chip c-green" id="ep-reset">
+            <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">
+              <span class="method post">POST</span><span>/reset-password</span>
+            </div>
+            <small>single-use reset token → set pw</small>
+            <div class="tt">Returns 400 (not 401) so<br>Axios refresh interceptor<br>is NOT triggered on bad link.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- users router -->
+      <div class="section-box" id="box-users">
+        <div class="sec-title">👥 users.router — prefix /api/users</div>
+        <div class="chip-grid">
+          <div class="chip c-purple" id="ep-list">
+            <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">
+              <span class="method get">GET</span><span>/api/users</span>
+            </div>
+            <small>Depends(require_admin)</small>
+            <div class="tt">db.list_users()<br>Returns all users ordered by id.</div>
+          </div>
+          <div class="chip c-purple" id="ep-create">
+            <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">
+              <span class="method post">POST</span><span>/api/users</span>
+            </div>
+            <small>admin creates user</small>
+            <div class="tt">Validates role ∈ {admin, operator}<br>password length ≥ MIN_PASSWORD_LEN<br>db.create_user() + scrypt hash</div>
+          </div>
+          <div class="chip c-purple" id="ep-update">
+            <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">
+              <span class="method put">PUT</span><span>/api/users/{id}</span>
+            </div>
+            <small>update role / display / email</small>
+            <div class="tt">Last-admin guard:<br>cannot demote final admin.<br>db.update_user()</div>
+          </div>
+          <div class="chip c-purple" id="ep-delete">
+            <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">
+              <span class="method delete">DELETE</span><span>/api/users/{id}</span>
+            </div>
+            <small>admin only — guards apply</small>
+            <div class="tt">Cannot delete yourself.<br>Cannot delete last admin.<br>db.delete_user() → 204.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="v-arrow" id="va-dep">
+    <div class="line"></div><div class="tip"></div>
+    <div class="label">FastAPI dependency injection runs before handler</div>
+  </div>
+
+  <!-- ════ L3: DEPENDENCIES ════ -->
+  <div class="layer">
+    <div class="layer-label">④ Dependency Injection Chain</div>
+    <div class="row" style="align-items:center; gap:10px;">
+      <div class="node c-orange" id="n-bearer">
+        <div class="tag">FastAPI Dep</div>
+        <div class="name">HTTPBearer</div>
+        <div class="detail">auto_error=True<br>reads Authorization<br>header → credentials</div>
+        <div class="tt">FastAPI's built-in security scheme.<br>Extracts "Bearer &lt;token&gt;" from header.<br>Returns 403 if header missing.</div>
+      </div>
+      <div class="h-arrow" id="ha-bearer-curr">
+        <div class="h-line"></div><div class="h-tip"></div>
+      </div>
+      <div class="node c-orange" id="n-getuser">
+        <div class="tag">Dependency</div>
+        <div class="name">get_current_user()</div>
+        <div class="detail">security.decode_token()<br>payload["type"] == "access"<br>db.get_user_by_id(sub)<br>→ user dict or 401</div>
+        <div class="tt">Shared dependency used by /me,<br>/change-password, and require_admin.<br>Validates token type is "access".</div>
+      </div>
+      <div class="h-arrow" id="ha-curr-admin">
+        <div class="h-line"></div><div class="h-tip"></div>
+      </div>
+      <div class="node c-orange" id="n-admin">
+        <div class="tag">Dependency</div>
+        <div class="name">require_admin()</div>
+        <div class="detail">Depends(get_current_user)<br>checks role == "admin"<br>→ 403 if not admin</div>
+        <div class="tt">Wraps get_current_user.<br>Used by all /api/users endpoints.<br>Returns 403 Forbidden for operators.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="v-arrow" id="va-sec">
+    <div class="line"></div><div class="tip"></div>
+    <div class="label">token decode &amp; password hash via security.py</div>
+  </div>
+
+  <!-- ════ L4: SECURITY ════ -->
+  <div class="layer">
+    <div class="layer-label">⑤ security.py — Crypto Primitives</div>
+    <div class="row" style="gap:10px; align-items:stretch; flex-wrap:wrap;">
+
+      <div class="section-box" id="box-sec">
+        <div class="sec-title">🔐 Password hashing — stdlib scrypt</div>
+        <div class="chip-grid">
+          <div class="chip c-orange" id="sec-hash">
+            <b>hash_password()</b>
+            <small>os.urandom(16) salt<br>hashlib.scrypt(N=16384, r=8, p=1)<br>→ "scrypt$&lt;salt&gt;$&lt;hash&gt;"</small>
+          </div>
+          <div class="chip c-orange" id="sec-verify">
+            <b>verify_password()</b>
+            <small>parse stored string<br>re-derive hash<br>hmac.compare_digest()</small>
+            <div class="tt">Constant-time comparison<br>prevents timing attacks.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-box" id="box-jwt">
+        <div class="sec-title">🪙 JWT — PyJWT HS256</div>
+        <div class="chip-grid">
+          <div class="chip c-yellow" id="jwt-access">
+            <b>create_access_token()</b>
+            <small>type="access", role<br>exp: ACCESS_EXPIRE_MIN (30m)<br>jti: uuid4</small>
+          </div>
+          <div class="chip c-yellow" id="jwt-refresh">
+            <b>create_refresh_token()</b>
+            <small>type="refresh"<br>exp: REFRESH_EXPIRE_DAYS (7d)<br>cookie path /api/auth</small>
+          </div>
+          <div class="chip c-yellow" id="jwt-reset">
+            <b>create_reset_token()</b>
+            <small>type="reset"<br>exp: RESET_EXPIRE_MIN (30m)<br>single-use via _used_reset set</small>
+          </div>
+          <div class="chip c-yellow" id="jwt-decode">
+            <b>decode_token()</b>
+            <small>jwt.decode() — verifies<br>signature + expiry<br>raises PyJWTError on fail</small>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="v-arrow" id="va-db">
+    <div class="line"></div><div class="tip"></div>
+    <div class="label">db.py opens psycopg3 connection per call</div>
+  </div>
+
+  <!-- ════ L5: DB ════ -->
+  <div class="layer">
+    <div class="layer-label">⑥ db.py + PostgreSQL — Data Layer</div>
+    <div class="row" style="gap:10px; align-items:flex-start; flex-wrap:wrap;">
+
+      <div class="node c-teal" id="n-db">
+        <div class="tag">db.py</div>
+        <div class="name">psycopg3 layer</div>
+        <div class="detail">
+          get_connection()<br>
+          → psycopg.connect()<br>
+          row_factory=dict_row<br>
+          <br>
+          Functions:<br>
+          get_user_by_username<br>
+          get_user_by_id<br>
+          get_user_by_email<br>
+          list_users<br>
+          create_user<br>
+          update_user<br>
+          delete_user<br>
+          set_password<br>
+          count_admins
+        </div>
+        <div class="tt">No connection pooling (yet).<br>Each function opens+closes a<br>new connection via context manager.<br>dict_row → rows as Python dicts.</div>
+      </div>
+
+      <!-- DB Tables -->
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        <div style="font-size:10px;color:var(--muted);letter-spacing:.8px;text-transform:uppercase;">PostgreSQL Tables</div>
+        <div class="row" style="gap:8px; align-items:flex-start; flex-wrap:wrap;">
+
+          <div class="db-table" id="tbl-users">
+            <div class="db-table-head">🗃 users</div>
+            <div class="db-table-body">
+              <div class="db-col"><span class="col-pk">PK</span><span class="col-name">id</span><span class="col-type">serial</span></div>
+              <div class="db-col"><span class="col-name">username</span><span class="col-type">text UNIQUE</span></div>
+              <div class="db-col"><span class="col-name">password_hash</span><span class="col-type">text</span></div>
+              <div class="db-col"><span class="col-name">role</span><span class="col-type">text default 'operator'</span></div>
+              <div class="db-col"><span class="col-name">display_name</span><span class="col-type">text</span></div>
+              <div class="db-col"><span class="col-name">email</span><span class="col-type">text nullable</span></div>
+              <div class="db-col"><span class="col-name">created_at</span><span class="col-type">timestamptz</span></div>
+            </div>
+            <div class="tt">Index: users_email_lower_key<br>UNIQUE btree(lower(email))<br>WHERE email IS NOT NULL</div>
+          </div>
+
+          <div class="db-table" id="tbl-devices">
+            <div class="db-table-head">🖥 devices</div>
+            <div class="db-table-body">
+              <div class="db-col"><span class="col-pk">PK</span><span class="col-name">id</span><span class="col-type">serial</span></div>
+              <div class="db-col"><span class="col-name">name</span><span class="col-type">text UNIQUE</span></div>
+              <div class="db-col"><span class="col-name">type</span><span class="col-type">text</span></div>
+              <div class="db-col"><span class="col-name">location</span><span class="col-type">text</span></div>
+              <div class="db-col"><span class="col-name">status</span><span class="col-type">text default 'online'</span></div>
+            </div>
+            <div class="tt">FX5U PLC devices.<br>Referenced by sensor_readings<br>and alarms via FK.</div>
+          </div>
+
+          <div class="db-table" id="tbl-sensor">
+            <div class="db-table-head">📈 sensor_readings</div>
+            <div class="db-table-body">
+              <div class="db-col"><span class="col-pk">PK</span><span class="col-name">id</span><span class="col-type">bigserial</span></div>
+              <div class="db-col"><span class="col-name">device_id</span><span class="col-type">int FK→devices</span></div>
+              <div class="db-col"><span class="col-name">metric</span><span class="col-type">text</span></div>
+              <div class="db-col"><span class="col-name">value</span><span class="col-type">float8</span></div>
+              <div class="db-col"><span class="col-name">unit</span><span class="col-type">text</span></div>
+              <div class="db-col"><span class="col-name">ts</span><span class="col-type">timestamptz IDX</span></div>
+            </div>
+            <div class="tt">Index: (device_id, ts DESC)<br>for fast time-range queries<br>per device.</div>
+          </div>
+
+          <div class="db-table" id="tbl-alarms">
+            <div class="db-table-head">🚨 alarms</div>
+            <div class="db-table-body">
+              <div class="db-col"><span class="col-pk">PK</span><span class="col-name">id</span><span class="col-type">bigserial</span></div>
+              <div class="db-col"><span class="col-name">device_id</span><span class="col-type">int FK→devices</span></div>
+              <div class="db-col"><span class="col-name">severity</span><span class="col-type">text default 'warning'</span></div>
+              <div class="db-col"><span class="col-name">message</span><span class="col-type">text</span></div>
+              <div class="db-col"><span class="col-name">ts</span><span class="col-type">timestamptz IDX</span></div>
+              <div class="db-col"><span class="col-name">acknowledged_at</span><span class="col-type">timestamptz nullable</span></div>
+            </div>
+            <div class="tt">acknowledged_at NULL = unacked.<br>ON DELETE CASCADE from devices.</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="v-arrow" id="va-mailer">
+    <div class="line"></div><div class="tip"></div>
+    <div class="label">forgot-password → mailer.send_password_reset()</div>
+  </div>
+
+  <!-- ════ L6: MAILER ════ -->
+  <div class="layer">
+    <div class="layer-label">⑦ mailer.py — SMTP / Dev-mode Email</div>
+    <div class="row" style="gap:8px; align-items:center;">
+      <div class="node c-pink" id="n-mailer">
+        <div class="tag">mailer.py</div>
+        <div class="name">send_password_reset()</div>
+        <div class="detail">
+          if SMTP_HOST set:<br>
+          &nbsp;&nbsp;smtplib.SMTP / SMTP_SSL<br>
+          &nbsp;&nbsp;STARTTLS or SSL<br>
+          else:<br>
+          &nbsp;&nbsp;logger.info(reset_link)<br>
+          <br>
+          Never raises — errors<br>are swallowed + logged
+        </div>
+        <div class="tt">Dev mode: reset link printed<br>to console (no SMTP needed).<br>Prod: configure SMTP_HOST in .env</div>
+      </div>
+      <div class="node c-pink" id="n-smtp">
+        <div class="tag">Transport</div>
+        <div class="name">SMTP Relay</div>
+        <div class="detail">SMTP_HOST / PORT<br>STARTTLS (587)<br>or SSL (465)</div>
+        <div class="tt">External email relay.<br>SMTP_USER + SMTP_PASS login.<br>SMTP_FROM overrides "From:" header.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="v-arrow" id="va-resp">
+    <div class="line"></div><div class="tip"></div>
+    <div class="label">FastAPI serialises Pydantic model → JSON response</div>
+  </div>
+
+  <!-- ════ L7: RESPONSE ════ -->
+  <div class="layer">
+    <div class="layer-label">⑧ Response — back to Vue</div>
+    <div class="chip-grid">
+      <div class="chip c-cyan" id="resp-200">
+        <b>200 / 201</b>
+        <small>JSON body: access_token + user<br>Set-Cookie: refresh_token (HttpOnly)</small>
+      </div>
+      <div class="chip c-cyan" id="resp-204">
+        <b>204 No Content</b>
+        <small>logout — cookie cleared<br>delete_user OK</small>
+      </div>
+      <div class="chip c-red" id="resp-401">
+        <b>401 Unauthorized</b>
+        <small>bad/expired Bearer token<br>→ Axios auto-refresh fires</small>
+      </div>
+      <div class="chip c-red" id="resp-403">
+        <b>403 Forbidden</b>
+        <small>operator on admin route<br>→ redirect to /overview</small>
+      </div>
+      <div class="chip c-red" id="resp-400">
+        <b>400 / 409 / 404</b>
+        <small>validation / conflict / not found<br>reset returns 400 (not 401!)</small>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ EXPLAIN ════ -->
+  <div class="explain" id="explain">
+    <h3><span class="sn" id="en">1</span> <span id="et">Uvicorn — ASGI Server Entry</span></h3>
+    <p id="eb">When the Vue frontend sends an HTTP request (e.g. <code>POST /api/auth/login</code>), Uvicorn receives it on <code>0.0.0.0:8088</code>. Uvicorn is an <b>ASGI server</b> — it handles async I/O and passes each request to the FastAPI app as an ASGI scope. In production you'd run it behind Nginx or NSSM (Windows service). The <code>/health</code> endpoint is available without auth for liveness monitoring.</p>
+  </div>
+
+</div><!-- /canvas -->
+
+<script>
+const STEPS = [
+  {
+    title: "Uvicorn — ASGI Server Entry",
+    body: `When the Vue frontend sends an HTTP request (e.g. <code>POST /api/auth/login</code>), Uvicorn receives it on <code>0.0.0.0:8088</code>. Uvicorn is an <b>ASGI server</b> — it handles async I/O and passes each request to the FastAPI app as an ASGI scope. In production you'd run it behind Nginx or NSSM (Windows service). The <code>/health</code> endpoint is available without auth for liveness monitoring.`,
+    light: ['n-client','n-uvicorn','n-fastapi','ha-client-uvi','ha-uvi-app'],
+    active: ['n-client','n-uvicorn'],
+    arrows: ['ha-client-uvi'],
+  },
+  {
+    title: "FastAPI App — main.py",
+    body: `<code>main.py</code> is the backend entry point. It calls <code>FastAPI(title="SCADA MML API")</code>, installs <b>CORSMiddleware</b> with explicit allowed origins from <code>CORS_ORIGINS</code> env var (must be explicit — not <code>"*"</code> — because <code>allow_credentials=True</code> is required for the HttpOnly cookie to work). Then it registers two routers: <code>auth.router</code> and <code>users.router</code>, and starts with <code>uvicorn.run()</code>.`,
+    light: ['n-client','n-uvicorn','n-fastapi','ha-client-uvi','ha-uvi-app'],
+    active: ['n-fastapi'],
+    arrows: ['ha-uvi-app'],
+  },
+  {
+    title: "CORS Middleware — Preflight & Origin Check",
+    body: `Every request passes through <b>CORSMiddleware</b> first. For cross-origin requests from the Vue dev server (<code>localhost:5173</code>), the browser sends an <code>OPTIONS</code> preflight. FastAPI handles this automatically and adds <code>Access-Control-Allow-Origin</code>, <code>Access-Control-Allow-Credentials: true</code>, and other CORS headers. <b>Without <code>allow_credentials=True</code>, the browser would not send the HttpOnly refresh cookie.</b>`,
+    light: ['n-cors','n-health','n-uvicorn'],
+    active: ['n-cors'],
+    arrows: ['va-cors'],
+  },
+  {
+    title: "Router Dispatch — /api/auth or /api/users",
+    body: `FastAPI matches the URL path to a registered router. <code>auth.router</code> handles all <code>/api/auth/*</code> endpoints (login, refresh, logout, me, change-password, forgot/reset-password). <code>users.router</code> handles <code>/api/users</code> CRUD — all guarded by <code>Depends(require_admin)</code>. <b>Unmatched routes return 404.</b> The router prefix is set at registration time in <code>APIRouter(prefix=...)</code>.`,
+    light: ['box-auth','box-users','n-cors'],
+    active: [],
+    activeBox: ['box-auth','box-users'],
+    arrows: ['va-route'],
+  },
+  {
+    title: "POST /api/auth/login — Password Verification",
+    body: `Login flow: <code>LoginRequest</code> Pydantic model is validated automatically. <code>db.get_user_by_username()</code> fetches the user row. <code>security.verify_password()</code> re-derives the scrypt hash and uses <code>hmac.compare_digest()</code> for <b>constant-time comparison</b> (prevents timing attacks). On success: <code>create_access_token()</code> + <code>create_refresh_token()</code>. The refresh token is written as an <b>HttpOnly, SameSite=Strict cookie</b> with <code>path="/api/auth"</code> — the browser will only send it to auth endpoints, not every API call.`,
+    light: ['ep-login','n-bearer','n-getuser','sec-hash','sec-verify','tbl-users','box-auth'],
+    active: ['ep-login','sec-verify','tbl-users'],
+    arrows: ['va-dep','va-sec','va-db'],
+  },
+  {
+    title: "POST /api/auth/refresh — Token Rotation",
+    body: `Called by Vue's Axios interceptor when an access token expires (401 response). FastAPI reads the <code>refresh_token</code> cookie via <code>Cookie(alias="refresh_token")</code>. It decodes the JWT, checks <code>type == "refresh"</code>, and checks the JTI is not in the in-memory <code>_revoked_refresh</code> set. If valid: <b>rotates the refresh token</b> (new cookie) and issues a fresh access token. <b>Note:</b> the denylist resets on server restart — acceptable for dev, but production should use a DB or Redis denylist.`,
+    light: ['ep-refresh','sec-verify','jwt-refresh','jwt-access','jwt-decode','tbl-users','box-auth'],
+    active: ['ep-refresh','jwt-refresh','jwt-decode'],
+    arrows: ['va-dep','va-sec','va-db'],
+  },
+  {
+    title: "GET /api/auth/me — Bearer Token Dependency",
+    body: `The <code>get_current_user</code> dependency runs before the endpoint handler. <code>HTTPBearer</code> extracts the <code>Authorization: Bearer &lt;token&gt;</code> header. <code>security.decode_token()</code> verifies the JWT signature and expiry using <code>config.JWT_SECRET</code>. It checks <code>payload["type"] == "access"</code> to reject refresh/reset tokens. Then <code>db.get_user_by_id()</code> confirms the user still exists. Returns <b>401</b> on any failure — which triggers Axios auto-refresh on the frontend.`,
+    light: ['ep-me','n-bearer','n-getuser','jwt-decode','tbl-users','box-auth'],
+    active: ['ep-me','n-bearer','n-getuser','jwt-decode'],
+    arrows: ['va-dep','va-sec'],
+  },
+  {
+    title: "require_admin — Admin Guard",
+    body: `<code>require_admin</code> wraps <code>get_current_user</code> and adds a role check. FastAPI's dependency system composes them automatically. All <code>/api/users</code> endpoints use <code>Depends(require_admin)</code>. Two safety guards prevent lockout: <b>self-delete guard</b> (cannot delete your own account) and <b>last-admin guard</b> (<code>db.count_admins()</code> — cannot delete or demote the final admin). Returns <b>403 Forbidden</b> for operators.`,
+    light: ['n-admin','n-getuser','n-bearer','box-users','ep-list','ep-create','ep-update','ep-delete'],
+    active: ['n-admin','n-getuser','box-users'],
+    arrows: ['va-dep'],
+    activeBox: ['box-users'],
+  },
+  {
+    title: "security.py — scrypt + PyJWT",
+    body: `<code>security.py</code> has no framework dependencies — pure Python. <b>Passwords</b> use <code>hashlib.scrypt</code> (stdlib, N=16384) — the stored format is <code>"scrypt$&lt;salt_hex&gt;$&lt;hash_hex&gt;"</code> so it's self-describing. <b>JWTs</b> use PyJWT with HS256 and <code>JWT_SECRET</code> from <code>config.py</code>. Each token carries: <code>sub</code> (user id), <code>type</code> (access/refresh/reset), <code>iat</code>, <code>exp</code>, and <code>jti</code> (UUID — for single-use reset and refresh denylist).`,
+    light: ['sec-hash','sec-verify','jwt-access','jwt-refresh','jwt-reset','jwt-decode','box-sec','box-jwt'],
+    active: ['sec-hash','sec-verify','jwt-access','jwt-refresh','jwt-reset','jwt-decode'],
+    arrows: ['va-sec'],
+    activeBox: ['box-sec','box-jwt'],
+  },
+  {
+    title: "db.py — psycopg3 Data Layer",
+    body: `<code>db.py</code> is a thin wrapper over psycopg3. <code>get_connection()</code> opens a new connection using <code>config.DATABASE_URL</code> (PostgreSQL keyword/value format). <code>row_factory=dict_row</code> means every row is returned as a Python <code>dict</code> — no ORM. Connections are opened per-call and closed via the <code>with</code> context manager. <b>Tables</b>: <code>users</code> (auth), <code>devices</code> (FX5U PLCs), <code>sensor_readings</code> (time-series data with btree index on <code>device_id, ts DESC</code>), <code>alarms</code> (SCADA events).`,
+    light: ['n-db','tbl-users','tbl-devices','tbl-sensor','tbl-alarms'],
+    active: ['n-db','tbl-users','tbl-devices','tbl-sensor','tbl-alarms'],
+    arrows: ['va-db'],
+  },
+  {
+    title: "mailer.py — Password Reset Email",
+    body: `<code>forgot-password</code> always returns a <b>generic message</b> regardless of whether the email is registered — this prevents user enumeration. Internally: <code>db.get_user_by_email()</code> (case-insensitive via <code>lower(email)</code>), then <code>security.create_reset_token()</code> (30 min expiry, single-use via <code>_used_reset</code> set). <br><br><b>Dev mode</b>: if <code>SMTP_HOST</code> is empty, the reset link is just <code>logger.info()</code> — check the console. <b>Prod</b>: configure SMTP relay in <code>.env</code>. Errors are swallowed so the API never returns a 500.`,
+    light: ['ep-forgot','ep-reset','n-mailer','n-smtp','jwt-reset'],
+    active: ['ep-forgot','n-mailer','n-smtp'],
+    arrows: ['va-mailer'],
+  },
+  {
+    title: "Response — Back to Vue Axios",
+    body: `FastAPI serialises the return value through Pydantic's <code>response_model</code>. <b>200/201</b>: JSON with <code>access_token</code> + <code>user</code> object. <b>204</b>: no body (logout, delete). <b>401</b>: triggers Axios auto-refresh interceptor in <code>api/client.js</code> — queues pending requests, calls <code>/api/auth/refresh</code>, replays on success or redirects to <code>/login</code>. <b>Reset endpoints return 400</b> (not 401) intentionally — so the Axios interceptor does NOT fire on an invalid reset link. <b>403</b>: Vue Router's <code>requiresRole</code> guard redirects to <code>/overview</code>.`,
+    light: ['resp-200','resp-204','resp-401','resp-403','resp-400','n-client'],
+    active: ['resp-200','resp-204','resp-401','resp-403','resp-400'],
+    arrows: ['va-resp'],
+  },
+]
+
+let current = 0
+let autoTimer = null
+
+function applyStep(idx){
+  const s = STEPS[idx]
+
+  // reset
+  document.querySelectorAll('.node,.chip,.db-table').forEach(el => el.classList.remove('active','lit'))
+  document.querySelectorAll('.v-arrow,.h-arrow').forEach(el => {
+    el.classList.remove('active','lit','flowing')
+  })
+  document.querySelectorAll('.section-box').forEach(el =>
+    el.classList.remove('lit','active-auth','active-users','active-sec'))
+
+  // light
+  ;(s.light||[]).forEach(id => {
+    const el = document.getElementById(id)
+    if(el) el.classList.add('lit')
+  })
+  // active nodes/chips
+  ;(s.active||[]).forEach(id => {
+    const el = document.getElementById(id)
+    if(el) el.classList.add('active')
+  })
+  // active section boxes
+  ;(s.activeBox||[]).forEach(id => {
+    const el = document.getElementById(id)
+    if(!el) return
+    if(id==='box-auth') el.classList.add('active-auth')
+    else if(id==='box-users') el.classList.add('active-users')
+    else if(id==='box-sec'||id==='box-jwt') el.classList.add('active-sec')
+    else el.classList.add('lit')
+  })
+  // flowing arrows
+  ;(s.arrows||[]).forEach(id => {
+    const el = document.getElementById(id)
+    if(!el) return
+    el.classList.add('active','flowing')
+  })
+
+  document.getElementById('en').textContent = idx+1
+  document.getElementById('et').textContent = s.title
+  document.getElementById('eb').innerHTML  = s.body
+
+  document.getElementById('stepCounter').textContent = `Step ${idx+1} / ${STEPS.length}`
+  document.getElementById('prevBtn').disabled = idx===0
+  document.getElementById('nextBtn').disabled = idx===STEPS.length-1
+
+  document.querySelectorAll('.step-btn').forEach((b,i)=>b.classList.toggle('active',i===idx))
+}
+
+function next(){ if(current<STEPS.length-1){ current++; applyStep(current); } }
+function prev(){ if(current>0){ current--; applyStep(current); } }
+function goTo(i){ current=i; applyStep(i); }
+function toggleAuto(){
+  const btn = document.getElementById('autoBtn')
+  if(autoTimer){
+    clearInterval(autoTimer); autoTimer=null
+    btn.textContent='▶ Auto Play'; btn.classList.remove('running')
+  } else {
+    btn.textContent='⏸ Pause'; btn.classList.add('running')
+    autoTimer = setInterval(()=>{
+      if(current<STEPS.length-1){ next() } else { current=0; applyStep(0); }
+    }, 3200)
+  }
+}
+
+// Build pills
+const pc = document.getElementById('pills')
+STEPS.forEach((s,i)=>{
+  const b = document.createElement('button')
+  b.className='step-btn'; b.textContent=i+1; b.title=s.title
+  b.onclick=()=>goTo(i); pc.appendChild(b)
+})
+
+applyStep(0)
+</script>
+</body>
+</html>

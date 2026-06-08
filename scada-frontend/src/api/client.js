@@ -6,7 +6,7 @@ export const apiClient = axios.create({
   baseURL,
   timeout: 10_000,
   headers: { 'Content-Type': 'application/json' },
-  // Required: browser must send the HttpOnly refresh_token cookie on /auth/refresh
+  // Required: the browser must send the HttpOnly refresh_token cookie on /auth/refresh
   withCredentials: true,
 })
 
@@ -23,7 +23,7 @@ export function clearAccessToken() {
   _accessToken = null
 }
 
-// Attach access token to every request as Bearer header
+// Attach an access token to every request as a Bearer header
 apiClient.interceptors.request.use((config) => {
   if (_accessToken) config.headers.Authorization = `Bearer ${_accessToken}`
   return config

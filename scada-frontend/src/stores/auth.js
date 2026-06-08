@@ -26,7 +26,7 @@ export const useAuthStore = defineStore('auth', {
         this._hasToken = true
         this.user = data.user
       } catch {
-        // No valid cookie → not logged in, stay on login page
+        // No valid cookie → not logged in, stay on the login page
         this._clearSession()
       }
     },

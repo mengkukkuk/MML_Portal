@@ -1,0 +1,1026 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MML Portal — Vue + Vite Render Flow</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg2: #161b22;
+    --bg3: #1c2333;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --orange: #f0883e;
+    --purple: #d2a8ff;
+    --red: #f85149;
+    --yellow: #e3b341;
+    --teal: #39d353;
+    --pink: #f778ba;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── HEADER ── */
+  header {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 18px 32px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  header .badge {
+    background: #1a3a5c;
+    color: var(--accent);
+    border: 1px solid #2d6a9e;
+    border-radius: 6px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .5px;
+    text-transform: uppercase;
+  }
+  header h1 { font-size: 18px; font-weight: 700; }
+  header p { color: var(--muted); font-size: 13px; margin-top: 2px; }
+
+  /* ── STAGE CONTROLS ── */
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 32px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .step-btn {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 14px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    transition: all .15s;
+  }
+  .step-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .step-btn.active { background: #1a3a5c; border-color: var(--accent); color: var(--accent); }
+  .nav-btn {
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 18px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 700;
+    transition: opacity .15s;
+    min-width: 80px;
+  }
+  .nav-btn:hover { opacity: .85; }
+  .nav-btn:disabled { opacity: .35; cursor: not-allowed; }
+  .step-counter { color: var(--muted); font-size: 12px; margin-left: 4px; }
+  .auto-btn {
+    background: transparent;
+    border: 1px solid var(--green);
+    color: var(--green);
+    border-radius: 6px;
+    padding: 6px 14px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    transition: all .15s;
+    margin-left: auto;
+  }
+  .auto-btn:hover { background: rgba(63,185,80,.1); }
+  .auto-btn.running { border-color: var(--orange); color: var(--orange); }
+
+  /* ── MAIN CANVAS ── */
+  .canvas {
+    padding: 28px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  /* ── LAYERS ── */
+  .layer {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .layer-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 4px 0 6px 0;
+    border-top: 1px solid var(--border);
+    margin-top: 4px;
+  }
+  .row {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  /* ── NODE ── */
+  .node {
+    border-radius: 8px;
+    border: 1.5px solid var(--border);
+    background: var(--bg2);
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    opacity: .28;
+    transition: opacity .4s, border-color .4s, background .4s, transform .3s, box-shadow .4s;
+    cursor: default;
+    position: relative;
+    min-width: 120px;
+    flex: 0 0 auto;
+  }
+  .node.lit {
+    opacity: 1;
+  }
+  .node.active {
+    opacity: 1;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(0,0,0,.5);
+  }
+  .node .tag {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .8px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 2px;
+  }
+  .node .name {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .node .detail {
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.4;
+  }
+
+  /* colour variants */
+  .node.c-blue.active   { border-color: var(--accent); background: #0d2340; }
+  .node.c-green.active  { border-color: var(--green);  background: #0d2218; }
+  .node.c-orange.active { border-color: var(--orange); background: #2d1a08; }
+  .node.c-purple.active { border-color: var(--purple); background: #201634; }
+  .node.c-red.active    { border-color: var(--red);    background: #2d0d0d; }
+  .node.c-yellow.active { border-color: var(--yellow); background: #2a1f08; }
+  .node.c-teal.active   { border-color: var(--teal);   background: #0d2215; }
+  .node.c-pink.active   { border-color: var(--pink);   background: #2d1226; }
+
+  .node.c-blue.lit   { border-color: #1a3a5c; }
+  .node.c-green.lit  { border-color: #1a3a20; }
+  .node.c-orange.lit { border-color: #3d2008; }
+  .node.c-purple.lit { border-color: #2a1e40; }
+
+  /* ── ARROW ── */
+  .arrow-wrap {
+    display: flex;
+    align-items: center;
+    padding: 2px 0;
+    opacity: .12;
+    transition: opacity .4s;
+  }
+  .arrow-wrap.lit { opacity: .6; }
+  .arrow-wrap.active { opacity: 1; }
+  .arrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+  }
+  .arrow .line {
+    width: 2px;
+    background: var(--accent);
+    height: 20px;
+    border-radius: 1px;
+    position: relative;
+    overflow: hidden;
+  }
+  .arrow.flowing .line::after {
+    content: '';
+    position: absolute;
+    top: -100%;
+    width: 100%;
+    height: 50%;
+    background: linear-gradient(transparent, #fff, transparent);
+    animation: flow 1s linear infinite;
+  }
+  @keyframes flow {
+    0% { top: -50%; }
+    100% { top: 150%; }
+  }
+  .arrow .tip {
+    width: 0; height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 7px solid var(--accent);
+  }
+  .arrow .label {
+    font-size: 9px;
+    color: var(--muted);
+    text-align: center;
+    max-width: 100px;
+    margin-top: 2px;
+  }
+
+  /* horiz arrow */
+  .h-arrow {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    opacity: .12;
+    transition: opacity .4s;
+    flex-shrink: 0;
+  }
+  .h-arrow.lit { opacity: .6; }
+  .h-arrow.active { opacity: 1; }
+  .h-arrow .h-line {
+    width: 30px;
+    height: 2px;
+    background: var(--accent);
+    position: relative;
+    overflow: hidden;
+  }
+  .h-arrow.flowing .h-line::after {
+    content: '';
+    position: absolute;
+    left: -100%;
+    height: 100%;
+    width: 50%;
+    background: linear-gradient(90deg, transparent, #fff, transparent);
+    animation: hflow 1s linear infinite;
+  }
+  @keyframes hflow {
+    0% { left: -50%; }
+    100% { left: 150%; }
+  }
+  .h-arrow .h-tip {
+    width: 0; height: 0;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    border-left: 7px solid var(--accent);
+  }
+
+  /* ── EXPLANATION PANEL ── */
+  .explain {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 0 0 0 0;
+    min-height: 100px;
+    transition: all .3s;
+  }
+  .explain h3 {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .explain h3 .step-num {
+    background: var(--accent);
+    color: #000;
+    font-size: 11px;
+    font-weight: 800;
+    border-radius: 100px;
+    width: 20px; height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .explain p {
+    color: var(--muted);
+    line-height: 1.7;
+    font-size: 13px;
+  }
+  .explain code {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 12px;
+    color: var(--orange);
+  }
+
+  /* ── KEY TABLE ── */
+  .key-table {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .key-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .key-row .k { color: var(--text); font-weight: 600; min-width: 100px; }
+
+  /* ── GUARD BRANCH ── */
+  .branch-wrap {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .branch-box {
+    border: 1.5px dashed var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    flex: 1;
+    opacity: .28;
+    transition: opacity .4s, border-color .4s;
+  }
+  .branch-box.lit { opacity: 1; border-color: var(--border); }
+  .branch-box.active-pub { opacity: 1; border-color: var(--orange); }
+  .branch-box.active-auth { opacity: 1; border-color: var(--green); }
+  .branch-box .branch-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    font-weight: 700;
+    letter-spacing: .8px;
+    margin-bottom: 6px;
+  }
+  .branch-box.active-pub .branch-label { color: var(--orange); }
+  .branch-box.active-auth .branch-label { color: var(--green); }
+
+  /* ── STORE GRID ── */
+  .store-grid {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .store-chip {
+    border-radius: 6px;
+    border: 1.5px solid var(--border);
+    background: var(--bg3);
+    padding: 6px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    opacity: .28;
+    transition: all .4s;
+    cursor: default;
+  }
+  .store-chip.lit { opacity: 1; }
+  .store-chip.active { opacity: 1; border-color: var(--purple); color: var(--purple); background: #201634; }
+
+  /* ── API GRID ── */
+  .api-grid {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .api-chip {
+    border-radius: 6px;
+    border: 1.5px solid var(--border);
+    background: var(--bg3);
+    padding: 6px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    opacity: .28;
+    transition: all .4s;
+  }
+  .api-chip.lit { opacity: 1; }
+  .api-chip.active { opacity: 1; border-color: var(--teal); color: var(--teal); background: #0d2215; }
+
+  /* ── TOOLTIP ── */
+  .node:hover .tooltip { display: block; }
+  .tooltip {
+    display: none;
+    position: absolute;
+    z-index: 100;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1c2333;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 11px;
+    color: var(--text);
+    line-height: 1.5;
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: 0 4px 16px rgba(0,0,0,.6);
+  }
+  .tooltip::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: var(--border);
+  }
+
+  /* responsive */
+  @media (max-width: 700px) {
+    .canvas { padding: 16px; }
+    .controls { padding: 12px 16px; }
+    header { padding: 14px 16px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <span class="badge">Vue 3 + Vite</span>
+      <span class="badge" style="background:#1a2e1a;color:#3fb950;border-color:#2a5a2a">SCADA MML</span>
+    </div>
+    <h1>Frontend Render Flow Analysis</h1>
+    <p>Step-by-step walkthrough — from browser request to rendered SCADA dashboard</p>
+  </div>
+</header>
+
+<div class="controls">
+  <button class="nav-btn" id="prevBtn" onclick="prev()" disabled>← Prev</button>
+  <button class="nav-btn" id="nextBtn" onclick="next()">Next →</button>
+  <span class="step-counter" id="stepCounter">Step 1 / 10</span>
+
+  <div id="stepPills" style="display:flex;gap:6px;flex-wrap:wrap">
+    <!-- generated by JS -->
+  </div>
+
+  <button class="auto-btn" id="autoBtn" onclick="toggleAuto()">▶ Auto Play</button>
+</div>
+
+<div class="canvas">
+
+  <!-- ════ LAYER 0: BROWSER ════ -->
+  <div class="layer">
+    <div class="layer-label">① Browser / Entry Point</div>
+    <div class="row" style="align-items:center">
+      <div class="node c-blue" id="n-browser">
+        <div class="tag">Host</div>
+        <div class="name">Browser</div>
+        <div class="detail">HTTP GET /</div>
+        <div class="tooltip">Browser sends GET request.<br>Vite dev server (or Nginx in prod)<br>returns index.html</div>
+      </div>
+      <div class="h-arrow" id="a-browser-html">
+        <div class="h-line"></div>
+        <div class="h-tip"></div>
+      </div>
+      <div class="node c-blue" id="n-html">
+        <div class="tag">File</div>
+        <div class="name">index.html</div>
+        <div class="detail">&lt;div id="app"&gt;<br>&lt;script src="main.js"&gt;</div>
+        <div class="tooltip">index.html is the SPA shell.<br>Contains &lt;div id="app"&gt; mount target<br>and &lt;script type="module"&gt;</div>
+      </div>
+      <div class="h-arrow" id="a-html-main">
+        <div class="h-line"></div>
+        <div class="h-tip"></div>
+      </div>
+      <div class="node c-blue" id="n-vite">
+        <div class="tag">Build Tool</div>
+        <div class="name">Vite</div>
+        <div class="detail">ES Module bundler<br>HMR in dev mode</div>
+        <div class="tooltip">Vite transforms .vue SFCs,<br>resolves @/ aliases, injects<br>HMR (Hot Module Replacement)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ARROW -->
+  <div class="arrow-wrap" id="aw-entry">
+    <div class="arrow" id="ar-entry">
+      <div class="line"></div>
+      <div class="tip"></div>
+      <div class="label">module script executed</div>
+    </div>
+  </div>
+
+  <!-- ════ LAYER 1: main.js ════ -->
+  <div class="layer">
+    <div class="layer-label">② main.js — App Bootstrap</div>
+    <div class="row" style="align-items:center">
+      <div class="node c-orange" id="n-mainjs">
+        <div class="tag">Entry</div>
+        <div class="name">main.js</div>
+        <div class="detail">createApp(App)</div>
+        <div class="tooltip">Vue entry point.<br>Instantiates the application,<br>registers all global plugins.</div>
+      </div>
+      <div class="h-arrow" id="a-main-plugins">
+        <div class="h-line"></div>
+        <div class="h-tip"></div>
+      </div>
+      <!-- Plugin group -->
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div style="font-size:10px;color:var(--muted);letter-spacing:.8px;text-transform:uppercase;margin-bottom:2px">Plugins installed</div>
+        <div class="row">
+          <div class="node c-orange" id="n-pinia" style="min-width:90px;padding:7px 10px">
+            <div class="tag">State</div>
+            <div class="name">Pinia</div>
+            <div class="tooltip">createPinia() — reactive store<br>manager. Replaces Vuex.<br>Stores in /src/stores/</div>
+          </div>
+          <div class="node c-orange" id="n-router-plugin" style="min-width:90px;padding:7px 10px">
+            <div class="tag">Routing</div>
+            <div class="name">Vue Router</div>
+            <div class="tooltip">app.use(router) — injects<br>&lt;router-view&gt; and &lt;router-link&gt;<br>globally into the app</div>
+          </div>
+          <div class="node c-orange" id="n-elplus" style="min-width:90px;padding:7px 10px">
+            <div class="tag">UI Lib</div>
+            <div class="name">Element Plus</div>
+            <div class="tooltip">app.use(ElementPlus) — registers<br>all &lt;el-*&gt; components globally.<br>Dark mode CSS vars loaded.</div>
+          </div>
+          <div class="node c-orange" id="n-icons" style="min-width:90px;padding:7px 10px">
+            <div class="tag">Icons</div>
+            <div class="name">EP Icons</div>
+            <div class="tooltip">All @element-plus/icons-vue<br>registered globally as<br>&lt;Odometer&gt;, &lt;Cpu&gt;, etc.</div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);padding-left:2px">→ <code style="font-size:11px">app.mount('#app')</code> — Vue takes over &lt;div id="app"&gt;</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ARROW -->
+  <div class="arrow-wrap" id="aw-mount">
+    <div class="arrow" id="ar-mount">
+      <div class="line"></div>
+      <div class="tip"></div>
+      <div class="label">mount → renders root component</div>
+    </div>
+  </div>
+
+  <!-- ════ LAYER 2: App.vue ════ -->
+  <div class="layer">
+    <div class="layer-label">③ App.vue — Root Component</div>
+    <div class="row" style="align-items:center">
+      <div class="node c-blue" id="n-appvue">
+        <div class="tag">Root SFC</div>
+        <div class="name">App.vue</div>
+        <div class="detail">&lt;template&gt;<br>  &lt;router-view /&gt;<br>&lt;/template&gt;</div>
+        <div class="tooltip">App.vue is intentionally thin.<br>No layout here — just a<br>&lt;router-view&gt; outlet.</div>
+      </div>
+      <div class="h-arrow" id="a-app-router">
+        <div class="h-line"></div>
+        <div class="h-tip"></div>
+      </div>
+      <div class="node c-blue" id="n-routerview1">
+        <div class="tag">Vue Router</div>
+        <div class="name">&lt;router-view /&gt;</div>
+        <div class="detail">Resolves current URL<br>→ runs beforeEach guard</div>
+        <div class="tooltip">&lt;router-view&gt; is a placeholder<br>injected by Vue Router that<br>renders the matched component</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ARROW -->
+  <div class="arrow-wrap" id="aw-guard">
+    <div class="arrow" id="ar-guard">
+      <div class="line"></div>
+      <div class="tip"></div>
+      <div class="label">router.beforeEach() fires</div>
+    </div>
+  </div>
+
+  <!-- ════ LAYER 3: Route Guard ════ -->
+  <div class="layer">
+    <div class="layer-label">④ Router Guard — Auth &amp; Role Check</div>
+    <div class="node c-yellow" id="n-guard" style="max-width:700px;margin-bottom:10px">
+      <div class="tag">Navigation Guard</div>
+      <div class="name">router/index.js → beforeEach()</div>
+      <div class="detail" style="margin-top:4px">
+        1st visit: <code>auth.initialize()</code> → calls <code>/api/auth/refresh</code> to restore session from HttpOnly cookie<br>
+        Then checks: <code>requiresAuth</code> → redirect to /login if not logged in<br>
+        Then checks: <code>requiresRole</code> → redirect to /overview if role mismatch
+      </div>
+      <div class="tooltip">Guard runs ONCE per navigation.<br>On first load it tries silent refresh<br>to restore user session.</div>
+    </div>
+
+    <div class="branch-wrap" id="branch-wrap">
+      <!-- Public branch -->
+      <div class="branch-box" id="branch-pub">
+        <div class="branch-label">🔓 Public Route</div>
+        <div class="row">
+          <div class="node c-orange" id="n-login" style="min-width:100px;padding:7px 10px">
+            <div class="tag">meta.public</div>
+            <div class="name">LoginPage</div>
+            <div class="tooltip">src/pages/LoginPage.vue<br>Directly rendered — no AppShell.<br>Lazy-loaded via import()</div>
+          </div>
+          <div class="node c-orange" id="n-reset" style="min-width:100px;padding:7px 10px">
+            <div class="tag">meta.public</div>
+            <div class="name">ResetPassword</div>
+            <div class="tooltip">src/pages/ResetPasswordPage.vue<br>Lazy-loaded. No layout wrap.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Protected branch -->
+      <div class="branch-box" id="branch-auth">
+        <div class="branch-label">🔒 Protected Route → AppShell</div>
+        <div class="row">
+          <div class="node c-green" id="n-appshell">
+            <div class="tag">Layout</div>
+            <div class="name">AppShell.vue</div>
+            <div class="detail">el-container<br>Sidebar + Header<br>+ router-view</div>
+            <div class="tooltip">AppShell wraps all protected pages.<br>Contains the persistent sidebar<br>and header layout.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ARROW -->
+  <div class="arrow-wrap" id="aw-shell">
+    <div class="arrow" id="ar-shell">
+      <div class="line"></div>
+      <div class="tip"></div>
+      <div class="label">AppShell renders children</div>
+    </div>
+  </div>
+
+  <!-- ════ LAYER 4: AppShell Layout ════ -->
+  <div class="layer">
+    <div class="layer-label">⑤ AppShell.vue — Persistent Layout</div>
+    <div class="row" style="align-items:stretch;flex-wrap:nowrap">
+      <div class="node c-green" id="n-sidebar">
+        <div class="tag">Component</div>
+        <div class="name">AppSidebar</div>
+        <div class="detail">Navigation links<br>:collapsed prop<br>el-menu</div>
+        <div class="tooltip">src/components/AppSidebar.vue<br>Receives :collapsed prop from<br>AppShell's collapsed ref</div>
+      </div>
+      <div class="node c-green" id="n-header">
+        <div class="tag">Component</div>
+        <div class="name">AppHeader</div>
+        <div class="detail">Toggle btn<br>ConnectionPill<br>User menu</div>
+        <div class="tooltip">src/components/AppHeader.vue<br>Emits @toggle to AppShell.<br>Shows WS connection status.</div>
+      </div>
+      <div class="node c-green" id="n-routerview2">
+        <div class="tag">Slot</div>
+        <div class="name">&lt;router-view&gt;</div>
+        <div class="detail">&lt;transition fade&gt;<br>mode="out-in"<br>lazy pages</div>
+        <div class="tooltip">Nested router-view renders<br>the active child page component<br>with a 120ms fade transition</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ARROW -->
+  <div class="arrow-wrap" id="aw-pages">
+    <div class="arrow" id="ar-pages">
+      <div class="line"></div>
+      <div class="tip"></div>
+      <div class="label">lazy import() → page component</div>
+    </div>
+  </div>
+
+  <!-- ════ LAYER 5: Pages ════ -->
+  <div class="layer">
+    <div class="layer-label">⑥ Pages (Lazy-Loaded)</div>
+    <div class="row">
+      <div class="node c-purple" id="n-overview">
+        <div class="tag">/ </div>
+        <div class="name">Overview</div>
+        <div class="detail">GaugeTile<br>StatCard<br>TrendChart</div>
+        <div class="tooltip">OverviewPage.vue — main SCADA<br>dashboard. Uses GaugeTile,<br>StatCard, TrendChart components.</div>
+      </div>
+      <div class="node c-purple" id="n-devices">
+        <div class="tag">/devices</div>
+        <div class="name">Devices</div>
+        <div class="detail">PLC list<br>el-table</div>
+        <div class="tooltip">DevicesPage.vue — lists all<br>FX5U PLCs and their status.</div>
+      </div>
+      <div class="node c-purple" id="n-alarms">
+        <div class="tag">/alarms</div>
+        <div class="name">Alarms</div>
+        <div class="detail">Real-time<br>alarm log</div>
+        <div class="tooltip">AlarmsPage.vue — real-time<br>alarm log from alarm store.</div>
+      </div>
+      <div class="node c-purple" id="n-trends">
+        <div class="tag">/trends</div>
+        <div class="name">Trends</div>
+        <div class="detail">GrafanaPanel<br>TrendChart</div>
+        <div class="tooltip">TrendsPage.vue — embeds<br>Grafana panels and custom charts.</div>
+      </div>
+      <div class="node c-purple" id="n-settings">
+        <div class="tag">/settings</div>
+        <div class="name">Settings</div>
+        <div class="detail">User prefs</div>
+        <div class="tooltip">SettingsPage.vue</div>
+      </div>
+      <div class="node c-purple" id="n-accounts">
+        <div class="tag">/accounts</div>
+        <div class="name">Accounts</div>
+        <div class="detail">requiresRole:<br>admin</div>
+        <div class="tooltip">AccountsPage.vue — admin only.<br>Router guards redirect non-admins<br>back to /overview.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ARROW -->
+  <div class="arrow-wrap" id="aw-stores">
+    <div class="arrow" id="ar-stores">
+      <div class="line"></div>
+      <div class="tip"></div>
+      <div class="label">pages call useXxxStore()</div>
+    </div>
+  </div>
+
+  <!-- ════ LAYER 6: Pinia Stores ════ -->
+  <div class="layer">
+    <div class="layer-label">⑦ Pinia Stores — Reactive State</div>
+    <div class="store-grid">
+      <div class="store-chip" id="s-auth">🔑 auth.js<br><small style="font-weight:400;color:var(--muted)">user, _hasToken, role</small></div>
+      <div class="store-chip" id="s-alarms">🚨 alarms.js<br><small style="font-weight:400;color:var(--muted)">alarm list, unread count</small></div>
+      <div class="store-chip" id="s-devices">🖥 devices.js<br><small style="font-weight:400;color:var(--muted)">PLC device list</small></div>
+      <div class="store-chip" id="s-connection">🔌 connection.js<br><small style="font-weight:400;color:var(--muted)">WebSocket status</small></div>
+      <div class="store-chip" id="s-users">👤 users.js<br><small style="font-weight:400;color:var(--muted)">user management</small></div>
+    </div>
+  </div>
+
+  <!-- ARROW -->
+  <div class="arrow-wrap" id="aw-api">
+    <div class="arrow" id="ar-api">
+      <div class="line"></div>
+      <div class="tip"></div>
+      <div class="label">stores dispatch API calls</div>
+    </div>
+  </div>
+
+  <!-- ════ LAYER 7: API Layer ════ -->
+  <div class="layer">
+    <div class="layer-label">⑧ API Layer — Axios + Token Management</div>
+    <div class="row" style="align-items:center;flex-wrap:wrap;gap:12px">
+      <div class="node c-teal" id="n-client">
+        <div class="tag">Core</div>
+        <div class="name">api/client.js</div>
+        <div class="detail">axios instance<br>Bearer interceptor<br>401 auto-refresh</div>
+        <div class="tooltip">In-memory access token (_accessToken).<br>Request interceptor injects Bearer.<br>Response interceptor: 401 → queue<br>→ refresh → retry all queued calls.</div>
+      </div>
+      <div class="api-grid">
+        <div class="api-chip" id="a-auth">auth.js<br><small>login, logout, refresh</small></div>
+        <div class="api-chip" id="a-alarms">alarms.js<br><small>GET /alarms</small></div>
+        <div class="api-chip" id="a-devices">devices.js<br><small>GET /devices</small></div>
+        <div class="api-chip" id="a-users">users.js<br><small>CRUD /users</small></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ARROW -->
+  <div class="arrow-wrap" id="aw-backend">
+    <div class="arrow" id="ar-backend">
+      <div class="line"></div>
+      <div class="tip"></div>
+      <div class="label">HTTP / WS</div>
+    </div>
+  </div>
+
+  <!-- ════ LAYER 8: Backend ════ -->
+  <div class="layer">
+    <div class="layer-label">⑨ Backend</div>
+    <div class="row">
+      <div class="node c-red" id="n-backend">
+        <div class="tag">API</div>
+        <div class="name">FastAPI / Backend</div>
+        <div class="detail">VITE_API_BASE=/api<br>HttpOnly cookie auth<br>WebSocket for real-time</div>
+        <div class="tooltip">All requests go to /api/*.<br>Refresh token stored as<br>HttpOnly cookie (secure).<br>WebSocket for live PLC data.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ EXPLANATION PANEL ════ -->
+  <div class="explain" id="explain">
+    <h3><span class="step-num" id="explain-num">1</span> <span id="explain-title">Browser Request</span></h3>
+    <p id="explain-body">The browser navigates to the MML Portal URL. Vite dev server (or Nginx in production) receives the request and serves <code>index.html</code>. This is a standard Single Page Application shell — a nearly empty HTML file with a <code>&lt;div id="app"&gt;</code> mount point and a single <code>&lt;script type="module" src="/src/main.js"&gt;</code> tag.</p>
+  </div>
+
+</div><!-- /canvas -->
+
+<script>
+// ── STEP DEFINITIONS ──────────────────────────────────────────────────────────
+const STEPS = [
+  {
+    title: "Browser Request",
+    body: `The browser navigates to the MML Portal URL. Vite dev server (or Nginx in production) receives the request and serves <code>index.html</code>. This is a standard Single Page Application shell — a nearly empty HTML file with a <code>&lt;div id="app"&gt;</code> mount point and a single <code>&lt;script type="module" src="/src/main.js"&gt;</code> tag.`,
+    light: ['n-browser','n-html','n-vite','a-browser-html','a-html-main'],
+    active: ['n-browser'],
+    arrows: [],
+  },
+  {
+    title: "index.html → Vite serves main.js",
+    body: `Vite reads the <code>type="module"</code> script tag and serves <code>src/main.js</code> as an ES Module. In dev mode, Vite transforms <code>.vue</code> Single File Components (SFCs) on-the-fly, resolves the <code>@/</code> alias to <code>src/</code>, and injects Hot Module Replacement (HMR) client code. In production build, Rollup bundles everything into optimised chunks.`,
+    light: ['n-browser','n-html','n-vite','a-browser-html','a-html-main'],
+    active: ['n-html','n-vite'],
+    arrows: ['a-browser-html','a-html-main'],
+  },
+  {
+    title: "main.js — App Bootstrap",
+    body: `<code>main.js</code> is the Vue entry point. It calls <code>createApp(App)</code> to instantiate the Vue application, then chains <code>app.use()</code> to register four plugins: <b>Pinia</b> (reactive store), <b>Vue Router</b> (client-side routing), <b>Element Plus</b> (UI component library with dark theme CSS vars), and all <b>Element Plus Icons</b> registered globally. Finally <code>app.mount('#app')</code> hands control to Vue which replaces the empty &lt;div&gt; with the rendered component tree.`,
+    light: ['n-mainjs','n-pinia','n-router-plugin','n-elplus','n-icons','a-main-plugins','aw-entry','aw-mount'],
+    active: ['n-mainjs','n-pinia','n-router-plugin','n-elplus','n-icons'],
+    arrows: ['aw-entry','a-main-plugins'],
+  },
+  {
+    title: "App.vue — Root Component",
+    body: `The root component <code>App.vue</code> is intentionally minimal — it contains only <code>&lt;router-view /&gt;</code>. This is by design: all layout (sidebar, header) lives inside protected route children, not at the top level. The <code>&lt;router-view&gt;</code> is a slot injected by Vue Router that renders whichever component matches the current URL path.`,
+    light: ['n-appvue','n-routerview1','a-app-router','aw-mount'],
+    active: ['n-appvue','n-routerview1'],
+    arrows: ['aw-mount','a-app-router'],
+  },
+  {
+    title: "Router Guard — Auth & Session Init",
+    body: `Before rendering any route, <code>router.beforeEach()</code> fires. On the <b>first navigation only</b>, it calls <code>auth.initialize()</code> which silently hits <code>/api/auth/refresh</code>. The browser automatically sends the <b>HttpOnly refresh_token cookie</b> — if valid, the server returns a new access token and the user object, restoring the session without any login prompt.<br><br>
+    After init: if <code>requiresAuth</code> and not logged in → redirect to <code>/login</code>. If <code>requiresRole: 'admin'</code> and user role doesn't match → redirect to <code>/overview</code>.`,
+    light: ['n-guard','branch-wrap','n-login','n-reset','n-appshell','aw-guard'],
+    active: ['n-guard'],
+    arrows: ['aw-guard'],
+  },
+  {
+    title: "Public Routes (Unauthenticated)",
+    body: `Routes with <code>meta: { public: true }</code> are rendered <b>directly</b> without any layout wrapper. <code>LoginPage.vue</code> and <code>ResetPasswordPage.vue</code> are lazy-loaded via dynamic <code>import()</code>. This means their JS chunk is only downloaded when the browser actually navigates to that path — reducing initial bundle size for authenticated users who never see the login page after first load.`,
+    light: ['n-guard','n-login','n-reset'],
+    active: ['n-login','n-reset'],
+    arrows: ['aw-guard'],
+    branchPub: true,
+  },
+  {
+    title: "Protected Route → AppShell Layout",
+    body: `Protected routes render <code>AppShell.vue</code> as their parent layout. AppShell uses an <code>&lt;el-container&gt;</code> with a collapsible sidebar (<code>AppSidebar</code>), a fixed header (<code>AppHeader</code>), and a nested <code>&lt;router-view&gt;</code> for the actual page content. The <code>collapsed</code> state is a local <code>ref</code> — toggling it animates the sidebar width via a CSS transition on <code>el-aside</code>.`,
+    light: ['n-appshell','n-sidebar','n-header','n-routerview2','aw-shell'],
+    active: ['n-appshell','n-sidebar','n-header','n-routerview2'],
+    arrows: ['aw-guard','aw-shell'],
+    branchAuth: true,
+  },
+  {
+    title: "Pages — Lazy-Loaded Route Components",
+    body: `Each child route uses dynamic <code>import()</code> so Vite/Rollup creates a separate JS chunk per page. When Vue Router navigates to <code>/devices</code>, it fetches <code>DevicesPage.js</code> only if not already cached. The <b>&lt;transition fade&gt;</b> in AppShell wraps the nested router-view with a 120ms opacity transition between page changes (<code>mode="out-in"</code> ensures the old page fully exits before the new one enters).`,
+    light: ['n-overview','n-devices','n-alarms','n-trends','n-settings','n-accounts','aw-pages'],
+    active: ['n-overview','n-devices','n-alarms','n-trends','n-settings','n-accounts'],
+    arrows: ['aw-shell','aw-pages'],
+  },
+  {
+    title: "Pinia Stores — Reactive State",
+    body: `Pages call <code>useXxxStore()</code> from <code>/src/stores/</code>. Pinia stores are reactive singletons — any component reading a store property will automatically re-render when that property changes. The <b>auth</b> store keeps the access token in module memory (not in Pinia state, not in localStorage) for security. The <b>connection</b> store tracks WebSocket status shown in <code>ConnectionPill</code>.`,
+    light: ['s-auth','s-alarms','s-devices','s-connection','s-users','aw-stores'],
+    active: ['s-auth','s-alarms','s-devices','s-connection','s-users'],
+    arrows: ['aw-pages','aw-stores'],
+  },
+  {
+    title: "API Layer — Axios + 401 Auto-Refresh",
+    body: `Stores call functions from <code>/src/api/</code>. All HTTP calls go through <code>api/client.js</code> — an Axios instance with two interceptors:<br><br>
+    <b>Request interceptor:</b> injects the in-memory access token as <code>Authorization: Bearer &lt;token&gt;</code>.<br><br>
+    <b>Response interceptor:</b> if a 401 comes back and it's not an <code>/auth/</code> call, it queues all concurrent requests, calls <code>auth.refresh()</code> once, then replays the entire queue with the new token. If refresh also fails → clears session and redirects to <code>/login</code>.`,
+    light: ['n-client','a-auth','a-alarms','a-devices','a-users','n-backend','aw-api','aw-backend'],
+    active: ['n-client','a-auth','a-alarms','a-devices','a-users','n-backend'],
+    arrows: ['aw-stores','aw-api','aw-backend'],
+  },
+]
+
+let current = 0
+let autoTimer = null
+
+function applyStep(idx) {
+  const step = STEPS[idx]
+
+  // Reset everything
+  document.querySelectorAll('.node,.store-chip,.api-chip').forEach(el => {
+    el.classList.remove('active','lit')
+  })
+  document.querySelectorAll('.arrow-wrap,.h-arrow').forEach(el => {
+    el.classList.remove('active','lit')
+    const inner = el.querySelector('.arrow,.h-arrow')
+    if (inner) inner.classList.remove('flowing')
+  })
+  document.querySelectorAll('.branch-box').forEach(el => {
+    el.classList.remove('lit','active-pub','active-auth')
+  })
+
+  // Light up nodes
+  step.light.forEach(id => {
+    const el = document.getElementById(id)
+    if (el) el.classList.add('lit')
+  })
+
+  // Activate nodes
+  step.active.forEach(id => {
+    const el = document.getElementById(id)
+    if (el) el.classList.add('active')
+  })
+
+  // Flow arrows
+  step.arrows.forEach(id => {
+    const el = document.getElementById(id)
+    if (el) {
+      el.classList.add('active')
+      const inner = el.querySelector('.arrow,.h-arrow')
+      // add flowing to line
+      const line = el.querySelector('.line,.h-line')
+      if (line) {
+        const parent = line.parentElement
+        if (parent) parent.classList.add('flowing')
+      }
+    }
+  })
+
+  // Branch states
+  if (step.branchPub) {
+    document.getElementById('branch-pub').classList.add('active-pub')
+    document.getElementById('branch-auth').classList.add('lit')
+  } else if (step.branchAuth) {
+    document.getElementById('branch-auth').classList.add('active-auth')
+    document.getElementById('branch-pub').classList.add('lit')
+  }
+
+  // Update explain
+  document.getElementById('explain-num').textContent = idx + 1
+  document.getElementById('explain-title').textContent = step.title
+  document.getElementById('explain-body').innerHTML = step.body
+
+  // Update pills
+  document.querySelectorAll('.step-btn').forEach((btn, i) => {
+    btn.classList.toggle('active', i === idx)
+  })
+
+  // Update counter
+  document.getElementById('stepCounter').textContent = `Step ${idx + 1} / ${STEPS.length}`
+
+  // Buttons
+  document.getElementById('prevBtn').disabled = idx === 0
+  document.getElementById('nextBtn').disabled = idx === STEPS.length - 1
+}
+
+function next() {
+  if (current < STEPS.length - 1) {
+    current++
+    applyStep(current)
+  }
+}
+function prev() {
+  if (current > 0) {
+    current--
+    applyStep(current)
+  }
+}
+function goTo(idx) {
+  current = idx
+  applyStep(current)
+}
+function toggleAuto() {
+  const btn = document.getElementById('autoBtn')
+  if (autoTimer) {
+    clearInterval(autoTimer)
+    autoTimer = null
+    btn.textContent = '▶ Auto Play'
+    btn.classList.remove('running')
+  } else {
+    btn.textContent = '⏸ Pause'
+    btn.classList.add('running')
+    autoTimer = setInterval(() => {
+      if (current < STEPS.length - 1) {
+        next()
+      } else {
+        current = 0
+        applyStep(0)
+      }
+    }, 3000)
+  }
+}
+
+// Build step pills
+const pillContainer = document.getElementById('stepPills')
+STEPS.forEach((s, i) => {
+  const btn = document.createElement('button')
+  btn.className = 'step-btn'
+  btn.textContent = i + 1
+  btn.title = s.title
+  btn.onclick = () => goTo(i)
+  pillContainer.appendChild(btn)
+})
+
+// Init
+applyStep(0)
+</script>
+</body>
+</html>
