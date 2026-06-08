@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(psql -U postgres -c \"\\\\l\")",
+      "Bash(psql -U mengk -c \"\\\\l\")",
+      "Bash(npm list:*)",
+      "Read(//g/Code/DEV/scada-frontend/$\\(npm root -g\\)/@seungje.jun/grafana-mcp/**)",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(''''bin:'''', d.get\\(''''bin''''\\)\\); print\\(''''main:'''', d.get\\(''''main''''\\)\\)\")",
+      "Bash(claude mcp:*)"
+    ]
+  }
+}

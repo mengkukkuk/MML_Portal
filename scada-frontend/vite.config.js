@@ -10,7 +10,7 @@ export default defineConfig({
   // (no sub-path prefix). `import.meta.env.BASE_URL` will be '/', which is what
   // createWebHistory(BASE_URL) in src/router/index.js expects for root deployment.
   // If you ever move this back under an IIS sub-application like /scada, change to '/scada/'
-  // and also update .env.production + the web.config SPA-fallback condition.
+  // and also update .env.local + the web.config SPA-fallback condition.
   base: '/',
   plugins: [
     vue(),

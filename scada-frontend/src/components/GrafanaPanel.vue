@@ -37,13 +37,15 @@ const frameHeight = computed(() =>
 <template>
   <div class="gf-panel">
     <div v-if="title" class="gf-panel__title">{{ title }}</div>
-    <iframe
-      :src="frameUrl"
-      :style="{ height: frameHeight }"
-      class="gf-panel__frame"
-      frameborder="0"
-      allowfullscreen
-    />
+    <div class="gf-panel__wrap">
+      <iframe
+        :src="frameUrl"
+        :style="{ height: frameHeight }"
+        class="gf-panel__frame"
+        frameborder="0"
+        allowfullscreen
+      />
+    </div>
   </div>
 </template>
 
@@ -65,6 +67,22 @@ const frameHeight = computed(() =>
   text-transform: uppercase;
   letter-spacing: 0.05em;
   border-bottom: 1px solid var(--border-soft);
+}
+
+.gf-panel__wrap {
+  position: relative;
+}
+
+/* Block Grafana's hover panel-menu button (cross-origin iframe — cannot inject CSS inside) */
+.gf-panel__wrap::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 48px;
+  height: 48px;
+  z-index: 10;
+  pointer-events: all;
 }
 
 .gf-panel__frame {
