@@ -1,4 +1,10 @@
 <script setup>
+/**
+ * AlarmsPage — active alarms list (route: /alarms).
+ * Displays all active alarms from useAlarmsStore with severity colour-coding
+ * (critical → danger, warning → warning, info → info) and inline Acknowledge
+ * buttons. Polls on mount; user can also manually refresh.
+ */
 import { onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAlarmsStore } from '@/stores/alarms'

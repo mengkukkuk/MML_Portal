@@ -1,4 +1,12 @@
 <script setup>
+/**
+ * TrendsPage — time-series trends page (route: /trends).
+ * When VITE_GRAFANA_DASHBOARD_UID is set in .env, renders live GrafanaPanels
+ * for each configured panel ID using the d-solo embed URL format.
+ * Falls back to a mock ECharts TrendChart when Grafana is not configured.
+ * Time range (1h / 6h / 24h) is controlled by a radio-button group and
+ * forwarded to both Grafana iframe params and the mock data generator.
+ */
 import { computed, ref } from 'vue'
 import TrendChart from '@/components/TrendChart.vue'
 import GrafanaPanel from '@/components/GrafanaPanel.vue'

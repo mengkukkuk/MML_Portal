@@ -1,4 +1,12 @@
 <script setup>
+/**
+ * LoginPage — public full-screen login page (route: /login).
+ * Left brand panel (decorative, hidden on mobile) + right form panel with:
+ *   - Sign-in form (redirects to ?redirect= target after login)
+ *   - "Create an Account" dialog (self-registration)
+ *   - "Forgot password?" dialog (sends reset email via /api/auth/forgot-password)
+ * Open-redirect is prevented: only paths starting with '/' are honoured.
+ */
 import { reactive, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'

@@ -1,4 +1,11 @@
 <script setup>
+/**
+ * AppHeader — top navigation bar rendered inside AppShell.
+ * Shows the current page title (from route.meta.title), the ConnectionPill,
+ * and a user dropdown with "Change password" and "Sign out" actions.
+ * Props: collapsed (Boolean) — mirrors sidebar state to show Expand/Fold icon.
+ * Emits: toggle — requests sidebar collapse/expand from AppShell.
+ */
 import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'

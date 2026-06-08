@@ -1,4 +1,13 @@
 <script setup>
+/**
+ * OverviewPage — main dashboard landing page (route: /).
+ * Displays three sections:
+ *   1. KPI row — StatCards for device counts (online/offline/degraded) and
+ *      alarm counts (critical / unacknowledged) sourced from Pinia stores.
+ *   2. Gauge grid — GaugeTiles for key process values (currently hardcoded
+ *      mock values; replace with live store data when API is ready).
+ *   3. Trend section — TrendChart showing the last 60 minutes (mock data).
+ */
 import { onMounted, computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import StatCard from '@/components/StatCard.vue'
@@ -36,8 +45,8 @@ const trendSeries = computed(() => {
   <div class="overview">
     <section class="overview__kpis" aria-label="Key metrics">
       <StatCard label="Devices online" :value="onlineCount" tone="ok" icon="CircleCheck" />
-      <StatCard label="Degraded" :value="degradedCount" tone="warn" icon="WarnTriangleFilled" />
-      <StatCard label="Offline" :value="offlineCount" tone="crit" icon="CircleClose" />
+      <StatCard label="Offline" :value="degradedCount" tone="warn" icon="WarnTriangleFilled" />
+      <StatCard label="Degraded" :value="offlineCount" tone="crit" icon="CircleClose" />
       <StatCard label="Critical alarms" :value="criticalCount" tone="crit" icon="WarningFilled" />
       <StatCard label="Unacknowledged" :value="unacknowledgedCount" tone="warn" icon="Bell" />
     </section>

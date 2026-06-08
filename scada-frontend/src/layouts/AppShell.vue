@@ -1,4 +1,10 @@
 <script setup>
+/**
+ * AppShell — authenticated application layout (used by all protected routes).
+ * Renders a collapsible AppSidebar on the left, a fixed AppHeader on top,
+ * and a scrollable main content area with a fade-transition router-view.
+ * Sidebar collapse state is local to this layout component.
+ */
 import { ref } from 'vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import AppHeader from '@/components/AppHeader.vue'

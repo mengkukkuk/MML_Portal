@@ -1,4 +1,10 @@
 <script setup>
+/**
+ * DevicesPage — device inventory table (route: /devices).
+ * Fetches the device list from useDevicesStore on mount and displays
+ * ID, name, location, status (online/degraded/offline), CPU progress bar,
+ * and uptime. Refresh button re-fetches from the backend.
+ */
 import { onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useDevicesStore } from '@/stores/devices'

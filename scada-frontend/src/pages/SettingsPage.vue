@@ -1,4 +1,10 @@
 <script setup>
+/**
+ * SettingsPage — application settings form (route: /settings).
+ * Currently a placeholder UI for API base URL, polling interval, theme, and
+ * critical alarm notifications. The save() function is not yet wired to the
+ * backend or localStorage — implement persistence before shipping.
+ */
 import { reactive } from 'vue'
 
 const form = reactive({

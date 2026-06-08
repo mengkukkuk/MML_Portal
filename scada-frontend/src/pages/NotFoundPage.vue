@@ -1,4 +1,6 @@
 <script setup>
+// NotFoundPage — 404 fallback rendered for any unmatched route.
+// Shows a large "404" heading and a button that navigates back to the overview.
 import { useRouter } from 'vue-router'
 const router = useRouter()
 </script>

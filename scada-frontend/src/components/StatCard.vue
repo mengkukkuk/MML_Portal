@@ -1,4 +1,14 @@
 <script setup>
+/**
+ * StatCard — KPI summary card used in the OverviewPage grid.
+ * Props:
+ *   label   — metric name displayed in small caps
+ *   value   — numeric or string reading
+ *   unit    — optional suffix (e.g. '°C', '%')
+ *   trend   — optional delta string (e.g. '+2.1%')
+ *   tone    — left-border colour: 'default' | 'ok' | 'warn' | 'crit'
+ *   icon    — optional Element Plus icon name shown in the card header
+ */
 defineProps({
   label: { type: String, required: true },
   value: { type: [String, Number], required: true },

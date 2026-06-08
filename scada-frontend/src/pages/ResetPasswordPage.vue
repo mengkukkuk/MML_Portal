@@ -1,4 +1,10 @@
 <script setup>
+/**
+ * ResetPasswordPage — password reset form (route: /reset-password).
+ * Reads the one-time JWT from the ?token= query parameter (set by the email
+ * link generated in mailer.py). Validates token presence before showing the
+ * form; on success redirects to /login.
+ */
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'

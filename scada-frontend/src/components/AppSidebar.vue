@@ -1,4 +1,9 @@
 <script setup>
+/**
+ * AppSidebar — collapsible left navigation menu rendered inside AppShell.
+ * Navigation items are role-aware: the Accounts link is only shown to admin users.
+ * Props: collapsed (Boolean) — when true, hides text labels and the brand title.
+ */
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'

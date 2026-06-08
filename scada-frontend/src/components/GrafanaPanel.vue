@@ -1,4 +1,12 @@
 <script setup>
+/**
+ * GrafanaPanel — iframe wrapper for embedding a single Grafana panel.
+ * Appends `from`, `to`, `refresh`, and `kiosk` query params to the src URL.
+ * A CSS ::after overlay on the wrapper div blocks Grafana's cross-origin
+ * hover panel-menu button (top-right corner) since we cannot inject CSS into
+ * the iframe directly.
+ * Props: src (required), title, height, from, to, refresh.
+ */
 import { computed } from 'vue'
 
 const props = defineProps({

@@ -1,4 +1,10 @@
 <script setup>
+/**
+ * AccountsPage — admin-only user management page (route: /accounts).
+ * Lists all users in a table and provides Create / Edit / Delete actions via
+ * dialogs backed by useUsersStore. Accessible only to users with role 'admin'
+ * (enforced by requiresRole in the router).
+ */
 import { onMounted, reactive, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'

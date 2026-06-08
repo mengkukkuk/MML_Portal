@@ -1,4 +1,12 @@
 <script setup>
+/**
+ * TrendChart — multi-series ECharts time-series line chart.
+ * Props:
+ *   title  — optional chart heading rendered by ECharts (not a Vue slot)
+ *   series — array of { name: string, data: [timestamp, value][] }
+ *   height — CSS height string for the canvas (default '280px')
+ * Used on OverviewPage (last-60-min preview) and TrendsPage (mock fallback).
+ */
 import { computed } from 'vue'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'

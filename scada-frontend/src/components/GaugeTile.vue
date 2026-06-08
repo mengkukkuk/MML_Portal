@@ -1,4 +1,10 @@
 <script setup>
+/**
+ * GaugeTile — ECharts arc-gauge card for a single numeric reading.
+ * Props: title, value, min (default 0), max (default 100), unit (string suffix).
+ * Renders a 220 px canvas gauge with a blue progress arc; no pointer shown.
+ * Used on OverviewPage for key process values (temperature, pressure, level).
+ */
 import { computed } from 'vue'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'

@@ -1,4 +1,10 @@
 <script setup>
+/**
+ * ConnectionPill — small status badge shown in AppHeader.
+ * Reads connection.status from useConnectionStore ('connected' | 'degraded' | 'offline')
+ * and renders a coloured pulsing dot with a Live / Degraded / Offline label.
+ * No props; purely reactive to the store.
+ */
 import { computed } from 'vue'
 import { useConnectionStore } from '@/stores/connection'
 
