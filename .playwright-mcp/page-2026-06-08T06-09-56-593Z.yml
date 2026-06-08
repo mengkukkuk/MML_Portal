@@ -1,0 +1,5 @@
+- generic [active] [ref=e1]:
+  - img [ref=e2]
+  - paragraph [ref=e4]: Large (200px)
+  - img [ref=e5]
+  - paragraph [ref=e7]: Favicon size (32px)
