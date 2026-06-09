@@ -7,7 +7,7 @@
  *   - "Forgot password?" dialog (sends reset email via /api/auth/forgot-password)
  * Open-redirect is prevented: only paths starting with '/' are honoured.
  */
-import { reactive, ref } from 'vue'
+import { reactive, ref, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
@@ -23,6 +23,33 @@ const password = ref('')
 const forgotVisible = ref(false)
 const forgotEmail = ref('')
 const forgotLoading = ref(false)
+
+// ── Slide nav tabs (brand panel) ─────────────────────────
+const activeTab = ref(0)
+const tabs = [
+  { id: 'status', label: 'STATUS' },
+  { id: 'load',   label: 'LOAD'   },
+  { id: 'comm',   label: 'COMM'   },
+]
+let autoAdvance = null
+
+onMounted(() => {
+  autoAdvance = setInterval(() => {
+    activeTab.value = (activeTab.value + 1) % tabs.length
+  }, 3500)
+})
+
+onUnmounted(() => {
+  clearInterval(autoAdvance)
+})
+
+function setTab(i) {
+  activeTab.value = i
+  clearInterval(autoAdvance)
+  autoAdvance = setInterval(() => {
+    activeTab.value = (activeTab.value + 1) % tabs.length
+  }, 3500)
+}
 
 const registerVisible = ref(false)
 const registerForm = reactive({
@@ -139,84 +166,127 @@ async function handleForgot() {
         <h1 class="brand-title">MML Portal</h1>
         <p class="brand-subtitle">MML Unified Systems</p>
 
-        <!-- System status block -->
-        <div class="sys-status">
-          <div class="sys-status__header">— SYSTEM STATUS —</div>
-          <div class="sys-status__item">
-            <span class="led led--ok" />
-            <span>Core Systems Online</span>
+        <!-- ── Slide nav tab panel ──────────────────────── -->
+        <div class="info-tabs">
+
+          <!-- Tab bar -->
+          <div class="tab-bar" role="tablist">
+            <button
+              v-for="(tab, i) in tabs"
+              :key="tab.id"
+              class="tab-btn"
+              :class="{ 'tab-btn--active': activeTab === i }"
+              role="tab"
+              :aria-selected="activeTab === i"
+              @click="setTab(i)"
+            >{{ tab.label }}</button>
+            <div
+              class="tab-bar__indicator"
+              :style="{ transform: `translateX(${activeTab * 100}%)` }"
+              aria-hidden="true"
+            />
           </div>
-          <div class="sys-status__item">
-            <span class="led led--ok" />
-            <span>Database Connected</span>
+
+          <!-- Sliding panels -->
+          <div class="tab-content-wrap">
+            <div
+              class="tab-slides"
+              :style="{ transform: `translateX(calc(-${activeTab} * 100%))` }"
+            >
+
+              <!-- STATUS slide -->
+              <div class="tab-slide" role="tabpanel" :aria-hidden="activeTab !== 0">
+                <div class="slide-header">— SYSTEM STATUS —</div>
+                <div class="slide-item">
+                  <span class="led led--ok" />
+                  <span>Core Systems Online</span>
+                </div>
+                <div class="slide-item">
+                  <span class="led led--ok" />
+                  <span>Database Connected</span>
+                </div>
+                <div class="slide-item">
+                  <span class="led led--ok" />
+                  <span>Monitoring Active</span>
+                </div>
+              </div>
+
+              <!-- LOAD slide (gauge) -->
+              <!--
+                Gauge: 300° sweep, 7 o'clock (SVG 120°) → 5 o'clock (SVG 60°)
+                65% → 195° arc → needle at 315°
+              -->
+              <div class="tab-slide tab-slide--gauge" role="tabpanel" :aria-hidden="activeTab !== 1">
+                <svg viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="100" cy="100" r="92" stroke="rgba(58,160,255,0.06)" stroke-width="0.75"/>
+                  <circle cx="100" cy="100" r="86" stroke="rgba(58,160,255,0.04)" stroke-width="0.75"/>
+                  <path d="M 60 169.3 A 80 80 0 1 1 140 169.3"
+                        stroke="rgba(58,160,255,0.12)" stroke-width="10" stroke-linecap="round"/>
+                  <path d="M 60 169.3 A 80 80 0 1 1 156.6 43.4"
+                        stroke="rgba(58,160,255,0.18)" stroke-width="18" stroke-linecap="round"/>
+                  <path d="M 60 169.3 A 80 80 0 1 1 156.6 43.4"
+                        stroke="#3aa0ff" stroke-width="10" stroke-linecap="round"/>
+                  <g transform="translate(100,100)">
+                    <line x1="70" y1="0" x2="83" y2="0" stroke="rgba(58,160,255,0.45)" stroke-width="1.5" transform="rotate(120)"/>
+                    <line x1="73" y1="0" x2="83" y2="0" stroke="rgba(58,160,255,0.25)" stroke-width="1"   transform="rotate(157.5)"/>
+                    <line x1="70" y1="0" x2="83" y2="0" stroke="rgba(58,160,255,0.45)" stroke-width="1.5" transform="rotate(195)"/>
+                    <line x1="73" y1="0" x2="83" y2="0" stroke="rgba(58,160,255,0.25)" stroke-width="1"   transform="rotate(232.5)"/>
+                    <line x1="70" y1="0" x2="83" y2="0" stroke="rgba(58,160,255,0.55)" stroke-width="2"   transform="rotate(270)"/>
+                    <line x1="73" y1="0" x2="83" y2="0" stroke="rgba(58,160,255,0.25)" stroke-width="1"   transform="rotate(307.5)"/>
+                    <line x1="70" y1="0" x2="83" y2="0" stroke="rgba(58,160,255,0.45)" stroke-width="1.5" transform="rotate(345)"/>
+                    <line x1="73" y1="0" x2="83" y2="0" stroke="rgba(58,160,255,0.25)" stroke-width="1"   transform="rotate(22.5)"/>
+                    <line x1="70" y1="0" x2="83" y2="0" stroke="rgba(58,160,255,0.45)" stroke-width="1.5" transform="rotate(60)"/>
+                  </g>
+                  <g transform="translate(100,100) rotate(315)">
+                    <line x1="-10" y1="0" x2="62" y2="0"
+                          stroke="#3aa0ff" stroke-width="2.5" stroke-linecap="round"/>
+                    <circle cx="0" cy="0" r="6"  fill="rgba(11,22,44,0.9)" stroke="#3aa0ff" stroke-width="2"/>
+                    <circle cx="0" cy="0" r="2.5" fill="#3aa0ff"/>
+                  </g>
+                  <text x="100" y="108" text-anchor="middle"
+                        fill="#e6edf7" font-size="26" font-weight="700"
+                        font-family="ui-monospace,Menlo,monospace">65%</text>
+                  <text x="100" y="126" text-anchor="middle"
+                        fill="rgba(138,153,179,0.65)" font-size="9.5"
+                        font-family="ui-monospace,Menlo,monospace" letter-spacing="2">SYSTEM LOAD</text>
+                  <text x="54"  y="186" text-anchor="middle"
+                        fill="rgba(91,106,134,0.6)" font-size="9"
+                        font-family="ui-monospace,Menlo,monospace">0</text>
+                  <text x="146" y="186" text-anchor="middle"
+                        fill="rgba(91,106,134,0.6)" font-size="9"
+                        font-family="ui-monospace,Menlo,monospace">100</text>
+                </svg>
+              </div>
+
+              <!-- COMM slide -->
+              <div class="tab-slide" role="tabpanel" :aria-hidden="activeTab !== 2">
+                <div class="slide-header">— COMMUNICATIONS —</div>
+                <div class="comm-metric">
+                  <span class="comm-metric__label">UPTIME</span>
+                  <div class="comm-metric__track">
+                    <div class="comm-metric__fill" style="width:99.8%"></div>
+                  </div>
+                  <span class="comm-metric__val">99.8%</span>
+                </div>
+                <div class="comm-metric">
+                  <span class="comm-metric__label">DATA RT</span>
+                  <div class="comm-metric__track">
+                    <div class="comm-metric__fill comm-metric__fill--cyan" style="width:48%"></div>
+                  </div>
+                  <span class="comm-metric__val">2.4K/s</span>
+                </div>
+                <div class="comm-metric">
+                  <span class="comm-metric__label">LATENCY</span>
+                  <div class="comm-metric__track">
+                    <div class="comm-metric__fill comm-metric__fill--green" style="width:12%"></div>
+                  </div>
+                  <span class="comm-metric__val">12 ms</span>
+                </div>
+              </div>
+
+            </div>
           </div>
-          <div class="sys-status__item">
-            <span class="led led--ok" />
-            <span>Monitoring Active</span>
-          </div>
-        </div>
 
-        <!-- Engineering gauge (decorative) -->
-        <!--
-          Gauge: 300° sweep, 7 o'clock (SVG 120°) → 5 o'clock (SVG 60°)
-          Start  (60, 169.3)  = 100 + 80·cos(120°),  100 + 80·sin(120°)
-          End   (140, 169.3)  = 100 + 80·cos( 60°),  100 + 80·sin( 60°)
-          Fill 65% → 195° → end angle 315° → (156.6, 43.4)
-        -->
-        <div class="gauge-wrap">
-          <svg viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <!-- Outer decorative rings -->
-            <circle cx="100" cy="100" r="92" stroke="rgba(58,160,255,0.06)" stroke-width="0.75"/>
-            <circle cx="100" cy="100" r="86" stroke="rgba(58,160,255,0.04)" stroke-width="0.75"/>
-
-            <!-- Track arc (300°, large-arc=1, CW) -->
-            <path d="M 60 169.3 A 80 80 0 1 1 140 169.3"
-                  stroke="rgba(58,160,255,0.12)" stroke-width="10" stroke-linecap="round"/>
-
-            <!-- Active arc glow + fill (65% = 195° → end at 315°) -->
-            <path d="M 60 169.3 A 80 80 0 1 1 156.6 43.4"
-                  stroke="rgba(58,160,255,0.18)" stroke-width="18" stroke-linecap="round"/>
-            <path d="M 60 169.3 A 80 80 0 1 1 156.6 43.4"
-                  stroke="#3aa0ff" stroke-width="10" stroke-linecap="round"/>
-
-            <!-- Tick marks at 0/12.5/25/37.5/50/62.5/75/87.5/100 % -->
-            <!-- angles: 120°, 157.5°, 195°, 232.5°, 270°, 307.5°, 345°, 22.5°, 60° -->
-            <g transform="translate(100,100)">
-              <line x1="70" y1="0" x2="83" y2="0" stroke="rgba(58,160,255,0.45)" stroke-width="1.5" transform="rotate(120)"/>
-              <line x1="73" y1="0" x2="83" y2="0" stroke="rgba(58,160,255,0.25)" stroke-width="1"   transform="rotate(157.5)"/>
-              <line x1="70" y1="0" x2="83" y2="0" stroke="rgba(58,160,255,0.45)" stroke-width="1.5" transform="rotate(195)"/>
-              <line x1="73" y1="0" x2="83" y2="0" stroke="rgba(58,160,255,0.25)" stroke-width="1"   transform="rotate(232.5)"/>
-              <line x1="70" y1="0" x2="83" y2="0" stroke="rgba(58,160,255,0.55)" stroke-width="2"   transform="rotate(270)"/>
-              <line x1="73" y1="0" x2="83" y2="0" stroke="rgba(58,160,255,0.25)" stroke-width="1"   transform="rotate(307.5)"/>
-              <line x1="70" y1="0" x2="83" y2="0" stroke="rgba(58,160,255,0.45)" stroke-width="1.5" transform="rotate(345)"/>
-              <line x1="73" y1="0" x2="83" y2="0" stroke="rgba(58,160,255,0.25)" stroke-width="1"   transform="rotate(22.5)"/>
-              <line x1="70" y1="0" x2="83" y2="0" stroke="rgba(58,160,255,0.45)" stroke-width="1.5" transform="rotate(60)"/>
-            </g>
-
-            <!-- Needle at 65% → 315° SVG -->
-            <g transform="translate(100,100) rotate(315)">
-              <line x1="-10" y1="0" x2="62" y2="0"
-                    stroke="#3aa0ff" stroke-width="2.5" stroke-linecap="round"/>
-              <circle cx="0" cy="0" r="6"  fill="rgba(11,22,44,0.9)" stroke="#3aa0ff"  stroke-width="2"/>
-              <circle cx="0" cy="0" r="2.5" fill="#3aa0ff"/>
-            </g>
-
-            <!-- Center readout -->
-            <text x="100" y="108" text-anchor="middle"
-                  fill="#e6edf7" font-size="26" font-weight="700"
-                  font-family="ui-monospace,Menlo,monospace">65%</text>
-            <text x="100" y="126" text-anchor="middle"
-                  fill="rgba(138,153,179,0.65)" font-size="9.5"
-                  font-family="ui-monospace,Menlo,monospace" letter-spacing="2">SYSTEM LOAD</text>
-
-            <!-- Range labels -->
-            <text x="54"  y="186" text-anchor="middle"
-                  fill="rgba(91,106,134,0.6)" font-size="9"
-                  font-family="ui-monospace,Menlo,monospace">0</text>
-            <text x="146" y="186" text-anchor="middle"
-                  fill="rgba(91,106,134,0.6)" font-size="9"
-                  font-family="ui-monospace,Menlo,monospace">100</text>
-          </svg>
         </div>
 
         <!-- Footer -->
@@ -538,37 +608,176 @@ async function handleForgot() {
   line-height: 1.6;
 }
 
-/* System status card */
-.sys-status {
-  position: relative;
-  padding: 14px 14px 12px;
-  background: rgba(0, 0, 0, 0.22);
-  border: 1px solid rgba(58, 160, 255, 0.09);
-  border-radius: 8px;
+/* ── Slide Nav Tabs ──────────────────────────────────────── */
+.info-tabs {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   margin-top: 4px;
 }
 
-.sys-status__header {
+/* Tab bar */
+.tab-bar {
+  position: relative;
+  display: flex;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(58, 160, 255, 0.12);
+  border-bottom: none;
+  border-radius: 7px 7px 0 0;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.tab-btn {
+  flex: 1;
+  background: none;
+  border: none;
+  padding: 8px 0 7px;
+  font-size: 8px;
+  letter-spacing: 2.5px;
+  color: rgba(138, 153, 179, 0.4);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  cursor: pointer;
+  position: relative;
+  z-index: 1;
+  transition: color 0.25s;
+}
+
+.tab-btn--active {
+  color: rgba(230, 237, 247, 0.9);
+}
+
+.tab-btn:hover:not(.tab-btn--active) {
+  color: rgba(138, 153, 179, 0.7);
+}
+
+/* Glowing sliding underline indicator */
+.tab-bar__indicator {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 33.333%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, #3aa0ff 40%, #3aa0ff 60%, transparent 100%);
+  box-shadow: 0 0 8px rgba(58, 160, 255, 0.6), 0 0 2px rgba(58, 160, 255, 0.9);
+  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+}
+
+/* Content viewport */
+.tab-content-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(58, 160, 255, 0.09);
+  border-radius: 0 0 8px 8px;
+  background: rgba(0, 0, 0, 0.22);
+  container-type: inline-size;
+}
+
+/* Slides strip — 3 panels side by side */
+.tab-slides {
+  display: flex;
+  height: 100%;
+  transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform;
+}
+
+/* Each slide = exactly 100% of the viewport (container query unit) */
+.tab-slide {
+  width: 100cqi;
+  flex-shrink: 0;
+  overflow: hidden;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+}
+
+.tab-slide--gauge {
+  padding: 8px 10px;
+  align-items: center;
+}
+
+.tab-slide--gauge svg {
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+}
+
+/* Shared slide section header */
+.slide-header {
   font-size: 8px;
   letter-spacing: 3px;
   color: rgba(58, 160, 255, 0.45);
   text-transform: uppercase;
   text-align: center;
-  margin-bottom: 10px;
+  margin-bottom: 2px;
   font-family: var(--font-mono);
 }
 
-.sys-status__item {
+/* Status items (STATUS slide) */
+.slide-item {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 11px;
   color: rgba(138, 153, 179, 0.8);
-  margin-bottom: 6px;
   font-family: var(--font-mono);
 }
 
-.sys-status__item:last-child { margin-bottom: 0; }
+/* Comm metrics (COMM slide) */
+.comm-metric {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+}
+
+.comm-metric__label {
+  font-size: 8px;
+  letter-spacing: 1px;
+  color: rgba(91, 106, 134, 0.75);
+  text-transform: uppercase;
+  width: 44px;
+  flex-shrink: 0;
+}
+
+.comm-metric__track {
+  flex: 1;
+  height: 4px;
+  background: rgba(58, 160, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.comm-metric__fill {
+  height: 100%;
+  background: #3aa0ff;
+  border-radius: 2px;
+  box-shadow: 0 0 6px rgba(58, 160, 255, 0.5);
+}
+
+.comm-metric__fill--cyan {
+  background: #22d3ee;
+  box-shadow: 0 0 6px rgba(34, 211, 238, 0.5);
+}
+
+.comm-metric__fill--green {
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+}
+
+.comm-metric__val {
+  font-size: 9px;
+  color: rgba(138, 153, 179, 0.7);
+  width: 34px;
+  text-align: right;
+  flex-shrink: 0;
+}
 
 /* LED dots */
 .led {
@@ -592,22 +801,6 @@ async function handleForgot() {
 @keyframes led-pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 7px rgba(34, 197, 94, 0.55); }
   50%       { opacity: 0.6; box-shadow: 0 0 3px rgba(34, 197, 94, 0.25); }
-}
-
-/* Gauge */
-.gauge-wrap {
-  position: relative;
-  flex: 1;
-  display: flex;
-  align-items: flex-end;
-  padding: 0 4px;
-  min-height: 0;
-  opacity: 0.92;
-}
-
-.gauge-wrap svg {
-  width: 100%;
-  height: auto;
 }
 
 /* Version/footer */
