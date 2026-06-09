@@ -15,7 +15,7 @@ import os
 
 import jwt
 import psycopg
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -307,11 +307,14 @@ def change_password(
 
 
 @router.post("/forgot-password")
-def forgot_password(body: ForgotPasswordRequest):
+def forgot_password(body: ForgotPasswordRequest, background: BackgroundTasks):
     """Email a reset link if the address matches a user.
 
     Always returns 200 with a generic message so the response does not reveal
-    whether an email is registered.
+    whether an email is registered. The SMTP send is queued as a FastAPI
+    BackgroundTask so the HTTP response returns immediately — otherwise a slow
+    SMTP relay would block the request and trip the frontend's 10 s axios
+    timeout (DevTools shows that as "canceled").
     """
     generic = {
         "message": "If that email is registered, a reset link has been sent.",
@@ -324,7 +327,7 @@ def forgot_password(body: ForgotPasswordRequest):
     if user is not None:
         token = security.create_reset_token(user["id"])
         reset_link = f"{config.APP_BASE_URL}/reset-password?token={token}"
-        mailer.send_password_reset(user["email"], reset_link)
+        background.add_task(mailer.send_password_reset, user["email"], reset_link)
     else:
         logger.info("Forgot-password requested for unknown email=%r", email)
     return generic

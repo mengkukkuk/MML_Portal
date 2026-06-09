@@ -39,9 +39,15 @@ APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:5173")
 # Minimum length enforced on new passwords (change-password / reset / admin create).
 MIN_PASSWORD_LEN = int(os.getenv("MIN_PASSWORD_LEN", "8"))
 
-# --- SMTP (outbound email for password reset) ---
-# When SMTP_HOST is empty, mailer.py falls back to logging the reset link
-# (dev console mode). Set these in .env to enable real delivery via an SMTP relay.
+# --- Outbound email for password reset ---
+# Delivery priority in mailer.py:
+#   1. Brevo HTTP API   — when BREVO_API_KEY is set (recommended; no IP allow-list)
+#   2. Generic SMTP     — when SMTP_HOST is set (legacy fallback)
+#   3. Dev console mode — neither set; reset link is logged
+# Generate a Brevo v3 key at: dashboard → SMTP & API → API Keys → Generate.
+BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
+
+# --- SMTP relay (legacy fallback — only used when BREVO_API_KEY is empty) ---
 SMTP_HOST = os.getenv("SMTP_HOST", "")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "")

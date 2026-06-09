@@ -1,0 +1,13 @@
+Browser -> ISS manager
+   ↓
+Python Web Application
+   ├─ Login/Auth + Reset Password ✅ -> JWT + bcrypt
+   ├─ User Role ✅
+   ├─ Business Logic x
+   ├─ Machine Control x
+   ├─ API ✅ -> FastAPI
+   └─ Embed Grafana Dashboard ✅
+           ↓
+        Grafana Server ✅ -> localhost:3000
+           ↓
+        PostgreSQL -> port:5432, host=26.252.139.132
