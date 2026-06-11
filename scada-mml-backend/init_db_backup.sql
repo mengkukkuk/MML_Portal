@@ -1,7 +1,7 @@
 -- MML Portal – database initialisation script
 -- PostgreSQL 15+
 -- Run once against a fresh "postgres" database (or any target DB):
---   psql -h localhost -U postgres -d postgres -f init_db.sql
+--   psql -h localhost -U postgres -d postgres -f init_db_backup.sql
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
