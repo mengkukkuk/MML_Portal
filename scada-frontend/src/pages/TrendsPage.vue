@@ -67,12 +67,12 @@ const series = computed(() => {
     <!-- Grafana panels (shown when VITE_GRAFANA_DASHBOARD_UID is set) -->
     <template v-if="dashboardUid">
       <div class="grafana-grid">
-        <!--GrafanaPanel
+        <GrafanaPanel
           :src="panelUrl(1)"
-          title="Boiler Temperature"
+          title="Test Monitor"
           :from="grafanaFrom"
           :height="280"
-        /-->
+        />
         <GrafanaPanel
           :src="panelUrl(2)"
           title="Compressor Pressure"

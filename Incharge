@@ -1,10 +1,10 @@
-Browser -> ISS manager
+Browser -> ISS manager ✅ exposed url
    ↓
 Python Web Application
    ├─ Login/Auth + Reset Password ✅ -> JWT + bcrypt
-   ├─ User Role ✅
-   ├─ Business Logic x
-   ├─ Machine Control x
+   ├─ User Role ✅ Add role
+   ├─ Business Logic X
+   ├─ Machine Control X
    ├─ API ✅ -> FastAPI
    └─ Embed Grafana Dashboard ✅
            ↓
