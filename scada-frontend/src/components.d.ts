@@ -43,6 +43,7 @@ declare module 'vue' {
     ElTag: typeof import('element-plus/es')['ElTag']
     GaugeTile: typeof import('./components/GaugeTile.vue')['default']
     GrafanaPanel: typeof import('./components/GrafanaPanel.vue')['default']
+    LivePanel: typeof import('./components/LivePanel.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     StatCard: typeof import('./components/StatCard.vue')['default']

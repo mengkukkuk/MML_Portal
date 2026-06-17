@@ -2,7 +2,7 @@
 /**
  * StatCard — KPI summary card used in the OverviewPage grid.
  * Props:
- *   label   — metric name displayed in small caps
+ *   label — metric name displayed in small caps
  *   value   — numeric or string reading
  *   unit    — optional suffix (e.g. '°C', '%')
  *   trend   — optional delta string (e.g. '+2.1%')

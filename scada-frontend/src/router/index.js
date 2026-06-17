@@ -45,6 +45,12 @@ const routes = [
         meta: { title: 'Trends', icon: 'TrendCharts' },
       },
       {
+        path: 'live',
+        name: 'live',
+        component: () => import('@/pages/LivePage.vue'),
+        meta: { title: 'Live', icon: 'VideoPlay' },
+      },
+      {
         path: 'settings',
         name: 'settings',
         component: () => import('@/pages/SettingsPage.vue'),

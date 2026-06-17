@@ -4,7 +4,17 @@
       "mcp__plugin_everything-claude-code_playwright__browser_navigate",
       "PowerShell(Add-Type -AssemblyName System.Drawing; $img = [System.Drawing.Image]::FromFile\\('G:\\\\Code\\\\DEV\\\\scada-frontend\\\\public\\\\m_favicon.tif'\\); $img.Save\\('G:\\\\Code\\\\DEV\\\\scada-frontend\\\\public\\\\m_favicon_preview.png', [System.Drawing.Imaging.ImageFormat]::Png\\); \"Size: $\\($img.Width\\)x$\\($img.Height\\)\"; $img.Dispose\\(\\))",
       "mcp__playwright__browser_take_screenshot",
-      "mcp__playwright__browser_navigate"
+      "mcp__playwright__browser_navigate",
+      "Read(//g/g/Code/DEV/scada-mml-backend/**)",
+      "Bash(./venv/Scripts/python.exe -c ' *)",
+      "Bash(./venv/Scripts/python.exe simulate_data.py)",
+      "Bash(netstat -ano)",
+      "Bash(powershell -Command \"Stop-Process -Id 15000 -Force\")",
+      "Bash(curl -s http://127.0.0.1:8088/health -w \"after_kill_http=%{http_code}\\\\n\" -o /dev/null --max-time 3)",
+      "Bash(./venv/Scripts/python.exe main.py)",
+      "Bash(curl -s http://127.0.0.1:8088/openapi.json)",
+      "Bash(powershell -Command \"Stop-Process -Id 18340 -Force\")",
+      "Bash(curl -s http://127.0.0.1:8088/api/panels -H \"Authorization: Bearer x\" -o /dev/null -w \"%{http_code}\\\\n\")"
     ]
   }
 }

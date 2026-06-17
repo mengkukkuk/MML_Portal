@@ -5,6 +5,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 import auth
+import db
+import panels
+import readings
 import users
 
 logging.basicConfig(
@@ -31,6 +34,14 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(readings.router)
+app.include_router(panels.router)
+
+
+@app.on_event("startup")
+def _ensure_tables() -> None:
+    """Create the dashboard_panels table on boot so the Live grid can persist."""
+    db.init_panels_table()
 
 
 @app.get("/health")

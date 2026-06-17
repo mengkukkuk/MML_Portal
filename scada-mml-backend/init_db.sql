@@ -1,6 +1,6 @@
 -- ==========================================================
 -- MML Dashboard Platform
--- init_db_v3.sql
+-- init_db.sql
 --
 -- PostgreSQL 18+
 -- UUID Primary Keys

@@ -22,6 +22,7 @@ const items = computed(() => {
     { path: '/devices', title: 'Devices', icon: 'Cpu' },
     { path: '/alarms', title: 'Alarms', icon: 'WarningFilled' },
     { path: '/trends', title: 'Trends', icon: 'TrendCharts' },
+    { path: '/live', title: 'Live', icon: 'VideoPlay' },
     { path: '/settings', title: 'Settings', icon: 'Setting' },
   ]
   if (auth.role === 'admin') {
