@@ -16,6 +16,7 @@ import { fetchDevices, fetchMetrics } from '@/api/readings'
 import { fetchTags, fetchTagFields } from '@/api/tags'
 import { fetchPanels, createPanel, updatePanel, deletePanel } from '@/api/panels'
 import { colorAt } from '@/utils/seriesPalette'
+import { compileExpr } from '@/utils/mathExpr'
 
 // Poll-interval choices shown in the editor & on each panel header.
 // Values are seconds and must match the backend whitelist in panels.py.
@@ -108,6 +109,9 @@ const form = reactive({
   device_id: null,
   tags: [],        // tag source: one or more tag names, each its own series/color
   metric: null,
+  // Optional math transform applied to every reading before display.
+  // Kept outside form.options because onVizTypeChange replaces options wholesale.
+  mathExpr: '',
   window_minutes: 15,
   chart_type: 'timeseries',
   options: defaultOptions('timeseries'),
@@ -175,6 +179,7 @@ function openCreate() {
   form.device_id = null
   form.tags = tags.value[0] ? [tags.value[0].tag_name] : []
   form.metric = tagFields.value[0]?.field ?? 'current_value'
+  form.mathExpr = ''
   form.window_minutes = 15
   form.chart_type = 'timeseries'
   form.options = defaultOptions('timeseries')
@@ -194,10 +199,11 @@ function openEdit(panel) {
   form.metric = panel.metric
   form.window_minutes = panel.window_minutes
   form.chart_type = panel.chart_type === 'line' ? 'timeseries' : panel.chart_type
-  // `tags` lives in form.tags only — keep it out of form.options (onVizTypeChange
-  // replaces form.options wholesale and would otherwise drop the tag list).
-  const { tags: _ignoredTags, ...vizOpts } = panel.options || {}
+  // `tags` and `mathExpr` live outside form.options — onVizTypeChange replaces
+  // form.options wholesale and would otherwise drop them.
+  const { tags: _ignoredTags, mathExpr: _ignoredExpr, ...vizOpts } = panel.options || {}
   form.options = { ...defaultOptions(form.chart_type), ...vizOpts }
+  form.mathExpr = panel.options?.mathExpr || ''
   form.poll_interval_seconds = panel.poll_interval_seconds || 5
   dialogVisible.value = true
   if (form.source === 'device') loadDialogMetrics()
@@ -216,9 +222,16 @@ async function save() {
     ElMessage.warning('Add at least one tag and pick a field.')
     return
   }
+  const compiled = compileExpr(form.mathExpr)
+  if (!compiled.ok) {
+    ElMessage.error(`Expression: ${compiled.error}`)
+    return
+  }
   saving.value = true
   try {
     const isTag = form.source === 'tag'
+    const trimmedExpr = form.mathExpr?.trim() || ''
+    const extraOpts = trimmedExpr ? { mathExpr: trimmedExpr } : {}
     const payload = {
       title: form.title.trim(),
       source: form.source,
@@ -228,7 +241,9 @@ async function save() {
       metric: form.metric,
       window_minutes: form.window_minutes,
       chart_type: form.chart_type,
-      options: isTag ? { ...form.options, tags: [...form.tags] } : { ...form.options },
+      options: isTag
+        ? { ...form.options, tags: [...form.tags], ...extraOpts }
+        : { ...form.options, ...extraOpts },
       poll_interval_seconds: form.poll_interval_seconds,
       position: editingId.value
         ? panels.value.find((p) => p.id === editingId.value)?.position ?? 0
@@ -465,6 +480,18 @@ onMounted(async () => {
           </el-form-item>
         </div>
 
+        <el-form-item label="Expression (optional)">
+          <el-input
+            v-model="form.mathExpr"
+            placeholder="e.g. value * 1.8 + 32, sqrt(value), value / 100"
+            clearable
+          />
+          <span class="editor__hint">
+            Applied to every reading before display. Variable: <code>value</code>.
+            Functions: <code>abs sqrt pow min max floor ceil round</code>.
+          </span>
+        </el-form-item>
+
         <div class="editor__row">
           <el-form-item label="Window (minutes)" class="editor__col">
             <el-input-number v-model="form.window_minutes" :min="1" :max="1440" style="width: 100%" />
@@ -648,6 +675,22 @@ onMounted(async () => {
 
 .editor__col {
   flex: 1;
+}
+
+.editor__hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+}
+
+.editor__hint code {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  padding: 0 4px;
+  background: var(--bg-elev, rgba(255, 255, 255, 0.06));
+  border-radius: 3px;
 }
 
 /* Multi-tag list */

@@ -19,6 +19,7 @@ import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/compon
 import { fetchSeries, fetchLatest } from '@/api/readings'
 import { fetchTagLatest } from '@/api/tags'
 import { SERIES_PALETTE, colorAt } from '@/utils/seriesPalette'
+import { compileExpr, applyExpr } from '@/utils/mathExpr'
 
 use([CanvasRenderer, LineChart, BarChart, GaugeChart, GridComponent, TooltipComponent, LegendComponent])
 
@@ -92,6 +93,10 @@ const isGeneric = computed(() => ['timeseries', 'bar', 'histogram', 'bargauge'].
 const showHeaderValue = computed(() => ['timeseries', 'bar', 'histogram'].includes(vizType.value))
 
 const firstLatest = computed(() => seriesLatest.value[seriesTags.value[0]] || null)
+
+// Per-panel math transform: applied to every reading at ingest time so all
+// renderers (and warn/crit thresholds) see post-transform numbers.
+const mathFn = computed(() => compileExpr(props.panel.options?.mathExpr || '').fn)
 
 function fmt(v) {
   if (v == null) return '—'
@@ -308,11 +313,12 @@ async function seed() {
     const key = props.panel.metric
     const res = await fetchSeries(props.panel.device_id, props.panel.metric, props.panel.window_minutes)
     unit.value = res.unit || ''
-    const arr = res.points.map((p) => [new Date(p.ts).getTime(), p.value])
+    const fn = mathFn.value
+    const arr = res.points.map((p) => [new Date(p.ts).getTime(), applyExpr(fn, p.value)])
     seriesPoints.value = { [key]: arr }
     if (arr.length) {
       const last = res.points[res.points.length - 1]
-      seriesLatest.value = { [key]: { value: last.value, ts: last.ts } }
+      seriesLatest.value = { [key]: { value: applyExpr(fn, last.value), ts: last.ts } }
     } else {
       seriesLatest.value = {}
     }
@@ -332,12 +338,14 @@ async function poll() {
     const nextPoints = { ...seriesPoints.value }
     const nextLatest = { ...seriesLatest.value }
     let anyOk = false
+    const fn = mathFn.value
     results.forEach((res, i) => {
       const tag = seriesTags.value[i]
       if (res.status !== 'fulfilled') return
-      const value = res.value[props.panel.metric]
-      if (value == null) return
+      const raw = res.value[props.panel.metric]
+      if (raw == null) return
       anyOk = true
+      const value = applyExpr(fn, raw)
       const arr = nextPoints[tag] || []
       nextPoints[tag] = trimWindow([...arr, [sampleT, value]])
       // Keep the tag's real update time for the "Updated …" header when present.
@@ -362,9 +370,10 @@ async function poll() {
     const arr = seriesPoints.value[key] || []
     const lastT = arr.length ? arr[arr.length - 1][0] : -1
     const next = { ...seriesPoints.value }
-    if (t > lastT) next[key] = trimWindow([...arr, [t, r.value]])
+    const value = applyExpr(mathFn.value, r.value)
+    if (t > lastT) next[key] = trimWindow([...arr, [t, value]])
     seriesPoints.value = next
-    seriesLatest.value = { ...seriesLatest.value, [key]: { value: r.value, ts: r.ts } }
+    seriesLatest.value = { ...seriesLatest.value, [key]: { value, ts: r.ts } }
     emit('updated', t)
   } catch (e) {
     if (e?.response?.status === 404) error.value = 'No readings yet for this connection.'
