@@ -8,17 +8,17 @@
  * from `panel.options`. Streams a sliding-window series from /api/readings,
  * refreshing every POLL_MS. Admins see Edit / Delete controls in the header.
  */
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart, BarChart, GaugeChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import { fetchSeries, fetchLatest } from '@/api/readings'
+import { fetchTagLatest } from '@/api/tags'
 
 use([CanvasRenderer, LineChart, BarChart, GaugeChart, GridComponent, TooltipComponent])
 
-const POLL_MS = 5000
 const ACCENT = '#4f8cff'
 const WARN_COLOR = '#e6a23c'
 const CRIT_COLOR = '#f56c6c'
@@ -29,7 +29,24 @@ const props = defineProps({
   canManage: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['edit', 'delete'])
+const emit = defineEmits(['edit', 'delete', 'poll-interval-change'])
+
+// Poll interval selector — values are seconds, kept in sync with backend whitelist.
+const POLL_INTERVALS = [
+  { value: 5, label: '5s' },
+  { value: 30, label: '30s' },
+  { value: 60, label: '1m' },
+  { value: 600, label: '10m' },
+  { value: 1800, label: '30m' },
+  { value: 3600, label: '1h' },
+]
+
+const pollSeconds = computed(() => props.panel.poll_interval_seconds || 5)
+const isTag = computed(() => props.panel.source === 'tag')
+
+function onPollIntervalSelect(v) {
+  emit('poll-interval-change', props.panel, v)
+}
 
 const points = ref([]) // [[epochMs, value], ...]
 const latest = ref(null) // { value, ts }
@@ -202,6 +219,14 @@ function trimWindow() {
 }
 
 async function seed() {
+  if (isTag.value) {
+    // status_tag has no native history — start empty, accumulate via polling.
+    points.value = []
+    latest.value = null
+    unit.value = ''
+    await poll()
+    return
+  }
   try {
     const res = await fetchSeries(props.panel.device_id, props.panel.metric, props.panel.window_minutes)
     unit.value = res.unit || ''
@@ -220,25 +245,48 @@ async function seed() {
 
 async function poll() {
   try {
-    const r = await fetchLatest(props.panel.device_id, props.panel.metric)
+    let value, tsIso, u
+    if (isTag.value) {
+      const r = await fetchTagLatest(props.panel.tag_name)
+      value = r[props.panel.metric]
+      tsIso = r.ts || new Date().toISOString()
+      u = ''
+    } else {
+      const r = await fetchLatest(props.panel.device_id, props.panel.metric)
+      value = r.value
+      tsIso = r.ts
+      u = r.unit || unit.value
+    }
     error.value = ''
-    unit.value = r.unit || unit.value
-    const t = new Date(r.ts).getTime()
+    if (u) unit.value = u
+    if (value == null) {
+      error.value = 'No value reported.'
+      return
+    }
+    const t = new Date(tsIso).getTime()
     const lastT = points.value.length ? points.value[points.value.length - 1][0] : -1
     if (t > lastT) {
-      points.value = [...points.value, [t, r.value]]
+      points.value = [...points.value, [t, value]]
       trimWindow()
     }
-    latest.value = { value: r.value, ts: r.ts }
+    latest.value = { value, ts: tsIso }
   } catch (e) {
     if (e?.response?.status === 404) error.value = 'No readings yet for this connection.'
     else error.value = e?.message || 'Failed to fetch latest reading.'
   }
 }
 
+function startTimer() {
+  if (timer) clearInterval(timer)
+  timer = setInterval(poll, pollSeconds.value * 1000)
+}
+
+// Restart the timer whenever the panel's interval changes (admin edit).
+watch(pollSeconds, startTimer)
+
 onMounted(async () => {
   await seed()
-  timer = setInterval(poll, POLL_MS)
+  startTimer()
 })
 
 onBeforeUnmount(() => {
@@ -251,11 +299,26 @@ onBeforeUnmount(() => {
     <header class="panel__head">
       <div class="panel__titlewrap">
         <h3 class="panel__title">{{ panel.title }}</h3>
-        <span class="panel__conn">{{ deviceName || `device #${panel.device_id}` }} · {{ panel.metric }}</span>
+        <span class="panel__conn">
+          <template v-if="isTag">tag · {{ panel.tag_name }} · {{ panel.metric }}</template>
+          <template v-else>{{ deviceName || `device #${panel.device_id}` }} · {{ panel.metric }}</template>
+        </span>
       </div>
-      <div v-if="canManage" class="panel__actions">
-        <el-button size="small" text @click="emit('edit', panel)">Edit</el-button>
-        <el-button size="small" text type="danger" @click="emit('delete', panel)">Delete</el-button>
+      <div class="panel__actions">
+        <el-select
+          :model-value="pollSeconds"
+          size="small"
+          class="panel__poll"
+          :disabled="!canManage"
+          :title="canManage ? 'Poll interval' : 'Poll interval (admin only)'"
+          @update:model-value="onPollIntervalSelect"
+        >
+          <el-option v-for="it in POLL_INTERVALS" :key="it.value" :label="it.label" :value="it.value" />
+        </el-select>
+        <template v-if="canManage">
+          <el-button size="small" text @click="emit('edit', panel)">Edit</el-button>
+          <el-button size="small" text type="danger" @click="emit('delete', panel)">Delete</el-button>
+        </template>
       </div>
     </header>
 
@@ -337,7 +400,13 @@ onBeforeUnmount(() => {
 
 .panel__actions {
   display: flex;
+  align-items: center;
+  gap: var(--space-1);
   flex-shrink: 0;
+}
+
+.panel__poll {
+  width: 78px;
 }
 
 .panel__meta {

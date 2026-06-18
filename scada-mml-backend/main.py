@@ -8,6 +8,7 @@ import auth
 import db
 import panels
 import readings
+import tags
 import users
 
 logging.basicConfig(
@@ -35,6 +36,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(readings.router)
+app.include_router(tags.router)
 app.include_router(panels.router)
 
 

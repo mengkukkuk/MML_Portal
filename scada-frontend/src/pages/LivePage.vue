@@ -13,7 +13,19 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import LivePanel from '@/components/LivePanel.vue'
 import { fetchDevices, fetchMetrics } from '@/api/readings'
+import { fetchTags, fetchTagFields } from '@/api/tags'
 import { fetchPanels, createPanel, updatePanel, deletePanel } from '@/api/panels'
+
+// Poll-interval choices shown in the editor & on each panel header.
+// Values are seconds and must match the backend whitelist in panels.py.
+const POLL_INTERVALS = [
+  { value: 5, label: '5 seconds' },
+  { value: 30, label: '30 seconds' },
+  { value: 60, label: '1 minute' },
+  { value: 600, label: '10 minutes' },
+  { value: 1800, label: '30 minutes' },
+  { value: 3600, label: '1 hour' },
+]
 
 const auth = useAuthStore()
 const canManage = computed(() => auth.role === 'admin')
@@ -79,6 +91,8 @@ function defaultOptions(type) {
 
 const panels = ref([])
 const devices = ref([])
+const tags = ref([])         // [{ tag_name }]
+const tagFields = ref([])    // [{ field, label }]
 const loading = ref(true)
 const error = ref('')
 
@@ -89,11 +103,14 @@ const saving = ref(false)
 const dialogMetrics = ref([])
 const form = reactive({
   title: '',
+  source: 'tag',
   device_id: null,
+  tag_name: null,
   metric: null,
   window_minutes: 15,
   chart_type: 'timeseries',
   options: defaultOptions('timeseries'),
+  poll_interval_seconds: 5,
 })
 
 const dialogTitle = computed(() => (editingId.value ? 'Edit panel' : 'Add panel'))
@@ -121,32 +138,48 @@ function onVizTypeChange(type) {
   form.options = defaultOptions(type)
 }
 
+function onSourceChange(src) {
+  form.source = src
+  if (src === 'tag') {
+    form.tag_name = tags.value[0]?.tag_name ?? null
+    form.metric = tagFields.value[0]?.field ?? 'current_value'
+  } else {
+    form.device_id = devices.value[0]?.id ?? null
+    form.metric = null
+    loadDialogMetrics().then(() => {
+      form.metric = dialogMetrics.value[0]?.metric ?? null
+    })
+  }
+}
+
 function openCreate() {
   editingId.value = null
   form.title = ''
-  form.device_id = devices.value[0]?.id ?? null
-  form.metric = null
+  form.source = 'tag'
+  form.device_id = null
+  form.tag_name = tags.value[0]?.tag_name ?? null
+  form.metric = tagFields.value[0]?.field ?? 'current_value'
   form.window_minutes = 15
   form.chart_type = 'timeseries'
   form.options = defaultOptions('timeseries')
+  form.poll_interval_seconds = 5
   dialogMetrics.value = []
   dialogVisible.value = true
-  loadDialogMetrics().then(() => {
-    form.metric = dialogMetrics.value[0]?.metric ?? null
-  })
 }
 
 function openEdit(panel) {
   editingId.value = panel.id
   form.title = panel.title
+  form.source = panel.source || 'device'
   form.device_id = panel.device_id
+  form.tag_name = panel.tag_name
   form.metric = panel.metric
   form.window_minutes = panel.window_minutes
   form.chart_type = panel.chart_type === 'line' ? 'timeseries' : panel.chart_type
-  // Merge saved options over defaults so newly added params get sensible values.
   form.options = { ...defaultOptions(form.chart_type), ...(panel.options || {}) }
+  form.poll_interval_seconds = panel.poll_interval_seconds || 5
   dialogVisible.value = true
-  loadDialogMetrics()
+  if (form.source === 'device') loadDialogMetrics()
 }
 
 async function save() {
@@ -154,19 +187,26 @@ async function save() {
     ElMessage.warning('Title is required.')
     return
   }
-  if (!form.device_id || !form.metric) {
+  if (form.source === 'device' && (!form.device_id || !form.metric)) {
     ElMessage.warning('Pick a device and metric.')
+    return
+  }
+  if (form.source === 'tag' && (!form.tag_name || !form.metric)) {
+    ElMessage.warning('Pick a tag and field.')
     return
   }
   saving.value = true
   try {
     const payload = {
       title: form.title.trim(),
-      device_id: form.device_id,
+      source: form.source,
+      device_id: form.source === 'device' ? form.device_id : null,
+      tag_name: form.source === 'tag' ? form.tag_name : null,
       metric: form.metric,
       window_minutes: form.window_minutes,
       chart_type: form.chart_type,
       options: { ...form.options },
+      poll_interval_seconds: form.poll_interval_seconds,
       position: editingId.value
         ? panels.value.find((p) => p.id === editingId.value)?.position ?? 0
         : panels.value.length,
@@ -208,11 +248,42 @@ async function remove(panel) {
   }
 }
 
+// Persist a single panel's poll-interval change without opening the editor.
+async function onPollIntervalChange(panel, seconds) {
+  if (!canManage.value) return
+  try {
+    const payload = {
+      title: panel.title,
+      source: panel.source || 'device',
+      device_id: panel.device_id,
+      tag_name: panel.tag_name,
+      metric: panel.metric,
+      window_minutes: panel.window_minutes,
+      chart_type: panel.chart_type === 'line' ? 'timeseries' : panel.chart_type,
+      options: panel.options || {},
+      poll_interval_seconds: seconds,
+      position: panel.position,
+    }
+    const updated = await updatePanel(panel.id, payload)
+    const i = panels.value.findIndex((p) => p.id === panel.id)
+    if (i !== -1) panels.value[i] = updated
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || 'Failed to update poll interval.')
+  }
+}
+
 onMounted(async () => {
   try {
-    const [p, d] = await Promise.all([fetchPanels(), fetchDevices()])
+    const [p, d, t, f] = await Promise.all([
+      fetchPanels(),
+      fetchDevices().catch(() => []),
+      fetchTags().catch(() => []),
+      fetchTagFields().catch(() => []),
+    ])
     panels.value = p
     devices.value = d
+    tags.value = t
+    tagFields.value = f
   } catch (e) {
     error.value = e?.message || 'Failed to load dashboard.'
   } finally {
@@ -226,7 +297,7 @@ onMounted(async () => {
     <header class="live__bar">
       <div>
         <h2 class="live__heading">Live Dashboard</h2>
-        <p class="live__sub">Real-time machine panels · refreshing every 5s</p>
+        <p class="live__sub">Real-time machine panels · per-panel poll interval</p>
       </div>
       <el-button v-if="canManage" type="primary" @click="openCreate">Add panel</el-button>
     </header>
@@ -250,6 +321,7 @@ onMounted(async () => {
         :can-manage="canManage"
         @edit="openEdit"
         @delete="remove"
+        @poll-interval-change="onPollIntervalChange"
       />
     </section>
 
@@ -259,7 +331,27 @@ onMounted(async () => {
           <el-input v-model="form.title" placeholder="e.g. Boiler #1 Temperature" />
         </el-form-item>
 
-        <div class="editor__row">
+        <el-form-item label="Data source">
+          <el-radio-group :model-value="form.source" @update:model-value="onSourceChange">
+            <el-radio-button value="tag">Status tag</el-radio-button>
+            <el-radio-button value="device">Device + metric</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+
+        <div v-if="form.source === 'tag'" class="editor__row">
+          <el-form-item label="Tag" class="editor__col">
+            <el-select v-model="form.tag_name" placeholder="Tag" filterable style="width: 100%">
+              <el-option v-for="t in tags" :key="t.tag_name" :label="t.tag_name" :value="t.tag_name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="Field" class="editor__col">
+            <el-select v-model="form.metric" placeholder="Field" style="width: 100%">
+              <el-option v-for="f in tagFields" :key="f.field" :label="f.label" :value="f.field" />
+            </el-select>
+          </el-form-item>
+        </div>
+
+        <div v-else class="editor__row">
           <el-form-item label="Device (connection)" class="editor__col">
             <el-select v-model="form.device_id" placeholder="Device" @change="onDialogDeviceChange" style="width: 100%">
               <el-option v-for="d in devices" :key="d.id" :label="d.name" :value="d.id" />
@@ -272,9 +364,16 @@ onMounted(async () => {
           </el-form-item>
         </div>
 
-        <el-form-item label="Window (minutes)">
-          <el-input-number v-model="form.window_minutes" :min="1" :max="1440" />
-        </el-form-item>
+        <div class="editor__row">
+          <el-form-item label="Window (minutes)" class="editor__col">
+            <el-input-number v-model="form.window_minutes" :min="1" :max="1440" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="Poll interval" class="editor__col">
+            <el-select v-model="form.poll_interval_seconds" style="width: 100%">
+              <el-option v-for="it in POLL_INTERVALS" :key="it.value" :label="it.label" :value="it.value" />
+            </el-select>
+          </el-form-item>
+        </div>
 
         <!-- Visualization picker (Grafana-style) -->
         <el-form-item label="Visualization">

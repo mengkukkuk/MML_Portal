@@ -2,8 +2,9 @@
 
 Reads are open to any authenticated user (the Live dashboard renders them);
 writes (create / update / delete) require an admin token (``require_admin``).
-Each panel binds a device + metric from the flat ``public.sensor_readings`` /
-``public.devices`` tables that back the real-time ECharts page.
+A panel binds to one of two data sources:
+  - source='device': legacy device_id + metric (public.sensor_readings)
+  - source='tag'   : tag_name + metric one-of TAG_FIELDS (public.status_tag)
 """
 from datetime import datetime
 
@@ -15,9 +16,6 @@ from auth import get_current_user, require_admin
 
 router = APIRouter(prefix="/api/panels", tags=["panels"])
 
-# Grafana-style visualization types this dashboard supports. "line" is kept for
-# backward compatibility with panels created before the multi-viz change and is
-# rendered as a time series by the frontend.
 VALID_CHART_TYPES = {
     "timeseries",
     "line",
@@ -29,50 +27,86 @@ VALID_CHART_TYPES = {
     "table",
 }
 
+VALID_SOURCES = {"device", "tag"}
+
+# Poll-interval whitelist (seconds) — mirrors the frontend selector.
+VALID_POLL_INTERVALS = {5, 30, 60, 600, 1800, 3600}
+
 
 # --- Schemas ---------------------------------------------------------------
 class PanelOut(BaseModel):
     id: int
     title: str
-    device_id: int
-    metric: str
+    device_id: int | None = None
+    metric: str | None = None
     window_minutes: int
     chart_type: str
     position: int
     options: dict = {}
+    source: str = "device"
+    tag_name: str | None = None
+    poll_interval_seconds: int = 5
     created_at: datetime
 
 
 class PanelIn(BaseModel):
     title: str = Field(..., min_length=1)
-    device_id: int = Field(..., ge=1)
-    metric: str = Field(..., min_length=1)
+    device_id: int | None = Field(None, ge=1)
+    metric: str | None = None
     window_minutes: int = Field(15, ge=1, le=1440)
     chart_type: str = "timeseries"
     position: int = 0
-    # Per-visualization parameters (min/max, thresholds, decimals, …).
     options: dict = {}
+    source: str = "device"
+    tag_name: str | None = None
+    poll_interval_seconds: int = 5
 
 
 # --- Helpers ---------------------------------------------------------------
-def _validate_chart_type(chart_type: str) -> None:
-    if chart_type not in VALID_CHART_TYPES:
+def _validate(body: PanelIn) -> None:
+    if body.chart_type not in VALID_CHART_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Chart type must be one of: {', '.join(sorted(VALID_CHART_TYPES))}",
         )
+    if body.source not in VALID_SOURCES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Source must be one of: {', '.join(sorted(VALID_SOURCES))}",
+        )
+    if body.poll_interval_seconds not in VALID_POLL_INTERVALS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"poll_interval_seconds must be one of: {sorted(VALID_POLL_INTERVALS)}",
+        )
+    if body.source == "device":
+        if not body.device_id or not body.metric:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="device source requires device_id and metric",
+            )
+    else:  # tag
+        if not body.tag_name or not body.metric:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="tag source requires tag_name and metric (one of TAG_FIELDS)",
+            )
+        if body.metric not in db.TAG_FIELDS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"metric for tag source must be one of: {', '.join(db.TAG_FIELDS)}",
+            )
 
 
 # --- Endpoints -------------------------------------------------------------
 @router.get("", response_model=list[PanelOut])
 def list_panels(_user: dict = Depends(get_current_user)):
-    """All dashboard panels — rendered by the Live grid for every user."""
     return db.list_panels()
 
 
 @router.post("", response_model=PanelOut, status_code=status.HTTP_201_CREATED)
 def create_panel(body: PanelIn, _admin: dict = Depends(require_admin)):
-    _validate_chart_type(body.chart_type)
+    _validate(body)
     return db.create_panel(
         body.title.strip(),
         body.device_id,
@@ -81,12 +115,15 @@ def create_panel(body: PanelIn, _admin: dict = Depends(require_admin)):
         body.chart_type,
         body.position,
         body.options,
+        body.source,
+        body.tag_name.strip() if body.tag_name else None,
+        body.poll_interval_seconds,
     )
 
 
 @router.put("/{panel_id}", response_model=PanelOut)
 def update_panel(panel_id: int, body: PanelIn, _admin: dict = Depends(require_admin)):
-    _validate_chart_type(body.chart_type)
+    _validate(body)
     panel = db.update_panel(
         panel_id,
         body.title.strip(),
@@ -96,6 +133,9 @@ def update_panel(panel_id: int, body: PanelIn, _admin: dict = Depends(require_ad
         body.chart_type,
         body.position,
         body.options,
+        body.source,
+        body.tag_name.strip() if body.tag_name else None,
+        body.poll_interval_seconds,
     )
     if panel is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Panel not found")
