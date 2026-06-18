@@ -15,6 +15,7 @@ import LivePanel from '@/components/LivePanel.vue'
 import { fetchDevices, fetchMetrics } from '@/api/readings'
 import { fetchTags, fetchTagFields } from '@/api/tags'
 import { fetchPanels, createPanel, updatePanel, deletePanel } from '@/api/panels'
+import { colorAt } from '@/utils/seriesPalette'
 
 // Poll-interval choices shown in the editor & on each panel header.
 // Values are seconds and must match the backend whitelist in panels.py.
@@ -105,13 +106,28 @@ const form = reactive({
   title: '',
   source: 'tag',
   device_id: null,
-  tag_name: null,
+  tags: [],        // tag source: one or more tag names, each its own series/color
   metric: null,
   window_minutes: 15,
   chart_type: 'timeseries',
   options: defaultOptions('timeseries'),
   poll_interval_seconds: 5,
 })
+
+// First tag not already chosen, so [+ Add tag] defaults to a fresh selection.
+function firstUnusedTag() {
+  const used = new Set(form.tags)
+  return tags.value.find((t) => !used.has(t.tag_name))?.tag_name ?? tags.value[0]?.tag_name ?? null
+}
+
+function addTag() {
+  const t = firstUnusedTag()
+  if (t) form.tags.push(t)
+}
+
+function removeTag(i) {
+  form.tags.splice(i, 1)
+}
 
 const dialogTitle = computed(() => (editingId.value ? 'Edit panel' : 'Add panel'))
 const currentSchema = computed(() => PARAM_SCHEMA[form.chart_type] || [])
@@ -141,7 +157,7 @@ function onVizTypeChange(type) {
 function onSourceChange(src) {
   form.source = src
   if (src === 'tag') {
-    form.tag_name = tags.value[0]?.tag_name ?? null
+    form.tags = tags.value[0] ? [tags.value[0].tag_name] : []
     form.metric = tagFields.value[0]?.field ?? 'current_value'
   } else {
     form.device_id = devices.value[0]?.id ?? null
@@ -157,7 +173,7 @@ function openCreate() {
   form.title = ''
   form.source = 'tag'
   form.device_id = null
-  form.tag_name = tags.value[0]?.tag_name ?? null
+  form.tags = tags.value[0] ? [tags.value[0].tag_name] : []
   form.metric = tagFields.value[0]?.field ?? 'current_value'
   form.window_minutes = 15
   form.chart_type = 'timeseries'
@@ -172,11 +188,16 @@ function openEdit(panel) {
   form.title = panel.title
   form.source = panel.source || 'device'
   form.device_id = panel.device_id
-  form.tag_name = panel.tag_name
+  form.tags = panel.options?.tags?.length
+    ? [...panel.options.tags]
+    : (panel.tag_name ? [panel.tag_name] : [])
   form.metric = panel.metric
   form.window_minutes = panel.window_minutes
   form.chart_type = panel.chart_type === 'line' ? 'timeseries' : panel.chart_type
-  form.options = { ...defaultOptions(form.chart_type), ...(panel.options || {}) }
+  // `tags` lives in form.tags only — keep it out of form.options (onVizTypeChange
+  // replaces form.options wholesale and would otherwise drop the tag list).
+  const { tags: _ignoredTags, ...vizOpts } = panel.options || {}
+  form.options = { ...defaultOptions(form.chart_type), ...vizOpts }
   form.poll_interval_seconds = panel.poll_interval_seconds || 5
   dialogVisible.value = true
   if (form.source === 'device') loadDialogMetrics()
@@ -191,21 +212,23 @@ async function save() {
     ElMessage.warning('Pick a device and metric.')
     return
   }
-  if (form.source === 'tag' && (!form.tag_name || !form.metric)) {
-    ElMessage.warning('Pick a tag and field.')
+  if (form.source === 'tag' && (!form.tags.length || !form.metric)) {
+    ElMessage.warning('Add at least one tag and pick a field.')
     return
   }
   saving.value = true
   try {
+    const isTag = form.source === 'tag'
     const payload = {
       title: form.title.trim(),
       source: form.source,
-      device_id: form.source === 'device' ? form.device_id : null,
-      tag_name: form.source === 'tag' ? form.tag_name : null,
+      device_id: isTag ? null : form.device_id,
+      // Primary tag satisfies backend validation; full list rides in options.tags.
+      tag_name: isTag ? form.tags[0] : null,
       metric: form.metric,
       window_minutes: form.window_minutes,
       chart_type: form.chart_type,
-      options: { ...form.options },
+      options: isTag ? { ...form.options, tags: [...form.tags] } : { ...form.options },
       poll_interval_seconds: form.poll_interval_seconds,
       position: editingId.value
         ? panels.value.find((p) => p.id === editingId.value)?.position ?? 0
@@ -229,22 +252,74 @@ async function save() {
   }
 }
 
-async function remove(panel) {
-  try {
-    await ElMessageBox.confirm(
-      `Delete panel "${panel.title}"?`,
-      'Confirm delete',
-      { type: 'warning', confirmButtonText: 'Delete', cancelButtonText: 'Cancel' },
-    )
-  } catch {
+// --- Duplicate-panel dialog (small centred form) --------------------------
+const duplicateDialogVisible = ref(false)
+const duplicating = ref(false)
+const duplicateSource = ref(null)
+const duplicateForm = reactive({ title: '' })
+
+const deleteDialogVisible = ref(false)
+const deleting = ref(false)
+const deleteTarget = ref(null)
+
+function duplicate(panel) {
+  duplicateSource.value = panel
+  duplicateForm.title = `${panel.title} (Copy)`
+  duplicateDialogVisible.value = true
+}
+
+async function confirmDuplicate() {
+  const panel = duplicateSource.value
+  if (!panel) return
+  const name = duplicateForm.title.trim()
+  if (!name) {
+    ElMessage.warning('Name is required.')
     return
   }
+  duplicating.value = true
+  try {
+    const payload = {
+      title: name,
+      source: panel.source || 'device',
+      device_id: panel.device_id,
+      tag_name: panel.tag_name,
+      metric: panel.metric,
+      window_minutes: panel.window_minutes,
+      chart_type: panel.chart_type === 'line' ? 'timeseries' : panel.chart_type,
+      options: JSON.parse(JSON.stringify(panel.options || {})),
+      poll_interval_seconds: panel.poll_interval_seconds || 5,
+      position: panels.value.length,
+    }
+    const created = await createPanel(payload)
+    panels.value.push(created)
+    ElMessage.success('Panel duplicated.')
+    duplicateDialogVisible.value = false
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || 'Failed to duplicate panel.')
+  } finally {
+    duplicating.value = false
+  }
+}
+
+function remove(panel) {
+  deleteTarget.value = panel
+  deleteDialogVisible.value = true
+}
+
+async function confirmDelete() {
+  const panel = deleteTarget.value
+  if (!panel) return
+  deleting.value = true
   try {
     await deletePanel(panel.id)
     panels.value = panels.value.filter((p) => p.id !== panel.id)
     ElMessage.success('Panel deleted.')
+    deleteDialogVisible.value = false
+    deleteTarget.value = null
   } catch (e) {
     ElMessage.error(e?.response?.data?.detail || 'Failed to delete panel.')
+  } finally {
+    deleting.value = false
   }
 }
 
@@ -320,6 +395,7 @@ onMounted(async () => {
         :device-name="deviceName(panel.device_id)"
         :can-manage="canManage"
         @edit="openEdit"
+        @duplicate="duplicate"
         @delete="remove"
         @poll-interval-change="onPollIntervalChange"
       />
@@ -338,18 +414,31 @@ onMounted(async () => {
           </el-radio-group>
         </el-form-item>
 
-        <div v-if="form.source === 'tag'" class="editor__row">
-          <el-form-item label="Tag" class="editor__col">
-            <el-select v-model="form.tag_name" placeholder="Tag" filterable style="width: 100%">
-              <el-option v-for="t in tags" :key="t.tag_name" :label="t.tag_name" :value="t.tag_name" />
-            </el-select>
+        <template v-if="form.source === 'tag'">
+          <el-form-item label="Tags">
+            <div class="taglist">
+              <div v-for="(t, i) in form.tags" :key="i" class="taglist__row">
+                <span class="taglist__swatch" :style="{ background: colorAt(i) }" />
+                <el-select v-model="form.tags[i]" placeholder="Tag" filterable class="taglist__select">
+                  <el-option v-for="opt in tags" :key="opt.tag_name" :label="opt.tag_name" :value="opt.tag_name" />
+                </el-select>
+                <el-button
+                  class="taglist__remove"
+                  text
+                  :disabled="form.tags.length <= 1"
+                  title="Remove tag"
+                  @click="removeTag(i)"
+                >×</el-button>
+              </div>
+              <el-button class="taglist__add" text @click="addTag">+ Add tag</el-button>
+            </div>
           </el-form-item>
-          <el-form-item label="Field" class="editor__col">
+          <el-form-item label="Field">
             <el-select v-model="form.metric" placeholder="Field" style="width: 100%">
               <el-option v-for="f in tagFields" :key="f.field" :label="f.label" :value="f.field" />
             </el-select>
           </el-form-item>
-        </div>
+        </template>
 
         <div v-else class="editor__row">
           <el-form-item label="Device (connection)" class="editor__col">
@@ -420,6 +509,54 @@ onMounted(async () => {
         <el-button type="primary" :loading="saving" @click="save">Save</el-button>
       </template>
     </el-dialog>
+
+    <!-- Duplicate panel: small centred form-styled dialog -->
+    <el-dialog
+      v-model="duplicateDialogVisible"
+      title="Duplicate panel"
+      width="420px"
+      align-center
+      append-to-body
+      class="dup-dialog"
+    >
+      <el-form label-position="top" @submit.prevent="confirmDuplicate">
+        <el-form-item label="New panel name">
+          <el-input
+            v-model="duplicateForm.title"
+            placeholder="e.g. Boiler #1 Temperature (Copy)"
+            autofocus
+            clearable
+            @keyup.enter="confirmDuplicate"
+          />
+        </el-form-item>
+        <p v-if="duplicateSource" class="dup-dialog__hint">
+          Copies all settings from <strong>{{ duplicateSource.title }}</strong>.
+        </p>
+      </el-form>
+      <template #footer>
+        <el-button @click="duplicateDialogVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="duplicating" @click="confirmDuplicate">Create</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- Delete panel: small centred confirm dialog -->
+    <el-dialog
+      v-model="deleteDialogVisible"
+      title="Delete panel"
+      width="420px"
+      align-center
+      append-to-body
+      class="del-dialog"
+    >
+      <p v-if="deleteTarget" class="del-dialog__msg">
+        Delete <strong>{{ deleteTarget.title }}</strong>?
+      </p>
+      <p class="del-dialog__hint">This action cannot be undone.</p>
+      <template #footer>
+        <el-button @click="deleteDialogVisible = false">Cancel</el-button>
+        <el-button type="danger" :loading="deleting" @click="confirmDelete">Delete</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -478,6 +615,43 @@ onMounted(async () => {
 
 .editor__col {
   flex: 1;
+}
+
+/* Multi-tag list */
+.taglist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.taglist__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.taglist__swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.taglist__select {
+  flex: 1;
+  min-width: 0;
+}
+
+.taglist__remove {
+  flex-shrink: 0;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 6px;
+}
+
+.taglist__add {
+  align-self: flex-start;
 }
 
 .vizpicker {
@@ -546,5 +720,25 @@ onMounted(async () => {
 
 .submenu__field {
   margin-bottom: var(--space-2);
+}
+
+/* Duplicate-panel dialog */
+.dup-dialog__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+/* Delete-panel dialog */
+.del-dialog__msg {
+  margin: 0 0 var(--space-2) 0;
+  font-size: 14px;
+  color: var(--fg);
+}
+
+.del-dialog__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-muted);
 }
 </style>
