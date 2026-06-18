@@ -262,6 +262,14 @@ const deleteDialogVisible = ref(false)
 const deleting = ref(false)
 const deleteTarget = ref(null)
 
+const lastUpdatedAt = ref(0)
+const lastUpdatedLabel = computed(() =>
+  lastUpdatedAt.value ? new Date(lastUpdatedAt.value).toLocaleTimeString() : '',
+)
+function onPanelUpdated(ts) {
+  if (ts > lastUpdatedAt.value) lastUpdatedAt.value = ts
+}
+
 function duplicate(panel) {
   duplicateSource.value = panel
   duplicateForm.title = `${panel.title} (Copy)`
@@ -374,6 +382,9 @@ onMounted(async () => {
         <h2 class="live__heading">Live Dashboard</h2>
         <p class="live__sub">Real-time machine panels · per-panel poll interval</p>
       </div>
+      <div class="live__clock">
+        <span v-if="lastUpdatedLabel" class="live__updated">Updated {{ lastUpdatedLabel }}</span>
+      </div>
       <el-button v-if="canManage" type="primary" @click="openCreate">Add panel</el-button>
     </header>
 
@@ -398,6 +409,7 @@ onMounted(async () => {
         @duplicate="duplicate"
         @delete="remove"
         @poll-interval-change="onPollIntervalChange"
+        @updated="onPanelUpdated"
       />
     </section>
 
@@ -568,11 +580,32 @@ onMounted(async () => {
 }
 
 .live__bar {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: var(--space-4);
-  flex-wrap: wrap;
+}
+
+.live__bar > :nth-child(1) {
+  grid-column: 1;
+  justify-self: start;
+}
+
+.live__clock {
+  grid-column: 2;
+  justify-self: center;
+  text-align: center;
+}
+
+.live__bar > .el-button {
+  grid-column: 3;
+  justify-self: end;
+}
+
+.live__updated {
+  font-size: 13px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .live__heading {

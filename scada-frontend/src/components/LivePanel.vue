@@ -31,7 +31,7 @@ const props = defineProps({
   canManage: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['edit', 'duplicate', 'delete', 'poll-interval-change'])
+const emit = defineEmits(['edit', 'duplicate', 'delete', 'poll-interval-change', 'updated'])
 
 // Poll interval selector — values are seconds, kept in sync with backend whitelist.
 const POLL_INTERVALS = [
@@ -92,13 +92,6 @@ const isGeneric = computed(() => ['timeseries', 'bar', 'histogram', 'bargauge'].
 const showHeaderValue = computed(() => ['timeseries', 'bar', 'histogram'].includes(vizType.value))
 
 const firstLatest = computed(() => seriesLatest.value[seriesTags.value[0]] || null)
-
-const lastUpdated = computed(() => {
-  const tss = Object.values(seriesLatest.value)
-    .map((l) => new Date(l.ts).getTime())
-    .filter(Number.isFinite)
-  return tss.length ? new Date(Math.max(...tss)).toLocaleTimeString() : '—'
-})
 
 function fmt(v) {
   if (v == null) return '—'
@@ -353,6 +346,7 @@ async function poll() {
     seriesPoints.value = nextPoints
     seriesLatest.value = nextLatest
     error.value = anyOk ? '' : 'No value reported.'
+    if (anyOk) emit('updated', sampleT)
     return
   }
   try {
@@ -371,6 +365,7 @@ async function poll() {
     if (t > lastT) next[key] = trimWindow([...arr, [t, r.value]])
     seriesPoints.value = next
     seriesLatest.value = { ...seriesLatest.value, [key]: { value: r.value, ts: r.ts } }
+    emit('updated', t)
   } catch (e) {
     if (e?.response?.status === 404) error.value = 'No readings yet for this connection.'
     else error.value = e?.message || 'Failed to fetch latest reading.'
@@ -409,10 +404,6 @@ onBeforeUnmount(() => {
     <header class="panel__head">
       <div class="panel__titlewrap">
         <h3 class="panel__title">{{ panel.title }}</h3>
-        <span class="panel__conn">
-          <template v-if="isTag">tag · {{ seriesTags.join(', ') }} · {{ panel.metric }}</template>
-          <template v-else>{{ deviceName || `device #${panel.device_id}` }} · {{ panel.metric }}</template>
-        </span>
       </div>
       <div class="panel__actions">
         <el-select
@@ -433,6 +424,11 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
+    <span class="panel__conn">
+      <template v-if="isTag">tag · {{ seriesTags.join(', ') }} · {{ panel.metric }}</template>
+      <template v-else>{{ deviceName || `device #${panel.device_id}` }} · {{ panel.metric }}</template>
+    </span>
+
     <div class="panel__meta">
       <template v-if="showHeaderValue">
         <!-- Multi-series: coloured tag chips instead of a single big number. -->
@@ -447,7 +443,6 @@ onBeforeUnmount(() => {
           <span class="panel__unit">{{ unit }}</span>
         </template>
       </template>
-      <span class="panel__updated">Updated {{ lastUpdated }}</span>
     </div>
 
     <p v-if="error" class="panel__error">{{ error }}</p>
@@ -519,7 +514,15 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  flex: 1 1 auto;
   min-width: 0;
+}
+
+.panel__conn {
+  font-size: 12px;
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 .panel__title {
@@ -527,11 +530,6 @@ onBeforeUnmount(() => {
   font-size: 15px;
   font-weight: 600;
   color: var(--fg);
-}
-
-.panel__conn {
-  font-size: 12px;
-  color: var(--fg-muted);
 }
 
 .panel__actions {
@@ -578,13 +576,6 @@ onBeforeUnmount(() => {
   height: 8px;
   border-radius: 2px;
   flex-shrink: 0;
-}
-
-.panel__updated {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--fg-muted);
-  opacity: 0.8;
 }
 
 .panel__error {
