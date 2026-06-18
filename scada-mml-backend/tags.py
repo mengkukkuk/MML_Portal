@@ -7,7 +7,7 @@ by polling /api/tags/latest at the panel's configured poll interval.
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 import db
 from auth import get_current_user
@@ -20,6 +20,10 @@ class TagOut(BaseModel):
 
 
 class TagLatestOut(BaseModel):
+    # extra='allow' so newly-discovered numeric columns from public.status_tag
+    # pass through without a Pydantic schema change.
+    model_config = ConfigDict(extra="allow")
+
     tag_name: str
     active: bool | None = None
     ts: datetime | None = None
@@ -34,12 +38,18 @@ class FieldOut(BaseModel):
     label: str
 
 
-_FIELD_LABELS = {
+# Preserve the cosmetic labels for the four legacy options so the UI doesn't
+# visually change. Newly-discovered columns are auto-humanised from their name.
+_FIELD_LABEL_OVERRIDES = {
     "current_value": "Current value",
     "current_setpoint": "Setpoint",
     "current_high_value": "High limit",
     "current_low_value": "Low limit",
 }
+
+
+def _humanise(name: str) -> str:
+    return name.replace("_", " ").strip().capitalize() or name
 
 
 @router.get("", response_model=list[TagOut])
@@ -50,8 +60,11 @@ def list_tags(_user: dict = Depends(get_current_user)):
 
 @router.get("/fields", response_model=list[FieldOut])
 def list_fields(_user: dict = Depends(get_current_user)):
-    """The four numeric columns a panel can bind to."""
-    return [{"field": f, "label": _FIELD_LABELS[f]} for f in db.TAG_FIELDS]
+    """Numeric columns of public.status_tag a panel can bind to."""
+    return [
+        {"field": f, "label": _FIELD_LABEL_OVERRIDES.get(f, _humanise(f))}
+        for f in db.tag_fields()
+    ]
 
 
 @router.get("/latest", response_model=TagLatestOut)

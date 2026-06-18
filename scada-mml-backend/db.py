@@ -216,8 +216,59 @@ def init_panels_table() -> None:
 
 # --- Status tags (real SCADA data — public.status_tag) ----------------------
 # API field names ↔ actual DB columns. The DB exposes the "current" value as
-# `current_value_tag`; we surface it as `current_value` for the frontend.
-TAG_FIELDS = ("current_value", "current_setpoint", "current_high_value", "current_low_value")
+# `current_value_tag`; we surface it as `current_value` for the frontend so
+# existing panels (metric == "current_value") keep working.
+_FIELD_DB_COLUMN = {"current_value": "current_value_tag"}
+_DB_COLUMN_FIELD = {v: k for k, v in _FIELD_DB_COLUMN.items()}
+
+# Postgres numeric data_types we plot as panel metrics.
+_NUMERIC_TYPES = (
+    "smallint", "integer", "bigint",
+    "real", "double precision", "numeric", "decimal",
+)
+
+# Process-lifetime cache of discovered API field names. DDL on status_tag is
+# rare and is only picked up on FastAPI restart — comment in plan.
+_tag_fields_cache: tuple[str, ...] | None = None
+
+
+def _discover_tag_fields() -> tuple[str, ...]:
+    """Introspect public.status_tag and return numeric columns as API field names.
+
+    Excludes primary-key columns (e.g. integer `id`) since they identify rows,
+    not metric values.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT c.column_name
+               FROM information_schema.columns c
+               LEFT JOIN (
+                 SELECT kcu.column_name
+                 FROM information_schema.table_constraints tc
+                 JOIN information_schema.key_column_usage kcu
+                   ON kcu.constraint_name = tc.constraint_name
+                  AND kcu.table_schema   = tc.table_schema
+                  AND kcu.table_name     = tc.table_name
+                 WHERE tc.table_schema = 'public'
+                   AND tc.table_name   = 'status_tag'
+                   AND tc.constraint_type = 'PRIMARY KEY'
+               ) pk ON pk.column_name = c.column_name
+               WHERE c.table_schema = 'public'
+                 AND c.table_name   = 'status_tag'
+                 AND c.data_type    = ANY(%s)
+                 AND pk.column_name IS NULL
+               ORDER BY c.ordinal_position""",
+            (list(_NUMERIC_TYPES),),
+        ).fetchall()
+    return tuple(_DB_COLUMN_FIELD.get(r["column_name"], r["column_name"]) for r in rows)
+
+
+def tag_fields() -> tuple[str, ...]:
+    """API field names exposed for panel `metric`. Cached after first call."""
+    global _tag_fields_cache
+    if _tag_fields_cache is None:
+        _tag_fields_cache = _discover_tag_fields()
+    return _tag_fields_cache
 
 
 def list_tags() -> list[dict[str, Any]]:
@@ -231,20 +282,17 @@ def list_tags() -> list[dict[str, Any]]:
 
 
 def latest_tag(tag_name: str) -> dict[str, Any] | None:
-    """Most-recent row for a tag — all four value columns + updated_at + active."""
+    """Most-recent row for a tag — all discovered numeric columns + updated_at + active."""
+    fields = tag_fields()
+    # Build "<db_col> AS <api_field>" for each discovered field; pass through if no alias.
+    select_metrics = ", ".join(f'{_FIELD_DB_COLUMN.get(f, f)} AS {f}' for f in fields)
+    sql = (
+        f"SELECT tag_name, active, updated_at AS ts, {select_metrics} "
+        "FROM public.status_tag WHERE tag_name = %s "
+        "ORDER BY updated_at DESC NULLS LAST LIMIT 1"
+    )
     with get_connection() as conn:
-        row = conn.execute(
-            """SELECT tag_name, active, updated_at AS ts,
-                      current_value_tag AS current_value,
-                      current_setpoint,
-                      current_high_value,
-                      current_low_value
-            FROM public.status_tag
-            WHERE tag_name = %s
-            ORDER BY updated_at DESC NULLS LAST
-            LIMIT 1""",
-            (tag_name,),
-        ).fetchone()
+        row = conn.execute(sql, (tag_name,)).fetchone()
     return row
 
 

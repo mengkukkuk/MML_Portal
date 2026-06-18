@@ -89,12 +89,13 @@ def _validate(body: PanelIn) -> None:
         if not body.tag_name or not body.metric:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="tag source requires tag_name and metric (one of TAG_FIELDS)",
+                detail="tag source requires tag_name and metric (a numeric column of public.status_tag)",
             )
-        if body.metric not in db.TAG_FIELDS:
+        valid_fields = db.tag_fields()
+        if body.metric not in valid_fields:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"metric for tag source must be one of: {', '.join(db.TAG_FIELDS)}",
+                detail=f"metric for tag source must be one of: {', '.join(valid_fields)}",
             )
 
 
