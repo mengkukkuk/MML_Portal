@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import auth
 import db
+import events
 import panels
 import readings
 import tags
@@ -38,6 +39,7 @@ app.include_router(users.router)
 app.include_router(readings.router)
 app.include_router(tags.router)
 app.include_router(panels.router)
+app.include_router(events.router)
 
 
 @app.on_event("startup")

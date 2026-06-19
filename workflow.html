@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MMLPortal — System Workflow</title>
+<style>
+  :root {
+    --bg:     #0d1117;
+    --bg2:    #161b22;
+    --bg3:    #1c2333;
+    --border: #30363d;
+    --text:   #e6edf3;
+    --muted:  #8b949e;
+    --accent: #58a6ff;
+    --green:  #3fb950;
+    --orange: #f0883e;
+    --purple: #d2a8ff;
+    --red:    #f85149;
+    --yellow: #e3b341;
+    --teal:   #39d353;
+    --pink:   #f778ba;
+    --cyan:   #76e3ea;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ── HEADER ── */
+  header {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 18px 32px;
+  }
+  .badges { display:flex; gap:8px; margin-bottom:6px; flex-wrap:wrap; }
+  .badge {
+    border-radius:6px; padding:3px 10px;
+    font-size:11px; font-weight:700; letter-spacing:.5px; text-transform:uppercase;
+    border: 1px solid;
+  }
+  .badge-vue   { background:#0d2218; color:var(--green);  border-color:#1a4a28; }
+  .badge-py    { background:#1a1a3a; color:var(--accent); border-color:#2a2a6a; }
+  .badge-pg    { background:#0d2530; color:var(--cyan);   border-color:#1a4a6a; }
+  .badge-iis   { background:#2d1a08; color:var(--orange); border-color:#3d2008; }
+  .badge-nssm  { background:#201634; color:var(--purple); border-color:#2a1e40; }
+  header h1  { font-size:18px; font-weight:700; }
+  header p   { color:var(--muted); font-size:13px; margin-top:2px; }
+  .subtitle  { color:var(--muted); margin-top:4px; }
+
+  /* ── CONTROLS ── */
+  .controls {
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding:14px 32px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .nav-btn {
+    background:var(--accent); color:#000; border:none;
+    border-radius:6px; padding:7px 18px; cursor:pointer;
+    font-size:13px; font-weight:700; transition:opacity .15s; min-width:80px;
+  }
+  .nav-btn:hover { opacity:.85; }
+  .nav-btn:disabled { opacity:.3; cursor:not-allowed; }
+  .step-btn {
+    background:var(--bg3); border:1px solid var(--border); color:var(--text);
+    border-radius:6px; padding:5px 11px; cursor:pointer;
+    font-size:12px; font-weight:600; transition:all .15s;
+  }
+  .step-btn:hover { border-color:var(--accent); color:var(--accent); }
+  .step-btn.active { background:#0d2340; border-color:var(--accent); color:var(--accent); }
+  .step-counter { color:var(--muted); font-size:12px; }
+  .auto-btn {
+    background:transparent; border:1px solid var(--green); color:var(--green);
+    border-radius:6px; padding:6px 14px; cursor:pointer;
+    font-size:12px; font-weight:600; transition:all .15s; margin-left:auto;
+  }
+  .auto-btn:hover { background:rgba(63,185,80,.1); }
+  .auto-btn.running { border-color:var(--orange); color:var(--orange); }
+
+  /* ── STEP LABEL ── */
+  .step-label {
+    padding: 18px 32px 6px;
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 700;
+  }
+  .step-label small {
+    display:block; color:var(--muted); font-weight:400; font-size:12px; margin-top:3px;
+  }
+
+  /* ── CANVAS ── */
+  .canvas { padding: 18px 32px 40px; display:flex; flex-direction:column; gap:14px; }
+
+  /* ── LAYER ── */
+  .layer { display:flex; flex-direction:column; gap:6px; }
+  .layer-label {
+    font-size:10px; font-weight:700; letter-spacing:1px;
+    text-transform:uppercase; color:var(--muted);
+    padding:4px 0; border-top:1px solid var(--border); margin-top:2px;
+  }
+  .row { display:flex; align-items:stretch; gap:10px; flex-wrap:wrap; }
+
+  /* ── NODE ── */
+  .node {
+    border-radius:8px; border:1.5px solid var(--border); background:var(--bg2);
+    padding:10px 14px; display:flex; flex-direction:column; gap:3px;
+    opacity:.22; transition:opacity .4s, border-color .4s, background .4s, transform .3s, box-shadow .4s;
+    cursor:default; position:relative; min-width:130px; flex:0 0 auto;
+  }
+  .node.lit  { opacity:1; }
+  .node.active { opacity:1; transform:translateY(-2px); box-shadow:0 4px 20px rgba(0,0,0,.55); }
+  .node .tag  { font-size:9px; font-weight:700; letter-spacing:.8px; text-transform:uppercase; color:var(--muted); margin-bottom:2px; }
+  .node .name { font-size:13px; font-weight:700; color:var(--text); }
+  .node .detail { font-size:11px; color:var(--muted); line-height:1.5; margin-top:2px; }
+  .node code  { background:var(--bg3); border:1px solid var(--border); border-radius:3px; padding:0 5px; font-family:'Cascadia Code','Fira Code',monospace; font-size:10px; color:var(--orange); }
+
+  .node.c-blue.active   { border-color:var(--accent); background:#0d2340; }
+  .node.c-green.active  { border-color:var(--green);  background:#0d2218; }
+  .node.c-orange.active { border-color:var(--orange); background:#2d1a08; }
+  .node.c-purple.active { border-color:var(--purple); background:#201634; }
+  .node.c-red.active    { border-color:var(--red);    background:#2d0d0d; }
+  .node.c-yellow.active { border-color:var(--yellow); background:#2a1f08; }
+  .node.c-teal.active   { border-color:var(--teal);   background:#0d2215; }
+  .node.c-pink.active   { border-color:var(--pink);   background:#2d1226; }
+  .node.c-cyan.active   { border-color:var(--cyan);   background:#0d2530; }
+
+  .node.c-blue.lit   { border-color:#1a3a5c; }
+  .node.c-green.lit  { border-color:#1a3a20; }
+  .node.c-orange.lit { border-color:#3d2008; }
+  .node.c-purple.lit { border-color:#2a1e40; }
+  .node.c-teal.lit   { border-color:#0d2a20; }
+  .node.c-cyan.lit   { border-color:#0d2535; }
+  .node.c-yellow.lit { border-color:#2a1f08; }
+
+  /* ── ARROWS ── */
+  .v-arrow { display:flex; flex-direction:column; align-items:center; padding:2px 0; opacity:.12; transition:opacity .4s; }
+  .v-arrow.lit { opacity:.55; }
+  .v-arrow.active { opacity:1; }
+  .v-arrow .line {
+    width:2px; background:var(--accent); height:24px; border-radius:1px; position:relative; overflow:hidden;
+  }
+  .v-arrow.flowing .line::after {
+    content:''; position:absolute; top:-100%; width:100%; height:50%;
+    background:linear-gradient(transparent,#fff,transparent); animation:flow 1s linear infinite;
+  }
+  @keyframes flow { 0%{top:-50%} 100%{top:150%} }
+  .v-arrow .tip {
+    width:0; height:0; border-left:5px solid transparent; border-right:5px solid transparent; border-top:7px solid var(--accent);
+  }
+  .v-arrow .label { font-size:10px; color:var(--muted); text-align:center; margin-top:3px; max-width:240px; }
+
+  .h-arrow { display:flex; align-items:center; gap:3px; opacity:.12; transition:opacity .4s; flex-shrink:0; }
+  .h-arrow.lit { opacity:.55; }
+  .h-arrow.active { opacity:1; }
+  .h-arrow .h-line { width:32px; height:2px; background:var(--accent); position:relative; overflow:hidden; }
+  .h-arrow.flowing .h-line::after {
+    content:''; position:absolute; left:-100%; height:100%; width:50%;
+    background:linear-gradient(90deg,transparent,#fff,transparent); animation:hflow 1s linear infinite;
+  }
+  @keyframes hflow { 0%{left:-50%} 100%{left:150%} }
+  .h-arrow .h-tip { width:0; height:0; border-top:5px solid transparent; border-bottom:5px solid transparent; border-left:7px solid var(--accent); }
+
+  /* ── CHIP GRID ── */
+  .chip-grid { display:flex; gap:7px; flex-wrap:wrap; }
+  .chip {
+    border-radius:6px; border:1.5px solid var(--border); background:var(--bg3);
+    padding:7px 12px; font-size:11px; font-weight:600; line-height:1.4;
+    opacity:.22; transition:all .4s; cursor:default;
+  }
+  .chip small { font-weight:400; color:var(--muted); display:block; font-size:10px; }
+  .chip.lit  { opacity:1; }
+  .chip.c-green.active  { border-color:var(--green);  color:var(--green);  background:#0d2218; opacity:1; }
+  .chip.c-purple.active { border-color:var(--purple); color:var(--purple); background:#201634; opacity:1; }
+  .chip.c-orange.active { border-color:var(--orange); color:var(--orange); background:#2d1a08; opacity:1; }
+  .chip.c-teal.active   { border-color:var(--teal);   color:var(--teal);   background:#0d2215; opacity:1; }
+  .chip.c-yellow.active { border-color:var(--yellow); color:var(--yellow); background:#2a1f08; opacity:1; }
+  .chip.c-cyan.active   { border-color:var(--cyan);   color:var(--cyan);   background:#0d2530; opacity:1; }
+  .chip.c-pink.active   { border-color:var(--pink);   color:var(--pink);   background:#2d1226; opacity:1; }
+  .chip.c-red.active    { border-color:var(--red);    color:var(--red);    background:#2d0d0d; opacity:1; }
+  .chip.c-blue.active   { border-color:var(--accent); color:var(--accent); background:#0d2340; opacity:1; }
+
+  /* ── DB TABLE ── */
+  .db-table {
+    border:1.5px solid var(--border); border-radius:8px; overflow:hidden;
+    opacity:.22; transition:opacity .4s, border-color .4s;
+    min-width:170px; flex:0 0 auto;
+  }
+  .db-table.lit { opacity:1; }
+  .db-table.active { opacity:1; border-color:var(--cyan); }
+  .db-table-head {
+    background:var(--bg3); padding:6px 10px;
+    font-size:10px; font-weight:700; letter-spacing:.6px; text-transform:uppercase;
+    color:var(--cyan); border-bottom:1px solid var(--border);
+    display:flex; align-items:center; gap:6px;
+  }
+  .db-table-body { padding:6px 10px; background:var(--bg2); }
+  .db-col { font-size:10px; color:var(--muted); padding:1px 0; display:flex; gap:6px; align-items:center; }
+  .db-col .col-name { color:var(--text); font-weight:600; min-width:100px; font-family:'Cascadia Code','Fira Code',monospace; }
+  .db-col .col-type { color:var(--purple); font-family:'Cascadia Code','Fira Code',monospace; font-size:9px; }
+  .db-col .col-pk { color:var(--yellow); font-size:9px; font-weight:700; }
+
+  /* ── METHOD BADGE ── */
+  .method {
+    font-size:9px; font-weight:800; letter-spacing:.5px; border-radius:3px; padding:1px 5px;
+    font-family:'Cascadia Code','Fira Code',monospace; flex-shrink:0;
+  }
+  .get    { background:#0d2818; color:#3fb950; border:1px solid #1a4a28; }
+  .post   { background:#1a1a3a; color:#58a6ff; border:1px solid #2a2a6a; }
+  .put    { background:#2d1a08; color:#f0883e; border:1px solid #3d2008; }
+  .delete { background:#2d0d0d; color:#f85149; border:1px solid #5a1c1c; }
+
+  /* ── FOOTER ── */
+  footer {
+    padding: 16px 32px;
+    border-top: 1px solid var(--border);
+    background: var(--bg2);
+    color: var(--muted);
+    font-size: 12px;
+    display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;
+  }
+  footer span code { color: var(--orange); font-family:'Cascadia Code','Fira Code',monospace; background:var(--bg3); padding:0 5px; border-radius:3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="badges">
+    <span class="badge badge-vue">Vue 3 + Vite</span>
+    <span class="badge badge-py">FastAPI 0.136</span>
+    <span class="badge badge-pg">PostgreSQL 18</span>
+    <span class="badge badge-iis">IIS + ARR</span>
+    <span class="badge badge-nssm">NSSM</span>
+  </div>
+  <h1>MMLPortal — End-to-End System Workflow</h1>
+  <p class="subtitle">SCADA monitoring portal. Walk through 8 steps from install to live dashboard.</p>
+</header>
+
+<div class="controls">
+  <button class="nav-btn" id="prevBtn">← Prev</button>
+  <button class="nav-btn" id="nextBtn">Next →</button>
+  <span class="step-counter" id="stepCounter">Step 0 / 8</span>
+  <button class="step-btn" data-step="0">0 · Overview</button>
+  <button class="step-btn" data-step="1">1 · Install</button>
+  <button class="step-btn" data-step="2">2 · Browser</button>
+  <button class="step-btn" data-step="3">3 · IIS</button>
+  <button class="step-btn" data-step="4">4 · Auth</button>
+  <button class="step-btn" data-step="5">5 · Live</button>
+  <button class="step-btn" data-step="6">6 · Admin</button>
+  <button class="step-btn" data-step="7">7 · Reset</button>
+  <button class="step-btn" data-step="8">8 · Ingest</button>
+  <button class="auto-btn" id="autoBtn">▶ Auto</button>
+</div>
+
+<div class="step-label" id="stepLabel">
+  Click <strong>Next →</strong> or pick a step above to walk through the system.
+  <small>Each step lights up only the pieces involved in that flow.</small>
+</div>
+
+<div class="canvas">
+
+  <!-- ─────────── LAYER 1 · CLIENT ─────────── -->
+  <div class="layer">
+    <div class="layer-label">Client</div>
+    <div class="row">
+      <div class="node c-blue" data-node="browser">
+        <span class="tag">Browser</span>
+        <span class="name">Chrome / Edge</span>
+        <span class="detail">User signs in, navigates SPA, polls live tiles.</span>
+      </div>
+      <div class="node c-purple" data-node="vite">
+        <span class="tag">Dev only</span>
+        <span class="name">Vite dev server</span>
+        <span class="detail">:5173 — HMR + proxy <code>/api → :8088</code></span>
+      </div>
+      <div class="node c-green" data-node="installer">
+        <span class="tag">Bootstrap</span>
+        <span class="name">install.ps1</span>
+        <span class="detail">Self-elevates, builds venv, patches <code>.env</code>, seeds DB, registers <code>mml-api</code> via NSSM.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="v-arrow" data-arrow="browser-iis">
+    <div class="line"></div><div class="tip"></div>
+    <div class="label">HTTPS — every page & API call</div>
+  </div>
+
+  <!-- ─────────── LAYER 2 · EDGE ─────────── -->
+  <div class="layer">
+    <div class="layer-label">Edge (Windows host)</div>
+    <div class="row">
+      <div class="node c-orange" data-node="iis">
+        <span class="tag">Reverse proxy</span>
+        <span class="name">IIS + ARR</span>
+        <span class="detail">Serves <code>dist/</code> SPA · proxies <code>/api/* → 127.0.0.1:8088</code> · SPA fallback to <code>index.html</code>.</span>
+      </div>
+      <div class="node c-purple" data-node="nssm">
+        <span class="tag">Service mgr</span>
+        <span class="name">NSSM · mml-api</span>
+        <span class="detail">Runs <code>uvicorn main:app</code> on 127.0.0.1:8088 · auto-start · rotating logs.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="v-arrow" data-arrow="iis-api">
+    <div class="line"></div><div class="tip"></div>
+    <div class="label">/api/* — ARR forward</div>
+  </div>
+
+  <!-- ─────────── LAYER 3 · BACKEND ─────────── -->
+  <div class="layer">
+    <div class="layer-label">FastAPI — scada-mml-backend</div>
+    <div class="row">
+      <div class="node c-green" data-node="auth">
+        <span class="tag">Router</span>
+        <span class="name">auth.py</span>
+        <span class="detail">login · register · me · refresh · logout · change-password · forgot-password · reset-password</span>
+      </div>
+      <div class="node c-green" data-node="users">
+        <span class="tag">Router</span>
+        <span class="name">users.py</span>
+        <span class="detail">admin user CRUD · last-admin guards</span>
+      </div>
+      <div class="node c-green" data-node="readings">
+        <span class="tag">Router</span>
+        <span class="name">readings.py</span>
+        <span class="detail">/api/readings · devices · metrics · latest · series</span>
+      </div>
+      <div class="node c-green" data-node="tags">
+        <span class="tag">Router</span>
+        <span class="name">tags.py</span>
+        <span class="detail">/api/tags · names · <em>dynamic</em> numeric fields · latest row</span>
+      </div>
+      <div class="node c-green" data-node="panels">
+        <span class="tag">Router</span>
+        <span class="name">panels.py</span>
+        <span class="detail">/api/panels CRUD · admin gate · device+tag sources · poll-interval whitelist</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="row" style="gap:10px;">
+    <div class="v-arrow" data-arrow="api-deps" style="flex:1;">
+      <div class="line"></div><div class="tip"></div>
+      <div class="label">db.py · security.py · mailer.py</div>
+    </div>
+  </div>
+
+  <!-- ─────────── LAYER 4 · BACKEND HELPERS ─────────── -->
+  <div class="layer">
+    <div class="layer-label">Cross-cutting helpers</div>
+    <div class="row">
+      <div class="node c-yellow" data-node="security">
+        <span class="tag">Crypto</span>
+        <span class="name">security.py</span>
+        <span class="detail">scrypt hash · JWT HS256 · access / refresh / reset · jti revocation sets in memory</span>
+      </div>
+      <div class="node c-yellow" data-node="db">
+        <span class="tag">SQL layer</span>
+        <span class="name">db.py</span>
+        <span class="detail">psycopg 3 · users · sensor_readings · status_tag (dynamic columns) · dashboard_panels</span>
+      </div>
+      <div class="node c-pink" data-node="mailer">
+        <span class="tag">Email</span>
+        <span class="name">mailer.py</span>
+        <span class="detail">Brevo HTTP API → SMTP fallback → log-only</span>
+      </div>
+      <div class="node c-cyan" data-node="config">
+        <span class="tag">Env</span>
+        <span class="name">config.py + .env</span>
+        <span class="detail">DB · JWT · APP_BASE_URL · BREVO_API_KEY · CORS_ORIGINS</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="v-arrow" data-arrow="api-db">
+    <div class="line"></div><div class="tip"></div>
+    <div class="label">SQL over loopback :5432</div>
+  </div>
+
+  <!-- ─────────── LAYER 5 · DATABASE ─────────── -->
+  <div class="layer">
+    <div class="layer-label">PostgreSQL 18 — localhost:5432</div>
+    <div class="row">
+      <div class="db-table" data-node="t-users">
+        <div class="db-table-head">users</div>
+        <div class="db-table-body">
+          <div class="db-col"><span class="col-name">id</span><span class="col-type">SERIAL</span><span class="col-pk">PK</span></div>
+          <div class="db-col"><span class="col-name">username</span><span class="col-type">TEXT</span></div>
+          <div class="db-col"><span class="col-name">password_hash</span><span class="col-type">TEXT</span></div>
+          <div class="db-col"><span class="col-name">role</span><span class="col-type">TEXT</span></div>
+          <div class="db-col"><span class="col-name">display_name</span><span class="col-type">TEXT</span></div>
+          <div class="db-col"><span class="col-name">email</span><span class="col-type">TEXT</span></div>
+        </div>
+      </div>
+      <div class="db-table" data-node="t-panels">
+        <div class="db-table-head">dashboard_panels</div>
+        <div class="db-table-body">
+          <div class="db-col"><span class="col-name">id</span><span class="col-type">SERIAL</span><span class="col-pk">PK</span></div>
+          <div class="db-col"><span class="col-name">title</span><span class="col-type">TEXT</span></div>
+          <div class="db-col"><span class="col-name">source</span><span class="col-type">TEXT</span></div>
+          <div class="db-col"><span class="col-name">device_id / tag_name</span><span class="col-type">INT/TEXT</span></div>
+          <div class="db-col"><span class="col-name">metric</span><span class="col-type">TEXT</span></div>
+          <div class="db-col"><span class="col-name">chart_type</span><span class="col-type">TEXT</span></div>
+          <div class="db-col"><span class="col-name">window_minutes</span><span class="col-type">INT</span></div>
+          <div class="db-col"><span class="col-name">poll_interval_s</span><span class="col-type">INT</span></div>
+          <div class="db-col"><span class="col-name">options</span><span class="col-type">JSONB</span></div>
+        </div>
+      </div>
+      <div class="db-table" data-node="t-readings">
+        <div class="db-table-head">sensor_readings + devices</div>
+        <div class="db-table-body">
+          <div class="db-col"><span class="col-name">device_id</span><span class="col-type">INT</span></div>
+          <div class="db-col"><span class="col-name">metric</span><span class="col-type">TEXT</span></div>
+          <div class="db-col"><span class="col-name">value</span><span class="col-type">FLOAT</span></div>
+          <div class="db-col"><span class="col-name">unit</span><span class="col-type">TEXT</span></div>
+          <div class="db-col"><span class="col-name">ts</span><span class="col-type">TIMESTAMPTZ</span></div>
+          <div class="db-col" style="color:var(--muted); font-style:italic; margin-top:2px;">written by simulate_data.py</div>
+        </div>
+      </div>
+      <div class="db-table" data-node="t-status">
+        <div class="db-table-head">public.status_tag</div>
+        <div class="db-table-body">
+          <div class="db-col"><span class="col-name">tag_name</span><span class="col-type">TEXT</span><span class="col-pk">PK</span></div>
+          <div class="db-col"><span class="col-name">active</span><span class="col-type">BOOL</span></div>
+          <div class="db-col"><span class="col-name">current_value_tag</span><span class="col-type">NUMERIC</span></div>
+          <div class="db-col"><span class="col-name">current_setpoint</span><span class="col-type">NUMERIC</span></div>
+          <div class="db-col"><span class="col-name">current_high_value</span><span class="col-type">NUMERIC</span></div>
+          <div class="db-col"><span class="col-name">current_low_value</span><span class="col-type">NUMERIC</span></div>
+          <div class="db-col"><span class="col-name">updated_at</span><span class="col-type">TIMESTAMPTZ</span></div>
+          <div class="db-col" style="color:var(--muted); font-style:italic; margin-top:2px;">written by SCADA · numeric columns discovered dynamically</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─────────── EXTERNAL ─────────── -->
+  <div class="layer">
+    <div class="layer-label">External systems</div>
+    <div class="row">
+      <div class="node c-pink" data-node="brevo">
+        <span class="tag">SMTP</span>
+        <span class="name">Brevo HTTP API</span>
+        <span class="detail">api.brevo.com/v3/smtp/email · password-reset · no IP allow-list</span>
+      </div>
+      <div class="node c-teal" data-node="scada">
+        <span class="tag">Plant floor</span>
+        <span class="name">SCADA / PLC</span>
+        <span class="detail">Writes <code>public.status_tag</code> directly. Backend only reads.</span>
+      </div>
+      <div class="node c-cyan" data-node="grafana">
+        <span class="tag">Optional</span>
+        <span class="name">Grafana</span>
+        <span class="detail">Reads Postgres directly · embedded by <code>GrafanaPanel.vue</code> on Trends.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─────────── SPA ROUTES ─────────── -->
+  <div class="layer">
+    <div class="layer-label">SPA routes (Vue Router · src/router/index.js)</div>
+    <div class="chip-grid">
+      <div class="chip c-blue"     data-node="r-login">/login<small>public</small></div>
+      <div class="chip c-blue"     data-node="r-reset">/reset-password<small>public</small></div>
+      <div class="chip c-green"    data-node="r-overview">/<small>OverviewPage</small></div>
+      <div class="chip c-green"    data-node="r-devices">/devices<small>DevicesPage</small></div>
+      <div class="chip c-yellow"   data-node="r-alarms">/alarms<small>AlarmsPage</small></div>
+      <div class="chip c-orange"   data-node="r-trends">/trends<small>+ embedded Grafana</small></div>
+      <div class="chip c-teal"     data-node="r-live">/live<small>LivePage + LivePanel</small></div>
+      <div class="chip c-purple"   data-node="r-settings">/settings<small>profile, password</small></div>
+      <div class="chip c-red"      data-node="r-accounts">/accounts<small>admin only</small></div>
+    </div>
+  </div>
+
+  <!-- ─────────── ENDPOINTS ─────────── -->
+  <div class="layer">
+    <div class="layer-label">REST endpoints</div>
+    <div class="chip-grid">
+      <div class="chip c-blue"   data-node="e-login"><span class="method post">POST</span> /api/auth/login</div>
+      <div class="chip c-blue"   data-node="e-refresh"><span class="method post">POST</span> /api/auth/refresh<small>HttpOnly cookie</small></div>
+      <div class="chip c-blue"   data-node="e-me"><span class="method get">GET</span> /api/auth/me</div>
+      <div class="chip c-blue"   data-node="e-logout"><span class="method post">POST</span> /api/auth/logout</div>
+      <div class="chip c-pink"   data-node="e-forgot"><span class="method post">POST</span> /api/auth/forgot-password</div>
+      <div class="chip c-pink"   data-node="e-reset"><span class="method post">POST</span> /api/auth/reset-password</div>
+      <div class="chip c-red"    data-node="e-users"><span class="method get">GET</span> /api/users<small>admin</small></div>
+      <div class="chip c-red"    data-node="e-user-crud"><span class="method post">POST</span><span class="method put">PUT</span><span class="method delete">DEL</span> /api/users</div>
+      <div class="chip c-green"  data-node="e-rdev"><span class="method get">GET</span> /api/readings/devices</div>
+      <div class="chip c-green"  data-node="e-rmet"><span class="method get">GET</span> /api/readings/metrics</div>
+      <div class="chip c-green"  data-node="e-rlat"><span class="method get">GET</span> /api/readings/latest</div>
+      <div class="chip c-green"  data-node="e-rser"><span class="method get">GET</span> /api/readings/series</div>
+      <div class="chip c-cyan"   data-node="e-tags"><span class="method get">GET</span> /api/tags</div>
+      <div class="chip c-cyan"   data-node="e-tfields"><span class="method get">GET</span> /api/tags/fields<small>dynamic numeric cols</small></div>
+      <div class="chip c-cyan"   data-node="e-tlat"><span class="method get">GET</span> /api/tags/latest</div>
+      <div class="chip c-teal"   data-node="e-plist"><span class="method get">GET</span> /api/panels</div>
+      <div class="chip c-teal"   data-node="e-pcrud"><span class="method post">POST</span><span class="method put">PUT</span><span class="method delete">DEL</span> /api/panels<small>admin only</small></div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  <span>Docs · <a href="README.md">README.md</a> · <a href="DEVELOPMENT.md">DEVELOPMENT.md</a> · <a href="CLAUDE.md">CLAUDE.md</a></span>
+  <span>Animated per-step backend view: <code>scada-mml-backend/python-backend-flow.html</code></span>
+</footer>
+
+<script>
+/* -------------------------------------------------------------------------
+   Each step lights ("lit") a subset of nodes/arrows and "active"-marks the
+   ones that are the focus of the step. Arrows can also "flow" (animated).
+   ------------------------------------------------------------------------- */
+const STEPS = [
+  {
+    title: "0 · Overview — full system map",
+    sub:   "Every node visible at low intensity. Pick a step to focus.",
+    lit: ["browser","vite","installer","iis","nssm",
+          "auth","users","readings","tags","panels",
+          "security","db","mailer","config",
+          "t-users","t-panels","t-readings","t-status",
+          "brevo","scada","grafana",
+          "r-login","r-reset","r-overview","r-devices","r-alarms","r-trends","r-live","r-settings","r-accounts",
+          "e-login","e-refresh","e-me","e-logout","e-forgot","e-reset","e-users","e-user-crud",
+          "e-rdev","e-rmet","e-rlat","e-rser","e-tags","e-tfields","e-tlat","e-plist","e-pcrud"],
+    active: [],
+    arrows: { lit: ["browser-iis","iis-api","api-deps","api-db"], flow: [] }
+  },
+  {
+    title: "1 · Install & bring up the host",
+    sub:   "install.ps1 self-elevates → venv → patches .env → seeds users → registers NSSM service → /health passes.",
+    lit:   ["installer","nssm","config","db","t-users"],
+    active:["installer","nssm","config"],
+    arrows:{ lit: [], flow: [] }
+  },
+  {
+    title: "2 · Browser loads the SPA",
+    sub:   "Dev: Vite (5173). Prod: IIS serves dist/. SPA fallback rewrites non-/api paths to index.html.",
+    lit:   ["browser","vite","iis","r-login","r-overview","r-devices","r-alarms","r-trends","r-live","r-settings","r-accounts","r-reset"],
+    active:["browser","iis","r-login"],
+    arrows:{ lit: ["browser-iis"], flow: ["browser-iis"] }
+  },
+  {
+    title: "3 · IIS / ARR reverse proxy",
+    sub:   "web.config rewrites /api/* → 127.0.0.1:8088 · NSSM keeps uvicorn alive. /api never leaves the host.",
+    lit:   ["browser","iis","nssm","auth","users","readings","tags","panels"],
+    active:["iis","nssm"],
+    arrows:{ lit: ["browser-iis","iis-api"], flow: ["browser-iis","iis-api"] }
+  },
+  {
+    title: "4 · Login & session lifecycle",
+    sub:   "POST /login → access token (memory) + refresh cookie (HttpOnly). Axios interceptor silently refreshes on 401.",
+    lit:   ["browser","iis","auth","security","db","config","t-users","r-login","e-login","e-refresh","e-me","e-logout"],
+    active:["browser","auth","security","t-users","e-login","e-refresh"],
+    arrows:{ lit: ["browser-iis","iis-api","api-deps","api-db"], flow: ["browser-iis","iis-api","api-db"] }
+  },
+  {
+    title: "5 · Live dashboard polls panels + tags",
+    sub:   "LivePage fetches panels once · each LivePanel self-polls /readings/latest or /tags/latest at its own interval.",
+    lit:   ["browser","iis","panels","readings","tags","db","t-panels","t-readings","t-status","scada","r-live",
+            "e-plist","e-rdev","e-rmet","e-rlat","e-rser","e-tags","e-tfields","e-tlat"],
+    active:["browser","panels","readings","tags","t-panels","t-status","r-live","e-plist","e-rlat","e-tlat"],
+    arrows:{ lit: ["browser-iis","iis-api","api-deps","api-db"], flow: ["browser-iis","iis-api","api-db"] }
+  },
+  {
+    title: "6 · Admin curates the Live grid",
+    sub:   "Admin only: POST/PUT/DELETE /api/panels. Tag-source panels pick a metric from dynamically discovered status_tag columns.",
+    lit:   ["browser","iis","auth","users","panels","tags","security","db","config","t-users","t-panels","t-status",
+            "r-live","r-accounts","e-users","e-user-crud","e-plist","e-pcrud","e-tfields"],
+    active:["panels","tags","t-panels","t-status","e-pcrud","e-tfields","r-accounts"],
+    arrows:{ lit: ["browser-iis","iis-api","api-deps","api-db"], flow: ["iis-api","api-db"] }
+  },
+  {
+    title: "7 · Forgot-password → reset link",
+    sub:   "POST /forgot-password → mailer picks Brevo HTTP / SMTP / log → user clicks ${APP_BASE_URL}/reset-password?token=… → POST /reset-password.",
+    lit:   ["browser","iis","auth","security","db","mailer","config","brevo","t-users","r-reset","e-forgot","e-reset"],
+    active:["mailer","brevo","auth","r-reset","e-forgot","e-reset"],
+    arrows:{ lit: ["browser-iis","iis-api","api-deps","api-db"], flow: ["iis-api","api-deps"] }
+  },
+  {
+    title: "8 · Data ingest (live & demo)",
+    sub:   "Plant SCADA writes status_tag directly. simulate_data.py writes sensor_readings every 5s for dev/demo. Grafana can also read Postgres.",
+    lit:   ["installer","db","readings","tags","scada","grafana","t-readings","t-status","r-trends","r-live"],
+    active:["scada","t-status","t-readings","r-live","r-trends"],
+    arrows:{ lit: ["api-db"], flow: [] }
+  },
+];
+
+const allNodes  = Array.from(document.querySelectorAll("[data-node]"));
+const allArrows = Array.from(document.querySelectorAll("[data-arrow]"));
+const stepBtns  = Array.from(document.querySelectorAll(".step-btn"));
+const stepLabel = document.getElementById("stepLabel");
+const stepCounter = document.getElementById("stepCounter");
+const prevBtn = document.getElementById("prevBtn");
+const nextBtn = document.getElementById("nextBtn");
+const autoBtn = document.getElementById("autoBtn");
+
+let current = 0;
+let autoTimer = null;
+
+function applyStep(i){
+  current = ((i % STEPS.length) + STEPS.length) % STEPS.length;
+  const s = STEPS[current];
+
+  // Reset everything
+  allNodes.forEach(n => n.classList.remove("lit","active"));
+  allArrows.forEach(a => a.classList.remove("lit","active","flowing"));
+
+  // Light nodes
+  s.lit.forEach(id => {
+    const n = document.querySelector(`[data-node="${id}"]`);
+    if (n) n.classList.add("lit");
+  });
+  // Activate focus nodes
+  (s.active || []).forEach(id => {
+    const n = document.querySelector(`[data-node="${id}"]`);
+    if (n) n.classList.add("active");
+  });
+  // Arrows
+  (s.arrows.lit  || []).forEach(id => {
+    const a = document.querySelector(`[data-arrow="${id}"]`);
+    if (a) a.classList.add("lit");
+  });
+  (s.arrows.flow || []).forEach(id => {
+    const a = document.querySelector(`[data-arrow="${id}"]`);
+    if (a) a.classList.add("active","flowing");
+  });
+
+  // Label & buttons
+  stepLabel.innerHTML = `<strong>${s.title}</strong><small>${s.sub}</small>`;
+  stepCounter.textContent = `Step ${current} / ${STEPS.length - 1}`;
+  stepBtns.forEach(b => b.classList.toggle("active", parseInt(b.dataset.step,10) === current));
+}
+
+stepBtns.forEach(b => b.addEventListener("click", () => {
+  stopAuto();
+  applyStep(parseInt(b.dataset.step,10));
+}));
+prevBtn.addEventListener("click", () => { stopAuto(); applyStep(current - 1); });
+nextBtn.addEventListener("click", () => { stopAuto(); applyStep(current + 1); });
+
+function startAuto(){
+  autoBtn.classList.add("running");
+  autoBtn.textContent = "■ Stop";
+  autoTimer = setInterval(() => applyStep(current + 1), 3200);
+}
+function stopAuto(){
+  if (!autoTimer) return;
+  clearInterval(autoTimer);
+  autoTimer = null;
+  autoBtn.classList.remove("running");
+  autoBtn.textContent = "▶ Auto";
+}
+autoBtn.addEventListener("click", () => autoTimer ? stopAuto() : startAuto());
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowRight") { stopAuto(); applyStep(current + 1); }
+  else if (e.key === "ArrowLeft") { stopAuto(); applyStep(current - 1); }
+  else if (e.key === " ") { e.preventDefault(); autoTimer ? stopAuto() : startAuto(); }
+});
+
+applyStep(0);
+</script>
+
+</body>
+</html>

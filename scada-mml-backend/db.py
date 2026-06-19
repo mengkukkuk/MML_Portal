@@ -296,6 +296,31 @@ def latest_tag(tag_name: str) -> dict[str, Any] | None:
     return row
 
 
+# --- Event log (real SCADA data — public.event_log, read-only) ---------------
+def list_recent_events(limit: int) -> list[dict[str, Any]]:
+    """Last `limit` events per (location, tag_name), newest first.
+
+    Reads the externally-populated public.event_log. Ordered so the frontend can
+    group location -> tag_name in a single pass.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT location, tag_name, event, at_date_time
+               FROM (
+                 SELECT location, tag_name, event, at_date_time,
+                        ROW_NUMBER() OVER (
+                          PARTITION BY location, tag_name
+                          ORDER BY at_date_time DESC
+                        ) AS rn
+                 FROM public.event_log
+               ) ranked
+               WHERE rn <= %s
+               ORDER BY location, tag_name, at_date_time DESC""",
+            (limit,),
+        ).fetchall()
+    return rows
+
+
 _PANEL_COLS = (
     "id, title, device_id, metric, window_minutes, chart_type, position, "
     "options, source, tag_name, poll_interval_seconds, created_at"
