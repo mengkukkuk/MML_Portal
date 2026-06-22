@@ -2,6 +2,7 @@
 from typing import Any
 
 import psycopg
+from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
@@ -209,6 +210,19 @@ def init_panels_table() -> None:
             "ALTER TABLE dashboard_panels "
             "ADD COLUMN IF NOT EXISTS poll_interval_seconds INTEGER NOT NULL DEFAULT 5"
         )
+        # Generic table data-source binding (source='table'): the chosen public
+        # table, the filter (series-key) column, and the timestamp column used for
+        # ordering / the x-axis. The value column reuses `metric`; the per-series
+        # filter values ride in options.filters (parallel to options.tags).
+        conn.execute(
+            "ALTER TABLE dashboard_panels ADD COLUMN IF NOT EXISTS table_name TEXT"
+        )
+        conn.execute(
+            "ALTER TABLE dashboard_panels ADD COLUMN IF NOT EXISTS filter_col TEXT"
+        )
+        conn.execute(
+            "ALTER TABLE dashboard_panels ADD COLUMN IF NOT EXISTS ts_col TEXT"
+        )
         conn.execute("ALTER TABLE dashboard_panels ALTER COLUMN device_id DROP NOT NULL")
         conn.execute("ALTER TABLE dashboard_panels ALTER COLUMN metric DROP NOT NULL")
         conn.commit()
@@ -375,7 +389,8 @@ def acknowledge_alarm(alarm_id: int, user_id: int) -> dict[str, Any] | None:
 
 _PANEL_COLS = (
     "id, title, device_id, metric, window_minutes, chart_type, position, "
-    "options, source, tag_name, poll_interval_seconds, created_at"
+    "options, source, tag_name, poll_interval_seconds, "
+    "table_name, filter_col, ts_col, created_at"
 )
 
 
@@ -399,16 +414,21 @@ def create_panel(
     source: str,
     tag_name: str | None,
     poll_interval_seconds: int,
+    table_name: str | None = None,
+    filter_col: str | None = None,
+    ts_col: str | None = None,
 ) -> dict[str, Any]:
     with get_connection() as conn:
         row = conn.execute(
             f"""INSERT INTO dashboard_panels
                 (title, device_id, metric, window_minutes, chart_type, position,
-                 options, source, tag_name, poll_interval_seconds)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 options, source, tag_name, poll_interval_seconds,
+                 table_name, filter_col, ts_col)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING {_PANEL_COLS}""",
             (title, device_id, metric, window_minutes, chart_type, position,
-             Json(options), source, tag_name, poll_interval_seconds),
+             Json(options), source, tag_name, poll_interval_seconds,
+             table_name, filter_col, ts_col),
         ).fetchone()
         conn.commit()
     return row
@@ -426,6 +446,9 @@ def update_panel(
     source: str,
     tag_name: str | None,
     poll_interval_seconds: int,
+    table_name: str | None = None,
+    filter_col: str | None = None,
+    ts_col: str | None = None,
 ) -> dict[str, Any] | None:
     """Update a panel. Returns None if no such panel."""
     with get_connection() as conn:
@@ -433,11 +456,13 @@ def update_panel(
             f"""UPDATE dashboard_panels
             SET title = %s, device_id = %s, metric = %s, window_minutes = %s,
                 chart_type = %s, position = %s, options = %s,
-                source = %s, tag_name = %s, poll_interval_seconds = %s
+                source = %s, tag_name = %s, poll_interval_seconds = %s,
+                table_name = %s, filter_col = %s, ts_col = %s
             WHERE id = %s
             RETURNING {_PANEL_COLS}""",
             (title, device_id, metric, window_minutes, chart_type, position,
-             Json(options), source, tag_name, poll_interval_seconds, panel_id),
+             Json(options), source, tag_name, poll_interval_seconds,
+             table_name, filter_col, ts_col, panel_id),
         ).fetchone()
         conn.commit()
     return row
@@ -449,3 +474,175 @@ def delete_panel(panel_id: int) -> bool:
         cur = conn.execute("DELETE FROM dashboard_panels WHERE id = %s", (panel_id,))
         conn.commit()
         return cur.rowcount > 0
+
+
+# --- Generic table data-source (source='table') -----------------------------
+# Admins can bind a panel to any numeric column of any non-sensitive public
+# table. Table/column names are SQL *identifiers* and cannot be parameterized,
+# so every identifier is validated against an information_schema allowlist and
+# composed with psycopg.sql.Identifier — never string-interpolated. Filter
+# *values* are always passed as %s params.
+
+# Tables never exposed to the picker (credentials / app-internal state).
+SENSITIVE_TABLES = {"users", "dashboard_panels", "mmldatabuffer"}
+
+# Postgres date/time data_types usable as a panel's timestamp/x-axis column.
+_TS_TYPES = (
+    "timestamp without time zone",
+    "timestamp with time zone",
+    "date",
+    "time without time zone",
+    "time with time zone",
+)
+
+
+def list_schema_tables() -> list[dict[str, Any]]:
+    """Public base tables an admin may chart, minus the sensitive denylist."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT table_name FROM information_schema.tables
+               WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+               ORDER BY table_name"""
+        ).fetchall()
+    return [
+        {"table": r["table_name"], "label": r["table_name"]}
+        for r in rows
+        if r["table_name"] not in SENSITIVE_TABLES
+    ]
+
+
+def _table_columns(table: str) -> dict[str, str]:
+    """{column_name: data_type} for an allowlisted public table.
+
+    Validation gate for all dynamic-SQL builders: raises ValueError if the table
+    is not in the (denylist-filtered) allowlist, so a caller can never reference
+    an arbitrary or sensitive table.
+    """
+    allowed = {t["table"] for t in list_schema_tables()}
+    if table not in allowed:
+        raise ValueError(f"Table not allowed: {table!r}")
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT column_name, data_type
+               FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = %s
+               ORDER BY ordinal_position""",
+            (table,),
+        ).fetchall()
+    return {r["column_name"]: r["data_type"] for r in rows}
+
+
+def _safe_identifiers(table: str, *cols: str | None) -> dict[str, str]:
+    """Validate table + columns; return the table's {col: type} map.
+
+    Each non-None column must exist on the table. Raises ValueError otherwise.
+    """
+    columns = _table_columns(table)
+    for c in cols:
+        if c is not None and c not in columns:
+            raise ValueError(f"Column not in {table!r}: {c!r}")
+    return columns
+
+
+def _primary_key_columns(table: str) -> set[str]:
+    """Primary-key column names for a public table (used to drop id-like cols)."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT kcu.column_name
+               FROM information_schema.table_constraints tc
+               JOIN information_schema.key_column_usage kcu
+                 ON kcu.constraint_name = tc.constraint_name
+                AND kcu.table_schema   = tc.table_schema
+                AND kcu.table_name     = tc.table_name
+               WHERE tc.table_schema = 'public'
+                 AND tc.table_name   = %s
+                 AND tc.constraint_type = 'PRIMARY KEY'""",
+            (table,),
+        ).fetchall()
+    return {r["column_name"] for r in rows}
+
+
+def describe_table(table: str) -> dict[str, list[str]]:
+    """Categorize a table's columns for the panel editor's pickers."""
+    columns = _table_columns(table)
+    # Numeric columns are chartable values, but a surrogate key identifies rows,
+    # not a metric — exclude PK columns and any column conventionally named `id`
+    # (some SCADA log tables carry an `id` with no formal PK constraint).
+    skip = _primary_key_columns(table) | {"id"}
+    value_columns = [c for c, t in columns.items() if t in _NUMERIC_TYPES and c not in skip]
+    ts_columns = [c for c, t in columns.items() if t in _TS_TYPES]
+    return {
+        "value_columns": value_columns,
+        "ts_columns": ts_columns,
+        # Any column may identify a series; numeric value columns are the least
+        # useful as a filter so they're excluded to keep the list focused.
+        "filter_columns": [c for c in columns if c not in value_columns],
+    }
+
+
+def distinct_column_values(table: str, column: str, limit: int) -> list[str]:
+    """Distinct non-null values of a filter column (series picker)."""
+    _safe_identifiers(table, column)
+    query = sql.SQL(
+        "SELECT DISTINCT {col}::text AS v FROM {tbl} "
+        "WHERE {col} IS NOT NULL ORDER BY 1 LIMIT %s"
+    ).format(col=sql.Identifier(column), tbl=sql.Identifier("public", table))
+    with get_connection() as conn:
+        rows = conn.execute(query, (limit,)).fetchall()
+    return [r["v"] for r in rows]
+
+
+def table_latest(
+    table: str,
+    value_col: str,
+    filter_col: str | None,
+    filter_val: str | None,
+    ts_col: str | None,
+) -> dict[str, Any] | None:
+    """Newest matching row's value (+ ts when a timestamp column is given)."""
+    _safe_identifiers(table, value_col, filter_col, ts_col)
+    ts_select = (
+        sql.SQL(", {} AS ts").format(sql.Identifier(ts_col))
+        if ts_col else sql.SQL(", NULL AS ts")
+    )
+    query = sql.SQL("SELECT {val} AS value{ts} FROM {tbl}").format(
+        val=sql.Identifier(value_col), ts=ts_select, tbl=sql.Identifier("public", table)
+    )
+    params: list[Any] = []
+    if filter_col and filter_val is not None:
+        query += sql.SQL(" WHERE {}::text = %s").format(sql.Identifier(filter_col))
+        params.append(filter_val)
+    if ts_col:
+        query += sql.SQL(" ORDER BY {} DESC NULLS LAST").format(sql.Identifier(ts_col))
+    query += sql.SQL(" LIMIT 1")
+    with get_connection() as conn:
+        row = conn.execute(query, params).fetchone()
+    return row
+
+
+def table_series(
+    table: str,
+    value_col: str,
+    filter_col: str | None,
+    filter_val: str | None,
+    ts_col: str,
+    minutes: int,
+) -> list[dict[str, Any]]:
+    """Time-ordered rows over the last `minutes` (requires a timestamp column)."""
+    _safe_identifiers(table, value_col, filter_col, ts_col)
+    query = sql.SQL(
+        "SELECT {val} AS value, {ts} AS ts FROM {tbl} WHERE {ts} >= "
+        "now() - make_interval(mins => %s)"
+    ).format(
+        val=sql.Identifier(value_col),
+        ts=sql.Identifier(ts_col),
+        tbl=sql.Identifier("public", table),
+    )
+    params: list[Any] = [minutes]
+    if filter_col and filter_val is not None:
+        query += sql.SQL(" AND {}::text = %s").format(sql.Identifier(filter_col))
+        params.append(filter_val)
+    query += sql.SQL(" ORDER BY {} ASC").format(sql.Identifier(ts_col))
+    with get_connection() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return rows

@@ -12,11 +12,15 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import LivePanel from '@/components/LivePanel.vue'
-import { fetchDevices, fetchMetrics } from '@/api/readings'
-import { fetchTags, fetchTagFields } from '@/api/tags'
+import { fetchDevices } from '@/api/readings'
+import { fetchSchemaTables, fetchSchemaColumns, fetchSchemaValues } from '@/api/schema'
 import { fetchPanels, createPanel, updatePanel, deletePanel } from '@/api/panels'
 import { colorAt } from '@/utils/seriesPalette'
 import { compileExpr } from '@/utils/mathExpr'
+
+// Legacy tag API field names → real status_tag column names, so editing an old
+// tag panel maps cleanly onto the generic table model.
+const TAG_FIELD_TO_COL = { current_value: 'current_value_tag' }
 
 // Poll-interval choices shown in the editor & on each panel header.
 // Values are seconds and must match the backend whitelist in panels.py.
@@ -93,8 +97,9 @@ function defaultOptions(type) {
 
 const panels = ref([])
 const devices = ref([])
-const tags = ref([])         // [{ tag_name }]
-const tagFields = ref([])    // [{ field, label }]
+const schemaTables = ref([])   // [{ table, label }]
+const schemaCols = ref({ value_columns: [], ts_columns: [], filter_columns: [] })
+const filterValues = ref([])   // distinct values of the chosen filter column
 const loading = ref(true)
 const error = ref('')
 
@@ -102,13 +107,13 @@ const error = ref('')
 const dialogVisible = ref(false)
 const editingId = ref(null) // null = create mode
 const saving = ref(false)
-const dialogMetrics = ref([])
 const form = reactive({
   title: '',
-  source: 'tag',
-  device_id: null,
-  tags: [],        // tag source: one or more tag names, each its own series/color
-  metric: null,
+  table_name: null,
+  metric: null,      // value column
+  filter_col: null,  // optional series-key column
+  filters: [],       // chosen filter values, each its own series/color
+  ts_col: null,      // optional timestamp column (enables real history)
   // Optional math transform applied to every reading before display.
   // Kept outside form.options because onVizTypeChange replaces options wholesale.
   mathExpr: '',
@@ -118,19 +123,19 @@ const form = reactive({
   poll_interval_seconds: 5,
 })
 
-// First tag not already chosen, so [+ Add tag] defaults to a fresh selection.
-function firstUnusedTag() {
-  const used = new Set(form.tags)
-  return tags.value.find((t) => !used.has(t.tag_name))?.tag_name ?? tags.value[0]?.tag_name ?? null
+// First filter value not already chosen, so [+ Add series] picks something fresh.
+function firstUnusedFilter() {
+  const used = new Set(form.filters)
+  return filterValues.value.find((v) => !used.has(v)) ?? filterValues.value[0] ?? null
 }
 
-function addTag() {
-  const t = firstUnusedTag()
-  if (t) form.tags.push(t)
+function addFilter() {
+  const v = firstUnusedFilter()
+  if (v != null) form.filters.push(v)
 }
 
-function removeTag(i) {
-  form.tags.splice(i, 1)
+function removeFilter(i) {
+  form.filters.splice(i, 1)
 }
 
 const dialogTitle = computed(() => (editingId.value ? 'Edit panel' : 'Add panel'))
@@ -138,75 +143,124 @@ const currentSchema = computed(() => PARAM_SCHEMA[form.chart_type] || [])
 
 const deviceName = (id) => devices.value.find((d) => d.id === id)?.name || ''
 
-async function loadDialogMetrics() {
-  if (!form.device_id) {
-    dialogMetrics.value = []
-    return
-  }
-  dialogMetrics.value = await fetchMetrics(form.device_id)
-}
-
-async function onDialogDeviceChange() {
-  await loadDialogMetrics()
-  if (!dialogMetrics.value.some((m) => m.metric === form.metric)) {
-    form.metric = dialogMetrics.value[0]?.metric ?? null
-  }
-}
-
 // Switching viz type resets its parameters to that type's defaults.
 function onVizTypeChange(type) {
   form.options = defaultOptions(type)
 }
 
-function onSourceChange(src) {
-  form.source = src
-  if (src === 'tag') {
-    form.tags = tags.value[0] ? [tags.value[0].tag_name] : []
-    form.metric = tagFields.value[0]?.field ?? 'current_value'
-  } else {
-    form.device_id = devices.value[0]?.id ?? null
-    form.metric = null
-    loadDialogMetrics().then(() => {
-      form.metric = dialogMetrics.value[0]?.metric ?? null
-    })
+// Load the distinct values for the current filter column into filterValues.
+async function loadFilterValues() {
+  if (!form.table_name || !form.filter_col) {
+    filterValues.value = []
+    return
+  }
+  try {
+    filterValues.value = await fetchSchemaValues(form.table_name, form.filter_col)
+  } catch {
+    filterValues.value = []
   }
 }
 
-function openCreate() {
+// Resolve a binding against the chosen table's columns, clamping each field to a
+// valid value. Shared by openCreate / openEdit and the table-change handler.
+async function applyBinding({ table, metric, filter_col, filters, ts_col }) {
+  // Fall back to the first available table if the requested one isn't selectable.
+  const exists = schemaTables.value.some((t) => t.table === table)
+  form.table_name = exists ? table : (schemaTables.value[0]?.table ?? null)
+  if (!form.table_name) {
+    schemaCols.value = { value_columns: [], ts_columns: [], filter_columns: [] }
+    form.metric = null; form.filter_col = null; form.filters = []; form.ts_col = null
+    filterValues.value = []
+    return
+  }
+  try {
+    schemaCols.value = await fetchSchemaColumns(form.table_name)
+  } catch {
+    schemaCols.value = { value_columns: [], ts_columns: [], filter_columns: [] }
+  }
+  const cols = schemaCols.value
+  form.metric = cols.value_columns.includes(metric) ? metric : (cols.value_columns[0] ?? null)
+  form.ts_col = ts_col && cols.ts_columns.includes(ts_col)
+    ? ts_col
+    : (cols.ts_columns[0] ?? null)
+  form.filter_col = filter_col && cols.filter_columns.includes(filter_col) ? filter_col : null
+  await loadFilterValues()
+  if (form.filter_col) {
+    const keep = (filters || []).filter((v) => filterValues.value.includes(v))
+    form.filters = keep.length ? keep : (filterValues.value[0] != null ? [filterValues.value[0]] : [])
+  } else {
+    form.filters = []
+  }
+}
+
+async function onTableChange(table) {
+  // New table → reset to its first value column, prefer a timestamp, no filter.
+  await applyBinding({ table, metric: null, filter_col: null, filters: [], ts_col: null })
+}
+
+async function onFilterColChange(col) {
+  form.filter_col = col || null
+  await loadFilterValues()
+  form.filters = form.filter_col && filterValues.value[0] != null ? [filterValues.value[0]] : []
+}
+
+async function openCreate() {
   editingId.value = null
   form.title = ''
-  form.source = 'tag'
-  form.device_id = null
-  form.tags = tags.value[0] ? [tags.value[0].tag_name] : []
-  form.metric = tagFields.value[0]?.field ?? 'current_value'
   form.mathExpr = ''
   form.window_minutes = 15
   form.chart_type = 'timeseries'
   form.options = defaultOptions('timeseries')
   form.poll_interval_seconds = 5
-  dialogMetrics.value = []
+  await applyBinding({
+    table: schemaTables.value[0]?.table ?? null,
+    metric: null, filter_col: null, filters: [], ts_col: null,
+  })
   dialogVisible.value = true
 }
 
-function openEdit(panel) {
+// Best-effort map of a legacy tag/device panel onto the generic table model.
+function legacyBinding(panel) {
+  if (panel.source === 'tag') {
+    return {
+      table: 'status_tag',
+      metric: TAG_FIELD_TO_COL[panel.metric] || panel.metric,
+      filter_col: 'tag_name',
+      filters: panel.options?.tags?.length ? [...panel.options.tags] : (panel.tag_name ? [panel.tag_name] : []),
+      // status_tag updates one row in place; leave ts unset so the tile samples
+      // at the poll clock (its prior behaviour) instead of degenerate history.
+      ts_col: null,
+    }
+  }
+  if (panel.source === 'device') {
+    return { table: 'sensor_readings', metric: 'value', filter_col: 'metric', filters: panel.metric ? [panel.metric] : [], ts_col: 'ts' }
+  }
+  return null
+}
+
+async function openEdit(panel) {
   editingId.value = panel.id
   form.title = panel.title
-  form.source = panel.source || 'device'
-  form.device_id = panel.device_id
-  form.tags = panel.options?.tags?.length
-    ? [...panel.options.tags]
-    : (panel.tag_name ? [panel.tag_name] : [])
-  form.metric = panel.metric
-  form.window_minutes = panel.window_minutes
   form.chart_type = panel.chart_type === 'line' ? 'timeseries' : panel.chart_type
-  // `tags` and `mathExpr` live outside form.options — onVizTypeChange replaces
-  // form.options wholesale and would otherwise drop them.
-  const { tags: _ignoredTags, mathExpr: _ignoredExpr, ...vizOpts } = panel.options || {}
+  // `filters`/`tags` and `mathExpr` live outside form.options — onVizTypeChange
+  // replaces form.options wholesale and would otherwise drop them.
+  const { tags: _t, filters: _f, mathExpr: _m, ...vizOpts } = panel.options || {}
   form.options = { ...defaultOptions(form.chart_type), ...vizOpts }
   form.mathExpr = panel.options?.mathExpr || ''
+  form.window_minutes = panel.window_minutes
   form.poll_interval_seconds = panel.poll_interval_seconds || 5
+
+  const binding = panel.source === 'table'
+    ? {
+        table: panel.table_name,
+        metric: panel.metric,
+        filter_col: panel.filter_col,
+        filters: panel.options?.filters?.length ? [...panel.options.filters] : [],
+        ts_col: panel.ts_col,
+      }
+    : (legacyBinding(panel) || { table: null, metric: null, filter_col: null, filters: [], ts_col: null })
+  await applyBinding(binding)
   dialogVisible.value = true
-  if (form.source === 'device') loadDialogMetrics()
 }
 
 async function save() {
@@ -214,12 +268,12 @@ async function save() {
     ElMessage.warning('Title is required.')
     return
   }
-  if (form.source === 'device' && (!form.device_id || !form.metric)) {
-    ElMessage.warning('Pick a device and metric.')
+  if (!form.table_name || !form.metric) {
+    ElMessage.warning('Pick a table and a value column.')
     return
   }
-  if (form.source === 'tag' && (!form.tags.length || !form.metric)) {
-    ElMessage.warning('Add at least one tag and pick a field.')
+  if (form.filter_col && !form.filters.length) {
+    ElMessage.warning('Add at least one series value, or clear the filter column.')
     return
   }
   const compiled = compileExpr(form.mathExpr)
@@ -229,21 +283,21 @@ async function save() {
   }
   saving.value = true
   try {
-    const isTag = form.source === 'tag'
     const trimmedExpr = form.mathExpr?.trim() || ''
     const extraOpts = trimmedExpr ? { mathExpr: trimmedExpr } : {}
     const payload = {
       title: form.title.trim(),
-      source: form.source,
-      device_id: isTag ? null : form.device_id,
-      // Primary tag satisfies backend validation; full list rides in options.tags.
-      tag_name: isTag ? form.tags[0] : null,
+      source: 'table',
+      device_id: null,
+      tag_name: null,
+      table_name: form.table_name,
       metric: form.metric,
+      filter_col: form.filter_col || null,
+      ts_col: form.ts_col || null,
       window_minutes: form.window_minutes,
       chart_type: form.chart_type,
-      options: isTag
-        ? { ...form.options, tags: [...form.tags], ...extraOpts }
-        : { ...form.options, ...extraOpts },
+      // Filter values ride in options.filters (parallel to the old options.tags).
+      options: { ...form.options, filters: [...form.filters], ...extraOpts },
       poll_interval_seconds: form.poll_interval_seconds,
       position: editingId.value
         ? panels.value.find((p) => p.id === editingId.value)?.position ?? 0
@@ -306,6 +360,9 @@ async function confirmDuplicate() {
       source: panel.source || 'device',
       device_id: panel.device_id,
       tag_name: panel.tag_name,
+      table_name: panel.table_name,
+      filter_col: panel.filter_col,
+      ts_col: panel.ts_col,
       metric: panel.metric,
       window_minutes: panel.window_minutes,
       chart_type: panel.chart_type === 'line' ? 'timeseries' : panel.chart_type,
@@ -355,6 +412,9 @@ async function onPollIntervalChange(panel, seconds) {
       source: panel.source || 'device',
       device_id: panel.device_id,
       tag_name: panel.tag_name,
+      table_name: panel.table_name,
+      filter_col: panel.filter_col,
+      ts_col: panel.ts_col,
       metric: panel.metric,
       window_minutes: panel.window_minutes,
       chart_type: panel.chart_type === 'line' ? 'timeseries' : panel.chart_type,
@@ -372,16 +432,14 @@ async function onPollIntervalChange(panel, seconds) {
 
 onMounted(async () => {
   try {
-    const [p, d, t, f] = await Promise.all([
+    const [p, d, t] = await Promise.all([
       fetchPanels(),
       fetchDevices().catch(() => []),
-      fetchTags().catch(() => []),
-      fetchTagFields().catch(() => []),
+      fetchSchemaTables().catch(() => []),
     ])
     panels.value = p
     devices.value = d
-    tags.value = t
-    tagFields.value = f
+    schemaTables.value = t
   } catch (e) {
     error.value = e?.message || 'Failed to load dashboard.'
   } finally {
@@ -434,51 +492,62 @@ onMounted(async () => {
           <el-input v-model="form.title" placeholder="e.g. Boiler #1 Temperature" />
         </el-form-item>
 
-        <el-form-item label="Data source">
-          <el-radio-group :model-value="form.source" @update:model-value="onSourceChange">
-            <el-radio-button value="tag">Status tag</el-radio-button>
-            <el-radio-button value="device">Device + metric</el-radio-button>
-          </el-radio-group>
+        <el-form-item label="Data source (table)">
+          <el-select
+            :model-value="form.table_name"
+            placeholder="Select a table"
+            filterable
+            style="width: 100%"
+            @update:model-value="onTableChange"
+          >
+            <el-option v-for="t in schemaTables" :key="t.table" :label="t.label" :value="t.table" />
+          </el-select>
         </el-form-item>
 
-        <template v-if="form.source === 'tag'">
-          <el-form-item label="Tags">
-            <div class="taglist">
-              <div v-for="(t, i) in form.tags" :key="i" class="taglist__row">
-                <span class="taglist__swatch" :style="{ background: colorAt(i) }" />
-                <el-select v-model="form.tags[i]" placeholder="Tag" filterable class="taglist__select">
-                  <el-option v-for="opt in tags" :key="opt.tag_name" :label="opt.tag_name" :value="opt.tag_name" />
-                </el-select>
-                <el-button
-                  class="taglist__remove"
-                  text
-                  :disabled="form.tags.length <= 1"
-                  title="Remove tag"
-                  @click="removeTag(i)"
-                >×</el-button>
-              </div>
-              <el-button class="taglist__add" text @click="addTag">+ Add tag</el-button>
-            </div>
-          </el-form-item>
-          <el-form-item label="Field">
-            <el-select v-model="form.metric" placeholder="Field" style="width: 100%">
-              <el-option v-for="f in tagFields" :key="f.field" :label="f.label" :value="f.field" />
+        <div class="editor__row">
+          <el-form-item label="Value column" class="editor__col">
+            <el-select v-model="form.metric" placeholder="Value" style="width: 100%">
+              <el-option v-for="c in schemaCols.value_columns" :key="c" :label="c" :value="c" />
             </el-select>
           </el-form-item>
-        </template>
-
-        <div v-else class="editor__row">
-          <el-form-item label="Device (connection)" class="editor__col">
-            <el-select v-model="form.device_id" placeholder="Device" @change="onDialogDeviceChange" style="width: 100%">
-              <el-option v-for="d in devices" :key="d.id" :label="d.name" :value="d.id" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="Metric" class="editor__col">
-            <el-select v-model="form.metric" placeholder="Metric" style="width: 100%">
-              <el-option v-for="m in dialogMetrics" :key="m.metric" :label="m.metric" :value="m.metric" />
+          <el-form-item label="Timestamp column" class="editor__col">
+            <el-select v-model="form.ts_col" placeholder="None (live sampling)" clearable style="width: 100%">
+              <el-option v-for="c in schemaCols.ts_columns" :key="c" :label="c" :value="c" />
             </el-select>
           </el-form-item>
         </div>
+
+        <el-form-item label="Filter column (series)">
+          <el-select
+            :model-value="form.filter_col"
+            placeholder="None — whole table as one series"
+            clearable
+            filterable
+            style="width: 100%"
+            @update:model-value="onFilterColChange"
+          >
+            <el-option v-for="c in schemaCols.filter_columns" :key="c" :label="c" :value="c" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item v-if="form.filter_col" label="Series values">
+          <div class="taglist">
+            <div v-for="(v, i) in form.filters" :key="i" class="taglist__row">
+              <span class="taglist__swatch" :style="{ background: colorAt(i) }" />
+              <el-select v-model="form.filters[i]" placeholder="Value" filterable class="taglist__select">
+                <el-option v-for="opt in filterValues" :key="opt" :label="opt" :value="opt" />
+              </el-select>
+              <el-button
+                class="taglist__remove"
+                text
+                :disabled="form.filters.length <= 1"
+                title="Remove series"
+                @click="removeFilter(i)"
+              >×</el-button>
+            </div>
+            <el-button class="taglist__add" text @click="addFilter">+ Add series</el-button>
+          </div>
+        </el-form-item>
 
         <el-form-item label="Expression (optional)">
           <el-input

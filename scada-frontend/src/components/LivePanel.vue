@@ -18,6 +18,7 @@ import { LineChart, BarChart, GaugeChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import { fetchSeries, fetchLatest } from '@/api/readings'
 import { fetchTagLatest } from '@/api/tags'
+import { fetchSchemaLatest, fetchSchemaSeries } from '@/api/schema'
 import { SERIES_PALETTE, colorAt } from '@/utils/seriesPalette'
 import { compileExpr, applyExpr } from '@/utils/mathExpr'
 
@@ -46,6 +47,17 @@ const POLL_INTERVALS = [
 
 const pollSeconds = computed(() => props.panel.poll_interval_seconds || 5)
 const isTag = computed(() => props.panel.source === 'tag')
+const isTable = computed(() => props.panel.source === 'table')
+
+// Table source: filter values chosen in the editor become the series. When no
+// filter column is set the panel is a single series labelled by its value column.
+const tableFilters = computed(() => {
+  const f = props.panel.options?.filters
+  return Array.isArray(f) ? f.filter(Boolean) : []
+})
+const tableHasFilter = computed(() => !!props.panel.filter_col && tableFilters.value.length > 0)
+// Map a series key to the filter value sent to the API (null = no WHERE filter).
+const tableFilterVal = (key) => (tableHasFilter.value ? key : null)
 
 function onPollIntervalSelect(v) {
   emit('poll-interval-change', props.panel, v)
@@ -64,7 +76,8 @@ let timer = null
 const vizType = computed(() => (props.panel.chart_type === 'line' ? 'timeseries' : props.panel.chart_type))
 const opts = computed(() => props.panel.options || {})
 
-// The series keys for this panel: the tag list (tag source) or the single metric.
+// The series keys for this panel: the tag list (tag source), the filter values
+// (table source), or the single metric (device source / unfiltered table).
 const seriesTags = computed(() => {
   if (isTag.value) {
     const tags = props.panel.options?.tags
@@ -72,6 +85,9 @@ const seriesTags = computed(() => {
       ? tags
       : (props.panel.tag_name ? [props.panel.tag_name] : [])
     return list.filter(Boolean)
+  }
+  if (isTable.value && tableHasFilter.value) {
+    return tableFilters.value
   }
   return props.panel.metric ? [props.panel.metric] : []
 })
@@ -309,6 +325,49 @@ async function seed() {
     await poll()
     return
   }
+  if (isTable.value) {
+    unit.value = ''
+    // With a timestamp column we can seed real history; otherwise start empty
+    // and let polling accumulate (like the tag source).
+    if (!props.panel.ts_col) {
+      const init = {}
+      for (const k of seriesTags.value) init[k] = []
+      seriesPoints.value = init
+      seriesLatest.value = {}
+      await poll()
+      return
+    }
+    const fn = mathFn.value
+    const results = await Promise.allSettled(
+      seriesTags.value.map((k) =>
+        fetchSchemaSeries({
+          table: props.panel.table_name,
+          valueCol: props.panel.metric,
+          tsCol: props.panel.ts_col,
+          filterCol: props.panel.filter_col,
+          filterVal: tableFilterVal(k),
+          minutes: props.panel.window_minutes,
+        }),
+      ),
+    )
+    const nextPoints = {}
+    const nextLatest = {}
+    results.forEach((res, i) => {
+      const key = seriesTags.value[i]
+      nextPoints[key] = []
+      if (res.status !== 'fulfilled') return
+      const arr = res.value.points.map((p) => [new Date(p.ts).getTime(), applyExpr(fn, p.value)])
+      nextPoints[key] = arr
+      if (arr.length) {
+        const last = res.value.points[res.value.points.length - 1]
+        nextLatest[key] = { value: applyExpr(fn, last.value), ts: last.ts }
+      }
+    })
+    seriesPoints.value = nextPoints
+    seriesLatest.value = nextLatest
+    error.value = ''
+    return
+  }
   try {
     const key = props.panel.metric
     const res = await fetchSeries(props.panel.device_id, props.panel.metric, props.panel.window_minutes)
@@ -357,6 +416,48 @@ async function poll() {
     if (anyOk) emit('updated', sampleT)
     return
   }
+  if (isTable.value) {
+    // Fetch every series concurrently; one dead series must not blank the panel.
+    const results = await Promise.allSettled(
+      seriesTags.value.map((k) =>
+        fetchSchemaLatest({
+          table: props.panel.table_name,
+          valueCol: props.panel.metric,
+          filterCol: props.panel.filter_col,
+          filterVal: tableFilterVal(k),
+          tsCol: props.panel.ts_col,
+        }),
+      ),
+    )
+    const sampleT = Date.now()
+    const nextPoints = { ...seriesPoints.value }
+    const nextLatest = { ...seriesLatest.value }
+    let anyOk = false
+    let newest = 0
+    const fn = mathFn.value
+    results.forEach((res, i) => {
+      const key = seriesTags.value[i]
+      if (res.status !== 'fulfilled') return
+      const raw = res.value.value
+      if (raw == null) return
+      anyOk = true
+      const value = applyExpr(fn, raw)
+      // Real history tables carry a row timestamp; append only when it advances.
+      // Current-state tables (no ts_col) sample at wall-clock so steady values
+      // still move the line forward.
+      const t = props.panel.ts_col && res.value.ts ? new Date(res.value.ts).getTime() : sampleT
+      const arr = nextPoints[key] || []
+      const lastT = arr.length ? arr[arr.length - 1][0] : -1
+      if (t > lastT) nextPoints[key] = trimWindow([...arr, [t, value]])
+      nextLatest[key] = { value, ts: res.value.ts || new Date(sampleT).toISOString() }
+      if (t > newest) newest = t
+    })
+    seriesPoints.value = nextPoints
+    seriesLatest.value = nextLatest
+    error.value = anyOk ? '' : 'No value reported.'
+    if (anyOk) emit('updated', newest || sampleT)
+    return
+  }
   try {
     const key = props.panel.metric
     const r = await fetchLatest(props.panel.device_id, props.panel.metric)
@@ -391,7 +492,11 @@ watch(pollSeconds, startTimer)
 
 // Re-seed when the panel's data binding changes (admin edits tags/metric/window).
 watch(
-  () => JSON.stringify([props.panel.source, props.panel.device_id, props.panel.metric, props.panel.window_minutes, seriesTags.value]),
+  () => JSON.stringify([
+    props.panel.source, props.panel.device_id, props.panel.metric,
+    props.panel.window_minutes, seriesTags.value,
+    props.panel.table_name, props.panel.filter_col, props.panel.ts_col,
+  ]),
   async () => {
     await seed()
     startTimer()
@@ -434,7 +539,10 @@ onBeforeUnmount(() => {
     </header>
 
     <span class="panel__conn">
-      <template v-if="isTag">tag · {{ seriesTags.join(', ') }} · {{ panel.metric }}</template>
+      <template v-if="isTable">
+        {{ panel.table_name }}<template v-if="tableHasFilter"> · {{ tableFilters.join(', ') }}</template> · {{ panel.metric }}
+      </template>
+      <template v-else-if="isTag">tag · {{ seriesTags.join(', ') }} · {{ panel.metric }}</template>
       <template v-else>{{ deviceName || `device #${panel.device_id}` }} · {{ panel.metric }}</template>
     </span>
 
