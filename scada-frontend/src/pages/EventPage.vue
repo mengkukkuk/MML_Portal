@@ -17,7 +17,7 @@ const loading = ref(true)
 const error = ref('')
 const perCard = ref(10)
 const updatedAt = ref(null)
-const collapsed = ref(new Set())
+const expanded = ref(null) // key of currently open card, null = all collapsed
 
 let pollTimer = null
 
@@ -71,9 +71,7 @@ function fmtTime(value) {
 }
 
 function toggleCard(key) {
-  const s = new Set(collapsed.value)
-  s.has(key) ? s.delete(key) : s.add(key)
-  collapsed.value = s
+  expanded.value = expanded.value === key ? null : key
 }
 
 watch(perCard, load)
@@ -122,25 +120,28 @@ onUnmounted(() => {
         </span>
       </header>
 
-      <div class="evt__grid">
+      <div class="evt__stack">
         <article
           v-for="tag in loc.tags"
           :key="tag.tag_name"
           class="evt__tag"
-          :class="{ 'evt__tag--collapsed': collapsed.has(`${loc.location}::${tag.tag_name}`) }"
+          :class="{ 'evt__tag--collapsed': expanded !== `${loc.location}::${tag.tag_name}` }"
         >
-          <header class="evt__tag-head">
+          <header
+            class="evt__tag-head"
+            @click="toggleCard(`${loc.location}::${tag.tag_name}`)"
+          >
             <span class="evt__tag-name">{{ tag.tag_name }}</span>
             <div class="evt__tag-actions">
               <span class="evt__badge">{{ tag.events.length }}</span>
               <button
                 class="evt__minimize"
-                :aria-label="collapsed.has(`${loc.location}::${tag.tag_name}`) ? 'Expand' : 'Minimize'"
-                @click="toggleCard(`${loc.location}::${tag.tag_name}`)"
-              >{{ collapsed.has(`${loc.location}::${tag.tag_name}`) ? '+' : '−' }}</button>
+                :aria-label="expanded === `${loc.location}::${tag.tag_name}` ? 'Minimize' : 'Expand'"
+                @click.stop="toggleCard(`${loc.location}::${tag.tag_name}`)"
+              >{{ expanded === `${loc.location}::${tag.tag_name}` ? '−' : '+' }}</button>
             </div>
           </header>
-          <ol v-if="!collapsed.has(`${loc.location}::${tag.tag_name}`)" class="evt__timeline">
+          <ol v-if="expanded === `${loc.location}::${tag.tag_name}`" class="evt__timeline">
             <li
               v-for="(ev, i) in tag.events"
               :key="i"
@@ -261,11 +262,11 @@ onUnmounted(() => {
   color: var(--fg-muted);
 }
 
-/* Tag cards */
-.evt__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: var(--space-4);
+/* Tag cards — vertical accordion stack */
+.evt__stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
 .evt__tag {
@@ -283,6 +284,8 @@ onUnmounted(() => {
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border-soft);
+  cursor: pointer;
+  user-select: none;
 }
 
 .evt__tag--collapsed .evt__tag-head {
