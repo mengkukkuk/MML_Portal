@@ -131,6 +131,23 @@ def _validate(body: PanelIn) -> None:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"ts_col must be a timestamp column of {body.table_name!r}",
             )
+        # Extra value columns ride in options.value_cols so the panel can chart
+        # several columns from the same table as separate series. The primary
+        # column stays in `metric` for back-compat; each extra must also be a
+        # valid numeric column.
+        extra = body.options.get("value_cols") if isinstance(body.options, dict) else None
+        if extra is not None:
+            if not isinstance(extra, list) or any(not isinstance(c, str) for c in extra):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="options.value_cols must be a list of column names",
+                )
+            for c in extra:
+                if c not in cols["value_columns"]:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"options.value_cols[{c!r}] is not a numeric column of {body.table_name!r}",
+                    )
 
 
 # --- Endpoints -------------------------------------------------------------

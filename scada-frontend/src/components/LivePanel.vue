@@ -49,15 +49,18 @@ const pollSeconds = computed(() => props.panel.poll_interval_seconds || 5)
 const isTag = computed(() => props.panel.source === 'tag')
 const isTable = computed(() => props.panel.source === 'table')
 
-// Table source: filter values chosen in the editor become the series. When no
-// filter column is set the panel is a single series labelled by its value column.
+// Table source: chosen value columns × filter values expand into one series each.
+// When no filter column is set the panel collapses to one series per value column.
+const tableValueCols = computed(() => {
+  const extras = props.panel.options?.value_cols
+  const list = [props.panel.metric, ...(Array.isArray(extras) ? extras : [])]
+  return list.filter(Boolean)
+})
 const tableFilters = computed(() => {
   const f = props.panel.options?.filters
   return Array.isArray(f) ? f.filter(Boolean) : []
 })
 const tableHasFilter = computed(() => !!props.panel.filter_col && tableFilters.value.length > 0)
-// Map a series key to the filter value sent to the API (null = no WHERE filter).
-const tableFilterVal = (key) => (tableHasFilter.value ? key : null)
 
 function onPollIntervalSelect(v) {
   emit('poll-interval-change', props.panel, v)
@@ -76,30 +79,54 @@ let timer = null
 const vizType = computed(() => (props.panel.chart_type === 'line' ? 'timeseries' : props.panel.chart_type))
 const opts = computed(() => props.panel.options || {})
 
-// The series keys for this panel: the tag list (tag source), the filter values
-// (table source), or the single metric (device source / unfiltered table).
-const seriesTags = computed(() => {
+// Canonical series model: one entry per output series carrying everything we
+// need to fetch and render it. For the table source this expands the cartesian
+// (value_cols × filter_values), so a panel can chart several columns AND
+// several filter values at once. For tag/device sources it mirrors the legacy
+// one-series-per-key shape.
+const seriesSpecs = computed(() => {
   if (isTag.value) {
     const tags = props.panel.options?.tags
     const list = Array.isArray(tags) && tags.length
       ? tags
       : (props.panel.tag_name ? [props.panel.tag_name] : [])
-    return list.filter(Boolean)
+    return list.filter(Boolean).map((t) => ({
+      key: t, label: t, valueCol: props.panel.metric, filterVal: null,
+    }))
   }
-  if (isTable.value && tableHasFilter.value) {
-    return tableFilters.value
+  if (isTable.value) {
+    const vcs = tableValueCols.value
+    const fvs = tableHasFilter.value ? tableFilters.value : [null]
+    const multiVc = vcs.length > 1
+    const specs = []
+    for (const vc of vcs) {
+      for (const fv of fvs) {
+        // Encode (vc, fv) into a stable key. JSON encoding is collision-safe
+        // against value strings that happen to contain separators.
+        const key = JSON.stringify([vc, fv])
+        const label = multiVc && fv != null ? `${vc} · ${fv}` : (fv != null ? fv : vc)
+        specs.push({ key, label, valueCol: vc, filterVal: fv })
+      }
+    }
+    return specs
   }
-  return props.panel.metric ? [props.panel.metric] : []
+  // Device source: a single series keyed by its metric.
+  return props.panel.metric
+    ? [{ key: props.panel.metric, label: props.panel.metric, valueCol: props.panel.metric, filterVal: null }]
+    : []
 })
+
+// Legacy alias: the bare series keys, still used by re-seed watchers below.
+const seriesTags = computed(() => seriesSpecs.value.map((s) => s.key))
 
 // Hydrated view model for the renderers: one entry per series with its colour.
 const seriesList = computed(() =>
-  seriesTags.value.map((key, i) => ({
-    key,
-    label: key,
+  seriesSpecs.value.map((s, i) => ({
+    key: s.key,
+    label: s.label,
     color: colorAt(i),
-    points: seriesPoints.value[key] || [],
-    latest: seriesLatest.value[key] || null,
+    points: seriesPoints.value[s.key] || [],
+    latest: seriesLatest.value[s.key] || null,
   })),
 )
 
@@ -108,7 +135,7 @@ const isMulti = computed(() => seriesList.value.length > 1)
 const isGeneric = computed(() => ['timeseries', 'bar', 'histogram', 'bargauge'].includes(vizType.value))
 const showHeaderValue = computed(() => ['timeseries', 'bar', 'histogram'].includes(vizType.value))
 
-const firstLatest = computed(() => seriesLatest.value[seriesTags.value[0]] || null)
+const firstLatest = computed(() => seriesLatest.value[seriesSpecs.value[0]?.key] || null)
 
 // Per-panel math transform: applied to every reading at ingest time so all
 // renderers (and warn/crit thresholds) see post-transform numbers.
@@ -318,7 +345,7 @@ async function seed() {
   if (isTag.value) {
     // status_tag has no native history — start empty, accumulate via polling.
     const init = {}
-    for (const t of seriesTags.value) init[t] = []
+    for (const s of seriesSpecs.value) init[s.key] = []
     seriesPoints.value = init
     seriesLatest.value = {}
     unit.value = ''
@@ -331,21 +358,22 @@ async function seed() {
     // and let polling accumulate (like the tag source).
     if (!props.panel.ts_col) {
       const init = {}
-      for (const k of seriesTags.value) init[k] = []
+      for (const s of seriesSpecs.value) init[s.key] = []
       seriesPoints.value = init
       seriesLatest.value = {}
       await poll()
       return
     }
     const fn = mathFn.value
+    const specs = seriesSpecs.value
     const results = await Promise.allSettled(
-      seriesTags.value.map((k) =>
+      specs.map((s) =>
         fetchSchemaSeries({
           table: props.panel.table_name,
-          valueCol: props.panel.metric,
+          valueCol: s.valueCol,
           tsCol: props.panel.ts_col,
           filterCol: props.panel.filter_col,
-          filterVal: tableFilterVal(k),
+          filterVal: s.filterVal,
           minutes: props.panel.window_minutes,
         }),
       ),
@@ -353,7 +381,7 @@ async function seed() {
     const nextPoints = {}
     const nextLatest = {}
     results.forEach((res, i) => {
-      const key = seriesTags.value[i]
+      const key = specs[i].key
       nextPoints[key] = []
       if (res.status !== 'fulfilled') return
       const arr = res.value.points.map((p) => [new Date(p.ts).getTime(), applyExpr(fn, p.value)])
@@ -418,13 +446,14 @@ async function poll() {
   }
   if (isTable.value) {
     // Fetch every series concurrently; one dead series must not blank the panel.
+    const specs = seriesSpecs.value
     const results = await Promise.allSettled(
-      seriesTags.value.map((k) =>
+      specs.map((s) =>
         fetchSchemaLatest({
           table: props.panel.table_name,
-          valueCol: props.panel.metric,
+          valueCol: s.valueCol,
           filterCol: props.panel.filter_col,
-          filterVal: tableFilterVal(k),
+          filterVal: s.filterVal,
           tsCol: props.panel.ts_col,
         }),
       ),
@@ -436,7 +465,7 @@ async function poll() {
     let newest = 0
     const fn = mathFn.value
     results.forEach((res, i) => {
-      const key = seriesTags.value[i]
+      const key = specs[i].key
       if (res.status !== 'fulfilled') return
       const raw = res.value.value
       if (raw == null) return
@@ -540,7 +569,7 @@ onBeforeUnmount(() => {
 
     <span class="panel__conn">
       <template v-if="isTable">
-        {{ panel.table_name }}<template v-if="tableHasFilter"> · {{ tableFilters.join(', ') }}</template> · {{ panel.metric }}
+        {{ panel.table_name }}<template v-if="tableHasFilter"> · {{ tableFilters.join(', ') }}</template> · {{ tableValueCols.join(', ') }}
       </template>
       <template v-else-if="isTag">tag · {{ seriesTags.join(', ') }} · {{ panel.metric }}</template>
       <template v-else>{{ deviceName || `device #${panel.device_id}` }} · {{ panel.metric }}</template>

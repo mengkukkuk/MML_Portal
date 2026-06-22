@@ -110,7 +110,10 @@ const saving = ref(false)
 const form = reactive({
   title: '',
   table_name: null,
-  metric: null,      // value column
+  // Primary value column (kept here for back-compat); extras append to value_cols.
+  // The renderer plots one series per (value × filter) combination.
+  metric: null,
+  value_cols: [],    // additional value columns (each becomes its own series)
   filter_col: null,  // optional series-key column
   filters: [],       // chosen filter values, each its own series/color
   ts_col: null,      // optional timestamp column (enables real history)
@@ -122,6 +125,26 @@ const form = reactive({
   options: defaultOptions('timeseries'),
   poll_interval_seconds: 5,
 })
+
+// All currently-selected value columns (primary first, then extras), used both
+// as the source of truth for the editor's value rows and for "unused" lookups.
+const allValueCols = computed(() => [form.metric, ...form.value_cols].filter(Boolean))
+
+// First value column not already chosen, so [+ Value] defaults to a fresh pick.
+function firstUnusedValueCol() {
+  const used = new Set(allValueCols.value)
+  const pool = schemaCols.value.value_columns || []
+  return pool.find((c) => !used.has(c)) ?? null
+}
+
+function addValueCol() {
+  const c = firstUnusedValueCol()
+  if (c) form.value_cols.push(c)
+}
+
+function removeValueCol(i) {
+  form.value_cols.splice(i, 1)
+}
 
 // First filter value not already chosen, so [+ Add series] picks something fresh.
 function firstUnusedFilter() {
@@ -163,13 +186,14 @@ async function loadFilterValues() {
 
 // Resolve a binding against the chosen table's columns, clamping each field to a
 // valid value. Shared by openCreate / openEdit and the table-change handler.
-async function applyBinding({ table, metric, filter_col, filters, ts_col }) {
+async function applyBinding({ table, metric, value_cols, filter_col, filters, ts_col }) {
   // Fall back to the first available table if the requested one isn't selectable.
   const exists = schemaTables.value.some((t) => t.table === table)
   form.table_name = exists ? table : (schemaTables.value[0]?.table ?? null)
   if (!form.table_name) {
     schemaCols.value = { value_columns: [], ts_columns: [], filter_columns: [] }
-    form.metric = null; form.filter_col = null; form.filters = []; form.ts_col = null
+    form.metric = null; form.value_cols = []
+    form.filter_col = null; form.filters = []; form.ts_col = null
     filterValues.value = []
     return
   }
@@ -180,6 +204,9 @@ async function applyBinding({ table, metric, filter_col, filters, ts_col }) {
   }
   const cols = schemaCols.value
   form.metric = cols.value_columns.includes(metric) ? metric : (cols.value_columns[0] ?? null)
+  // Keep only extras that still exist in this table and aren't the primary.
+  form.value_cols = (value_cols || [])
+    .filter((c) => cols.value_columns.includes(c) && c !== form.metric)
   form.ts_col = ts_col && cols.ts_columns.includes(ts_col)
     ? ts_col
     : (cols.ts_columns[0] ?? null)
@@ -214,7 +241,7 @@ async function openCreate() {
   form.poll_interval_seconds = 5
   await applyBinding({
     table: schemaTables.value[0]?.table ?? null,
-    metric: null, filter_col: null, filters: [], ts_col: null,
+    metric: null, value_cols: [], filter_col: null, filters: [], ts_col: null,
   })
   dialogVisible.value = true
 }
@@ -244,7 +271,7 @@ async function openEdit(panel) {
   form.chart_type = panel.chart_type === 'line' ? 'timeseries' : panel.chart_type
   // `filters`/`tags` and `mathExpr` live outside form.options — onVizTypeChange
   // replaces form.options wholesale and would otherwise drop them.
-  const { tags: _t, filters: _f, mathExpr: _m, ...vizOpts } = panel.options || {}
+  const { tags: _t, filters: _f, value_cols: _v, mathExpr: _m, ...vizOpts } = panel.options || {}
   form.options = { ...defaultOptions(form.chart_type), ...vizOpts }
   form.mathExpr = panel.options?.mathExpr || ''
   form.window_minutes = panel.window_minutes
@@ -254,11 +281,12 @@ async function openEdit(panel) {
     ? {
         table: panel.table_name,
         metric: panel.metric,
+        value_cols: Array.isArray(panel.options?.value_cols) ? [...panel.options.value_cols] : [],
         filter_col: panel.filter_col,
         filters: panel.options?.filters?.length ? [...panel.options.filters] : [],
         ts_col: panel.ts_col,
       }
-    : (legacyBinding(panel) || { table: null, metric: null, filter_col: null, filters: [], ts_col: null })
+    : (legacyBinding(panel) || { table: null, metric: null, value_cols: [], filter_col: null, filters: [], ts_col: null })
   await applyBinding(binding)
   dialogVisible.value = true
 }
@@ -297,7 +325,14 @@ async function save() {
       window_minutes: form.window_minutes,
       chart_type: form.chart_type,
       // Filter values ride in options.filters (parallel to the old options.tags).
-      options: { ...form.options, filters: [...form.filters], ...extraOpts },
+      // Filter values + extra value columns ride in options (parallel to the
+      // old options.tags). The primary value column stays in `metric`.
+      options: {
+        ...form.options,
+        filters: [...form.filters],
+        ...(form.value_cols.length ? { value_cols: [...form.value_cols] } : {}),
+        ...extraOpts,
+      },
       poll_interval_seconds: form.poll_interval_seconds,
       position: editingId.value
         ? panels.value.find((p) => p.id === editingId.value)?.position ?? 0
@@ -506,9 +541,31 @@ onMounted(async () => {
 
         <div class="editor__row">
           <el-form-item label="Value column" class="editor__col">
-            <el-select v-model="form.metric" placeholder="Value" style="width: 100%">
-              <el-option v-for="c in schemaCols.value_columns" :key="c" :label="c" :value="c" />
-            </el-select>
+            <div class="taglist">
+              <!-- Primary value column (stored in form.metric for back-compat). -->
+              <div class="taglist__row">
+                <span class="taglist__swatch" :style="{ background: colorAt(0) }" />
+                <el-select v-model="form.metric" placeholder="Value" filterable class="taglist__select">
+                  <el-option v-for="c in schemaCols.value_columns" :key="c" :label="c" :value="c" />
+                </el-select>
+                <!-- Spacer keeps row widths aligned with the extra rows that have a remove button. -->
+                <span class="taglist__remove taglist__remove--placeholder" />
+              </div>
+              <!-- Extra value columns: each becomes its own series, filtered the same way. -->
+              <div v-for="(c, i) in form.value_cols" :key="i" class="taglist__row">
+                <span class="taglist__swatch" :style="{ background: colorAt(i + 1) }" />
+                <el-select v-model="form.value_cols[i]" placeholder="Value" filterable class="taglist__select">
+                  <el-option v-for="opt in schemaCols.value_columns" :key="opt" :label="opt" :value="opt" />
+                </el-select>
+                <el-button
+                  class="taglist__remove"
+                  text
+                  title="Remove value"
+                  @click="removeValueCol(i)"
+                >×</el-button>
+              </div>
+              <el-button class="taglist__add" text @click="addValueCol">+ Value</el-button>
+            </div>
           </el-form-item>
           <el-form-item label="Timestamp column" class="editor__col">
             <el-select v-model="form.ts_col" placeholder="None (live sampling)" clearable style="width: 100%">
@@ -793,6 +850,15 @@ onMounted(async () => {
   font-size: 18px;
   line-height: 1;
   padding: 0 6px;
+}
+
+/* Invisible spacer that keeps the primary value row's gutter aligned with the
+ * extra rows (which carry a "×" remove button). */
+.taglist__remove--placeholder {
+  width: 25px;
+  height: 1px;
+  display: inline-block;
+  pointer-events: none;
 }
 
 .taglist__add {
