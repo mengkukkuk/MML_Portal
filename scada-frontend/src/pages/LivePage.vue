@@ -45,6 +45,11 @@ const VIZ_TYPES = [
   { value: 'bargauge', label: 'Bar gauge', icon: 'Sort', hint: 'Horizontal / vertical level bar' },
   { value: 'histogram', label: 'Histogram', icon: 'DataAnalysis', hint: 'Distribution of values' },
   { value: 'table', label: 'Table', icon: 'Grid', hint: 'Recent readings table' },
+  { value: 'pie', label: 'Pie / Donut', icon: 'PieChart', hint: 'Proportional breakdown of series values' },
+  { value: 'heatmap', label: 'Heatmap', icon: 'Operation', hint: 'Value intensity across time × series' },
+  { value: 'scatter', label: 'Scatter', icon: 'Aim', hint: 'Individual data points over time' },
+  { value: 'statetimeline', label: 'State timeline', icon: 'Calendar', hint: 'Discrete state bands over time (ON/OFF, OPEN/CLOSED)' },
+  { value: 'candlestick', label: 'Candlestick', icon: 'Coin', hint: 'Min / open / close / max per interval' },
 ]
 
 // Per-type parameter schema rendered in the editor sub-menu.
@@ -85,6 +90,29 @@ const PARAM_SCHEMA = {
   ],
   table: [
     { key: 'maxRows', label: 'Max rows', type: 'number', default: 10, min: 1, max: 100 },
+    { key: 'decimals', label: 'Decimals', type: 'number', default: 1, min: 0, max: 4 },
+  ],
+  pie: [
+    { key: 'donut', label: 'Donut style', type: 'switch', default: true },
+    { key: 'innerRadius', label: 'Inner radius %', type: 'number', default: 50, min: 10, max: 80 },
+    { key: 'labelPosition', label: 'Labels', type: 'enum', options: ['outside', 'inside', 'none'], default: 'outside' },
+    { key: 'decimals', label: 'Decimals', type: 'number', default: 1, min: 0, max: 4 },
+  ],
+  heatmap: [
+    { key: 'bucketMinutes', label: 'Bucket (min)', type: 'number', default: 5, min: 1, max: 60 },
+    { key: 'colorMin', label: 'Color min', type: 'number', default: null, nullable: true },
+    { key: 'colorMax', label: 'Color max', type: 'number', default: null, nullable: true },
+    { key: 'decimals', label: 'Decimals', type: 'number', default: 1, min: 0, max: 4 },
+  ],
+  scatter: [
+    { key: 'pointSize', label: 'Point size', type: 'number', default: 6, min: 2, max: 20 },
+    { key: 'decimals', label: 'Decimals', type: 'number', default: 1, min: 0, max: 4 },
+  ],
+  statetimeline: [
+    { key: 'roundValues', label: 'Round to integer', type: 'switch', default: true },
+  ],
+  candlestick: [
+    { key: 'bucketMinutes', label: 'Bucket (min)', type: 'number', default: 5, min: 1, max: 60 },
     { key: 'decimals', label: 'Decimals', type: 'number', default: 1, min: 0, max: 4 },
   ],
 }
