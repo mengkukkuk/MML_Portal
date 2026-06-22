@@ -4,6 +4,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+import alarms
 import auth
 import db
 import events
@@ -40,6 +41,7 @@ app.include_router(readings.router)
 app.include_router(tags.router)
 app.include_router(panels.router)
 app.include_router(events.router)
+app.include_router(alarms.router)
 
 
 @app.on_event("startup")

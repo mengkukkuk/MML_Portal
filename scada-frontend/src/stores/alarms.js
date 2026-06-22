@@ -1,31 +1,43 @@
 import { defineStore } from 'pinia'
-import { fetchActiveAlarms } from '@/api/alarms'
+import { fetchRecentAlarms, acknowledgeAlarm } from '@/api/alarms'
 
 export const useAlarmsStore = defineStore('alarms', {
   state: () => ({
-    active: [],
+    alarms: [],
     loading: false,
     error: null,
+    updatedAt: null,
+    acking: new Set(),
   }),
   getters: {
-    unacknowledgedCount: (state) => state.active.filter((a) => !a.ack).length,
-    criticalCount: (state) => state.active.filter((a) => a.severity === 'critical').length,
+    unacknowledgedCount: (state) => state.alarms.filter((a) => !a.acknowledged).length,
+    criticalCount: (state) => state.alarms.filter((a) => a.severity === 'critical').length,
   },
   actions: {
-    async load() {
+    async load(limit = 10) {
       this.loading = true
       this.error = null
       try {
-        this.active = await fetchActiveAlarms()
+        this.alarms = await fetchRecentAlarms(limit)
+        this.updatedAt = new Date()
       } catch (e) {
-        this.error = e?.message || String(e)
+        this.error = e?.response?.data?.detail || e?.message || String(e)
       } finally {
         this.loading = false
       }
     },
-    acknowledge(id) {
-      const a = this.active.find((x) => x.id === id)
-      if (a) a.ack = true
+    async acknowledge(id) {
+      if (this.acking.has(id)) return
+      this.acking.add(id)
+      try {
+        const updated = await acknowledgeAlarm(id)
+        const i = this.alarms.findIndex((x) => x.id === id)
+        if (i !== -1) this.alarms[i] = { ...this.alarms[i], ...updated }
+      } catch (e) {
+        this.error = e?.response?.data?.detail || e?.message || String(e)
+      } finally {
+        this.acking.delete(id)
+      }
     },
   },
 })

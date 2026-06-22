@@ -321,6 +321,58 @@ def list_recent_events(limit: int) -> list[dict[str, Any]]:
     return rows
 
 
+# --- Alarm log (real SCADA data — public.alarm_logs) -------------------------
+# DB column `alarm_events` is surfaced as API field `alarm`; `created_at` is
+# surfaced as `at_date_time` so the frontend can share the events timestamp
+# shape. Severity / acknowledgement columns were added via a one-shot
+# migration (see _probe_alarms.py).
+def list_recent_alarms(limit: int) -> list[dict[str, Any]]:
+    """Last `limit` alarms per (location, tag_name), newest first."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT id, location, tag_name,
+                      alarm_events AS alarm,
+                      severity,
+                      created_at   AS at_date_time,
+                      acknowledged, acknowledged_at, acknowledged_by
+               FROM (
+                 SELECT id, location, tag_name, alarm_events, severity,
+                        created_at, acknowledged, acknowledged_at,
+                        acknowledged_by,
+                        ROW_NUMBER() OVER (
+                          PARTITION BY location, tag_name
+                          ORDER BY created_at DESC
+                        ) AS rn
+                 FROM public.alarm_logs
+               ) ranked
+               WHERE rn <= %s
+               ORDER BY location, tag_name, created_at DESC""",
+            (limit,),
+        ).fetchall()
+    return rows
+
+
+def acknowledge_alarm(alarm_id: int, user_id: int) -> dict[str, Any] | None:
+    """Mark an alarm acknowledged. Returns the updated row, or None if the
+    alarm doesn't exist or was already acknowledged."""
+    with get_connection() as conn:
+        row = conn.execute(
+            """UPDATE public.alarm_logs
+                  SET acknowledged    = TRUE,
+                      acknowledged_at = now(),
+                      acknowledged_by = %s
+                WHERE id = %s AND acknowledged = FALSE
+                RETURNING id, location, tag_name,
+                          alarm_events AS alarm,
+                          severity,
+                          created_at   AS at_date_time,
+                          acknowledged, acknowledged_at, acknowledged_by""",
+            (user_id, alarm_id),
+        ).fetchone()
+        conn.commit()
+    return row
+
+
 _PANEL_COLS = (
     "id, title, device_id, metric, window_minutes, chart_type, position, "
     "options, source, tag_name, poll_interval_seconds, created_at"
