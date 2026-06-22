@@ -25,6 +25,11 @@ VALID_CHART_TYPES = {
     "bargauge",
     "histogram",
     "table",
+    "pie",
+    "heatmap",
+    "scatter",
+    "statetimeline",
+    "candlestick",
 }
 
 VALID_SOURCES = {"device", "tag", "table"}
