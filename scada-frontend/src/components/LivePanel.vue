@@ -31,6 +31,7 @@ const props = defineProps({
   panel: { type: Object, required: true },
   deviceName: { type: String, default: '' },
   canManage: { type: Boolean, default: false },
+  editMode: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['edit', 'duplicate', 'delete', 'poll-interval-change', 'updated'])
@@ -820,6 +821,12 @@ onBeforeUnmount(() => {
   <article class="panel">
     <header class="panel__head">
       <div class="panel__titlewrap">
+        <span
+          v-if="editMode && canManage"
+          class="panel__drag"
+          title="Drag to move"
+          aria-label="Drag to move panel"
+        >⠿</span>
         <h3 class="panel__title">{{ panel.title }}</h3>
       </div>
       <div class="panel__actions">
@@ -921,6 +928,10 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
   padding: var(--space-4);
+  /* Fill the GridLayout cell so corner-resize is reflected immediately. */
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .panel__head {
@@ -936,6 +947,24 @@ onBeforeUnmount(() => {
   gap: 2px;
   flex: 1 1 auto;
   min-width: 0;
+}
+
+/* Drag grip — only this element starts a GridLayout drag (drag-allow-from). */
+.panel__drag {
+  align-self: flex-start;
+  cursor: move;
+  user-select: none;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--fg-muted);
+  padding: 2px 4px;
+  margin-bottom: 2px;
+  border-radius: 4px;
+}
+
+.panel__drag:hover {
+  color: var(--fg);
+  background: var(--border-soft);
 }
 
 .panel__conn {
@@ -1007,12 +1036,17 @@ onBeforeUnmount(() => {
 .panel__chart {
   width: 100%;
   height: 220px;
+  /* Grow to fill the GridLayout cell; ECharts (autoresize) redraws to fit. */
+  flex: 1 1 auto;
+  min-height: 180px;
 }
 
 /* Gauge small multiples */
 .panel__minis {
   display: flex;
   gap: var(--space-2);
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .panel__minis--multi {

@@ -10,6 +10,7 @@
  */
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { GridLayout, GridItem } from 'grid-layout-plus'
 import { useAuthStore } from '@/stores/auth'
 import LivePanel from '@/components/LivePanel.vue'
 import { fetchDevices } from '@/api/readings'
@@ -124,6 +125,10 @@ function defaultOptions(type) {
 }
 
 const panels = ref([])
+const editMode = ref(false)
+const savingLayout = ref(false)
+// Grid layout array bound to GridLayout (v-model:layout). Items: {i,x,y,w,h}.
+const layout = ref([])
 const devices = ref([])
 const schemaTables = ref([])   // [{ table, label }]
 const schemaCols = ref({ value_columns: [], ts_columns: [], filter_columns: [] })
@@ -345,6 +350,13 @@ async function save() {
   try {
     const trimmedExpr = form.mathExpr?.trim() || ''
     const extraOpts = trimmedExpr ? { mathExpr: trimmedExpr } : {}
+    // Preserve the panel's layout when editing; seed a bottom slot when creating.
+    const existing = editingId.value
+      ? panels.value.find((p) => p.id === editingId.value)
+      : null
+    const layoutOpt = editingId.value
+      ? (existing?.options?.layout ? { layout: existing.options.layout } : {})
+      : { layout: nextLayoutSlot() }
     const payload = {
       title: form.title.trim(),
       source: 'table',
@@ -364,6 +376,7 @@ async function save() {
         filters: [...form.filters],
         ...(form.value_cols.length ? { value_cols: [...form.value_cols] } : {}),
         ...extraOpts,
+        ...layoutOpt,
       },
       poll_interval_seconds: form.poll_interval_seconds,
       position: editingId.value
@@ -378,6 +391,7 @@ async function save() {
     } else {
       const created = await createPanel(payload)
       panels.value.push(created)
+      appendLayoutItem(created)
       ElMessage.success('Panel added.')
     }
     dialogVisible.value = false
@@ -422,6 +436,9 @@ async function confirmDuplicate() {
   }
   duplicating.value = true
   try {
+    const clonedOptions = JSON.parse(JSON.stringify(panel.options || {}))
+    // Place the copy in a fresh bottom slot rather than overlapping the source.
+    clonedOptions.layout = nextLayoutSlot()
     const payload = {
       title: name,
       source: panel.source || 'device',
@@ -433,12 +450,13 @@ async function confirmDuplicate() {
       metric: panel.metric,
       window_minutes: panel.window_minutes,
       chart_type: panel.chart_type === 'line' ? 'timeseries' : panel.chart_type,
-      options: JSON.parse(JSON.stringify(panel.options || {})),
+      options: clonedOptions,
       poll_interval_seconds: panel.poll_interval_seconds || 5,
       position: panels.value.length,
     }
     const created = await createPanel(payload)
     panels.value.push(created)
+    appendLayoutItem(created)
     ElMessage.success('Panel duplicated.')
     duplicateDialogVisible.value = false
   } catch (e) {
@@ -460,6 +478,7 @@ async function confirmDelete() {
   try {
     await deletePanel(panel.id)
     panels.value = panels.value.filter((p) => p.id !== panel.id)
+    layout.value = layout.value.filter((it) => it.i !== String(panel.id))
     ElMessage.success('Panel deleted.')
     deleteDialogVisible.value = false
     deleteTarget.value = null
@@ -497,6 +516,93 @@ async function onPollIntervalChange(panel, seconds) {
   }
 }
 
+// --- Grid layout (Grafana-style drag/resize) ------------------------------
+// Find the panel backing a layout item (item.i is the stringified panel id).
+function panelById(id) {
+  return panels.value.find((p) => String(p.id) === String(id))
+}
+
+// Next free slot at the bottom of the grid for a freshly created panel.
+function nextLayoutSlot() {
+  const maxY = layout.value.reduce((m, it) => Math.max(m, it.y + it.h), 0)
+  return { x: 0, y: maxY, w: 6, h: 9 }
+}
+
+// Append a layout item for a panel that was just created/duplicated.
+function appendLayoutItem(panel) {
+  const lay = panel.options?.layout || nextLayoutSlot()
+  layout.value.push({ i: String(panel.id), x: lay.x, y: lay.y, w: lay.w, h: lay.h })
+}
+
+// Build the GridLayout array from panels. Use each panel's persisted
+// options.layout when present; otherwise synthesize a two-up 12-col layout
+// from the array index (vertical-compact then tidies any gaps).
+function layoutFromPanels() {
+  layout.value = panels.value.map((p, idx) => {
+    const saved = p.options?.layout
+    if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+      return { i: String(p.id), x: saved.x, y: saved.y, w: saved.w || 6, h: saved.h || 9 }
+    }
+    return { i: String(p.id), x: (idx % 2) * 6, y: Math.floor(idx / 2) * 9, w: 6, h: 9 }
+  })
+}
+
+// Toggle edit mode; persist layout when leaving edit mode.
+function toggleEditMode() {
+  if (editMode.value) {
+    editMode.value = false
+    saveLayout()
+  } else {
+    editMode.value = true
+  }
+}
+
+// Persist only panels whose {x,y,w,h} changed since last save. Reuses the
+// full-payload shape from onPollIntervalChange so the backend round-trips
+// every field; layout rides inside options.layout (no schema change).
+async function saveLayout() {
+  if (!canManage.value) return
+  const dirty = []
+  for (const item of layout.value) {
+    const panel = panelById(item.i)
+    if (!panel) continue
+    const cur = panel.options?.layout || {}
+    if (cur.x === item.x && cur.y === item.y && cur.w === item.w && cur.h === item.h) continue
+    dirty.push({ panel, layout: { x: item.x, y: item.y, w: item.w, h: item.h } })
+  }
+  if (!dirty.length) return
+  savingLayout.value = true
+  try {
+    await Promise.all(
+      dirty.map(async ({ panel, layout: lay }) => {
+        const payload = {
+          title: panel.title,
+          source: panel.source || 'device',
+          device_id: panel.device_id,
+          tag_name: panel.tag_name,
+          table_name: panel.table_name,
+          filter_col: panel.filter_col,
+          ts_col: panel.ts_col,
+          metric: panel.metric,
+          window_minutes: panel.window_minutes,
+          chart_type: panel.chart_type === 'line' ? 'timeseries' : panel.chart_type,
+          options: { ...(panel.options || {}), layout: lay },
+          poll_interval_seconds: panel.poll_interval_seconds,
+          position: panel.position,
+        }
+        const updated = await updatePanel(panel.id, payload)
+        const i = panels.value.findIndex((p) => p.id === panel.id)
+        if (i !== -1) panels.value[i] = updated
+      }),
+    )
+    ElMessage.success('Layout saved.')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || 'Failed to save layout.')
+  } finally {
+    savingLayout.value = false
+  }
+}
+
 onMounted(async () => {
   try {
     const [p, d, t] = await Promise.all([
@@ -505,6 +611,7 @@ onMounted(async () => {
       fetchSchemaTables().catch(() => []),
     ])
     panels.value = p
+    layoutFromPanels()
     devices.value = d
     schemaTables.value = t
     // Warm the cache for the default "Add panel" table in the background so the
@@ -532,6 +639,14 @@ onMounted(async () => {
       <div class="live__clock">
         <span v-if="lastUpdatedLabel" class="live__updated">Updated {{ lastUpdatedLabel }}</span>
       </div>
+      <el-button
+        v-if="canManage && panels.length"
+        :type="editMode ? 'success' : 'default'"
+        :loading="savingLayout"
+        @click="toggleEditMode"
+      >
+        {{ editMode ? 'Done' : 'Edit Layout' }}
+      </el-button>
       <el-button v-if="canManage" type="primary" @click="openCreate">Add panel</el-button>
     </header>
 
@@ -545,20 +660,48 @@ onMounted(async () => {
       <template v-else>An admin hasn’t configured any panels.</template>
     </p>
 
-    <section v-else class="live__grid">
-      <LivePanel
-        v-for="panel in panels"
-        :key="panel.id"
-        :panel="panel"
-        :device-name="deviceName(panel.device_id)"
-        :can-manage="canManage"
-        @edit="openEdit"
-        @duplicate="duplicate"
-        @delete="remove"
-        @poll-interval-change="onPollIntervalChange"
-        @updated="onPanelUpdated"
-      />
-    </section>
+    <GridLayout
+      v-else
+      v-model:layout="layout"
+      class="live__grid"
+      :class="{ 'live__grid--editing': editMode }"
+      :col-num="12"
+      :row-height="26"
+      :margin="[16, 16]"
+      :is-draggable="editMode && canManage"
+      :is-resizable="editMode && canManage"
+      :responsive="true"
+      :cols="{ lg: 12, md: 12, sm: 1, xs: 1, xxs: 1 }"
+      :breakpoints="{ lg: 1200, md: 900, sm: 700, xs: 480, xxs: 0 }"
+      vertical-compact
+      use-css-transforms
+      drag-allow-from=".panel__drag"
+    >
+      <GridItem
+        v-for="item in layout"
+        :key="item.i"
+        :i="item.i"
+        :x="item.x"
+        :y="item.y"
+        :w="item.w"
+        :h="item.h"
+        :min-w="2"
+        :min-h="4"
+      >
+        <LivePanel
+          v-if="panelById(item.i)"
+          :panel="panelById(item.i)"
+          :device-name="deviceName(panelById(item.i).device_id)"
+          :can-manage="canManage"
+          :edit-mode="editMode"
+          @edit="openEdit"
+          @duplicate="duplicate"
+          @delete="remove"
+          @poll-interval-change="onPollIntervalChange"
+          @updated="onPanelUpdated"
+        />
+      </GridItem>
+    </GridLayout>
 
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="520px">
       <el-form label-position="top">
@@ -813,10 +956,38 @@ onMounted(async () => {
   color: var(--fg-muted);
 }
 
+/* GridLayout container — items are absolutely positioned by the library. */
 .live__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-  gap: var(--space-4);
+  width: 100%;
+}
+
+/* Each grid cell is just a positioning shell; LivePanel paints its own card. */
+.live__grid :deep(.vgl-item) {
+  background: transparent;
+  box-sizing: border-box;
+  touch-action: none;
+}
+
+/* Edit-mode affordance: dashed accent outline + visible resize handle. */
+.live__grid--editing :deep(.vgl-item) {
+  outline: 1px dashed var(--accent, #4f9cff);
+  outline-offset: -1px;
+  border-radius: var(--radius);
+}
+
+.live__grid :deep(.vgl-item__resizer) {
+  display: none;
+}
+
+.live__grid--editing :deep(.vgl-item__resizer) {
+  display: block;
+}
+
+/* Placeholder shown while dragging a tile to a new slot. */
+.live__grid :deep(.vgl-item--placeholder) {
+  background: var(--accent, #4f9cff);
+  opacity: 0.18;
+  border-radius: var(--radius);
 }
 
 .live__empty {
