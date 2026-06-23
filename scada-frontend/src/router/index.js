@@ -51,6 +51,12 @@ const routes = [
         meta: { title: 'Live', icon: 'VideoPlay' },
       },
       {
+        path: 'events',
+        name: 'events',
+        component: () => import('@/pages/EventPage.vue'),
+        meta: { title: 'Events', icon: 'List' },
+      },
+      {
         path: 'settings',
         name: 'settings',
         component: () => import('@/pages/SettingsPage.vue'),

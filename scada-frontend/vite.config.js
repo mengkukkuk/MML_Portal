@@ -33,7 +33,7 @@ export default defineConfig({
     include: ['element-plus/es', 'element-plus/es/locale/lang/en'],
   },
   server: {
-    port: 5173,
+    port: Number(process.env.PORT) || 5173,
     strictPort: false,
     proxy: {
       '/api': 'http://127.0.0.1:8088',

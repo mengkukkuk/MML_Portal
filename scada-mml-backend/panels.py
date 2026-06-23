@@ -25,9 +25,14 @@ VALID_CHART_TYPES = {
     "bargauge",
     "histogram",
     "table",
+    "pie",
+    "heatmap",
+    "scatter",
+    "statetimeline",
+    "candlestick",
 }
 
-VALID_SOURCES = {"device", "tag"}
+VALID_SOURCES = {"device", "tag", "table"}
 
 # Poll-interval whitelist (seconds) — mirrors the frontend selector.
 VALID_POLL_INTERVALS = {5, 30, 60, 600, 1800, 3600}
@@ -46,6 +51,9 @@ class PanelOut(BaseModel):
     source: str = "device"
     tag_name: str | None = None
     poll_interval_seconds: int = 5
+    table_name: str | None = None
+    filter_col: str | None = None
+    ts_col: str | None = None
     created_at: datetime
 
 
@@ -60,6 +68,9 @@ class PanelIn(BaseModel):
     source: str = "device"
     tag_name: str | None = None
     poll_interval_seconds: int = 5
+    table_name: str | None = None
+    filter_col: str | None = None
+    ts_col: str | None = None
 
 
 # --- Helpers ---------------------------------------------------------------
@@ -85,7 +96,7 @@ def _validate(body: PanelIn) -> None:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="device source requires device_id and metric",
             )
-    else:  # tag
+    elif body.source == "tag":
         if not body.tag_name or not body.metric:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -97,6 +108,51 @@ def _validate(body: PanelIn) -> None:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"metric for tag source must be one of: {', '.join(valid_fields)}",
             )
+    else:  # table — generic public-table binding
+        if not body.table_name or not body.metric:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="table source requires table_name and metric (a numeric column)",
+            )
+        try:
+            cols = db.describe_table(body.table_name)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Table not allowed: {body.table_name!r}",
+            )
+        if body.metric not in cols["value_columns"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"metric must be a numeric column of {body.table_name!r}",
+            )
+        if body.filter_col and body.filter_col not in cols["filter_columns"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"filter_col must be a column of {body.table_name!r}",
+            )
+        if body.ts_col and body.ts_col not in cols["ts_columns"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"ts_col must be a timestamp column of {body.table_name!r}",
+            )
+        # Extra value columns ride in options.value_cols so the panel can chart
+        # several columns from the same table as separate series. The primary
+        # column stays in `metric` for back-compat; each extra must also be a
+        # valid numeric column.
+        extra = body.options.get("value_cols") if isinstance(body.options, dict) else None
+        if extra is not None:
+            if not isinstance(extra, list) or any(not isinstance(c, str) for c in extra):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="options.value_cols must be a list of column names",
+                )
+            for c in extra:
+                if c not in cols["value_columns"]:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"options.value_cols[{c!r}] is not a numeric column of {body.table_name!r}",
+                    )
 
 
 # --- Endpoints -------------------------------------------------------------
@@ -119,6 +175,9 @@ def create_panel(body: PanelIn, _admin: dict = Depends(require_admin)):
         body.source,
         body.tag_name.strip() if body.tag_name else None,
         body.poll_interval_seconds,
+        body.table_name,
+        body.filter_col,
+        body.ts_col,
     )
 
 
@@ -137,6 +196,9 @@ def update_panel(panel_id: int, body: PanelIn, _admin: dict = Depends(require_ad
         body.source,
         body.tag_name.strip() if body.tag_name else None,
         body.poll_interval_seconds,
+        body.table_name,
+        body.filter_col,
+        body.ts_col,
     )
     if panel is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Panel not found")

@@ -14,14 +14,15 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { LineChart, BarChart, GaugeChart } from 'echarts/charts'
-import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
+import { LineChart, BarChart, GaugeChart, PieChart, ScatterChart, HeatmapChart, CandlestickChart, CustomChart } from 'echarts/charts'
+import { GridComponent, TooltipComponent, LegendComponent, VisualMapComponent } from 'echarts/components'
 import { fetchSeries, fetchLatest } from '@/api/readings'
 import { fetchTagLatest } from '@/api/tags'
+import { fetchSchemaLatest, fetchSchemaSeries } from '@/api/schema'
 import { SERIES_PALETTE, colorAt } from '@/utils/seriesPalette'
 import { compileExpr, applyExpr } from '@/utils/mathExpr'
 
-use([CanvasRenderer, LineChart, BarChart, GaugeChart, GridComponent, TooltipComponent, LegendComponent])
+use([CanvasRenderer, LineChart, BarChart, GaugeChart, PieChart, ScatterChart, HeatmapChart, CandlestickChart, CustomChart, GridComponent, TooltipComponent, LegendComponent, VisualMapComponent])
 
 const WARN_COLOR = '#e6a23c'
 const CRIT_COLOR = '#f56c6c'
@@ -46,6 +47,20 @@ const POLL_INTERVALS = [
 
 const pollSeconds = computed(() => props.panel.poll_interval_seconds || 5)
 const isTag = computed(() => props.panel.source === 'tag')
+const isTable = computed(() => props.panel.source === 'table')
+
+// Table source: chosen value columns × filter values expand into one series each.
+// When no filter column is set the panel collapses to one series per value column.
+const tableValueCols = computed(() => {
+  const extras = props.panel.options?.value_cols
+  const list = [props.panel.metric, ...(Array.isArray(extras) ? extras : [])]
+  return list.filter(Boolean)
+})
+const tableFilters = computed(() => {
+  const f = props.panel.options?.filters
+  return Array.isArray(f) ? f.filter(Boolean) : []
+})
+const tableHasFilter = computed(() => !!props.panel.filter_col && tableFilters.value.length > 0)
 
 function onPollIntervalSelect(v) {
   emit('poll-interval-change', props.panel, v)
@@ -64,35 +79,63 @@ let timer = null
 const vizType = computed(() => (props.panel.chart_type === 'line' ? 'timeseries' : props.panel.chart_type))
 const opts = computed(() => props.panel.options || {})
 
-// The series keys for this panel: the tag list (tag source) or the single metric.
-const seriesTags = computed(() => {
+// Canonical series model: one entry per output series carrying everything we
+// need to fetch and render it. For the table source this expands the cartesian
+// (value_cols × filter_values), so a panel can chart several columns AND
+// several filter values at once. For tag/device sources it mirrors the legacy
+// one-series-per-key shape.
+const seriesSpecs = computed(() => {
   if (isTag.value) {
     const tags = props.panel.options?.tags
     const list = Array.isArray(tags) && tags.length
       ? tags
       : (props.panel.tag_name ? [props.panel.tag_name] : [])
-    return list.filter(Boolean)
+    return list.filter(Boolean).map((t) => ({
+      key: t, label: t, valueCol: props.panel.metric, filterVal: null,
+    }))
   }
-  return props.panel.metric ? [props.panel.metric] : []
+  if (isTable.value) {
+    const vcs = tableValueCols.value
+    const fvs = tableHasFilter.value ? tableFilters.value : [null]
+    const multiVc = vcs.length > 1
+    const specs = []
+    for (const vc of vcs) {
+      for (const fv of fvs) {
+        // Encode (vc, fv) into a stable key. JSON encoding is collision-safe
+        // against value strings that happen to contain separators.
+        const key = JSON.stringify([vc, fv])
+        const label = multiVc && fv != null ? `${vc} · ${fv}` : (fv != null ? fv : vc)
+        specs.push({ key, label, valueCol: vc, filterVal: fv })
+      }
+    }
+    return specs
+  }
+  // Device source: a single series keyed by its metric.
+  return props.panel.metric
+    ? [{ key: props.panel.metric, label: props.panel.metric, valueCol: props.panel.metric, filterVal: null }]
+    : []
 })
+
+// Legacy alias: the bare series keys, still used by re-seed watchers below.
+const seriesTags = computed(() => seriesSpecs.value.map((s) => s.key))
 
 // Hydrated view model for the renderers: one entry per series with its colour.
 const seriesList = computed(() =>
-  seriesTags.value.map((key, i) => ({
-    key,
-    label: key,
+  seriesSpecs.value.map((s, i) => ({
+    key: s.key,
+    label: s.label,
     color: colorAt(i),
-    points: seriesPoints.value[key] || [],
-    latest: seriesLatest.value[key] || null,
+    points: seriesPoints.value[s.key] || [],
+    latest: seriesLatest.value[s.key] || null,
   })),
 )
 
 const isMulti = computed(() => seriesList.value.length > 1)
 
-const isGeneric = computed(() => ['timeseries', 'bar', 'histogram', 'bargauge'].includes(vizType.value))
-const showHeaderValue = computed(() => ['timeseries', 'bar', 'histogram'].includes(vizType.value))
+const isGeneric = computed(() => ['timeseries', 'bar', 'histogram', 'bargauge', 'pie', 'heatmap', 'scatter', 'statetimeline', 'candlestick'].includes(vizType.value))
+const showHeaderValue = computed(() => ['timeseries', 'bar', 'histogram', 'scatter'].includes(vizType.value))
 
-const firstLatest = computed(() => seriesLatest.value[seriesTags.value[0]] || null)
+const firstLatest = computed(() => seriesLatest.value[seriesSpecs.value[0]?.key] || null)
 
 // Per-panel math transform: applied to every reading at ingest time so all
 // renderers (and warn/crit thresholds) see post-transform numbers.
@@ -223,6 +266,265 @@ function histogramOption() {
   }
 }
 
+// Pie / Donut: latest value per series as proportional slices.
+function pieOption() {
+  const labelPos = opts.value.labelPosition || 'outside'
+  const inner = opts.value.donut !== false ? `${opts.value.innerRadius ?? 50}%` : '0'
+  const data = seriesList.value.map((s, i) => ({
+    name: s.label,
+    value: s.latest?.value ?? 0,
+    itemStyle: { color: colorAt(i) },
+  }))
+  return {
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: '#172238', borderColor: '#172238', textStyle: { color: '#e6edf7' },
+      formatter: (p) => `${p.name}<br/>${fmt(p.value)} ${unit.value} (${p.percent}%)`,
+    },
+    legend: legendCfg(),
+    series: [{
+      type: 'pie',
+      radius: [inner, '72%'],
+      center: ['50%', isMulti.value ? '55%' : '52%'],
+      data,
+      label: {
+        show: labelPos !== 'none',
+        position: labelPos === 'none' ? 'outside' : labelPos,
+        color: '#8a99b3', fontSize: 11,
+        formatter: '{b}: {d}%',
+      },
+      emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.4)' } },
+    }],
+  }
+}
+
+// Heatmap: time buckets × series, cell color = average value in bucket.
+function heatmapOption() {
+  const bucketMs = Math.max(60_000, (opts.value.bucketMinutes ?? 5) * 60_000)
+  const list = seriesList.value
+  if (!list.length) return { series: [] }
+
+  const allTs = list.flatMap(s => s.points.map(p => p[0]))
+  if (!allTs.length) return {
+    xAxis: { type: 'category', data: [] },
+    yAxis: { type: 'category', data: list.map(s => s.label) },
+    series: [{ type: 'heatmap', data: [] }],
+  }
+
+  const minT = Math.min(...allTs)
+  const maxT = Math.max(...allTs)
+  const numBuckets = Math.max(1, Math.ceil((maxT - minT) / bucketMs) + 1)
+  const timeLabels = Array.from({ length: numBuckets }, (_, i) =>
+    new Date(minT + i * bucketMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+  )
+  const seriesLabels = list.map(s => s.label)
+
+  const heatData = []
+  let dataMin = Infinity, dataMax = -Infinity
+  list.forEach((s, yi) => {
+    const bmap = Array.from({ length: numBuckets }, () => [])
+    for (const [t, v] of s.points) {
+      const bi = Math.min(numBuckets - 1, Math.floor((t - minT) / bucketMs))
+      if (bi >= 0 && v != null) bmap[bi].push(v)
+    }
+    for (let xi = 0; xi < numBuckets; xi++) {
+      const vals = bmap[xi]
+      if (vals.length) {
+        const avg = vals.reduce((a, b) => a + b, 0) / vals.length
+        heatData.push([xi, yi, avg])
+        if (avg < dataMin) dataMin = avg
+        if (avg > dataMax) dataMax = avg
+      }
+    }
+  })
+  if (!isFinite(dataMin)) dataMin = 0
+  if (!isFinite(dataMax)) dataMax = 1
+
+  const vMin = opts.value.colorMin ?? dataMin
+  const vMax = opts.value.colorMax ?? dataMax
+
+  return {
+    tooltip: {
+      backgroundColor: '#172238', borderColor: '#172238', textStyle: { color: '#e6edf7' },
+      formatter: (p) => {
+        const [xi, yi, v] = p.data
+        return `${seriesLabels[yi]}<br/>${timeLabels[xi]}<br/>${v != null ? fmt(v) : '—'} ${unit.value}`
+      },
+    },
+    grid: { top: 12, right: 60, bottom: 36, left: 80 },
+    xAxis: {
+      type: 'category', data: timeLabels,
+      axisLabel: { color: '#8a99b3', fontSize: 9, interval: Math.ceil(numBuckets / 8), rotate: numBuckets > 10 ? 30 : 0 },
+      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.12)' } },
+    },
+    yAxis: {
+      type: 'category', data: seriesLabels,
+      axisLabel: { color: '#8a99b3', fontSize: 10 },
+      axisLine: { show: false }, axisTick: { show: false },
+    },
+    visualMap: {
+      min: vMin, max: vMax, calculable: false, orient: 'vertical',
+      right: 0, top: 'center',
+      textStyle: { color: '#8a99b3', fontSize: 9 },
+      inRange: { color: ['#22c55e', '#e6a23c', '#f56c6c'] },
+    },
+    series: [{ type: 'heatmap', data: heatData, itemStyle: { borderWidth: 1, borderColor: 'rgba(0,0,0,0.15)' } }],
+  }
+}
+
+// Scatter: individual data points over time, one series per colour.
+function scatterOption() {
+  return {
+    color: SERIES_PALETTE,
+    legend: legendCfg(),
+    grid: { top: gridTop(), right: 14, bottom: 26, left: 46 },
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: '#172238', borderColor: '#172238', textStyle: { color: '#e6edf7' },
+      formatter: (p) => `${p.seriesName}<br/>${new Date(p.data[0]).toLocaleTimeString()}: ${fmt(p.data[1])} ${unit.value}`,
+    },
+    xAxis: timeAxis(),
+    yAxis: valueAxis(),
+    series: seriesList.value.map((s, i) => ({
+      name: s.label,
+      type: 'scatter',
+      symbolSize: opts.value.pointSize ?? 6,
+      itemStyle: { color: colorAt(i), opacity: 0.75 },
+      data: s.points,
+    })),
+  }
+}
+
+// State timeline: horizontal Gantt-style bands showing discrete state transitions.
+function stateTimelineOption() {
+  const list = seriesList.value
+  if (!list.length) return { series: [] }
+  const round = opts.value.roundValues !== false
+
+  function stateKey(v) {
+    return round ? String(Math.round(v ?? 0)) : fmt(v)
+  }
+
+  const stateSet = new Set()
+  for (const s of list) {
+    for (const [, v] of s.points) stateSet.add(stateKey(v))
+  }
+  const stateList = [...stateSet]
+  const stateColors = stateList.map((_, i) => colorAt(i))
+
+  const segments = []
+  const now = Date.now()
+  const categoryNames = list.map(s => s.label)
+
+  list.forEach((s, yi) => {
+    const pts = s.points
+    if (!pts.length) return
+    let segStart = pts[0][0]
+    let segK = stateKey(pts[0][1])
+    for (let i = 1; i < pts.length; i++) {
+      const [t, v] = pts[i]
+      const k = stateKey(v)
+      if (k !== segK) {
+        segments.push([segStart, t, yi, stateList.indexOf(segK)])
+        segStart = t
+        segK = k
+      }
+    }
+    segments.push([segStart, now, yi, stateList.indexOf(segK)])
+  })
+
+  const BAND_H = 22
+  return {
+    tooltip: {
+      backgroundColor: '#172238', borderColor: '#172238', textStyle: { color: '#e6edf7' },
+      formatter: (p) => {
+        if (!Array.isArray(p.data)) return ''
+        const [start, end, yi, si] = p.data
+        const dur = Math.round((end - start) / 1000)
+        const mins = Math.floor(dur / 60)
+        const secs = dur % 60
+        const durLabel = mins ? `${mins}m ${secs}s` : `${secs}s`
+        return `${categoryNames[yi] ?? ''}<br/>State: <b>${stateList[si] ?? '?'}</b><br/>Duration: ${durLabel}`
+      },
+    },
+    grid: { top: 8, right: 14, bottom: 24, left: 80 },
+    xAxis: {
+      type: 'time',
+      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.12)' } },
+      axisLabel: { color: '#8a99b3', fontSize: 10 },
+      splitLine: { show: false },
+    },
+    yAxis: {
+      type: 'category', data: categoryNames,
+      axisLabel: { color: '#8a99b3', fontSize: 10 },
+      axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false },
+    },
+    series: [{
+      type: 'custom',
+      renderItem(params, api) {
+        const startV = api.value(0)
+        const endV = api.value(1)
+        const catI = api.value(2)
+        const si = api.value(3)
+        const catLabel = categoryNames[catI]
+        const [x0, y0] = api.coord([startV, catLabel])
+        const [x1] = api.coord([endV, catLabel])
+        return {
+          type: 'rect',
+          shape: { x: x0, y: y0 - BAND_H / 2, width: Math.max(1, x1 - x0), height: BAND_H, r: 3 },
+          style: api.style({ fill: stateColors[si] ?? '#4f8cff', opacity: 0.85 }),
+        }
+      },
+      encode: { x: [0, 1], y: 2 },
+      data: segments,
+    }],
+  }
+}
+
+// Candlestick: client-side OHLC aggregation into time buckets.
+function candlestickOption() {
+  const bucketMs = Math.max(60_000, (opts.value.bucketMinutes ?? 5) * 60_000)
+  const series = seriesList.value.map((s, i) => {
+    const bmap = new Map()
+    for (const [t, v] of s.points) {
+      const bStart = Math.floor(t / bucketMs) * bucketMs
+      if (!bmap.has(bStart)) bmap.set(bStart, [])
+      bmap.get(bStart).push(v)
+    }
+    const data = [...bmap.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([t, vals]) => [t, vals[0], vals[vals.length - 1], Math.min(...vals), Math.max(...vals)])
+    const col = colorAt(i)
+    return {
+      name: s.label,
+      type: 'candlestick',
+      data,
+      itemStyle: { color: col, color0: col + '66', borderColor: col, borderColor0: col + '99' },
+    }
+  })
+  return {
+    color: SERIES_PALETTE,
+    legend: legendCfg(),
+    grid: { top: gridTop(), right: 14, bottom: 26, left: 46 },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#172238', borderColor: '#172238', textStyle: { color: '#e6edf7' },
+      formatter: (params) => {
+        if (!Array.isArray(params) || !params.length) return ''
+        const t = new Date(params[0].data?.[0]).toLocaleTimeString()
+        const lines = params.map(p => {
+          const [, o, c, lo, hi] = p.data ?? []
+          return `${p.marker}${p.seriesName}: O:${fmt(o)} H:${fmt(hi)} L:${fmt(lo)} C:${fmt(c)}`
+        })
+        return [t, ...lines].join('<br/>')
+      },
+    },
+    xAxis: timeAxis(),
+    yAxis: valueAxis(),
+    series,
+  }
+}
+
 // Gauge: rendered as small multiples (one radial gauge per series).
 function gaugeOptionFor(s, i) {
   const min = Number(opts.value.min ?? 0)
@@ -267,8 +569,23 @@ const option = computed(() => {
     case 'bar': return barOption()
     case 'bargauge': return barGaugeOption()
     case 'histogram': return histogramOption()
+    case 'pie': return pieOption()
+    case 'heatmap': return heatmapOption()
+    case 'scatter': return scatterOption()
+    case 'statetimeline': return stateTimelineOption()
+    case 'candlestick': return candlestickOption()
     default: return timeseriesOption()
   }
+})
+
+const chartStyle = computed(() => {
+  if (vizType.value === 'statetimeline') {
+    return { height: `${Math.max(120, seriesList.value.length * 44 + 40)}px` }
+  }
+  if (vizType.value === 'heatmap') {
+    return { height: `${Math.max(160, seriesList.value.length * 34 + 60)}px` }
+  }
+  return {}
 })
 
 // --- Table rows (one value column per series) ------------------------------
@@ -302,11 +619,55 @@ async function seed() {
   if (isTag.value) {
     // status_tag has no native history — start empty, accumulate via polling.
     const init = {}
-    for (const t of seriesTags.value) init[t] = []
+    for (const s of seriesSpecs.value) init[s.key] = []
     seriesPoints.value = init
     seriesLatest.value = {}
     unit.value = ''
     await poll()
+    return
+  }
+  if (isTable.value) {
+    unit.value = ''
+    // With a timestamp column we can seed real history; otherwise start empty
+    // and let polling accumulate (like the tag source).
+    if (!props.panel.ts_col) {
+      const init = {}
+      for (const s of seriesSpecs.value) init[s.key] = []
+      seriesPoints.value = init
+      seriesLatest.value = {}
+      await poll()
+      return
+    }
+    const fn = mathFn.value
+    const specs = seriesSpecs.value
+    const results = await Promise.allSettled(
+      specs.map((s) =>
+        fetchSchemaSeries({
+          table: props.panel.table_name,
+          valueCol: s.valueCol,
+          tsCol: props.panel.ts_col,
+          filterCol: props.panel.filter_col,
+          filterVal: s.filterVal,
+          minutes: props.panel.window_minutes,
+        }),
+      ),
+    )
+    const nextPoints = {}
+    const nextLatest = {}
+    results.forEach((res, i) => {
+      const key = specs[i].key
+      nextPoints[key] = []
+      if (res.status !== 'fulfilled') return
+      const arr = res.value.points.map((p) => [new Date(p.ts).getTime(), applyExpr(fn, p.value)])
+      nextPoints[key] = arr
+      if (arr.length) {
+        const last = res.value.points[res.value.points.length - 1]
+        nextLatest[key] = { value: applyExpr(fn, last.value), ts: last.ts }
+      }
+    })
+    seriesPoints.value = nextPoints
+    seriesLatest.value = nextLatest
+    error.value = ''
     return
   }
   try {
@@ -357,6 +718,49 @@ async function poll() {
     if (anyOk) emit('updated', sampleT)
     return
   }
+  if (isTable.value) {
+    // Fetch every series concurrently; one dead series must not blank the panel.
+    const specs = seriesSpecs.value
+    const results = await Promise.allSettled(
+      specs.map((s) =>
+        fetchSchemaLatest({
+          table: props.panel.table_name,
+          valueCol: s.valueCol,
+          filterCol: props.panel.filter_col,
+          filterVal: s.filterVal,
+          tsCol: props.panel.ts_col,
+        }),
+      ),
+    )
+    const sampleT = Date.now()
+    const nextPoints = { ...seriesPoints.value }
+    const nextLatest = { ...seriesLatest.value }
+    let anyOk = false
+    let newest = 0
+    const fn = mathFn.value
+    results.forEach((res, i) => {
+      const key = specs[i].key
+      if (res.status !== 'fulfilled') return
+      const raw = res.value.value
+      if (raw == null) return
+      anyOk = true
+      const value = applyExpr(fn, raw)
+      // Real history tables carry a row timestamp; append only when it advances.
+      // Current-state tables (no ts_col) sample at wall-clock so steady values
+      // still move the line forward.
+      const t = props.panel.ts_col && res.value.ts ? new Date(res.value.ts).getTime() : sampleT
+      const arr = nextPoints[key] || []
+      const lastT = arr.length ? arr[arr.length - 1][0] : -1
+      if (t > lastT) nextPoints[key] = trimWindow([...arr, [t, value]])
+      nextLatest[key] = { value, ts: res.value.ts || new Date(sampleT).toISOString() }
+      if (t > newest) newest = t
+    })
+    seriesPoints.value = nextPoints
+    seriesLatest.value = nextLatest
+    error.value = anyOk ? '' : 'No value reported.'
+    if (anyOk) emit('updated', newest || sampleT)
+    return
+  }
   try {
     const key = props.panel.metric
     const r = await fetchLatest(props.panel.device_id, props.panel.metric)
@@ -391,7 +795,11 @@ watch(pollSeconds, startTimer)
 
 // Re-seed when the panel's data binding changes (admin edits tags/metric/window).
 watch(
-  () => JSON.stringify([props.panel.source, props.panel.device_id, props.panel.metric, props.panel.window_minutes, seriesTags.value]),
+  () => JSON.stringify([
+    props.panel.source, props.panel.device_id, props.panel.metric,
+    props.panel.window_minutes, seriesTags.value,
+    props.panel.table_name, props.panel.filter_col, props.panel.ts_col,
+  ]),
   async () => {
     await seed()
     startTimer()
@@ -434,7 +842,10 @@ onBeforeUnmount(() => {
     </header>
 
     <span class="panel__conn">
-      <template v-if="isTag">tag · {{ seriesTags.join(', ') }} · {{ panel.metric }}</template>
+      <template v-if="isTable">
+        {{ panel.table_name }}<template v-if="tableHasFilter"> · {{ tableFilters.join(', ') }}</template> · {{ tableValueCols.join(', ') }}
+      </template>
+      <template v-else-if="isTag">tag · {{ seriesTags.join(', ') }} · {{ panel.metric }}</template>
       <template v-else>{{ deviceName || `device #${panel.device_id}` }} · {{ panel.metric }}</template>
     </span>
 
@@ -496,8 +907,8 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- Time series / bar / histogram / bar gauge: a single multi-series chart -->
-    <VChart v-else-if="isGeneric" class="panel__chart" :option="option" autoresize />
+    <!-- Time series / bar / histogram / bar gauge / pie / heatmap / scatter / state timeline / candlestick -->
+    <VChart v-else-if="isGeneric" class="panel__chart" :style="chartStyle" :option="option" autoresize />
   </article>
 </template>
 

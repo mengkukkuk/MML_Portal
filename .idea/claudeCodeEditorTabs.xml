@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ClaudeCodeEditorTabs">
+    <option name="activeSessionId" value="b4431825-8621-4b0c-8c4b-8ed720a902d0" />
+    <option name="openSessionIds">
+      <list>
+        <option value="12b97f17-fa94-49e0-9d71-2dd5c966cd29" />
+        <option value="b4431825-8621-4b0c-8c4b-8ed720a902d0" />
+      </list>
+    </option>
+    <option name="sessionPaths">
+      <map>
+        <entry key="12b97f17-fa94-49e0-9d71-2dd5c966cd29" value="/sessions/3ffaba28-fc97-4727-8411-2f06ff936ebf" />
+        <entry key="b4431825-8621-4b0c-8c4b-8ed720a902d0" value="/sessions/28a0ee8c-4172-413f-8c7f-a05c17d4214b" />
+      </map>
+    </option>
+    <option name="sessionTitles">
+      <map>
+        <entry key="12b97f17-fa94-49e0-9d71-2dd5c966cd29" value="Cannot run program &quot;C:\dev\scada-mml-backend\venv\" />
+        <entry key="b4431825-8621-4b0c-8c4b-8ed720a902d0" value="Create dashboard_dev.md . Contain instructions to" />
+      </map>
+    </option>
+  </component>
+</project>
