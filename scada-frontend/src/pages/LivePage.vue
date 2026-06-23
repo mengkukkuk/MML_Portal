@@ -128,6 +128,7 @@ const devices = ref([])
 const schemaTables = ref([])   // [{ table, label }]
 const schemaCols = ref({ value_columns: [], ts_columns: [], filter_columns: [] })
 const filterValues = ref([])   // distinct values of the chosen filter column
+const schemaColsCache = new Map()  // table_name → columns (avoids redundant fetches)
 const loading = ref(true)
 const error = ref('')
 
@@ -226,7 +227,10 @@ async function applyBinding({ table, metric, value_cols, filter_col, filters, ts
     return
   }
   try {
-    schemaCols.value = await fetchSchemaColumns(form.table_name)
+    if (!schemaColsCache.has(form.table_name)) {
+      schemaColsCache.set(form.table_name, await fetchSchemaColumns(form.table_name))
+    }
+    schemaCols.value = schemaColsCache.get(form.table_name)
   } catch {
     schemaCols.value = { value_columns: [], ts_columns: [], filter_columns: [] }
   }
@@ -267,11 +271,11 @@ async function openCreate() {
   form.chart_type = 'timeseries'
   form.options = defaultOptions('timeseries')
   form.poll_interval_seconds = 5
+  dialogVisible.value = true  // show immediately; dropdowns populate once schema resolves
   await applyBinding({
     table: schemaTables.value[0]?.table ?? null,
     metric: null, value_cols: [], filter_col: null, filters: [], ts_col: null,
   })
-  dialogVisible.value = true
 }
 
 // Best-effort map of a legacy tag/device panel onto the generic table model.
@@ -315,8 +319,8 @@ async function openEdit(panel) {
         ts_col: panel.ts_col,
       }
     : (legacyBinding(panel) || { table: null, metric: null, value_cols: [], filter_col: null, filters: [], ts_col: null })
+  dialogVisible.value = true  // show immediately; dropdowns populate once schema resolves
   await applyBinding(binding)
-  dialogVisible.value = true
 }
 
 async function save() {
@@ -503,6 +507,13 @@ onMounted(async () => {
     panels.value = p
     devices.value = d
     schemaTables.value = t
+    // Warm the cache for the default "Add panel" table in the background so the
+    // first openCreate() call hits the cache instead of waiting for a fetch.
+    if (t[0]?.table) {
+      fetchSchemaColumns(t[0].table)
+        .then(cols => schemaColsCache.set(t[0].table, cols))
+        .catch(() => {})
+    }
   } catch (e) {
     error.value = e?.message || 'Failed to load dashboard.'
   } finally {

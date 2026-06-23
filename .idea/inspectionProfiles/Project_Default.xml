@@ -1,0 +1,137 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <list>
+          <option value="absl-py" />
+          <option value="aiofiles" />
+          <option value="altgraph" />
+          <option value="annotated-types" />
+          <option value="antlr4-python3-runtime" />
+          <option value="anyio" />
+          <option value="asttokens" />
+          <option value="blinker" />
+          <option value="certifi" />
+          <option value="cffi" />
+          <option value="charset-normalizer" />
+          <option value="click" />
+          <option value="colorama" />
+          <option value="contourpy" />
+          <option value="cryptography" />
+          <option value="cycler" />
+          <option value="decorator" />
+          <option value="ecdsa" />
+          <option value="et_xmlfile" />
+          <option value="executing" />
+          <option value="fastapi" />
+          <option value="fastcrc" />
+          <option value="filelock" />
+          <option value="Flask" />
+          <option value="Flask-Login" />
+          <option value="fonttools" />
+          <option value="fsspec" />
+          <option value="future" />
+          <option value="gitdb" />
+          <option value="GitPython" />
+          <option value="greenlet" />
+          <option value="grpcio" />
+          <option value="h11" />
+          <option value="httptools" />
+          <option value="hydra-core" />
+          <option value="idna" />
+          <option value="ipython" />
+          <option value="ipython_pygments_lexers" />
+          <option value="itsdangerous" />
+          <option value="jedi" />
+          <option value="Jinja2" />
+          <option value="kiwisolver" />
+          <option value="lap" />
+          <option value="lxml" />
+          <option value="Markdown" />
+          <option value="MarkupSafe" />
+          <option value="matplotlib" />
+          <option value="matplotlib-inline" />
+          <option value="mpmath" />
+          <option value="networkx" />
+          <option value="numpy" />
+          <option value="omegaconf" />
+          <option value="opencv-python" />
+          <option value="openpyxl" />
+          <option value="packaging" />
+          <option value="pandas" />
+          <option value="parso" />
+          <option value="pefile" />
+          <option value="pillow" />
+          <option value="polars" />
+          <option value="polars-runtime-32" />
+          <option value="prompt_toolkit" />
+          <option value="protobuf" />
+          <option value="psutil" />
+          <option value="pure_eval" />
+          <option value="pyasn1" />
+          <option value="pycparser" />
+          <option value="pydantic" />
+          <option value="pydantic_core" />
+          <option value="Pygments" />
+          <option value="pyinstaller" />
+          <option value="pyinstaller-hooks-contrib" />
+          <option value="pymavlink" />
+          <option value="pyodbc" />
+          <option value="pyparsing" />
+          <option value="pyserial" />
+          <option value="python-dateutil" />
+          <option value="python-docx" />
+          <option value="python-dotenv" />
+          <option value="python-jose" />
+          <option value="python-multipart" />
+          <option value="pywin32-ctypes" />
+          <option value="PyYAML" />
+          <option value="requests" />
+          <option value="rsa" />
+          <option value="scipy" />
+          <option value="seaborn" />
+          <option value="six" />
+          <option value="smmap" />
+          <option value="SQLAlchemy" />
+          <option value="stack-data" />
+          <option value="starlette" />
+          <option value="sympy" />
+          <option value="tensorboard" />
+          <option value="tensorboard-data-server" />
+          <option value="thop" />
+          <option value="torch" />
+          <option value="torchvision" />
+          <option value="tqdm" />
+          <option value="traitlets" />
+          <option value="typing_extensions" />
+          <option value="typing-inspection" />
+          <option value="tzdata" />
+          <option value="ultralytics" />
+          <option value="ultralytics-thop" />
+          <option value="urllib3" />
+          <option value="uvicorn" />
+          <option value="waitress" />
+          <option value="watchfiles" />
+          <option value="wcwidth" />
+          <option value="websockets" />
+          <option value="Werkzeug" />
+        </list>
+      </option>
+    </inspection_tool>
+    <inspection_tool class="PyPep8Inspection" enabled="true" level="INFORMATION" enabled_by_default="true">
+      <option name="ignoredErrors">
+        <list>
+          <option value="E265" />
+        </list>
+      </option>
+    </inspection_tool>
+    <inspection_tool class="PyStubPackagesAdvertiser" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <list>
+          <option value="pandas-stubs==3.0.0.260204" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>
