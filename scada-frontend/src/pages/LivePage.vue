@@ -9,6 +9,7 @@
  * type's parameters via a sub-menu. Operators get a read-only grid.
  */
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { GridLayout, GridItem } from 'grid-layout-plus'
 import { useAuthStore } from '@/stores/auth'
@@ -16,6 +17,7 @@ import LivePanel from '@/components/LivePanel.vue'
 import { fetchDevices } from '@/api/readings'
 import { fetchSchemaTables, fetchSchemaColumns, fetchSchemaValues } from '@/api/schema'
 import { fetchPanels, createPanel, updatePanel, deletePanel } from '@/api/panels'
+import { fetchDashboards, createDashboard, updateDashboard, deleteDashboard } from '@/api/dashboards'
 import { colorAt } from '@/utils/seriesPalette'
 import { compileExpr } from '@/utils/mathExpr'
 import { UNIT_GROUPS } from '@/utils/units'
@@ -37,6 +39,8 @@ const POLL_INTERVALS = [
 
 const auth = useAuthStore()
 const canManage = computed(() => auth.role === 'admin')
+const route = useRoute()
+const router = useRouter()
 
 // --- Visualization catalogue (mirrors LivePanel's renderers) ---------------
 const VIZ_TYPES = [
@@ -125,6 +129,9 @@ function defaultOptions(type) {
   return out
 }
 
+const dashboards = ref([])              // [{ id, title, position, created_at }]
+const activeDashboardId = ref(null)
+const switching = ref(false)            // true while loading a dashboard's panels
 const panels = ref([])
 const editMode = ref(false)
 const savingLayout = ref(false)
@@ -407,6 +414,7 @@ async function save() {
         ...layoutOpt,
       },
       poll_interval_seconds: form.poll_interval_seconds,
+      dashboard_id: activeDashboardId.value,
       position: editingId.value
         ? panels.value.find((p) => p.id === editingId.value)?.position ?? 0
         : panels.value.length,
@@ -480,6 +488,7 @@ async function confirmDuplicate() {
       chart_type: panel.chart_type === 'line' ? 'timeseries' : panel.chart_type,
       options: clonedOptions,
       poll_interval_seconds: panel.poll_interval_seconds || 5,
+      dashboard_id: activeDashboardId.value,
       position: panels.value.length,
     }
     const created = await createPanel(payload)
@@ -534,6 +543,7 @@ async function onPollIntervalChange(panel, seconds) {
       chart_type: panel.chart_type === 'line' ? 'timeseries' : panel.chart_type,
       options: panel.options || {},
       poll_interval_seconds: seconds,
+      dashboard_id: panel.dashboard_id ?? activeDashboardId.value,
       position: panel.position,
     }
     const updated = await updatePanel(panel.id, payload)
@@ -616,6 +626,7 @@ async function saveLayout() {
           chart_type: panel.chart_type === 'line' ? 'timeseries' : panel.chart_type,
           options: { ...(panel.options || {}), layout: lay },
           poll_interval_seconds: panel.poll_interval_seconds,
+          dashboard_id: panel.dashboard_id ?? activeDashboardId.value,
           position: panel.position,
         }
         const updated = await updatePanel(panel.id, payload)
@@ -631,17 +642,53 @@ async function saveLayout() {
   }
 }
 
+// --- Dashboards (multi-board switcher + management) -----------------------
+// Load the active dashboard's panels and rebuild the grid layout.
+async function loadPanels() {
+  panels.value = activeDashboardId.value
+    ? await fetchPanels(activeDashboardId.value)
+    : []
+  layoutFromPanels()
+}
+
+// Switch the active dashboard: persist it in the URL query and reload panels.
+async function selectDashboard(id) {
+  if (id == null || id === activeDashboardId.value) return
+  activeDashboardId.value = id
+  editMode.value = false
+  router.replace({ query: { ...route.query, dashboard: String(id) } }).catch(() => {})
+  switching.value = true
+  try {
+    await loadPanels()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || 'Failed to load dashboard.')
+  } finally {
+    switching.value = false
+  }
+}
+
+const activeDashboard = computed(() =>
+  dashboards.value.find((d) => d.id === activeDashboardId.value) || null,
+)
+
 onMounted(async () => {
   try {
-    const [p, d, t] = await Promise.all([
-      fetchPanels(),
+    const [ds, d, t] = await Promise.all([
+      fetchDashboards(),
       fetchDevices().catch(() => []),
       fetchSchemaTables().catch(() => []),
     ])
-    panels.value = p
-    layoutFromPanels()
+    dashboards.value = ds
     devices.value = d
     schemaTables.value = t
+    // Resolve the active dashboard from ?dashboard=<id>, else the first board.
+    const qid = Number(route.query.dashboard)
+    const fromQuery = ds.find((x) => x.id === qid)
+    activeDashboardId.value = fromQuery ? fromQuery.id : (ds[0]?.id ?? null)
+    if (activeDashboardId.value != null && String(activeDashboardId.value) !== route.query.dashboard) {
+      router.replace({ query: { ...route.query, dashboard: String(activeDashboardId.value) } }).catch(() => {})
+    }
+    await loadPanels()
     // Warm the cache for the default "Add panel" table in the background so the
     // first openCreate() call hits the cache instead of waiting for a fetch.
     if (t[0]?.table) {
@@ -655,27 +702,120 @@ onMounted(async () => {
     loading.value = false
   }
 })
+
+// --- Manage-dashboards dialog ---------------------------------------------
+const manageVisible = ref(false)
+const newDashboardTitle = ref('')
+const creatingDashboard = ref(false)
+
+function openManage() {
+  newDashboardTitle.value = ''
+  manageVisible.value = true
+}
+
+async function addDashboard() {
+  const title = newDashboardTitle.value.trim()
+  if (!title) {
+    ElMessage.warning('Name is required.')
+    return
+  }
+  creatingDashboard.value = true
+  try {
+    const created = await createDashboard({ title, position: dashboards.value.length })
+    dashboards.value.push(created)
+    newDashboardTitle.value = ''
+    ElMessage.success('Dashboard created.')
+    await selectDashboard(created.id)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || 'Failed to create dashboard.')
+  } finally {
+    creatingDashboard.value = false
+  }
+}
+
+async function renameDashboard(dash) {
+  try {
+    const { value } = await ElMessageBox.prompt('New name', 'Rename dashboard', {
+      inputValue: dash.title,
+      inputValidator: (v) => (v && v.trim() ? true : 'Name is required'),
+      confirmButtonText: 'Save',
+      cancelButtonText: 'Cancel',
+    })
+    const updated = await updateDashboard(dash.id, { title: value.trim() })
+    const i = dashboards.value.findIndex((d) => d.id === dash.id)
+    if (i !== -1) dashboards.value[i] = updated
+    ElMessage.success('Dashboard renamed.')
+  } catch (e) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(e?.response?.data?.detail || 'Failed to rename dashboard.')
+  }
+}
+
+async function removeDashboard(dash) {
+  if (dashboards.value.length <= 1) {
+    ElMessage.warning('At least one dashboard must remain.')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `Delete "${dash.title}" and all its panels? This cannot be undone.`,
+      'Delete dashboard',
+      { type: 'warning', confirmButtonText: 'Delete', cancelButtonText: 'Cancel' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await deleteDashboard(dash.id)
+    dashboards.value = dashboards.value.filter((d) => d.id !== dash.id)
+    ElMessage.success('Dashboard deleted.')
+    if (activeDashboardId.value === dash.id) {
+      activeDashboardId.value = null
+      await selectDashboard(dashboards.value[0]?.id ?? null)
+    }
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || 'Failed to delete dashboard.')
+  }
+}
 </script>
 
 <template>
   <div class="live">
     <header class="live__bar">
-      <div>
-        <h2 class="live__heading">Live Dashboard</h2>
+      <div class="live__title">
+        <el-select
+          v-if="dashboards.length"
+          :model-value="activeDashboardId"
+          class="live__dashselect"
+          :loading="switching"
+          @update:model-value="selectDashboard"
+        >
+          <el-option v-for="d in dashboards" :key="d.id" :label="d.title" :value="d.id" />
+        </el-select>
+        <h2 v-else class="live__heading">Live Dashboard</h2>
+        <el-button
+          v-if="canManage"
+          class="live__manage"
+          text
+          title="Manage dashboards"
+          @click="openManage"
+        >Manage</el-button>
         <p class="live__sub">Real-time machine panels · per-panel poll interval</p>
       </div>
       <div class="live__clock">
         <span v-if="lastUpdatedLabel" class="live__updated">Updated {{ lastUpdatedLabel }}</span>
       </div>
-      <el-button
-        v-if="canManage && panels.length"
-        :type="editMode ? 'success' : 'default'"
-        :loading="savingLayout"
-        @click="toggleEditMode"
-      >
-        {{ editMode ? 'Done' : 'Edit Layout' }}
-      </el-button>
-      <el-button v-if="canManage" type="primary" @click="openCreate">Add panel</el-button>
+      <div class="live__actions">
+        <el-button
+          v-if="canManage && panels.length"
+          :type="editMode ? 'success' : 'default'"
+          :loading="savingLayout"
+          @click="toggleEditMode"
+        >
+          {{ editMode ? 'Done' : 'Edit Layout' }}
+        </el-button>
+        <el-button v-if="canManage" type="primary" :disabled="activeDashboardId == null" @click="openCreate">Add panel</el-button>
+      </div>
     </header>
 
     <p v-if="error" class="live__error">{{ error }}</p>
@@ -974,6 +1114,44 @@ onMounted(async () => {
         <el-button type="danger" :loading="deleting" @click="confirmDelete">Delete</el-button>
       </template>
     </el-dialog>
+
+    <!-- Manage dashboards: list + rename/delete + create -->
+    <el-dialog
+      v-model="manageVisible"
+      title="Manage dashboards"
+      width="480px"
+      align-center
+      append-to-body
+      class="manage-dialog"
+    >
+      <el-table :data="dashboards" size="small" max-height="320">
+        <el-table-column prop="title" label="Name" />
+        <el-table-column label="" width="150" align="right">
+          <template #default="{ row }">
+            <el-button text size="small" @click="renameDashboard(row)">Rename</el-button>
+            <el-button
+              text
+              size="small"
+              type="danger"
+              :disabled="dashboards.length <= 1"
+              @click="removeDashboard(row)"
+            >Delete</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div class="manage-dialog__new">
+        <el-input
+          v-model="newDashboardTitle"
+          placeholder="New dashboard name"
+          clearable
+          @keyup.enter="addDashboard"
+        />
+        <el-button type="primary" :loading="creatingDashboard" @click="addDashboard">Add</el-button>
+      </div>
+      <template #footer>
+        <el-button @click="manageVisible = false">Close</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -1002,9 +1180,36 @@ onMounted(async () => {
   text-align: center;
 }
 
-.live__bar > .el-button {
+.live__actions {
   grid-column: 3;
   justify-self: end;
+  display: flex;
+  gap: var(--space-2);
+}
+
+.live__title {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  column-gap: var(--space-2);
+}
+
+.live__dashselect {
+  width: 220px;
+}
+
+.live__dashselect :deep(.el-select__wrapper) {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.live__manage {
+  justify-self: start;
+}
+
+/* Sub-line spans both columns under the selector + manage button. */
+.live__title .live__sub {
+  grid-column: 1 / -1;
 }
 
 .live__updated {
@@ -1024,6 +1229,12 @@ onMounted(async () => {
   margin: 2px 0 0;
   font-size: 13px;
   color: var(--fg-muted);
+}
+
+.manage-dialog__new {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
 }
 
 /* GridLayout container — items are absolutely positioned by the library. */

@@ -54,6 +54,7 @@ class PanelOut(BaseModel):
     table_name: str | None = None
     filter_col: str | None = None
     ts_col: str | None = None
+    dashboard_id: int | None = None
     created_at: datetime
 
 
@@ -71,10 +72,17 @@ class PanelIn(BaseModel):
     table_name: str | None = None
     filter_col: str | None = None
     ts_col: str | None = None
+    dashboard_id: int | None = None
 
 
 # --- Helpers ---------------------------------------------------------------
 def _validate(body: PanelIn) -> None:
+    if body.dashboard_id is not None:
+        if not any(d["id"] == body.dashboard_id for d in db.list_dashboards()):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"dashboard_id {body.dashboard_id} does not exist",
+            )
     if body.chart_type not in VALID_CHART_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -157,8 +165,8 @@ def _validate(body: PanelIn) -> None:
 
 # --- Endpoints -------------------------------------------------------------
 @router.get("", response_model=list[PanelOut])
-def list_panels(_user: dict = Depends(get_current_user)):
-    return db.list_panels()
+def list_panels(dashboard_id: int | None = None, _user: dict = Depends(get_current_user)):
+    return db.list_panels(dashboard_id)
 
 
 @router.post("", response_model=PanelOut, status_code=status.HTTP_201_CREATED)
@@ -178,6 +186,7 @@ def create_panel(body: PanelIn, _admin: dict = Depends(require_admin)):
         body.table_name,
         body.filter_col,
         body.ts_col,
+        body.dashboard_id,
     )
 
 
@@ -199,6 +208,7 @@ def update_panel(panel_id: int, body: PanelIn, _admin: dict = Depends(require_ad
         body.table_name,
         body.filter_col,
         body.ts_col,
+        body.dashboard_id,
     )
     if panel is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Panel not found")

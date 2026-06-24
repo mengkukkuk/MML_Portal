@@ -228,6 +228,85 @@ def init_panels_table() -> None:
         conn.commit()
 
 
+def init_dashboards_table() -> None:
+    """Create the dashboards table and link panels to it. Idempotent.
+
+    A dashboard groups panels so the Live page can host several named boards.
+    Must run AFTER init_panels_table() (it alters dashboard_panels). Existing
+    panels are adopted into a single 'Default' dashboard so nothing breaks.
+    """
+    with get_connection() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS dashboards (
+                id         SERIAL PRIMARY KEY,
+                title      TEXT NOT NULL,
+                position   INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )"""
+        )
+        conn.execute(
+            "ALTER TABLE dashboard_panels ADD COLUMN IF NOT EXISTS dashboard_id "
+            "INTEGER REFERENCES dashboards(id) ON DELETE CASCADE"
+        )
+        # Guarantee at least one dashboard exists, then adopt any orphan panels.
+        existing = conn.execute(
+            "SELECT id FROM dashboards ORDER BY position, id LIMIT 1"
+        ).fetchone()
+        if existing is None:
+            existing = conn.execute(
+                "INSERT INTO dashboards (title, position) VALUES ('Default', 0) "
+                "RETURNING id"
+            ).fetchone()
+        default_id = existing["id"]
+        conn.execute(
+            "UPDATE dashboard_panels SET dashboard_id = %s WHERE dashboard_id IS NULL",
+            (default_id,),
+        )
+        conn.commit()
+
+
+_DASH_COLS = "id, title, position, created_at"
+
+
+def list_dashboards() -> list[dict[str, Any]]:
+    """All dashboards, ordered by position then id."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"SELECT {_DASH_COLS} FROM dashboards ORDER BY position, id"
+        ).fetchall()
+    return rows
+
+
+def create_dashboard(title: str, position: int = 0) -> dict[str, Any]:
+    with get_connection() as conn:
+        row = conn.execute(
+            f"INSERT INTO dashboards (title, position) VALUES (%s, %s) "
+            f"RETURNING {_DASH_COLS}",
+            (title, position),
+        ).fetchone()
+        conn.commit()
+    return row
+
+
+def update_dashboard(dashboard_id: int, title: str) -> dict[str, Any] | None:
+    """Rename a dashboard. Returns None if no such dashboard."""
+    with get_connection() as conn:
+        row = conn.execute(
+            f"UPDATE dashboards SET title = %s WHERE id = %s RETURNING {_DASH_COLS}",
+            (title, dashboard_id),
+        ).fetchone()
+        conn.commit()
+    return row
+
+
+def delete_dashboard(dashboard_id: int) -> bool:
+    """Delete a dashboard (its panels cascade away). True if a row was removed."""
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM dashboards WHERE id = %s", (dashboard_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
 # --- Status tags (real SCADA data — public.status_tag) ----------------------
 # API field names ↔ actual DB columns. The DB exposes the "current" value as
 # `current_value_tag`; we surface it as `current_value` for the frontend so
@@ -409,16 +488,26 @@ def acknowledge_alarm(alarm_id: int, user_id: int) -> dict[str, Any] | None:
 _PANEL_COLS = (
     "id, title, device_id, metric, window_minutes, chart_type, position, "
     "options, source, tag_name, poll_interval_seconds, "
-    "table_name, filter_col, ts_col, created_at"
+    "table_name, filter_col, ts_col, dashboard_id, created_at"
 )
 
 
-def list_panels() -> list[dict[str, Any]]:
-    """All dashboard panels, ordered by position then id."""
+def list_panels(dashboard_id: int | None = None) -> list[dict[str, Any]]:
+    """Dashboard panels, ordered by position then id.
+
+    When ``dashboard_id`` is given, only that dashboard's panels are returned.
+    """
     with get_connection() as conn:
-        rows = conn.execute(
-            f"SELECT {_PANEL_COLS} FROM dashboard_panels ORDER BY position, id"
-        ).fetchall()
+        if dashboard_id is None:
+            rows = conn.execute(
+                f"SELECT {_PANEL_COLS} FROM dashboard_panels ORDER BY position, id"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                f"SELECT {_PANEL_COLS} FROM dashboard_panels "
+                "WHERE dashboard_id = %s ORDER BY position, id",
+                (dashboard_id,),
+            ).fetchall()
     return rows
 
 
@@ -436,18 +525,19 @@ def create_panel(
     table_name: str | None = None,
     filter_col: str | None = None,
     ts_col: str | None = None,
+    dashboard_id: int | None = None,
 ) -> dict[str, Any]:
     with get_connection() as conn:
         row = conn.execute(
             f"""INSERT INTO dashboard_panels
                 (title, device_id, metric, window_minutes, chart_type, position,
                  options, source, tag_name, poll_interval_seconds,
-                 table_name, filter_col, ts_col)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 table_name, filter_col, ts_col, dashboard_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING {_PANEL_COLS}""",
             (title, device_id, metric, window_minutes, chart_type, position,
              Json(options), source, tag_name, poll_interval_seconds,
-             table_name, filter_col, ts_col),
+             table_name, filter_col, ts_col, dashboard_id),
         ).fetchone()
         conn.commit()
     return row
@@ -468,6 +558,7 @@ def update_panel(
     table_name: str | None = None,
     filter_col: str | None = None,
     ts_col: str | None = None,
+    dashboard_id: int | None = None,
 ) -> dict[str, Any] | None:
     """Update a panel. Returns None if no such panel."""
     with get_connection() as conn:
@@ -476,12 +567,12 @@ def update_panel(
             SET title = %s, device_id = %s, metric = %s, window_minutes = %s,
                 chart_type = %s, position = %s, options = %s,
                 source = %s, tag_name = %s, poll_interval_seconds = %s,
-                table_name = %s, filter_col = %s, ts_col = %s
+                table_name = %s, filter_col = %s, ts_col = %s, dashboard_id = %s
             WHERE id = %s
             RETURNING {_PANEL_COLS}""",
             (title, device_id, metric, window_minutes, chart_type, position,
              Json(options), source, tag_name, poll_interval_seconds,
-             table_name, filter_col, ts_col, panel_id),
+             table_name, filter_col, ts_col, dashboard_id, panel_id),
         ).fetchone()
         conn.commit()
     return row
