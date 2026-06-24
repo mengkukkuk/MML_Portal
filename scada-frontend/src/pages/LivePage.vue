@@ -184,12 +184,13 @@ function removeValueCol(i) {
   if (col && !allValueCols.value.includes(col)) delete form.units[col]
 }
 
-// Declare (or clear) the display unit for a value column. Keyed by column name
-// so it survives row reordering and rides into options.units on save.
-function setUnit(col, val) {
-  if (!col) return
-  if (val) form.units[col] = val
-  else delete form.units[col]
+// Declare (or clear) the display unit for a series. Keyed by the series-
+// distinguishing value (filter value when filtered, else value column) so it
+// rides into options.units on save.
+function setUnit(key, val) {
+  if (!key) return
+  if (val) form.units[key] = val
+  else delete form.units[key]
 }
 
 // First filter value not already chosen, so [+ Add series] picks something fresh.
@@ -204,7 +205,9 @@ function addFilter() {
 }
 
 function removeFilter(i) {
+  const fv = form.filters[i]
   form.filters.splice(i, 1)
+  if (fv != null && !form.filters.includes(fv)) delete form.units[fv]
 }
 
 const dialogTitle = computed(() => (editingId.value ? 'Edit panel' : 'Add panel'))
@@ -256,9 +259,6 @@ async function applyBinding({ table, metric, value_cols, filter_col, filters, ts
   // Keep only extras that still exist in this table and aren't the primary.
   form.value_cols = (value_cols || [])
     .filter((c) => cols.value_columns.includes(c) && c !== form.metric)
-  // Drop unit declarations for columns no longer bound (preserves valid ones).
-  const liveCols = new Set([form.metric, ...form.value_cols].filter(Boolean))
-  for (const k of Object.keys(form.units)) if (!liveCols.has(k)) delete form.units[k]
   form.ts_col = ts_col && cols.ts_columns.includes(ts_col)
     ? ts_col
     : (cols.ts_columns[0] ?? null)
@@ -270,6 +270,11 @@ async function applyBinding({ table, metric, value_cols, filter_col, filters, ts
   } else {
     form.filters = []
   }
+  // Drop unit declarations whose series no longer exist. Units key by filter
+  // value (when filtered) or value column (when not) — keep both so editing
+  // across modes doesn't lose data; save() does the final mode-specific prune.
+  const liveKeys = new Set([form.metric, ...form.value_cols, ...form.filters].filter(Boolean))
+  for (const k of Object.keys(form.units)) if (!liveKeys.has(k)) delete form.units[k]
 }
 
 async function onTableChange(table) {
@@ -367,9 +372,11 @@ async function save() {
   try {
     const trimmedExpr = form.mathExpr?.trim() || ''
     const extraOpts = trimmedExpr ? { mathExpr: trimmedExpr } : {}
-    // Per-value-column display units, pruned to currently-bound columns.
+    // Per-series display units: keyed by filter value when filtered, else by
+    // value column. Pruned to the active keys so stale cross-mode keys don't ride.
+    const unitKeys = form.filter_col ? form.filters : allValueCols.value
     const unitMap = {}
-    for (const col of allValueCols.value) if (form.units[col]) unitMap[col] = form.units[col]
+    for (const k of unitKeys) if (form.units[k]) unitMap[k] = form.units[k]
     // Preserve the panel's layout when editing; seed a bottom slot when creating.
     const existing = editingId.value
       ? panels.value.find((p) => p.id === editingId.value)
@@ -751,7 +758,10 @@ onMounted(async () => {
               <el-select v-model="form.metric" placeholder="Value" filterable class="taglist__select">
                 <el-option v-for="c in schemaCols.value_columns" :key="c" :label="c" :value="c" />
               </el-select>
+              <!-- Unit lives here only when there's no filter column (value columns
+                   are the series). Filtered panels show units in "Series values". -->
               <el-select
+                v-if="!form.filter_col"
                 :model-value="form.units[form.metric]"
                 placeholder="Unit"
                 clearable
@@ -774,6 +784,7 @@ onMounted(async () => {
                 <el-option v-for="opt in schemaCols.value_columns" :key="opt" :label="opt" :value="opt" />
               </el-select>
               <el-select
+                v-if="!form.filter_col"
                 :model-value="form.units[form.value_cols[i]]"
                 placeholder="Unit"
                 clearable
@@ -821,6 +832,19 @@ onMounted(async () => {
               <span class="taglist__swatch" :style="{ background: colorAt(i) }" />
               <el-select v-model="form.filters[i]" placeholder="Value" filterable class="taglist__select">
                 <el-option v-for="opt in filterValues" :key="opt" :label="opt" :value="opt" />
+              </el-select>
+              <el-select
+                :model-value="form.units[form.filters[i]]"
+                placeholder="Unit"
+                clearable
+                filterable
+                class="taglist__unit"
+                title="Display unit for this series"
+                @update:model-value="(v) => setUnit(form.filters[i], v)"
+              >
+                <el-option-group v-for="g in UNIT_GROUPS" :key="g.category" :label="g.category">
+                  <el-option v-for="u in g.units" :key="u.value" :label="u.label" :value="u.value" />
+                </el-option-group>
               </el-select>
               <el-button
                 class="taglist__remove"

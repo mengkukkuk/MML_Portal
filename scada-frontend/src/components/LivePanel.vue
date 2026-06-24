@@ -92,7 +92,7 @@ const seriesSpecs = computed(() => {
       ? tags
       : (props.panel.tag_name ? [props.panel.tag_name] : [])
     return list.filter(Boolean).map((t) => ({
-      key: t, label: t, valueCol: props.panel.metric, filterVal: null,
+      key: t, label: t, valueCol: props.panel.metric, filterVal: null, unitKey: t,
     }))
   }
   if (isTable.value) {
@@ -106,25 +106,29 @@ const seriesSpecs = computed(() => {
         // against value strings that happen to contain separators.
         const key = JSON.stringify([vc, fv])
         const label = multiVc && fv != null ? `${vc} · ${fv}` : (fv != null ? fv : vc)
-        specs.push({ key, label, valueCol: vc, filterVal: fv })
+        // Units key by the series-distinguishing value: filter value when
+        // filtered, else the value column.
+        specs.push({ key, label, valueCol: vc, filterVal: fv, unitKey: fv != null ? fv : vc })
       }
     }
     return specs
   }
   // Device source: a single series keyed by its metric.
   return props.panel.metric
-    ? [{ key: props.panel.metric, label: props.panel.metric, valueCol: props.panel.metric, filterVal: null }]
+    ? [{ key: props.panel.metric, label: props.panel.metric, valueCol: props.panel.metric, filterVal: null, unitKey: props.panel.metric }]
     : []
 })
 
 // Legacy alias: the bare series keys, still used by re-seed watchers below.
 const seriesTags = computed(() => seriesSpecs.value.map((s) => s.key))
 
-// Admin-declared display units, keyed by value-column name (options.units).
+// Admin-declared display units (options.units), keyed per series — by filter
+// value when filtered, else by value column.
 const unitMap = computed(() => props.panel.options?.units || {})
-// Resolve a series' unit: declared per-column unit → device/backend fallback → none.
-function unitFor(valueCol) {
-  return unitMap.value[valueCol] || unit.value || ''
+// Resolve a series' unit: series-key unit → legacy per-column unit → device
+// fallback → none. The valueCol term keeps old column-keyed panels working.
+function unitFor(spec) {
+  return unitMap.value[spec.unitKey] || unitMap.value[spec.valueCol] || unit.value || ''
 }
 
 // Hydrated view model for the renderers: one entry per series with its colour.
@@ -134,7 +138,7 @@ const seriesList = computed(() =>
     label: s.label,
     color: colorAt(i),
     valueCol: s.valueCol,
-    unit: unitFor(s.valueCol),
+    unit: unitFor(s),
     points: seriesPoints.value[s.key] || [],
     latest: seriesLatest.value[s.key] || null,
   })),
@@ -176,7 +180,15 @@ function legendCfg() {
 }
 const gridTop = () => (isMulti.value ? 30 : 12)
 const timeAxis = () => ({ type: 'time', axisLine: { lineStyle: { color: 'rgba(255,255,255,0.12)' } }, axisLabel: { color: '#8a99b3', fontSize: 10 }, splitLine: { show: false } })
-const valueAxis = () => ({ type: 'value', scale: true, axisLine: { show: false }, axisLabel: { color: '#8a99b3', fontSize: 10 }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } } })
+// scale:false → axis keeps a zero baseline; max is pushed 20% above the data's
+// peak so the top series never touches the chart edge.
+function axisMax(v) {
+  const m = v.max
+  if (m > 0) return Math.round(m * 1.2)
+  if (m < 0) return Math.round(m * 0.8) // less negative → headroom stays above the peak
+  return 1                              // all-zero fallback
+}
+const valueAxis = () => ({ type: 'value', scale: false, max: axisMax, axisLine: { show: false }, axisLabel: { color: '#8a99b3', fontSize: 10 }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } } })
 // Axis-trigger tooltip with a per-series unit suffix (valueFormatter can't see
 // which series a value belongs to, so we build the rows ourselves).
 const tooltipAxis = () => ({
