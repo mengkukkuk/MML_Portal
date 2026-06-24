@@ -366,6 +366,25 @@ def list_recent_alarms(limit: int) -> list[dict[str, Any]]:
     return rows
 
 
+def list_active_alarms() -> list[dict[str, Any]]:
+    """Tags currently in alarm (status_tag.alarm_no not null), joined to the
+    triggering alarm_logs row for the event text. Empty list when nothing active."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT st.tag_name, st.location,
+                      st.alarm_value, st.alarm_no, st.alarm_active,
+                      al.id            AS alarm_id,
+                      al.alarm_events  AS alarm,
+                      al.severity,
+                      al.created_at    AS at_date_time
+               FROM public.status_tag st
+               JOIN public.alarm_logs al ON al.id = st.alarm_no
+               WHERE st.alarm_no IS NOT NULL
+               ORDER BY st.location, st.tag_name"""
+        ).fetchall()
+    return rows
+
+
 def acknowledge_alarm(alarm_id: int, user_id: int) -> dict[str, Any] | None:
     """Mark an alarm acknowledged. Returns the updated row, or None if the
     alarm doesn't exist or was already acknowledged."""

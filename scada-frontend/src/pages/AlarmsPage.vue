@@ -16,7 +16,7 @@ const UNKNOWN = 'Unknown'
 const SEV_RANK = { critical: 3, warning: 2, info: 1 }
 
 const store = useAlarmsStore()
-const { alarms, loading, error, updatedAt, acking } = storeToRefs(store)
+const { alarms, activeAlarms, loading, error, updatedAt, acking } = storeToRefs(store)
 const perCard = ref(10)
 const expanded = ref(null) // key of currently open card, null = all collapsed
 
@@ -24,7 +24,10 @@ let pollTimer = null
 
 function reload() {
   store.load(perCard.value)
+  store.loadActive()
 }
+
+const hasActive = computed(() => activeAlarms.value.length > 0)
 
 const grouped = computed(() => {
   const locations = []
@@ -102,6 +105,33 @@ onUnmounted(() => {
         </el-button>
       </div>
     </header>
+
+    <section v-if="hasActive" class="alm__active">
+      <header class="alm__active-head">
+        <span class="alm__active-dot" aria-hidden="true" />
+        <span class="alm__active-title">Active Alarms</span>
+        <span class="alm__active-count">{{ activeAlarms.length }} active</span>
+      </header>
+      <div class="alm__active-grid">
+        <article
+          v-for="al in activeAlarms"
+          :key="`${al.location}::${al.tag_name}::${al.alarm_no}`"
+          class="alm__active-card"
+          :class="`alm__active-card--${al.severity || 'info'}`"
+        >
+          <div class="alm__active-card-top">
+            <span class="alm__sev-pill" :class="`alm__sev-pill--${al.severity || 'info'}`">
+              {{ sevLabel(al.severity) }}
+            </span>
+            <span class="alm__active-value">{{ al.alarm_value ?? '—' }}</span>
+          </div>
+          <span class="alm__active-tag">{{ al.tag_name ?? '—' }}</span>
+          <span class="alm__active-loc">{{ al.location ?? '—' }}</span>
+          <p class="alm__active-msg">{{ al.alarm ?? '—' }}</p>
+          <time class="alm__active-time">{{ fmtTime(al.at_date_time) }}</time>
+        </article>
+      </div>
+    </section>
 
     <p v-if="error" class="page__error">{{ error }}</p>
     <p v-else-if="loading && !alarms.length" class="page__empty">Loading alarms…</p>
@@ -181,6 +211,116 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
+}
+
+/* Active-alarm panel — live status, rendered above the historical log stacks */
+.alm__active {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--crit);
+  border-radius: var(--radius);
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.alm__active-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.alm__active-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--crit);
+  box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5);
+  animation: alm-active-pulse 1.6s infinite;
+}
+
+@keyframes alm-active-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.45); }
+  70% { box-shadow: 0 0 0 7px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+.alm__active-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--fg);
+}
+
+.alm__active-count {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--crit);
+}
+
+.alm__active-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-3);
+}
+
+.alm__active-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-1);
+}
+
+.alm__active-card--critical { border-left-color: var(--crit); }
+.alm__active-card--warning  { border-left-color: var(--warn); }
+.alm__active-card--info     { border-left-color: var(--info); }
+
+.alm__active-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.alm__active-value {
+  font-size: 18px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--fg);
+}
+
+.alm__active-tag {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alm__active-loc {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--fg-muted);
+  letter-spacing: 0.04em;
+}
+
+.alm__active-msg {
+  margin: var(--space-1) 0 0;
+  font-size: 13px;
+  color: var(--fg);
+  line-height: 1.4;
+}
+
+.alm__active-time {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--fg-muted);
 }
 
 .page__head {

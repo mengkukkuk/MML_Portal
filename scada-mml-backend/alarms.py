@@ -19,6 +19,17 @@ router = APIRouter(prefix="/api/alarms", tags=["alarms"])
 _VALID_SEVERITIES = ("critical", "warning", "info")
 
 
+def _normalize_severity(v):
+    """Coerce DB severity values into the three colour tiers the UI knows.
+    Accepts text labels (case-insensitive) or smallint codes (1/2/3)."""
+    if v is None:
+        return "info"
+    if isinstance(v, (int, float)):
+        return {1: "info", 2: "warning", 3: "critical"}.get(int(v), "info")
+    s = str(v).strip().lower()
+    return s if s in _VALID_SEVERITIES else "info"
+
+
 class AlarmOut(BaseModel):
     id: int
     location: str | None = None
@@ -30,17 +41,27 @@ class AlarmOut(BaseModel):
     acknowledged_at: datetime | None = None
     acknowledged_by: int | None = None
 
-    @field_validator("severity", mode="before")
-    @classmethod
-    def _normalize_severity(cls, v):
-        """Coerce DB severity values into the three colour tiers the UI knows.
-        Accepts text labels (case-insensitive) or smallint codes (1/2/3)."""
-        if v is None:
-            return "info"
-        if isinstance(v, (int, float)):
-            return {1: "info", 2: "warning", 3: "critical"}.get(int(v), "info")
-        s = str(v).strip().lower()
-        return s if s in _VALID_SEVERITIES else "info"
+    _norm_sev = field_validator("severity", mode="before")(_normalize_severity)
+
+
+class ActiveAlarmOut(BaseModel):
+    alarm_id: int | None = None
+    location: str | None = None
+    tag_name: str | None = None
+    alarm: str | None = None
+    alarm_value: int | None = None
+    alarm_no: int | None = None
+    alarm_active: bool = False
+    severity: str = "info"
+    at_date_time: datetime | None = None
+
+    _norm_sev = field_validator("severity", mode="before")(_normalize_severity)
+
+
+@router.get("/active", response_model=list[ActiveAlarmOut])
+def active_alarms(_user: dict = Depends(get_current_user)):
+    """Tags currently in alarm, joined to alarm_logs. Empty when none active."""
+    return db.list_active_alarms()
 
 
 @router.get("/recent", response_model=list[AlarmOut])

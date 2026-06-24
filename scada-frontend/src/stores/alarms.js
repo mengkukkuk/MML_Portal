@@ -1,11 +1,13 @@
 import { defineStore } from 'pinia'
-import { fetchRecentAlarms, acknowledgeAlarm } from '@/api/alarms'
+import { fetchRecentAlarms, fetchActiveAlarms, acknowledgeAlarm } from '@/api/alarms'
 
 export const useAlarmsStore = defineStore('alarms', {
   state: () => ({
     alarms: [],
+    activeAlarms: [],
     loading: false,
     error: null,
+    activeError: null,
     updatedAt: null,
     acking: new Set(),
   }),
@@ -24,6 +26,15 @@ export const useAlarmsStore = defineStore('alarms', {
         this.error = e?.response?.data?.detail || e?.message || String(e)
       } finally {
         this.loading = false
+      }
+    },
+    async loadActive() {
+      // Independent of load(): a failure here must never break the log stack.
+      this.activeError = null
+      try {
+        this.activeAlarms = await fetchActiveAlarms()
+      } catch (e) {
+        this.activeError = e?.response?.data?.detail || e?.message || String(e)
       }
     },
     async acknowledge(id) {

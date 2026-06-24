@@ -10,6 +10,16 @@ export async function fetchRecentAlarms(limit = 10) {
   //               acknowledged, acknowledged_at, acknowledged_by }]
 }
 
+/**
+ * Tags currently in alarm — status_tag rows with a non-null alarm_no, joined to
+ * the triggering alarm_logs row. Empty array when nothing is active.
+ */
+export async function fetchActiveAlarms() {
+  const { data } = await apiClient.get('/alarms/active')
+  return data // [{ alarm_id, location, tag_name, alarm, alarm_value, alarm_no,
+  //               alarm_active, severity, at_date_time }]
+}
+
 /** Mark one alarm acknowledged. Returns the updated row. */
 export async function acknowledgeAlarm(id) {
   const { data } = await apiClient.post(`/alarms/${id}/acknowledge`)
