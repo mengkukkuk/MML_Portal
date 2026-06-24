@@ -120,16 +120,28 @@ const seriesSpecs = computed(() => {
 // Legacy alias: the bare series keys, still used by re-seed watchers below.
 const seriesTags = computed(() => seriesSpecs.value.map((s) => s.key))
 
+// Admin-declared display units, keyed by value-column name (options.units).
+const unitMap = computed(() => props.panel.options?.units || {})
+// Resolve a series' unit: declared per-column unit → device/backend fallback → none.
+function unitFor(valueCol) {
+  return unitMap.value[valueCol] || unit.value || ''
+}
+
 // Hydrated view model for the renderers: one entry per series with its colour.
 const seriesList = computed(() =>
   seriesSpecs.value.map((s, i) => ({
     key: s.key,
     label: s.label,
     color: colorAt(i),
+    valueCol: s.valueCol,
+    unit: unitFor(s.valueCol),
     points: seriesPoints.value[s.key] || [],
     latest: seriesLatest.value[s.key] || null,
   })),
 )
+
+// Unit shown in the single-value header (first/only series).
+const headerUnit = computed(() => seriesList.value[0]?.unit || '')
 
 const isMulti = computed(() => seriesList.value.length > 1)
 
@@ -165,7 +177,23 @@ function legendCfg() {
 const gridTop = () => (isMulti.value ? 30 : 12)
 const timeAxis = () => ({ type: 'time', axisLine: { lineStyle: { color: 'rgba(255,255,255,0.12)' } }, axisLabel: { color: '#8a99b3', fontSize: 10 }, splitLine: { show: false } })
 const valueAxis = () => ({ type: 'value', scale: true, axisLine: { show: false }, axisLabel: { color: '#8a99b3', fontSize: 10 }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } } })
-const tooltipAxis = () => ({ trigger: 'axis', backgroundColor: '#172238', borderColor: '#172238', textStyle: { color: '#e6edf7' }, valueFormatter: (v) => `${fmt(v)} ${unit.value}` })
+// Axis-trigger tooltip with a per-series unit suffix (valueFormatter can't see
+// which series a value belongs to, so we build the rows ourselves).
+const tooltipAxis = () => ({
+  trigger: 'axis',
+  backgroundColor: '#172238', borderColor: '#172238', textStyle: { color: '#e6edf7' },
+  formatter: (params) => {
+    const arr = Array.isArray(params) ? params : [params]
+    if (!arr.length) return ''
+    const head = arr[0].axisValueLabel || new Date(arr[0].axisValue).toLocaleTimeString()
+    const rows = arr.map((p) => {
+      const v = Array.isArray(p.value) ? p.value[1] : p.value
+      const u = seriesList.value[p.seriesIndex]?.unit || ''
+      return `${p.marker}${p.seriesName}: ${fmt(v)}${u ? ' ' + u : ''}`
+    })
+    return [head, ...rows].join('<br/>')
+  },
+})
 
 // --- Per-type ECharts option ----------------------------------------------
 function timeseriesOption() {
@@ -220,7 +248,7 @@ function barGaugeOption() {
     return {
       value: v,
       itemStyle: { color: thColor(v, colorAt(i)), borderRadius: 4 },
-      label: { show: true, position: vertical ? 'top' : 'right', color: '#e6edf7', fontSize: 12, formatter: () => `${fmt(v)} ${unit.value}` },
+      label: { show: true, position: vertical ? 'top' : 'right', color: '#e6edf7', fontSize: 12, formatter: () => `${fmt(v)}${s.unit ? ' ' + s.unit : ''}` },
     }
   })
   const vAxis = { type: 'value', min, max, axisLabel: { color: '#8a99b3', fontSize: 10 }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } } }
@@ -280,7 +308,10 @@ function pieOption() {
     tooltip: {
       trigger: 'item',
       backgroundColor: '#172238', borderColor: '#172238', textStyle: { color: '#e6edf7' },
-      formatter: (p) => `${p.name}<br/>${fmt(p.value)} ${unit.value} (${p.percent}%)`,
+      formatter: (p) => {
+        const u = seriesList.value[p.dataIndex]?.unit || ''
+        return `${p.name}<br/>${fmt(p.value)}${u ? ' ' + u : ''} (${p.percent}%)`
+      },
     },
     legend: legendCfg(),
     series: [{
@@ -349,7 +380,8 @@ function heatmapOption() {
       backgroundColor: '#172238', borderColor: '#172238', textStyle: { color: '#e6edf7' },
       formatter: (p) => {
         const [xi, yi, v] = p.data
-        return `${seriesLabels[yi]}<br/>${timeLabels[xi]}<br/>${v != null ? fmt(v) : '—'} ${unit.value}`
+        const u = seriesList.value[yi]?.unit || ''
+        return `${seriesLabels[yi]}<br/>${timeLabels[xi]}<br/>${v != null ? fmt(v) : '—'}${u ? ' ' + u : ''}`
       },
     },
     grid: { top: 12, right: 60, bottom: 36, left: 80 },
@@ -382,7 +414,10 @@ function scatterOption() {
     tooltip: {
       trigger: 'item',
       backgroundColor: '#172238', borderColor: '#172238', textStyle: { color: '#e6edf7' },
-      formatter: (p) => `${p.seriesName}<br/>${new Date(p.data[0]).toLocaleTimeString()}: ${fmt(p.data[1])} ${unit.value}`,
+      formatter: (p) => {
+        const u = seriesList.value[p.seriesIndex]?.unit || ''
+        return `${p.seriesName}<br/>${new Date(p.data[0]).toLocaleTimeString()}: ${fmt(p.data[1])}${u ? ' ' + u : ''}`
+      },
     },
     xAxis: timeAxis(),
     yAxis: valueAxis(),
@@ -549,7 +584,7 @@ function gaugeOptionFor(s, i) {
       splitLine: { length: 10, lineStyle: { color: 'rgba(255,255,255,0.25)' } },
       axisLabel: { color: '#8a99b3', fontSize: 9, distance: 12 },
       anchor: { show: true, size: 8, itemStyle: { color: pc } },
-      detail: { valueAnimation: true, formatter: (v) => `${fmt(v)} ${unit.value}`, color: '#e6edf7', fontSize: isMulti.value ? 14 : 18, offsetCenter: [0, '78%'] },
+      detail: { valueAnimation: true, formatter: (v) => `${fmt(v)}${s.unit ? ' ' + s.unit : ''}`, color: '#e6edf7', fontSize: isMulti.value ? 14 : 18, offsetCenter: [0, '78%'] },
       data: [{ value: val }],
     }],
   }
@@ -862,12 +897,12 @@ onBeforeUnmount(() => {
         <template v-if="isMulti">
           <span v-for="(s, i) in seriesList" :key="s.key" class="panel__chip">
             <span class="panel__chipdot" :style="{ background: colorAt(i) }" />
-            {{ s.label }}: {{ s.latest ? fmt(s.latest.value) : '—' }}{{ unit ? ' ' + unit : '' }}
+            {{ s.label }}: {{ s.latest ? fmt(s.latest.value) : '—' }}{{ s.unit ? ' ' + s.unit : '' }}
           </span>
         </template>
         <template v-else>
           <span class="panel__num">{{ firstLatest ? fmt(firstLatest.value) : '—' }}</span>
-          <span class="panel__unit">{{ unit }}</span>
+          <span class="panel__unit">{{ headerUnit }}</span>
         </template>
       </template>
     </div>
@@ -878,7 +913,7 @@ onBeforeUnmount(() => {
     <div v-if="vizType === 'stat'" class="panel__stat" :class="{ 'panel__stat--multi': isMulti }">
       <div v-for="(s, i) in seriesList" :key="s.key" class="panel__statrow">
         <div class="panel__statnum" :style="{ color: s.latest ? thColor(s.latest.value, colorAt(i)) : 'var(--fg)' }">
-          {{ s.latest ? fmt(s.latest.value) : '—' }}<span class="panel__statunit">{{ unit }}</span>
+          {{ s.latest ? fmt(s.latest.value) : '—' }}<span class="panel__statunit">{{ s.unit }}</span>
         </div>
         <span v-if="isMulti" class="panel__statlabel" :style="{ color: colorAt(i) }">{{ s.label }}</span>
         <VChart v-if="opts.sparkline !== false && !isMulti" class="panel__spark" :option="sparklineOptionFor(s, i)" autoresize />
@@ -892,7 +927,7 @@ onBeforeUnmount(() => {
           <tr>
             <th>Time</th>
             <th v-for="(s, i) in seriesList" :key="s.key" :style="{ color: isMulti ? colorAt(i) : undefined }">
-              {{ s.label }} ({{ unit }})
+              {{ s.label }}{{ s.unit ? ' (' + s.unit + ')' : '' }}
             </th>
           </tr>
         </thead>

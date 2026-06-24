@@ -18,6 +18,7 @@ import { fetchSchemaTables, fetchSchemaColumns, fetchSchemaValues } from '@/api/
 import { fetchPanels, createPanel, updatePanel, deletePanel } from '@/api/panels'
 import { colorAt } from '@/utils/seriesPalette'
 import { compileExpr } from '@/utils/mathExpr'
+import { UNIT_GROUPS } from '@/utils/units'
 
 // Legacy tag API field names → real status_tag column names, so editing an old
 // tag panel maps cleanly onto the generic table model.
@@ -148,6 +149,7 @@ const form = reactive({
   // The renderer plots one series per (value × filter) combination.
   metric: null,
   value_cols: [],    // additional value columns (each becomes its own series)
+  units: {},         // value-column name → display unit suffix (e.g. { value_tag: 'bar' })
   filter_col: null,  // optional series-key column
   filters: [],       // chosen filter values, each its own series/color
   ts_col: null,      // optional timestamp column (enables real history)
@@ -177,7 +179,17 @@ function addValueCol() {
 }
 
 function removeValueCol(i) {
+  const col = form.value_cols[i]
   form.value_cols.splice(i, 1)
+  if (col && !allValueCols.value.includes(col)) delete form.units[col]
+}
+
+// Declare (or clear) the display unit for a value column. Keyed by column name
+// so it survives row reordering and rides into options.units on save.
+function setUnit(col, val) {
+  if (!col) return
+  if (val) form.units[col] = val
+  else delete form.units[col]
 }
 
 // First filter value not already chosen, so [+ Add series] picks something fresh.
@@ -244,6 +256,9 @@ async function applyBinding({ table, metric, value_cols, filter_col, filters, ts
   // Keep only extras that still exist in this table and aren't the primary.
   form.value_cols = (value_cols || [])
     .filter((c) => cols.value_columns.includes(c) && c !== form.metric)
+  // Drop unit declarations for columns no longer bound (preserves valid ones).
+  const liveCols = new Set([form.metric, ...form.value_cols].filter(Boolean))
+  for (const k of Object.keys(form.units)) if (!liveCols.has(k)) delete form.units[k]
   form.ts_col = ts_col && cols.ts_columns.includes(ts_col)
     ? ts_col
     : (cols.ts_columns[0] ?? null)
@@ -276,6 +291,7 @@ async function openCreate() {
   form.chart_type = 'timeseries'
   form.options = defaultOptions('timeseries')
   form.poll_interval_seconds = 5
+  form.units = {}
   dialogVisible.value = true  // show immediately; dropdowns populate once schema resolves
   await applyBinding({
     table: schemaTables.value[0]?.table ?? null,
@@ -308,9 +324,10 @@ async function openEdit(panel) {
   form.chart_type = panel.chart_type === 'line' ? 'timeseries' : panel.chart_type
   // `filters`/`tags` and `mathExpr` live outside form.options — onVizTypeChange
   // replaces form.options wholesale and would otherwise drop them.
-  const { tags: _t, filters: _f, value_cols: _v, mathExpr: _m, ...vizOpts } = panel.options || {}
+  const { tags: _t, filters: _f, value_cols: _v, mathExpr: _m, units: _u, ...vizOpts } = panel.options || {}
   form.options = { ...defaultOptions(form.chart_type), ...vizOpts }
   form.mathExpr = panel.options?.mathExpr || ''
+  form.units = { ...(panel.options?.units || {}) }
   form.window_minutes = panel.window_minutes
   form.poll_interval_seconds = panel.poll_interval_seconds || 5
 
@@ -350,6 +367,9 @@ async function save() {
   try {
     const trimmedExpr = form.mathExpr?.trim() || ''
     const extraOpts = trimmedExpr ? { mathExpr: trimmedExpr } : {}
+    // Per-value-column display units, pruned to currently-bound columns.
+    const unitMap = {}
+    for (const col of allValueCols.value) if (form.units[col]) unitMap[col] = form.units[col]
     // Preserve the panel's layout when editing; seed a bottom slot when creating.
     const existing = editingId.value
       ? panels.value.find((p) => p.id === editingId.value)
@@ -375,6 +395,7 @@ async function save() {
         ...form.options,
         filters: [...form.filters],
         ...(form.value_cols.length ? { value_cols: [...form.value_cols] } : {}),
+        ...(Object.keys(unitMap).length ? { units: unitMap } : {}),
         ...extraOpts,
         ...layoutOpt,
       },
@@ -721,40 +742,65 @@ onMounted(async () => {
           </el-select>
         </el-form-item>
 
-        <div class="editor__row">
-          <el-form-item label="Value column" class="editor__col">
-            <div class="taglist">
-              <!-- Primary value column (stored in form.metric for back-compat). -->
-              <div class="taglist__row">
-                <span class="taglist__swatch" :style="{ background: colorAt(0) }" />
-                <el-select v-model="form.metric" placeholder="Value" filterable class="taglist__select">
-                  <el-option v-for="c in schemaCols.value_columns" :key="c" :label="c" :value="c" />
-                </el-select>
-                <!-- Spacer keeps row widths aligned with the extra rows that have a remove button. -->
-                <span class="taglist__remove taglist__remove--placeholder" />
-              </div>
-              <!-- Extra value columns: each becomes its own series, filtered the same way. -->
-              <div v-for="(c, i) in form.value_cols" :key="i" class="taglist__row">
-                <span class="taglist__swatch" :style="{ background: colorAt(i + 1) }" />
-                <el-select v-model="form.value_cols[i]" placeholder="Value" filterable class="taglist__select">
-                  <el-option v-for="opt in schemaCols.value_columns" :key="opt" :label="opt" :value="opt" />
-                </el-select>
-                <el-button
-                  class="taglist__remove"
-                  text
-                  title="Remove value"
-                  @click="removeValueCol(i)"
-                >×</el-button>
-              </div>
-              <el-button class="taglist__add" text @click="addValueCol">+ Value</el-button>
+        <el-form-item label="Value column">
+          <div class="taglist">
+            <!-- Each value row: colour swatch · value column · its display unit. -->
+            <!-- Primary value column (stored in form.metric for back-compat). -->
+            <div class="taglist__row">
+              <span class="taglist__swatch" :style="{ background: colorAt(0) }" />
+              <el-select v-model="form.metric" placeholder="Value" filterable class="taglist__select">
+                <el-option v-for="c in schemaCols.value_columns" :key="c" :label="c" :value="c" />
+              </el-select>
+              <el-select
+                :model-value="form.units[form.metric]"
+                placeholder="Unit"
+                clearable
+                filterable
+                class="taglist__unit"
+                title="Display unit for this value"
+                @update:model-value="(v) => setUnit(form.metric, v)"
+              >
+                <el-option-group v-for="g in UNIT_GROUPS" :key="g.category" :label="g.category">
+                  <el-option v-for="u in g.units" :key="u.value" :label="u.label" :value="u.value" />
+                </el-option-group>
+              </el-select>
+              <!-- Spacer keeps row widths aligned with the extra rows that have a remove button. -->
+              <span class="taglist__remove taglist__remove--placeholder" />
             </div>
-          </el-form-item>
-          <el-form-item label="Timestamp column" class="editor__col">
-            <el-select v-model="form.ts_col" placeholder="None (live sampling)" clearable style="width: 100%">
-              <el-option v-for="c in schemaCols.ts_columns" :key="c" :label="c" :value="c" />
-            </el-select>
-          </el-form-item>
-        </div>
+            <!-- Extra value columns: each becomes its own series, filtered the same way. -->
+            <div v-for="(c, i) in form.value_cols" :key="i" class="taglist__row">
+              <span class="taglist__swatch" :style="{ background: colorAt(i + 1) }" />
+              <el-select v-model="form.value_cols[i]" placeholder="Value" filterable class="taglist__select">
+                <el-option v-for="opt in schemaCols.value_columns" :key="opt" :label="opt" :value="opt" />
+              </el-select>
+              <el-select
+                :model-value="form.units[form.value_cols[i]]"
+                placeholder="Unit"
+                clearable
+                filterable
+                class="taglist__unit"
+                title="Display unit for this value"
+                @update:model-value="(v) => setUnit(form.value_cols[i], v)"
+              >
+                <el-option-group v-for="g in UNIT_GROUPS" :key="g.category" :label="g.category">
+                  <el-option v-for="u in g.units" :key="u.value" :label="u.label" :value="u.value" />
+                </el-option-group>
+              </el-select>
+              <el-button
+                class="taglist__remove"
+                text
+                title="Remove value"
+                @click="removeValueCol(i)"
+              >×</el-button>
+            </div>
+            <el-button class="taglist__add" text @click="addValueCol">+ Value</el-button>
+          </div>
+        </el-form-item>
+        <el-form-item label="Timestamp column">
+          <el-select v-model="form.ts_col" placeholder="None (live sampling)" clearable style="width: 100%">
+            <el-option v-for="c in schemaCols.ts_columns" :key="c" :label="c" :value="c" />
+          </el-select>
+        </el-form-item>
 
         <el-form-item label="Filter column (series)">
           <el-select
@@ -1053,6 +1099,11 @@ onMounted(async () => {
 .taglist__select {
   flex: 1;
   min-width: 0;
+}
+
+.taglist__unit {
+  width: 108px;
+  flex-shrink: 0;
 }
 
 .taglist__remove {
