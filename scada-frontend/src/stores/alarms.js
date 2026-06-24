@@ -6,6 +6,7 @@ export const useAlarmsStore = defineStore('alarms', {
     alarms: [],
     activeAlarms: [],
     loading: false,
+    activeLoading: false,
     error: null,
     activeError: null,
     updatedAt: null,
@@ -30,11 +31,16 @@ export const useAlarmsStore = defineStore('alarms', {
     },
     async loadActive() {
       // Independent of load(): a failure here must never break the log stack.
+      // Guard against overlap so the ~1s poll can't pile up if a request is slow.
+      if (this.activeLoading) return
+      this.activeLoading = true
       this.activeError = null
       try {
         this.activeAlarms = await fetchActiveAlarms()
       } catch (e) {
         this.activeError = e?.response?.data?.detail || e?.message || String(e)
+      } finally {
+        this.activeLoading = false
       }
     },
     async acknowledge(id) {

@@ -703,10 +703,10 @@ onMounted(async () => {
       </GridItem>
     </GridLayout>
 
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="520px">
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="1020px">
       <el-form label-position="top">
         <el-form-item label="Title">
-          <el-input v-model="form.title" placeholder="e.g. Boiler #1 Temperature" />
+          <el-input v-model="form.title" placeholder="e.g. Panel 1" />
         </el-form-item>
 
         <el-form-item label="Data source (table)">

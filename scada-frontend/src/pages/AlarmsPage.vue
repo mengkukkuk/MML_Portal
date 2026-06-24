@@ -12,6 +12,7 @@ import { ref } from 'vue'
 import { useAlarmsStore } from '@/stores/alarms'
 
 const POLL_MS = 30_000
+const ACTIVE_POLL_MS = 1_000
 const UNKNOWN = 'Unknown'
 const SEV_RANK = { critical: 3, warning: 2, info: 1 }
 
@@ -21,8 +22,10 @@ const perCard = ref(10)
 const expanded = ref(null) // key of currently open card, null = all collapsed
 
 let pollTimer = null
+let activeTimer = null
 
 function reload() {
+  // Historical log stack only — active alarms have their own fast poll below.
   store.load(perCard.value)
   store.loadActive()
 }
@@ -78,10 +81,14 @@ watch(perCard, reload)
 onMounted(() => {
   reload()
   pollTimer = setInterval(reload, POLL_MS)
+  // Dedicated fast poll so the active-alarm card appears within ~1s of the
+  // backend setting status_tag.alarm_no, independent of the 30s log refresh.
+  activeTimer = setInterval(() => store.loadActive(), ACTIVE_POLL_MS)
 })
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
+  if (activeTimer) clearInterval(activeTimer)
 })
 </script>
 
