@@ -888,9 +888,15 @@ onBeforeUnmount(() => {
           <el-option v-for="it in POLL_INTERVALS" :key="it.value" :label="it.label" :value="it.value" />
         </el-select>
         <template v-if="canManage">
-          <el-button size="small" text @click="emit('edit', panel)">Edit</el-button>
-          <el-button size="small" text @click="emit('duplicate', panel)">Duplicate</el-button>
-          <el-button size="small" text type="danger" @click="emit('delete', panel)">Delete</el-button>
+          <el-button size="small" text title="Edit panel" aria-label="Edit panel" @click="emit('edit', panel)">
+            <el-icon><Edit /></el-icon>
+          </el-button>
+          <el-button size="small" text title="Duplicate panel" aria-label="Duplicate panel" @click="emit('duplicate', panel)">
+            <el-icon><CopyDocument /></el-icon>
+          </el-button>
+          <el-button size="small" text type="danger" title="Delete panel" aria-label="Delete panel" @click="emit('delete', panel)">
+            <el-icon><Close /></el-icon>
+          </el-button>
         </template>
       </div>
     </header>

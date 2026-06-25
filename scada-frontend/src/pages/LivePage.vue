@@ -560,6 +560,71 @@ function panelById(id) {
   return panels.value.find((p) => String(p.id) === String(id))
 }
 
+// Count the series a panel will render. Mirrors the seriesSpecs logic in
+// LivePanel.vue so the grid can size the tile to fit them all.
+function seriesCount(panel) {
+  if (!panel) return 1
+  if (panel.source === 'tag') {
+    const tags = panel.options?.tags
+    if (Array.isArray(tags) && tags.length) return tags.length
+    return panel.tag_name ? 1 : 0
+  }
+  if (panel.source === 'table') {
+    const extras = panel.options?.value_cols
+    const valueCols = 1 + (Array.isArray(extras) ? extras.filter(Boolean).length : 0)
+    const filters = panel.options?.filters
+    const hasFilter = !!panel.filter_col && Array.isArray(filters) && filters.length > 0
+    return valueCols * (hasFilter ? filters.length : 1)
+  }
+  return 1
+}
+
+// Per-chart-type minimum grid size (cols × rows) that still shows ALL selected
+// series AND keeps the ECharts canvas visible. LivePanel's `.panel__chart` has
+// min-height: 180px and the panel uses overflow:hidden, so a tile sized below
+// (~100px chrome + 180px canvas) clips the chart off — even when the chip row
+// above still renders. Each grid row is 26px + 16px gap = 42px effective; so
+// ~310px ≈ 8 rows is the floor for any panel with a chart canvas.
+function panelMinSize(panel) {
+  const n = Math.max(1, seriesCount(panel))
+  const clampW = (w) => Math.max(2, Math.min(12, w))
+  const clampH = (h) => Math.max(3, Math.min(30, h))
+  switch (panel?.chart_type) {
+    case 'stat':
+      // Single-series: a 64px sparkline sits under the big number; needs h=5.
+      // Multi-series: each row is ~47px (26px number + 12px label + gap); add
+      // ~100px chrome + ~50px chip-strip-wrap allowance → h ≈ 4 + 2n rows so
+      // overflow:hidden never clips the bottom values.
+      if (n === 1) return { w: clampW(2), h: clampH(5) }
+      return { w: clampW(2), h: clampH(4 + 2 * n) }
+    case 'gauge':
+      // Small-multiples gauges lay out left → right (one row). Single gauge
+      // canvas is 220px, multi gauge cells are 150px each + label.
+      return { w: clampW(3 + (n - 1) * 2), h: clampH(8) }
+    case 'bargauge':
+      return panel.options?.orientation === 'vertical'
+        ? { w: clampW(2 + n), h: clampH(7) }            // vertical bars need height
+        : { w: clampW(3), h: clampH(4 + n) }            // one ~40px row per series
+    case 'table':
+      // tablewrap caps at 240px; chrome ~100px → ~340px total max usable.
+      // Header is (Time + one column per series); w grows with series count.
+      return { w: clampW(2 + n), h: clampH(5) }
+    case 'statetimeline':
+      // chartStyle in LivePanel scales height by ~44px per series + 40px floor.
+      return { w: clampW(4), h: clampH(4 + 2 * n) }
+    case 'heatmap':
+      // chartStyle in LivePanel scales height by ~34px per series + 60px floor.
+      return { w: clampW(4), h: clampH(5 + n) }
+    case 'pie':
+      // Pie needs near-square aspect plus a legend strip; ~310px each way.
+      return { w: clampW(4), h: clampH(8) }
+    default:
+      // timeseries / bar / scatter / histogram / candlestick — single canvas
+      // with min-height 180px. Floor = chrome 100 + 180 ≈ 310px ≈ 8 rows.
+      return { w: clampW(3), h: clampH(8) }
+  }
+}
+
 // Next free slot at the bottom of the grid for a freshly created panel.
 function nextLayoutSlot() {
   const maxY = layout.value.reduce((m, it) => Math.max(m, it.y + it.h), 0)
@@ -733,21 +798,38 @@ async function addDashboard() {
   }
 }
 
-async function renameDashboard(dash) {
+// Rename dialog: small centred form-styled dialog (matches dup-dialog / del-dialog).
+const renameDialogVisible = ref(false)
+const renaming = ref(false)
+const renameTarget = ref(null)
+const renameForm = reactive({ title: '' })
+
+function renameDashboard(dash) {
+  renameTarget.value = dash
+  renameForm.title = dash.title
+  renameDialogVisible.value = true
+}
+
+async function confirmRename() {
+  const dash = renameTarget.value
+  if (!dash) return
+  const name = renameForm.title.trim()
+  if (!name) {
+    ElMessage.warning('Name is required.')
+    return
+  }
+  renaming.value = true
   try {
-    const { value } = await ElMessageBox.prompt('New name', 'Rename dashboard', {
-      inputValue: dash.title,
-      inputValidator: (v) => (v && v.trim() ? true : 'Name is required'),
-      confirmButtonText: 'Save',
-      cancelButtonText: 'Cancel',
-    })
-    const updated = await updateDashboard(dash.id, { title: value.trim() })
+    const updated = await updateDashboard(dash.id, { title: name })
     const i = dashboards.value.findIndex((d) => d.id === dash.id)
     if (i !== -1) dashboards.value[i] = updated
     ElMessage.success('Dashboard renamed.')
+    renameDialogVisible.value = false
+    renameTarget.value = null
   } catch (e) {
-    if (e === 'cancel' || e === 'close') return
     ElMessage.error(e?.response?.data?.detail || 'Failed to rename dashboard.')
+  } finally {
+    renaming.value = false
   }
 }
 
@@ -853,8 +935,8 @@ async function removeDashboard(dash) {
         :y="item.y"
         :w="item.w"
         :h="item.h"
-        :min-w="2"
-        :min-h="4"
+        :min-w="panelMinSize(panelById(item.i)).w"
+        :min-h="panelMinSize(panelById(item.i)).h"
       >
         <LivePanel
           v-if="panelById(item.i)"
@@ -1112,6 +1194,32 @@ async function removeDashboard(dash) {
       <template #footer>
         <el-button @click="deleteDialogVisible = false">Cancel</el-button>
         <el-button type="danger" :loading="deleting" @click="confirmDelete">Delete</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- Rename dashboard: small centred form-styled dialog (matches dup-dialog). -->
+    <el-dialog
+      v-model="renameDialogVisible"
+      title="Rename dashboard"
+      width="420px"
+      align-center
+      append-to-body
+      class="rename-dialog"
+    >
+      <el-form label-position="top" @submit.prevent="confirmRename">
+        <el-form-item label="New name">
+          <el-input
+            v-model="renameForm.title"
+            placeholder="Dashboard name"
+            autofocus
+            clearable
+            @keyup.enter="confirmRename"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="renameDialogVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="renaming" @click="confirmRename">Save</el-button>
       </template>
     </el-dialog>
 
