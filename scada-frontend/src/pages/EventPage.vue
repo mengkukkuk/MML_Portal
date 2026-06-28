@@ -5,6 +5,7 @@
  * location -> tag_name -> events tree: each location is a band, each tag_name a
  * card, each card a timeline of its last N events (newest first).
  * Auto-polls every 30s; the per-card count (5 / 10 / 25) is user-selectable.
+ * Filters: date range (start/end in DD/MM/YYYY), line (location), tag name — client-side.
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { fetchRecentEvents } from '@/api/events'
@@ -18,6 +19,12 @@ const error = ref('')
 const perCard = ref(10)
 const updatedAt = ref(null)
 const expanded = ref(null) // key of currently open card, null = all collapsed
+
+// Filters
+const filterStartDate = ref(null)
+const filterEndDate = ref(null)
+const filterLocation = ref('')
+const filterTagName = ref('')
 
 let pollTimer = null
 
@@ -34,13 +41,47 @@ async function load() {
   }
 }
 
+// Distinct location values for the Line filter dropdown
+const locationOptions = computed(() => {
+  const set = new Set(events.value.map(e => e.location ?? UNKNOWN))
+  return [...set].sort()
+})
+
+// Distinct tag_name values — scoped to the selected location when set
+const tagOptions = computed(() => {
+  const rows = filterLocation.value
+    ? events.value.filter(e => (e.location ?? UNKNOWN) === filterLocation.value)
+    : events.value
+  const set = new Set(rows.map(e => e.tag_name ?? UNKNOWN))
+  return [...set].sort()
+})
+
 // Fold the flat, pre-ordered list (location, tag_name, at_date_time DESC) into
-// a location -> tags -> events tree in a single pass.
+// a location -> tags -> events tree in a single pass, after applying active filters.
 const grouped = computed(() => {
+  let rows = events.value
+
+  if (filterStartDate.value) {
+    const start = new Date(filterStartDate.value)
+    start.setHours(0, 0, 0, 0)
+    rows = rows.filter(e => new Date(e.at_date_time) >= start)
+  }
+  if (filterEndDate.value) {
+    const end = new Date(filterEndDate.value)
+    end.setHours(23, 59, 59, 999)
+    rows = rows.filter(e => new Date(e.at_date_time) <= end)
+  }
+  if (filterLocation.value) {
+    rows = rows.filter(e => (e.location ?? UNKNOWN) === filterLocation.value)
+  }
+  if (filterTagName.value) {
+    rows = rows.filter(e => (e.tag_name ?? UNKNOWN) === filterTagName.value)
+  }
+
   const locations = []
   let curLoc = null
   let curTag = null
-  for (const row of events.value) {
+  for (const row of rows) {
     const location = row.location ?? UNKNOWN
     const tagName = row.tag_name ?? UNKNOWN
     if (!curLoc || curLoc.location !== location) {
@@ -58,6 +99,10 @@ const grouped = computed(() => {
   return locations
 })
 
+const hasActiveFilters = computed(() =>
+  filterStartDate.value || filterEndDate.value || filterLocation.value || filterTagName.value,
+)
+
 const isEmpty = computed(() => !loading.value && !error.value && grouped.value.length === 0)
 
 const updatedLabel = computed(() =>
@@ -73,6 +118,20 @@ function fmtTime(value) {
 function toggleCard(key) {
   expanded.value = expanded.value === key ? null : key
 }
+
+function clearFilters() {
+  filterStartDate.value = null
+  filterEndDate.value = null
+  filterLocation.value = ''
+  filterTagName.value = ''
+}
+
+// When location changes, reset tag filter if it no longer applies
+watch(filterLocation, () => {
+  if (filterTagName.value && !tagOptions.value.includes(filterTagName.value)) {
+    filterTagName.value = ''
+  }
+})
 
 watch(perCard, load)
 
@@ -107,9 +166,67 @@ onUnmounted(() => {
       </div>
     </header>
 
+    <!-- Filter bar -->
+    <div class="evt__filterbar">
+      <div class="evt__filter-group">
+        <span class="evt__filter-label">Date</span>
+        <el-date-picker
+          v-model="filterStartDate"
+          type="date"
+          placeholder="Start date"
+          format="DD/MM/YYYY"
+          size="default"
+          class="evt__date-picker"
+          clearable
+        />
+        <span class="evt__filter-sep">–</span>
+        <el-date-picker
+          v-model="filterEndDate"
+          type="date"
+          placeholder="End date"
+          format="DD/MM/YYYY"
+          size="default"
+          class="evt__date-picker"
+          clearable
+        />
+      </div>
+
+      <div class="evt__filter-group">
+        <span class="evt__filter-label">Line</span>
+        <el-select
+          v-model="filterLocation"
+          placeholder="All lines"
+          clearable
+          size="default"
+          class="evt__filter-select"
+        >
+          <el-option v-for="loc in locationOptions" :key="loc" :value="loc" :label="loc" />
+        </el-select>
+      </div>
+
+      <div class="evt__filter-group">
+        <span class="evt__filter-label">Tag</span>
+        <el-select
+          v-model="filterTagName"
+          placeholder="All tags"
+          clearable
+          size="default"
+          class="evt__filter-select"
+        >
+          <el-option v-for="tag in tagOptions" :key="tag" :value="tag" :label="tag" />
+        </el-select>
+      </div>
+
+      <el-button v-if="hasActiveFilters" size="default" @click="clearFilters">
+        Clear filters
+      </el-button>
+    </div>
+
     <p v-if="error" class="page__error">{{ error }}</p>
     <p v-else-if="loading && !events.length" class="page__empty">Loading events…</p>
-    <p v-else-if="isEmpty" class="page__empty">No events recorded.</p>
+    <p v-else-if="isEmpty" class="page__empty">
+      {{ hasActiveFilters ? 'No events match the current filters.' : 'No events recorded.' }}
+    </p>
 
     <section v-for="loc in grouped" :key="loc.location" class="evt__loc">
       <header class="evt__loc-head">
@@ -203,6 +320,44 @@ onUnmounted(() => {
   font-size: 14px;
   padding: var(--space-6) 0;
   text-align: center;
+}
+
+/* Filter bar */
+.evt__filterbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+
+.evt__filter-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.evt__filter-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.evt__filter-sep {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.evt__date-picker {
+  width: 140px;
+}
+
+.evt__filter-select {
+  width: 160px;
 }
 
 /* "Updated" indicator with a pulsing live dot */
