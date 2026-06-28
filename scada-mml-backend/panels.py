@@ -55,6 +55,7 @@ class PanelOut(BaseModel):
     filter_col: str | None = None
     ts_col: str | None = None
     dashboard_id: int | None = None
+    datasource_id: int | None = None
     created_at: datetime
 
 
@@ -73,6 +74,7 @@ class PanelIn(BaseModel):
     filter_col: str | None = None
     ts_col: str | None = None
     dashboard_id: int | None = None
+    datasource_id: int | None = None
 
 
 # --- Helpers ---------------------------------------------------------------
@@ -83,6 +85,11 @@ def _validate(body: PanelIn) -> None:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"dashboard_id {body.dashboard_id} does not exist",
             )
+    if body.datasource_id is not None and db.get_datasource(body.datasource_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"datasource_id {body.datasource_id} does not exist",
+        )
     if body.chart_type not in VALID_CHART_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -187,6 +194,7 @@ def create_panel(body: PanelIn, _admin: dict = Depends(require_admin)):
         body.filter_col,
         body.ts_col,
         body.dashboard_id,
+        body.datasource_id,
     )
 
 
@@ -209,6 +217,7 @@ def update_panel(panel_id: int, body: PanelIn, _admin: dict = Depends(require_ad
         body.filter_col,
         body.ts_col,
         body.dashboard_id,
+        body.datasource_id,
     )
     if panel is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Panel not found")

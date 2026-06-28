@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import alarms
 import auth
 import dashboards
+import datasources
 import db
 import events
 import panels
@@ -44,16 +45,19 @@ app.include_router(tags.router)
 app.include_router(schema.router)
 app.include_router(panels.router)
 app.include_router(dashboards.router)
+app.include_router(datasources.router)
 app.include_router(events.router)
 app.include_router(alarms.router)
 
 
 @app.on_event("startup")
 def _ensure_tables() -> None:
-    """Create the dashboard_panels + dashboards tables on boot so the Live grid
-    can persist. Dashboards must run after panels (it alters dashboard_panels)."""
+    """Create the dashboard_panels + dashboards + datasources tables on boot so
+    the Live grid and saved connections can persist. Dashboards must run after
+    panels (it alters dashboard_panels)."""
     db.init_panels_table()
     db.init_dashboards_table()
+    db.init_datasources_table()
 
 
 @app.get("/health")

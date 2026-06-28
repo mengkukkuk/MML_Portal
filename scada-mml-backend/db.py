@@ -223,6 +223,12 @@ def init_panels_table() -> None:
         conn.execute(
             "ALTER TABLE dashboard_panels ADD COLUMN IF NOT EXISTS ts_col TEXT"
         )
+        # Optional binding to a saved connection (datasources.id). Plain INTEGER
+        # (no FK) so this migration never depends on table-creation order; the
+        # selection is persisted now and used for query routing in a follow-up.
+        conn.execute(
+            "ALTER TABLE dashboard_panels ADD COLUMN IF NOT EXISTS datasource_id INTEGER"
+        )
         conn.execute("ALTER TABLE dashboard_panels ALTER COLUMN device_id DROP NOT NULL")
         conn.execute("ALTER TABLE dashboard_panels ALTER COLUMN metric DROP NOT NULL")
         conn.commit()
@@ -488,7 +494,7 @@ def acknowledge_alarm(alarm_id: int, user_id: int) -> dict[str, Any] | None:
 _PANEL_COLS = (
     "id, title, device_id, metric, window_minutes, chart_type, position, "
     "options, source, tag_name, poll_interval_seconds, "
-    "table_name, filter_col, ts_col, dashboard_id, created_at"
+    "table_name, filter_col, ts_col, dashboard_id, datasource_id, created_at"
 )
 
 
@@ -526,18 +532,19 @@ def create_panel(
     filter_col: str | None = None,
     ts_col: str | None = None,
     dashboard_id: int | None = None,
+    datasource_id: int | None = None,
 ) -> dict[str, Any]:
     with get_connection() as conn:
         row = conn.execute(
             f"""INSERT INTO dashboard_panels
                 (title, device_id, metric, window_minutes, chart_type, position,
                  options, source, tag_name, poll_interval_seconds,
-                 table_name, filter_col, ts_col, dashboard_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 table_name, filter_col, ts_col, dashboard_id, datasource_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING {_PANEL_COLS}""",
             (title, device_id, metric, window_minutes, chart_type, position,
              Json(options), source, tag_name, poll_interval_seconds,
-             table_name, filter_col, ts_col, dashboard_id),
+             table_name, filter_col, ts_col, dashboard_id, datasource_id),
         ).fetchone()
         conn.commit()
     return row
@@ -559,6 +566,7 @@ def update_panel(
     filter_col: str | None = None,
     ts_col: str | None = None,
     dashboard_id: int | None = None,
+    datasource_id: int | None = None,
 ) -> dict[str, Any] | None:
     """Update a panel. Returns None if no such panel."""
     with get_connection() as conn:
@@ -567,12 +575,13 @@ def update_panel(
             SET title = %s, device_id = %s, metric = %s, window_minutes = %s,
                 chart_type = %s, position = %s, options = %s,
                 source = %s, tag_name = %s, poll_interval_seconds = %s,
-                table_name = %s, filter_col = %s, ts_col = %s, dashboard_id = %s
+                table_name = %s, filter_col = %s, ts_col = %s, dashboard_id = %s,
+                datasource_id = %s
             WHERE id = %s
             RETURNING {_PANEL_COLS}""",
             (title, device_id, metric, window_minutes, chart_type, position,
              Json(options), source, tag_name, poll_interval_seconds,
-             table_name, filter_col, ts_col, dashboard_id, panel_id),
+             table_name, filter_col, ts_col, dashboard_id, datasource_id, panel_id),
         ).fetchone()
         conn.commit()
     return row
@@ -756,3 +765,128 @@ def table_series(
     with get_connection() as conn:
         rows = conn.execute(query, params).fetchall()
     return rows
+
+
+# --- Saved connections (datasources) ----------------------------------------
+# Admin-managed named Postgres connections. Panels reference one via
+# dashboard_panels.datasource_id. Passwords are stored as-is (parity with the
+# app's own .env credential) and are NEVER returned by the public API — callers
+# get a `has_password` flag instead. `database` is stored in column `dbname`
+# (avoids the reserved-ish identifier) and aliased back on read.
+def init_datasources_table() -> None:
+    """Create the datasources table if it doesn't exist. Idempotent."""
+    with get_connection() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS datasources (
+                id         SERIAL PRIMARY KEY,
+                name       TEXT NOT NULL UNIQUE,
+                type       TEXT NOT NULL DEFAULT 'postgres',
+                host       TEXT NOT NULL DEFAULT '',
+                port       INTEGER NOT NULL DEFAULT 5432,
+                dbname     TEXT NOT NULL DEFAULT '',
+                username   TEXT NOT NULL DEFAULT '',
+                password   TEXT NOT NULL DEFAULT '',
+                sslmode    TEXT NOT NULL DEFAULT 'prefer',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )"""
+        )
+        conn.commit()
+
+
+# Public projection — everything the frontend needs minus the secret.
+_DS_PUBLIC_COLS = (
+    "id, name, type, host, port, dbname AS database, username, sslmode, "
+    "(password <> '') AS has_password, created_at, updated_at"
+)
+
+
+def list_datasources() -> list[dict[str, Any]]:
+    """All saved connections, password-free, ordered by name."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"SELECT {_DS_PUBLIC_COLS} FROM datasources ORDER BY name"
+        ).fetchall()
+    return rows
+
+
+def get_datasource(datasource_id: int) -> dict[str, Any] | None:
+    """One saved connection, password-free. None if it doesn't exist."""
+    with get_connection() as conn:
+        row = conn.execute(
+            f"SELECT {_DS_PUBLIC_COLS} FROM datasources WHERE id = %s",
+            (datasource_id,),
+        ).fetchone()
+    return row
+
+
+def get_datasource_secret(datasource_id: int) -> dict[str, Any] | None:
+    """One saved connection WITH its password — for opening connections only.
+    Never expose the result of this directly through the API."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id, name, type, host, port, dbname AS database, username, "
+            "password, sslmode FROM datasources WHERE id = %s",
+            (datasource_id,),
+        ).fetchone()
+    return row
+
+
+def create_datasource(
+    name: str,
+    type: str,
+    host: str,
+    port: int,
+    database: str,
+    username: str,
+    password: str,
+    sslmode: str,
+) -> dict[str, Any]:
+    """Insert a connection. Raises psycopg.errors.UniqueViolation on dup name."""
+    with get_connection() as conn:
+        row = conn.execute(
+            f"""INSERT INTO datasources
+                (name, type, host, port, dbname, username, password, sslmode)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING {_DS_PUBLIC_COLS}""",
+            (name, type, host, port, database, username, password, sslmode),
+        ).fetchone()
+        conn.commit()
+    return row
+
+
+def update_datasource(
+    datasource_id: int,
+    name: str,
+    type: str,
+    host: str,
+    port: int,
+    database: str,
+    username: str,
+    password: str | None,
+    sslmode: str,
+) -> dict[str, Any] | None:
+    """Update a connection. A None password keeps the stored one (so the editor
+    need not round-trip the secret). Returns None if no such datasource."""
+    with get_connection() as conn:
+        row = conn.execute(
+            f"""UPDATE datasources
+            SET name = %s, type = %s, host = %s, port = %s, dbname = %s,
+                username = %s, password = COALESCE(%s, password),
+                sslmode = %s, updated_at = now()
+            WHERE id = %s
+            RETURNING {_DS_PUBLIC_COLS}""",
+            (name, type, host, port, database, username, password, sslmode,
+             datasource_id),
+        ).fetchone()
+        conn.commit()
+    return row
+
+
+def delete_datasource(datasource_id: int) -> bool:
+    """Delete a connection. Returns True if a row was removed. Panels keep their
+    (now-dangling) datasource_id; routing falls back to the app database."""
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM datasources WHERE id = %s", (datasource_id,))
+        conn.commit()
+        return cur.rowcount > 0

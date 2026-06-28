@@ -2,18 +2,30 @@
 /**
  * SettingsPage — the control-console for portal-wide parameters (route: /settings).
  * Laid out as rack modules: APPEARANCE (color faceplate), ACQUISITION (poll
- * cadence + alerts), and DATA SOURCE (Grafana-style DB connection). All state
- * lives in the `settings` Pinia store and persists to localStorage. Theme
- * changes apply live; acquisition and datasource are committed via Save.
+ * cadence + alerts), and DATA SOURCES (admin-managed saved DB connections).
+ *
+ * Theme + acquisition prefs persist to localStorage via the settings store
+ * (theme applies live; acquisition needs Save). Connections live server-side
+ * (api/datasources) so Live panels can bind to them; each saves on its own and
+ * can be tested against a real database.
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useSettingsStore, THEMES } from '@/stores/settings'
+import { useAuthStore } from '@/stores/auth'
+import {
+  fetchDatasources,
+  createDatasource,
+  updateDatasource,
+  deleteDatasource,
+  testDatasource,
+} from '@/api/datasources'
 
 const store = useSettingsStore()
-const { theme, pollSeconds, notifyOnCritical, datasource, testState, testMessage } =
-  storeToRefs(store)
+const { theme, pollSeconds, notifyOnCritical } = storeToRefs(store)
+const auth = useAuthStore()
+const isAdmin = computed(() => auth.role === 'admin')
 
 const POLL_PRESETS = [
   { s: 5, label: '5s' },
@@ -25,25 +37,15 @@ const DS_TYPES = [
   { value: 'postgres', label: 'PostgreSQL' },
   { value: 'timescaledb', label: 'TimescaleDB' },
 ]
-const SSL_MODES = ['disable', 'require', 'verify-ca', 'verify-full']
+const SSL_MODES = ['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full']
 
-// --- dirty tracking (theme is excluded — it commits instantly) -------------
-const fingerprint = () =>
-  JSON.stringify({ p: pollSeconds.value, n: notifyOnCritical.value, d: datasource.value })
-const saved = ref('')
-onMounted(() => {
-  saved.value = fingerprint()
-})
-const dirty = computed(() => saved.value !== fingerprint())
+const LED_BY_STATE = { testing: 'led--warn led--pulse', ok: 'led--ok', error: 'led--crit' }
 
-// Clear a stale connection result the moment the operator edits the config.
-watch(
-  datasource,
-  () => {
-    if (testState.value !== 'idle') store.resetTest()
-  },
-  { deep: true },
-)
+// --- Acquisition prefs: dirty tracking (theme commits instantly; connections
+//     save individually, so the commit bar governs poll/notify only) ---------
+const fingerprint = () => JSON.stringify({ p: pollSeconds.value, n: notifyOnCritical.value })
+const savedPrefs = ref('')
+const dirty = computed(() => savedPrefs.value !== fingerprint())
 
 function pickTheme(id) {
   store.applyTheme(id)
@@ -53,20 +55,170 @@ function setPoll(seconds) {
 }
 function commit() {
   store.savePrefs()
-  store.saveDatasource()
-  saved.value = fingerprint()
+  savedPrefs.value = fingerprint()
   ElMessage.success('Settings committed')
 }
-function testConnection() {
-  store.testConnection()
+
+// --- Data sources (server-side) --------------------------------------------
+const datasources = ref([])
+const dsLoading = ref(false)
+const rowTest = reactive({}) // id -> { state, message }
+
+const dialogVisible = ref(false)
+const editingDsId = ref(null) // null = create
+const savingDs = ref(false)
+const blankDs = () => ({
+  name: '',
+  type: 'postgres',
+  host: '127.0.0.1',
+  port: 5432,
+  database: '',
+  username: 'postgres',
+  password: '',
+  sslmode: 'prefer',
+})
+const dsForm = reactive(blankDs())
+const dsTest = reactive({ state: 'idle', message: '' }) // idle|testing|ok|error
+
+const dsDialogTitle = computed(() => (editingDsId.value ? 'Edit connection' : 'Add connection'))
+const dsTestLed = computed(() => LED_BY_STATE[dsTest.state] || '')
+const editingHasPassword = computed(
+  () => datasources.value.find((d) => d.id === editingDsId.value)?.has_password,
+)
+function rowLed(id) {
+  return LED_BY_STATE[rowTest[id]?.state] || ''
 }
 
-const testLed = computed(
-  () =>
-    ({ idle: '', testing: 'led--warn led--pulse', ok: 'led--ok', error: 'led--crit' })[
-      testState.value
-    ],
-)
+async function loadDatasources() {
+  dsLoading.value = true
+  try {
+    datasources.value = await fetchDatasources()
+  } catch (e) {
+    if (e?.response?.status !== 403) ElMessage.error('Failed to load connections.')
+  } finally {
+    dsLoading.value = false
+  }
+}
+
+function openCreateDs() {
+  editingDsId.value = null
+  Object.assign(dsForm, blankDs())
+  dsTest.state = 'idle'
+  dsTest.message = ''
+  dialogVisible.value = true
+}
+function openEditDs(ds) {
+  editingDsId.value = ds.id
+  Object.assign(dsForm, {
+    name: ds.name,
+    type: ds.type,
+    host: ds.host,
+    port: ds.port,
+    database: ds.database,
+    username: ds.username,
+    password: '', // blank = keep the stored secret
+    sslmode: ds.sslmode,
+  })
+  dsTest.state = 'idle'
+  dsTest.message = ''
+  dialogVisible.value = true
+}
+
+async function testInDialog() {
+  dsTest.state = 'testing'
+  dsTest.message = 'Opening connection…'
+  try {
+    const r = await testDatasource({
+      datasource_id: editingDsId.value ?? undefined,
+      type: dsForm.type,
+      host: dsForm.host,
+      port: dsForm.port,
+      database: dsForm.database,
+      username: dsForm.username,
+      password: dsForm.password || undefined,
+      sslmode: dsForm.sslmode,
+    })
+    dsTest.state = r.ok ? 'ok' : 'error'
+    dsTest.message = r.server_version ? `${r.message} · ${r.server_version}` : r.message
+  } catch (e) {
+    dsTest.state = 'error'
+    dsTest.message = e?.response?.data?.detail || 'Test failed.'
+  }
+}
+
+async function saveDs() {
+  if (!dsForm.name.trim()) {
+    ElMessage.warning('Name is required.')
+    return
+  }
+  savingDs.value = true
+  try {
+    const payload = {
+      name: dsForm.name.trim(),
+      type: dsForm.type,
+      host: dsForm.host.trim(),
+      port: dsForm.port,
+      database: dsForm.database.trim(),
+      username: dsForm.username.trim(),
+      sslmode: dsForm.sslmode,
+      ...(dsForm.password ? { password: dsForm.password } : {}),
+    }
+    if (editingDsId.value) {
+      const updated = await updateDatasource(editingDsId.value, payload)
+      const i = datasources.value.findIndex((d) => d.id === editingDsId.value)
+      if (i !== -1) datasources.value[i] = updated
+      ElMessage.success('Connection updated.')
+    } else {
+      const created = await createDatasource(payload)
+      datasources.value.push(created)
+      datasources.value.sort((a, b) => a.name.localeCompare(b.name))
+      ElMessage.success('Connection saved.')
+    }
+    dialogVisible.value = false
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || 'Failed to save connection.')
+  } finally {
+    savingDs.value = false
+  }
+}
+
+async function removeDs(ds) {
+  try {
+    await ElMessageBox.confirm(
+      `Delete connection “${ds.name}”? Panels bound to it fall back to the app database.`,
+      'Delete connection',
+      { type: 'warning', confirmButtonText: 'Delete', cancelButtonText: 'Cancel' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await deleteDatasource(ds.id)
+    datasources.value = datasources.value.filter((d) => d.id !== ds.id)
+    delete rowTest[ds.id]
+    ElMessage.success('Connection deleted.')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || 'Delete failed.')
+  }
+}
+
+async function testRow(ds) {
+  rowTest[ds.id] = { state: 'testing', message: 'Opening connection…' }
+  try {
+    const r = await testDatasource({ datasource_id: ds.id })
+    rowTest[ds.id] = {
+      state: r.ok ? 'ok' : 'error',
+      message: r.server_version ? `${r.message} · ${r.server_version}` : r.message,
+    }
+  } catch (e) {
+    rowTest[ds.id] = { state: 'error', message: e?.response?.data?.detail || 'Test failed.' }
+  }
+}
+
+onMounted(async () => {
+  savedPrefs.value = fingerprint()
+  await loadDatasources()
+})
 </script>
 
 <template>
@@ -176,86 +328,140 @@ const testLed = computed(
       </div>
     </section>
 
-    <!-- ── Module 3 · Data source ─────────────────────────────────────── -->
+    <!-- ── Module 3 · Data sources ────────────────────────────────────── -->
     <section class="mod">
       <header class="mod__head">
-        <span class="mod__tag">Data source</span>
-        <span class="mod__sub">Historian database connection</span>
+        <span class="mod__tag">Data sources</span>
+        <span class="mod__sub">Saved database connections</span>
+        <el-button
+          v-if="isAdmin"
+          class="mod__action"
+          type="primary"
+          size="small"
+          @click="openCreateDs"
+        >
+          + Add connection
+        </el-button>
       </header>
       <div class="mod__body">
+        <p v-if="!isAdmin" class="ds__readonly">
+          <span class="led"></span> Only administrators can manage connections.
+        </p>
+
+        <div v-if="datasources.length" class="conns">
+          <div v-for="ds in datasources" :key="ds.id" class="conn">
+            <span class="led" :class="rowLed(ds.id)"></span>
+            <div class="conn__main">
+              <span class="conn__name">
+                {{ ds.name }}
+                <span class="conn__type">{{ ds.type }}</span>
+              </span>
+              <span class="conn__dsn">
+                {{ ds.username }}@{{ ds.host }}:{{ ds.port }}/{{ ds.database }} · sslmode={{ ds.sslmode }}
+              </span>
+              <span v-if="rowTest[ds.id]?.message" class="conn__result">{{
+                rowTest[ds.id].message
+              }}</span>
+            </div>
+            <div v-if="isAdmin" class="conn__actions">
+              <el-button
+                size="small"
+                :loading="rowTest[ds.id]?.state === 'testing'"
+                @click="testRow(ds)"
+              >
+                Test
+              </el-button>
+              <el-button size="small" @click="openEditDs(ds)">Edit</el-button>
+              <el-button size="small" text type="danger" @click="removeDs(ds)">Delete</el-button>
+            </div>
+          </div>
+        </div>
+
+        <p v-else-if="!dsLoading" class="ds__empty">
+          No saved connections yet.
+          <template v-if="isAdmin">Add one to make it selectable when editing a Live panel.</template>
+        </p>
+      </div>
+    </section>
+
+    <!-- ── Commit bar (acquisition only) ──────────────────────────────── -->
+    <div class="cfg__bar">
+      <span class="cfg__barhint">
+        Appearance applies instantly. Connections save on their own. Acquisition needs a commit.
+      </span>
+      <el-button type="primary" :disabled="!dirty" @click="commit">Save changes</el-button>
+    </div>
+
+    <!-- ── Connection editor dialog ───────────────────────────────────── -->
+    <el-dialog v-model="dialogVisible" :title="dsDialogTitle" width="640px">
+      <el-form label-position="top">
         <div class="ds__grid">
+          <div class="fld fld--span6">
+            <label class="fld__label" for="dsf-name">Name</label>
+            <el-input id="dsf-name" v-model="dsForm.name" placeholder="e.g. Plant historian" />
+          </div>
           <div class="fld fld--span2">
-            <label class="fld__label" for="ds-type">Type</label>
-            <el-select id="ds-type" v-model="datasource.type">
-              <el-option
-                v-for="o in DS_TYPES"
-                :key="o.value"
-                :label="o.label"
-                :value="o.value"
-              />
+            <label class="fld__label" for="dsf-type">Type</label>
+            <el-select id="dsf-type" v-model="dsForm.type">
+              <el-option v-for="o in DS_TYPES" :key="o.value" :label="o.label" :value="o.value" />
             </el-select>
           </div>
           <div class="fld fld--span3">
-            <label class="fld__label" for="ds-host">Host</label>
-            <el-input id="ds-host" v-model="datasource.host" placeholder="127.0.0.1" />
+            <label class="fld__label" for="dsf-host">Host</label>
+            <el-input id="dsf-host" v-model="dsForm.host" placeholder="127.0.0.1" />
           </div>
           <div class="fld">
-            <label class="fld__label" for="ds-port">Port</label>
+            <label class="fld__label" for="dsf-port">Port</label>
             <el-input-number
-              id="ds-port"
-              v-model="datasource.port"
+              id="dsf-port"
+              v-model="dsForm.port"
               :min="1"
               :max="65535"
               :controls="false"
             />
           </div>
-
           <div class="fld fld--span3">
-            <label class="fld__label" for="ds-db">Database</label>
-            <el-input id="ds-db" v-model="datasource.database" placeholder="mml" />
+            <label class="fld__label" for="dsf-db">Database</label>
+            <el-input id="dsf-db" v-model="dsForm.database" placeholder="mml" />
           </div>
           <div class="fld fld--span3">
-            <label class="fld__label" for="ds-ssl">SSL mode</label>
-            <el-select id="ds-ssl" v-model="datasource.sslmode">
+            <label class="fld__label" for="dsf-ssl">SSL mode</label>
+            <el-select id="dsf-ssl" v-model="dsForm.sslmode">
               <el-option v-for="m in SSL_MODES" :key="m" :label="m" :value="m" />
             </el-select>
           </div>
-
           <div class="fld fld--span3">
-            <label class="fld__label" for="ds-user">User</label>
-            <el-input id="ds-user" v-model="datasource.user" placeholder="postgres" />
+            <label class="fld__label" for="dsf-user">Username</label>
+            <el-input id="dsf-user" v-model="dsForm.username" placeholder="postgres" />
           </div>
           <div class="fld fld--span3">
-            <label class="fld__label" for="ds-pass">Password</label>
+            <label class="fld__label" for="dsf-pass">Password</label>
             <el-input
-              id="ds-pass"
-              v-model="datasource.password"
+              id="dsf-pass"
+              v-model="dsForm.password"
               type="password"
               show-password
-              placeholder="••••••••"
+              :placeholder="editingHasPassword ? '•••••• (unchanged)' : '••••••••'"
             />
           </div>
         </div>
+      </el-form>
 
-        <div class="ds__foot">
-          <el-button :loading="testState === 'testing'" @click="testConnection">
+      <template #footer>
+        <div class="ds-dialog__foot">
+          <el-button :loading="dsTest.state === 'testing'" @click="testInDialog">
             Test connection
           </el-button>
-          <p class="ds__status" :class="{ 'ds__status--show': testState !== 'idle' }">
-            <span class="led" :class="testLed"></span>
-            <span class="ds__msg">{{ testMessage }}</span>
+          <p class="ds__status" :class="{ 'ds__status--show': dsTest.state !== 'idle' }">
+            <span class="led" :class="dsTestLed"></span>
+            <span class="ds__msg">{{ dsTest.message }}</span>
           </p>
+          <span class="ds-dialog__spacer"></span>
+          <el-button @click="dialogVisible = false">Cancel</el-button>
+          <el-button type="primary" :loading="savingDs" @click="saveDs">Save</el-button>
         </div>
-      </div>
-    </section>
-
-    <!-- ── Commit bar ─────────────────────────────────────────────────── -->
-    <div class="cfg__bar">
-      <span class="cfg__barhint">
-        Appearance applies instantly. Acquisition &amp; data source need a commit.
-      </span>
-      <el-button type="primary" :disabled="!dirty" @click="commit">Save changes</el-button>
-    </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -265,7 +471,7 @@ const testLed = computed(
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
-  max-width: 860px;
+  max-width: 1500px;
   padding-bottom: 88px;
 }
 
@@ -316,7 +522,6 @@ const testLed = computed(
   border-radius: var(--radius-lg);
   overflow: hidden;
 }
-/* engraved accent ledge along the top of every module */
 .mod::before {
   content: '';
   position: absolute;
@@ -345,11 +550,14 @@ const testLed = computed(
   font-size: 12px;
   color: var(--fg-dim);
 }
+.mod__action {
+  margin-left: auto;
+  align-self: center;
+}
 .mod__body {
   padding: var(--space-5);
 }
 
-/* shared field label */
 .fld__label {
   display: block;
   margin: 0 0 8px;
@@ -519,7 +727,78 @@ const testLed = computed(
   background: var(--accent-soft);
 }
 
-/* ── Data source ────────────────────────────────────────────────────── */
+/* ── Data sources ───────────────────────────────────────────────────── */
+.ds__readonly,
+.ds__empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+.conns {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.conn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.conn__main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.conn__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--fg);
+}
+.conn__type {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-muted);
+}
+.conn__dsn {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conn__result {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+.conn__actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  flex: none;
+}
+
+/* form grid shared by the datasource dialog */
 .ds__grid {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
@@ -535,6 +814,9 @@ const testLed = computed(
 .fld--span3 {
   grid-column: span 3;
 }
+.fld--span6 {
+  grid-column: span 6;
+}
 .fld :deep(.el-input),
 .fld :deep(.el-select),
 .fld :deep(.el-input-number) {
@@ -542,14 +824,6 @@ const testLed = computed(
 }
 .fld :deep(.el-input-number .el-input__inner) {
   text-align: left;
-}
-.ds__foot {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  margin-top: var(--space-5);
-  padding-top: var(--space-5);
-  border-top: 1px solid var(--border-soft);
 }
 .ds__status {
   display: inline-flex;
@@ -566,6 +840,15 @@ const testLed = computed(
   font-family: var(--font-mono);
   font-size: 12.5px;
   color: var(--fg-muted);
+}
+.ds-dialog__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+}
+.ds-dialog__spacer {
+  margin-left: auto;
 }
 
 /* ── Status LEDs ────────────────────────────────────────────────────── */
@@ -635,6 +918,9 @@ const testLed = computed(
   .fld--span2,
   .fld--span3 {
     grid-column: span 6;
+  }
+  .conn__actions {
+    margin-left: 0;
   }
 }
 

@@ -19,11 +19,11 @@ const activeIndex = computed(() => '/' + (route.path.split('/')[1] || ''))
 const items = computed(() => {
   const base = [
     { path: '/', title: 'Overview', icon: 'Odometer' },
-    { path: '/devices', title: 'Devices', icon: 'Cpu' },
-    { path: '/alarms', title: 'Alarms', icon: 'WarningFilled' },
-    { path: '/trends', title: 'Trends', icon: 'TrendCharts' },
     { path: '/live', title: 'Live', icon: 'VideoPlay' },
     { path: '/events', title: 'Events', icon: 'List' },
+    { path: '/alarms', title: 'Alarms', icon: 'WarningFilled' },
+    { path: '/trends', title: 'Trends', icon: 'TrendCharts' },
+    { path: '/devices', title: 'Devices', icon: 'Cpu' },
     { path: '/settings', title: 'Settings', icon: 'Setting' },
   ]
   if (auth.role === 'admin') {

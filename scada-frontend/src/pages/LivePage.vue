@@ -18,6 +18,7 @@ import { fetchDevices } from '@/api/readings'
 import { fetchSchemaTables, fetchSchemaColumns, fetchSchemaValues } from '@/api/schema'
 import { fetchPanels, createPanel, updatePanel, deletePanel } from '@/api/panels'
 import { fetchDashboards, createDashboard, updateDashboard, deleteDashboard } from '@/api/dashboards'
+import { fetchDatasources } from '@/api/datasources'
 import { colorAt } from '@/utils/seriesPalette'
 import { compileExpr } from '@/utils/mathExpr'
 import { UNIT_GROUPS } from '@/utils/units'
@@ -149,8 +150,12 @@ const error = ref('')
 const dialogVisible = ref(false)
 const editingId = ref(null) // null = create mode
 const saving = ref(false)
+// Saved connections an admin can bind a panel to. The selection is persisted on
+// the panel (datasource_id); query routing to the external DB is a follow-up.
+const datasources = ref([])
 const form = reactive({
   title: '',
+  datasource_id: null, // null = the app database (default)
   table_name: null,
   // Primary value column (kept here for back-compat); extras append to value_cols.
   // The renderer plots one series per (value × filter) combination.
@@ -298,6 +303,7 @@ async function onFilterColChange(col) {
 async function openCreate() {
   editingId.value = null
   form.title = ''
+  form.datasource_id = null
   form.mathExpr = ''
   form.window_minutes = 15
   form.chart_type = 'timeseries'
@@ -333,6 +339,7 @@ function legacyBinding(panel) {
 async function openEdit(panel) {
   editingId.value = panel.id
   form.title = panel.title
+  form.datasource_id = panel.datasource_id ?? null
   form.chart_type = panel.chart_type === 'line' ? 'timeseries' : panel.chart_type
   // `filters`/`tags` and `mathExpr` live outside form.options — onVizTypeChange
   // replaces form.options wholesale and would otherwise drop them.
@@ -396,6 +403,7 @@ async function save() {
       source: 'table',
       device_id: null,
       tag_name: null,
+      datasource_id: form.datasource_id || null,
       table_name: form.table_name,
       metric: form.metric,
       filter_col: form.filter_col || null,
@@ -480,6 +488,7 @@ async function confirmDuplicate() {
       source: panel.source || 'device',
       device_id: panel.device_id,
       tag_name: panel.tag_name,
+      datasource_id: panel.datasource_id ?? null,
       table_name: panel.table_name,
       filter_col: panel.filter_col,
       ts_col: panel.ts_col,
@@ -535,6 +544,7 @@ async function onPollIntervalChange(panel, seconds) {
       source: panel.source || 'device',
       device_id: panel.device_id,
       tag_name: panel.tag_name,
+      datasource_id: panel.datasource_id ?? null,
       table_name: panel.table_name,
       filter_col: panel.filter_col,
       ts_col: panel.ts_col,
@@ -683,6 +693,7 @@ async function saveLayout() {
           source: panel.source || 'device',
           device_id: panel.device_id,
           tag_name: panel.tag_name,
+          datasource_id: panel.datasource_id ?? null,
           table_name: panel.table_name,
           filter_col: panel.filter_col,
           ts_col: panel.ts_col,
@@ -738,14 +749,16 @@ const activeDashboard = computed(() =>
 
 onMounted(async () => {
   try {
-    const [ds, d, t] = await Promise.all([
+    const [ds, d, t, conns] = await Promise.all([
       fetchDashboards(),
       fetchDevices().catch(() => []),
       fetchSchemaTables().catch(() => []),
+      fetchDatasources().catch(() => []),
     ])
     dashboards.value = ds
     devices.value = d
     schemaTables.value = t
+    datasources.value = conns
     // Resolve the active dashboard from ?dashboard=<id>, else the first board.
     const qid = Number(route.query.dashboard)
     const fromQuery = ds.find((x) => x.id === qid)
@@ -957,6 +970,27 @@ async function removeDashboard(dash) {
       <el-form label-position="top">
         <el-form-item label="Title">
           <el-input v-model="form.title" placeholder="e.g. Panel 1" />
+        </el-form-item>
+
+        <el-form-item label="Connection">
+          <el-select
+            v-model="form.datasource_id"
+            placeholder="Default (app database)"
+            clearable
+            style="width: 100%"
+          >
+            <el-option :value="null" label="Default (app database)" />
+            <el-option
+              v-for="ds in datasources"
+              :key="ds.id"
+              :value="ds.id"
+              :label="`${ds.name} — ${ds.host}:${ds.port}/${ds.database}`"
+            />
+          </el-select>
+          <span class="editor__hint">
+            Saved connections are managed in Settings → Data sources. The table list below
+            still reads the app database; routing queries to the selected connection is coming.
+          </span>
         </el-form-item>
 
         <el-form-item label="Data source (table)">
