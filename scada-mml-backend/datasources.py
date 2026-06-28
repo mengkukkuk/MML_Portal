@@ -36,6 +36,7 @@ class DatasourceOut(BaseModel):
     database: str
     username: str
     sslmode: str
+    db_schema: str = "public"
     has_password: bool
     created_at: datetime
     updated_at: datetime
@@ -51,6 +52,7 @@ class DatasourceIn(BaseModel):
     # Omit / send null on update to keep the stored secret unchanged.
     password: str | None = None
     sslmode: str = "prefer"
+    db_schema: str = Field("public", min_length=1, max_length=120)
 
 
 class DatasourceTestIn(BaseModel):
@@ -100,7 +102,7 @@ def create_datasource(body: DatasourceIn, _admin: dict = Depends(require_admin))
         return db.create_datasource(
             body.name.strip(), body.type, body.host.strip(), body.port,
             body.database.strip(), body.username.strip(), body.password or "",
-            body.sslmode,
+            body.sslmode, body.db_schema.strip(),
         )
     except psycopg.errors.UniqueViolation:
         raise HTTPException(
@@ -118,7 +120,7 @@ def update_datasource(datasource_id: int, body: DatasourceIn, _admin: dict = Dep
         ds = db.update_datasource(
             datasource_id, body.name.strip(), body.type, body.host.strip(),
             body.port, body.database.strip(), body.username.strip(),
-            new_password, body.sslmode,
+            new_password, body.sslmode, body.db_schema.strip(),
         )
     except psycopg.errors.UniqueViolation:
         raise HTTPException(

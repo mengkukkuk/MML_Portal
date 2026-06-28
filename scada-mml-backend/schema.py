@@ -10,6 +10,7 @@ filter values are always parameterized.
 """
 from datetime import datetime
 
+import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
@@ -17,6 +18,12 @@ import db
 from auth import get_current_user
 
 router = APIRouter(prefix="/api/schema", tags=["schema"])
+
+
+def _detail(e: Exception) -> str:
+    """First line of an error — trims psycopg's multi-line connection messages."""
+    text = str(e).strip()
+    return text.splitlines()[0] if text else "Database error"
 
 
 class TableOut(BaseModel):
@@ -45,21 +52,32 @@ class SeriesOut(BaseModel):
 
 
 @router.get("/tables", response_model=list[TableOut])
-def list_tables(_user: dict = Depends(get_current_user)):
-    """Public base tables an admin may chart (sensitive tables excluded)."""
-    return db.list_schema_tables()
+def list_tables(
+    datasource_id: int | None = Query(None),
+    _user: dict = Depends(get_current_user),
+):
+    """Base tables an admin may chart (sensitive tables excluded).
+
+    With ``datasource_id`` the catalogue comes from that saved connection's
+    schema instead of the app database.
+    """
+    try:
+        return db.list_schema_tables(datasource_id)
+    except (ValueError, psycopg.Error) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_detail(e))
 
 
 @router.get("/columns", response_model=ColumnsOut)
 def list_columns(
     table: str = Query(..., min_length=1),
+    datasource_id: int | None = Query(None),
     _user: dict = Depends(get_current_user),
 ):
     """Columns of a table, categorized into value / timestamp / filter."""
     try:
-        return db.describe_table(table)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        return db.describe_table(table, datasource_id)
+    except (ValueError, psycopg.Error) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_detail(e))
 
 
 @router.get("/values", response_model=list[str])
@@ -67,13 +85,14 @@ def list_values(
     table: str = Query(..., min_length=1),
     column: str = Query(..., min_length=1),
     limit: int = Query(500, ge=1, le=2000),
+    datasource_id: int | None = Query(None),
     _user: dict = Depends(get_current_user),
 ):
     """Distinct values of a filter column — populates the per-series dropdown."""
     try:
-        return db.distinct_column_values(table, column, limit)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        return db.distinct_column_values(table, column, limit, datasource_id)
+    except (ValueError, psycopg.Error) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_detail(e))
 
 
 @router.get("/latest", response_model=LatestOut)
@@ -83,13 +102,14 @@ def get_latest(
     filter_col: str | None = Query(None),
     filter_val: str | None = Query(None),
     ts_col: str | None = Query(None),
+    datasource_id: int | None = Query(None),
     _user: dict = Depends(get_current_user),
 ):
     """Newest matching row — polled by each tile."""
     try:
-        row = db.table_latest(table, value_col, filter_col, filter_val, ts_col)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        row = db.table_latest(table, value_col, filter_col, filter_val, ts_col, datasource_id)
+    except (ValueError, psycopg.Error) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_detail(e))
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="No matching row"
@@ -105,12 +125,15 @@ def get_series(
     filter_col: str | None = Query(None),
     filter_val: str | None = Query(None),
     minutes: int = Query(15, ge=1, le=1440),
+    datasource_id: int | None = Query(None),
     _user: dict = Depends(get_current_user),
 ):
     """Time-series window — seeds real history on load (needs a timestamp col)."""
     try:
-        rows = db.table_series(table, value_col, filter_col, filter_val, ts_col, minutes)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        rows = db.table_series(
+            table, value_col, filter_col, filter_val, ts_col, minutes, datasource_id
+        )
+    except (ValueError, psycopg.Error) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_detail(e))
     points = [{"ts": r["ts"], "value": r["value"]} for r in rows if r["value"] is not None]
     return {"points": points}

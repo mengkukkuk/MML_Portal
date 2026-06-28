@@ -73,6 +73,7 @@ const blankDs = () => ({
   host: '127.0.0.1',
   port: 5432,
   database: '',
+  db_schema: 'public',
   username: 'postgres',
   password: '',
   sslmode: 'prefer',
@@ -115,6 +116,7 @@ function openEditDs(ds) {
     host: ds.host,
     port: ds.port,
     database: ds.database,
+    db_schema: ds.db_schema || 'public',
     username: ds.username,
     password: '', // blank = keep the stored secret
     sslmode: ds.sslmode,
@@ -159,6 +161,7 @@ async function saveDs() {
       host: dsForm.host.trim(),
       port: dsForm.port,
       database: dsForm.database.trim(),
+      db_schema: dsForm.db_schema.trim() || 'public',
       username: dsForm.username.trim(),
       sslmode: dsForm.sslmode,
       ...(dsForm.password ? { password: dsForm.password } : {}),
@@ -357,7 +360,7 @@ onMounted(async () => {
                 <span class="conn__type">{{ ds.type }}</span>
               </span>
               <span class="conn__dsn">
-                {{ ds.username }}@{{ ds.host }}:{{ ds.port }}/{{ ds.database }} · sslmode={{ ds.sslmode }}
+                {{ ds.username }}@{{ ds.host }}:{{ ds.port }}/{{ ds.database }} · schema={{ ds.db_schema }} · sslmode={{ ds.sslmode }}
               </span>
               <span v-if="rowTest[ds.id]?.message" class="conn__result">{{
                 rowTest[ds.id].message
@@ -420,11 +423,15 @@ onMounted(async () => {
               :controls="false"
             />
           </div>
-          <div class="fld fld--span3">
+          <div class="fld fld--span2">
             <label class="fld__label" for="dsf-db">Database</label>
             <el-input id="dsf-db" v-model="dsForm.database" placeholder="mml" />
           </div>
-          <div class="fld fld--span3">
+          <div class="fld fld--span2">
+            <label class="fld__label" for="dsf-schema">Schema</label>
+            <el-input id="dsf-schema" v-model="dsForm.db_schema" placeholder="public" />
+          </div>
+          <div class="fld fld--span2">
             <label class="fld__label" for="dsf-ssl">SSL mode</label>
             <el-select id="dsf-ssl" v-model="dsForm.sslmode">
               <el-option v-for="m in SSL_MODES" :key="m" :label="m" :value="m" />

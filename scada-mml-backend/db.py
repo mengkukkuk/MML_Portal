@@ -1,4 +1,5 @@
 """Thin PostgreSQL access layer using psycopg 3."""
+from contextlib import contextmanager
 from typing import Any
 
 import psycopg
@@ -603,7 +604,9 @@ def delete_panel(panel_id: int) -> bool:
 # *values* are always passed as %s params.
 
 # Tables never exposed to the picker (credentials / app-internal state).
-SENSITIVE_TABLES = {"users", "dashboard_panels", "mmldatabuffer"}
+# `datasources` holds saved connection passwords — must never be chartable, or a
+# text filter column could leak secrets via distinct_column_values.
+SENSITIVE_TABLES = {"users", "dashboard_panels", "mmldatabuffer", "datasources"}
 
 # Postgres date/time data_types usable as a panel's timestamp/x-axis column.
 _TS_TYPES = (
@@ -615,79 +618,105 @@ _TS_TYPES = (
 )
 
 
-def list_schema_tables() -> list[dict[str, Any]]:
-    """Public base tables an admin may chart, minus the sensitive denylist."""
-    with get_connection() as conn:
-        rows = conn.execute(
-            """SELECT table_name FROM information_schema.tables
-               WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-               ORDER BY table_name"""
-        ).fetchall()
-    return [
-        {"table": r["table_name"], "label": r["table_name"]}
-        for r in rows
-        if r["table_name"] not in SENSITIVE_TABLES
-    ]
+@contextmanager
+def _table_source_conn(datasource_id: int | None):
+    """Yield ``(conn, schema)`` for table-source queries.
+
+    ``None`` → the app database + the ``public`` schema (unchanged behaviour).
+    Otherwise opens a short-lived libpq connection to the saved datasource and
+    uses its configured schema. Raises ``ValueError`` if the datasource id is
+    unknown; ``psycopg.Error`` propagates when it can't be reached so callers can
+    surface a connection failure. ``get_datasource_secret`` is defined later in
+    this module — fine, it's only referenced at call time.
+    """
+    if datasource_id is None:
+        with get_connection() as conn:
+            yield conn, "public"
+        return
+    ds = get_datasource_secret(datasource_id)
+    if ds is None:
+        raise ValueError(f"datasource {datasource_id} not found")
+    with psycopg.connect(
+        host=ds["host"], port=ds["port"], dbname=ds["database"],
+        user=ds["username"], password=ds["password"], sslmode=ds["sslmode"],
+        connect_timeout=5, row_factory=dict_row,
+    ) as conn:
+        yield conn, (ds.get("db_schema") or "public")
 
 
-def _table_columns(table: str) -> dict[str, str]:
-    """{column_name: data_type} for an allowlisted public table.
+def _allowed_tables(conn, schema: str) -> set[str]:
+    """Chartable base-table names in ``schema`` (minus the sensitive denylist)."""
+    rows = conn.execute(
+        """SELECT table_name FROM information_schema.tables
+           WHERE table_schema = %s AND table_type = 'BASE TABLE'""",
+        (schema,),
+    ).fetchall()
+    return {r["table_name"] for r in rows if r["table_name"] not in SENSITIVE_TABLES}
+
+
+def list_schema_tables(datasource_id: int | None = None) -> list[dict[str, Any]]:
+    """Base tables an admin may chart, minus the sensitive denylist."""
+    with _table_source_conn(datasource_id) as (conn, schema):
+        names = sorted(_allowed_tables(conn, schema))
+    return [{"table": n, "label": n} for n in names]
+
+
+def _table_columns(conn, schema: str, table: str) -> dict[str, str]:
+    """{column_name: data_type} for an allowlisted table in ``schema``.
 
     Validation gate for all dynamic-SQL builders: raises ValueError if the table
     is not in the (denylist-filtered) allowlist, so a caller can never reference
     an arbitrary or sensitive table.
     """
-    allowed = {t["table"] for t in list_schema_tables()}
-    if table not in allowed:
+    if table not in _allowed_tables(conn, schema):
         raise ValueError(f"Table not allowed: {table!r}")
-    with get_connection() as conn:
-        rows = conn.execute(
-            """SELECT column_name, data_type
-               FROM information_schema.columns
-               WHERE table_schema = 'public' AND table_name = %s
-               ORDER BY ordinal_position""",
-            (table,),
-        ).fetchall()
+    rows = conn.execute(
+        """SELECT column_name, data_type
+           FROM information_schema.columns
+           WHERE table_schema = %s AND table_name = %s
+           ORDER BY ordinal_position""",
+        (schema, table),
+    ).fetchall()
     return {r["column_name"]: r["data_type"] for r in rows}
 
 
-def _safe_identifiers(table: str, *cols: str | None) -> dict[str, str]:
+def _safe_identifiers(conn, schema: str, table: str, *cols: str | None) -> dict[str, str]:
     """Validate table + columns; return the table's {col: type} map.
 
     Each non-None column must exist on the table. Raises ValueError otherwise.
     """
-    columns = _table_columns(table)
+    columns = _table_columns(conn, schema, table)
     for c in cols:
         if c is not None and c not in columns:
             raise ValueError(f"Column not in {table!r}: {c!r}")
     return columns
 
 
-def _primary_key_columns(table: str) -> set[str]:
-    """Primary-key column names for a public table (used to drop id-like cols)."""
-    with get_connection() as conn:
-        rows = conn.execute(
-            """SELECT kcu.column_name
-               FROM information_schema.table_constraints tc
-               JOIN information_schema.key_column_usage kcu
-                 ON kcu.constraint_name = tc.constraint_name
-                AND kcu.table_schema   = tc.table_schema
-                AND kcu.table_name     = tc.table_name
-               WHERE tc.table_schema = 'public'
-                 AND tc.table_name   = %s
-                 AND tc.constraint_type = 'PRIMARY KEY'""",
-            (table,),
-        ).fetchall()
+def _primary_key_columns(conn, schema: str, table: str) -> set[str]:
+    """Primary-key column names for a table (used to drop id-like cols)."""
+    rows = conn.execute(
+        """SELECT kcu.column_name
+           FROM information_schema.table_constraints tc
+           JOIN information_schema.key_column_usage kcu
+             ON kcu.constraint_name = tc.constraint_name
+            AND kcu.table_schema   = tc.table_schema
+            AND kcu.table_name     = tc.table_name
+           WHERE tc.table_schema = %s
+             AND tc.table_name   = %s
+             AND tc.constraint_type = 'PRIMARY KEY'""",
+        (schema, table),
+    ).fetchall()
     return {r["column_name"] for r in rows}
 
 
-def describe_table(table: str) -> dict[str, list[str]]:
+def describe_table(table: str, datasource_id: int | None = None) -> dict[str, list[str]]:
     """Categorize a table's columns for the panel editor's pickers."""
-    columns = _table_columns(table)
-    # Numeric columns are chartable values, but a surrogate key identifies rows,
-    # not a metric — exclude PK columns and any column conventionally named `id`
-    # (some SCADA log tables carry an `id` with no formal PK constraint).
-    skip = _primary_key_columns(table) | {"id"}
+    with _table_source_conn(datasource_id) as (conn, schema):
+        columns = _table_columns(conn, schema, table)
+        # Numeric columns are chartable values, but a surrogate key identifies
+        # rows, not a metric — exclude PK columns and any column conventionally
+        # named `id` (some SCADA log tables carry an `id` with no PK constraint).
+        skip = _primary_key_columns(conn, schema, table) | {"id"}
     value_columns = [c for c, t in columns.items() if t in _NUMERIC_TYPES and c not in skip]
     ts_columns = [c for c, t in columns.items() if t in _TS_TYPES]
     return {
@@ -699,14 +728,16 @@ def describe_table(table: str) -> dict[str, list[str]]:
     }
 
 
-def distinct_column_values(table: str, column: str, limit: int) -> list[str]:
+def distinct_column_values(
+    table: str, column: str, limit: int, datasource_id: int | None = None
+) -> list[str]:
     """Distinct non-null values of a filter column (series picker)."""
-    _safe_identifiers(table, column)
-    query = sql.SQL(
-        "SELECT DISTINCT {col}::text AS v FROM {tbl} "
-        "WHERE {col} IS NOT NULL ORDER BY 1 LIMIT %s"
-    ).format(col=sql.Identifier(column), tbl=sql.Identifier("public", table))
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
+        _safe_identifiers(conn, schema, table, column)
+        query = sql.SQL(
+            "SELECT DISTINCT {col}::text AS v FROM {tbl} "
+            "WHERE {col} IS NOT NULL ORDER BY 1 LIMIT %s"
+        ).format(col=sql.Identifier(column), tbl=sql.Identifier(schema, table))
         rows = conn.execute(query, (limit,)).fetchall()
     return [r["v"] for r in rows]
 
@@ -717,24 +748,25 @@ def table_latest(
     filter_col: str | None,
     filter_val: str | None,
     ts_col: str | None,
+    datasource_id: int | None = None,
 ) -> dict[str, Any] | None:
     """Newest matching row's value (+ ts when a timestamp column is given)."""
-    _safe_identifiers(table, value_col, filter_col, ts_col)
-    ts_select = (
-        sql.SQL(", {} AS ts").format(sql.Identifier(ts_col))
-        if ts_col else sql.SQL(", NULL AS ts")
-    )
-    query = sql.SQL("SELECT {val} AS value{ts} FROM {tbl}").format(
-        val=sql.Identifier(value_col), ts=ts_select, tbl=sql.Identifier("public", table)
-    )
-    params: list[Any] = []
-    if filter_col and filter_val is not None:
-        query += sql.SQL(" WHERE {}::text = %s").format(sql.Identifier(filter_col))
-        params.append(filter_val)
-    if ts_col:
-        query += sql.SQL(" ORDER BY {} DESC NULLS LAST").format(sql.Identifier(ts_col))
-    query += sql.SQL(" LIMIT 1")
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
+        _safe_identifiers(conn, schema, table, value_col, filter_col, ts_col)
+        ts_select = (
+            sql.SQL(", {} AS ts").format(sql.Identifier(ts_col))
+            if ts_col else sql.SQL(", NULL AS ts")
+        )
+        query = sql.SQL("SELECT {val} AS value{ts} FROM {tbl}").format(
+            val=sql.Identifier(value_col), ts=ts_select, tbl=sql.Identifier(schema, table)
+        )
+        params: list[Any] = []
+        if filter_col and filter_val is not None:
+            query += sql.SQL(" WHERE {}::text = %s").format(sql.Identifier(filter_col))
+            params.append(filter_val)
+        if ts_col:
+            query += sql.SQL(" ORDER BY {} DESC NULLS LAST").format(sql.Identifier(ts_col))
+        query += sql.SQL(" LIMIT 1")
         row = conn.execute(query, params).fetchone()
     return row
 
@@ -746,23 +778,24 @@ def table_series(
     filter_val: str | None,
     ts_col: str,
     minutes: int,
+    datasource_id: int | None = None,
 ) -> list[dict[str, Any]]:
     """Time-ordered rows over the last `minutes` (requires a timestamp column)."""
-    _safe_identifiers(table, value_col, filter_col, ts_col)
-    query = sql.SQL(
-        "SELECT {val} AS value, {ts} AS ts FROM {tbl} WHERE {ts} >= "
-        "now() - make_interval(mins => %s)"
-    ).format(
-        val=sql.Identifier(value_col),
-        ts=sql.Identifier(ts_col),
-        tbl=sql.Identifier("public", table),
-    )
-    params: list[Any] = [minutes]
-    if filter_col and filter_val is not None:
-        query += sql.SQL(" AND {}::text = %s").format(sql.Identifier(filter_col))
-        params.append(filter_val)
-    query += sql.SQL(" ORDER BY {} ASC").format(sql.Identifier(ts_col))
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
+        _safe_identifiers(conn, schema, table, value_col, filter_col, ts_col)
+        query = sql.SQL(
+            "SELECT {val} AS value, {ts} AS ts FROM {tbl} WHERE {ts} >= "
+            "now() - make_interval(mins => %s)"
+        ).format(
+            val=sql.Identifier(value_col),
+            ts=sql.Identifier(ts_col),
+            tbl=sql.Identifier(schema, table),
+        )
+        params: list[Any] = [minutes]
+        if filter_col and filter_val is not None:
+            query += sql.SQL(" AND {}::text = %s").format(sql.Identifier(filter_col))
+            params.append(filter_val)
+        query += sql.SQL(" ORDER BY {} ASC").format(sql.Identifier(ts_col))
         rows = conn.execute(query, params).fetchall()
     return rows
 
@@ -787,9 +820,15 @@ def init_datasources_table() -> None:
                 username   TEXT NOT NULL DEFAULT '',
                 password   TEXT NOT NULL DEFAULT '',
                 sslmode    TEXT NOT NULL DEFAULT 'prefer',
+                db_schema  TEXT NOT NULL DEFAULT 'public',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )"""
+        )
+        # Added after initial release — idempotent so existing tables pick it up.
+        conn.execute(
+            "ALTER TABLE datasources "
+            "ADD COLUMN IF NOT EXISTS db_schema TEXT NOT NULL DEFAULT 'public'"
         )
         conn.commit()
 
@@ -797,7 +836,7 @@ def init_datasources_table() -> None:
 # Public projection — everything the frontend needs minus the secret.
 _DS_PUBLIC_COLS = (
     "id, name, type, host, port, dbname AS database, username, sslmode, "
-    "(password <> '') AS has_password, created_at, updated_at"
+    "db_schema, (password <> '') AS has_password, created_at, updated_at"
 )
 
 
@@ -826,7 +865,7 @@ def get_datasource_secret(datasource_id: int) -> dict[str, Any] | None:
     with get_connection() as conn:
         row = conn.execute(
             "SELECT id, name, type, host, port, dbname AS database, username, "
-            "password, sslmode FROM datasources WHERE id = %s",
+            "password, sslmode, db_schema FROM datasources WHERE id = %s",
             (datasource_id,),
         ).fetchone()
     return row
@@ -841,15 +880,16 @@ def create_datasource(
     username: str,
     password: str,
     sslmode: str,
+    db_schema: str = "public",
 ) -> dict[str, Any]:
     """Insert a connection. Raises psycopg.errors.UniqueViolation on dup name."""
     with get_connection() as conn:
         row = conn.execute(
             f"""INSERT INTO datasources
-                (name, type, host, port, dbname, username, password, sslmode)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                (name, type, host, port, dbname, username, password, sslmode, db_schema)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING {_DS_PUBLIC_COLS}""",
-            (name, type, host, port, database, username, password, sslmode),
+            (name, type, host, port, database, username, password, sslmode, db_schema),
         ).fetchone()
         conn.commit()
     return row
@@ -865,6 +905,7 @@ def update_datasource(
     username: str,
     password: str | None,
     sslmode: str,
+    db_schema: str = "public",
 ) -> dict[str, Any] | None:
     """Update a connection. A None password keeps the stored one (so the editor
     need not round-trip the secret). Returns None if no such datasource."""
@@ -873,11 +914,11 @@ def update_datasource(
             f"""UPDATE datasources
             SET name = %s, type = %s, host = %s, port = %s, dbname = %s,
                 username = %s, password = COALESCE(%s, password),
-                sslmode = %s, updated_at = now()
+                sslmode = %s, db_schema = %s, updated_at = now()
             WHERE id = %s
             RETURNING {_DS_PUBLIC_COLS}""",
             (name, type, host, port, database, username, password, sslmode,
-             datasource_id),
+             db_schema, datasource_id),
         ).fetchone()
         conn.commit()
     return row

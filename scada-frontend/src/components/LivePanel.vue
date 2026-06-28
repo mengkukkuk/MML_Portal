@@ -32,6 +32,8 @@ const props = defineProps({
   deviceName: { type: String, default: '' },
   canManage: { type: Boolean, default: false },
   editMode: { type: Boolean, default: false },
+  // Bumped by the Live page's Refresh button to force an immediate re-fetch.
+  refreshSignal: { type: Number, default: 0 },
 })
 
 const emit = defineEmits(['edit', 'duplicate', 'delete', 'poll-interval-change', 'updated'])
@@ -660,7 +662,10 @@ const tableRows = computed(() => {
 // --- Polling ---------------------------------------------------------------
 function trimWindow(arr) {
   const cutoff = Date.now() - props.panel.window_minutes * 60_000
-  return arr.filter(([t]) => t >= cutoff)
+  const kept = arr.filter(([t]) => t >= cutoff)
+  // Never blank the chart: if every point has aged out of the window (a stale or
+  // lagging source), keep the most recent one so time-series/bar still show it.
+  return kept.length ? kept : arr.slice(-1)
 }
 
 async function seed() {
@@ -697,6 +702,7 @@ async function seed() {
           filterCol: props.panel.filter_col,
           filterVal: s.filterVal,
           minutes: props.panel.window_minutes,
+          datasourceId: props.panel.datasource_id,
         }),
       ),
     )
@@ -713,6 +719,31 @@ async function seed() {
         nextLatest[key] = { value: applyExpr(fn, last.value), ts: last.ts }
       }
     })
+    // Stale-source fallback: any series with no windowed history falls back to
+    // its latest reading, so a quiet source shows its last value instead of blank.
+    const emptyTableSpecs = specs.filter((s) => !nextPoints[s.key].length)
+    if (emptyTableSpecs.length) {
+      const fallbacks = await Promise.allSettled(
+        emptyTableSpecs.map((s) =>
+          fetchSchemaLatest({
+            table: props.panel.table_name,
+            valueCol: s.valueCol,
+            filterCol: props.panel.filter_col,
+            filterVal: s.filterVal,
+            tsCol: props.panel.ts_col,
+            datasourceId: props.panel.datasource_id,
+          }),
+        ),
+      )
+      fallbacks.forEach((res2, j) => {
+        if (res2.status !== 'fulfilled' || res2.value.value == null) return
+        const s = emptyTableSpecs[j]
+        const v = applyExpr(fn, res2.value.value)
+        const t = res2.value.ts ? new Date(res2.value.ts).getTime() : Date.now()
+        nextPoints[s.key] = [[t, v]]
+        nextLatest[s.key] = { value: v, ts: res2.value.ts || new Date(t).toISOString() }
+      })
+    }
     seriesPoints.value = nextPoints
     seriesLatest.value = nextLatest
     error.value = ''
@@ -724,12 +755,22 @@ async function seed() {
     unit.value = res.unit || ''
     const fn = mathFn.value
     const arr = res.points.map((p) => [new Date(p.ts).getTime(), applyExpr(fn, p.value)])
-    seriesPoints.value = { [key]: arr }
     if (arr.length) {
+      seriesPoints.value = { [key]: arr }
       const last = res.points[res.points.length - 1]
       seriesLatest.value = { [key]: { value: applyExpr(fn, last.value), ts: last.ts } }
     } else {
-      seriesLatest.value = {}
+      // Stale-source fallback: no readings in the window → seed the latest one.
+      const r = await fetchLatest(props.panel.device_id, props.panel.metric).catch(() => null)
+      if (r && r.value != null) {
+        const v = applyExpr(fn, r.value)
+        seriesPoints.value = { [key]: [[new Date(r.ts).getTime(), v]] }
+        seriesLatest.value = { [key]: { value: v, ts: r.ts } }
+        if (r.unit) unit.value = r.unit
+      } else {
+        seriesPoints.value = { [key]: [] }
+        seriesLatest.value = {}
+      }
     }
     error.value = ''
   } catch (e) {
@@ -777,6 +818,7 @@ async function poll() {
           filterCol: props.panel.filter_col,
           filterVal: s.filterVal,
           tsCol: props.panel.ts_col,
+          datasourceId: props.panel.datasource_id,
         }),
       ),
     )
@@ -847,12 +889,16 @@ watch(
     props.panel.source, props.panel.device_id, props.panel.metric,
     props.panel.window_minutes, seriesTags.value,
     props.panel.table_name, props.panel.filter_col, props.panel.ts_col,
+    props.panel.datasource_id,
   ]),
   async () => {
     await seed()
     startTimer()
   },
 )
+
+// Live page's Refresh button bumps refreshSignal → re-fetch this tile now.
+watch(() => props.refreshSignal, () => { seed() })
 
 onMounted(async () => {
   await seed()

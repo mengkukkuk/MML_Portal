@@ -8,6 +8,7 @@ A panel binds to one of two data sources:
 """
 from datetime import datetime
 
+import psycopg
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
@@ -130,11 +131,17 @@ def _validate(body: PanelIn) -> None:
                 detail="table source requires table_name and metric (a numeric column)",
             )
         try:
-            cols = db.describe_table(body.table_name)
+            cols = db.describe_table(body.table_name, body.datasource_id)
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Table not allowed: {body.table_name!r}",
+            )
+        except psycopg.Error as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Could not reach the selected connection: "
+                       f"{str(e).strip().splitlines()[0] if str(e).strip() else 'connection error'}",
             )
         if body.metric not in cols["value_columns"]:
             raise HTTPException(

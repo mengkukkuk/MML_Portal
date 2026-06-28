@@ -239,7 +239,9 @@ async function loadFilterValues() {
     return
   }
   try {
-    filterValues.value = await fetchSchemaValues(form.table_name, form.filter_col)
+    filterValues.value = await fetchSchemaValues(
+      form.table_name, form.filter_col, 500, form.datasource_id || undefined,
+    )
   } catch {
     filterValues.value = []
   }
@@ -259,10 +261,15 @@ async function applyBinding({ table, metric, value_cols, filter_col, filters, ts
     return
   }
   try {
-    if (!schemaColsCache.has(form.table_name)) {
-      schemaColsCache.set(form.table_name, await fetchSchemaColumns(form.table_name))
+    // Cache columns per (datasource, table) — same table name can differ across
+    // connections, so the key must include the datasource.
+    const cacheKey = `${form.datasource_id ?? 'app'}::${form.table_name}`
+    if (!schemaColsCache.has(cacheKey)) {
+      schemaColsCache.set(
+        cacheKey, await fetchSchemaColumns(form.table_name, form.datasource_id || undefined),
+      )
     }
-    schemaCols.value = schemaColsCache.get(form.table_name)
+    schemaCols.value = schemaColsCache.get(cacheKey)
   } catch {
     schemaCols.value = { value_columns: [], ts_columns: [], filter_columns: [] }
   }
@@ -294,6 +301,30 @@ async function onTableChange(table) {
   await applyBinding({ table, metric: null, filter_col: null, filters: [], ts_col: null })
 }
 
+// Load the table catalogue for a connection (null/undefined = app DB) into
+// schemaTables. On failure (unreachable or unknown connection) surface it and
+// clear the list rather than silently leaving stale tables.
+async function loadTablesFor(datasourceId) {
+  try {
+    schemaTables.value = await fetchSchemaTables(datasourceId || undefined)
+    return true
+  } catch (e) {
+    schemaTables.value = []
+    ElMessage.error(e?.response?.data?.detail || 'Could not load tables from that connection.')
+    return false
+  }
+}
+
+// User picked a different connection → reload its tables and reset the binding
+// to that connection's first table.
+async function onDatasourceChange() {
+  await loadTablesFor(form.datasource_id)
+  await applyBinding({
+    table: schemaTables.value[0]?.table ?? null,
+    metric: null, value_cols: [], filter_col: null, filters: [], ts_col: null,
+  })
+}
+
 async function onFilterColChange(col) {
   form.filter_col = col || null
   await loadFilterValues()
@@ -311,6 +342,8 @@ async function openCreate() {
   form.poll_interval_seconds = 5
   form.units = {}
   dialogVisible.value = true  // show immediately; dropdowns populate once schema resolves
+  // Reset to the app DB's tables (a prior edit may have left a datasource's list).
+  await loadTablesFor(null)
   await applyBinding({
     table: schemaTables.value[0]?.table ?? null,
     metric: null, value_cols: [], filter_col: null, filters: [], ts_col: null,
@@ -361,6 +394,8 @@ async function openEdit(panel) {
       }
     : (legacyBinding(panel) || { table: null, metric: null, value_cols: [], filter_col: null, filters: [], ts_col: null })
   dialogVisible.value = true  // show immediately; dropdowns populate once schema resolves
+  // Load the panel's connection tables before binding so its table validates.
+  await loadTablesFor(form.datasource_id)
   await applyBinding(binding)
 }
 
@@ -462,6 +497,17 @@ const lastUpdatedLabel = computed(() =>
 )
 function onPanelUpdated(ts) {
   if (ts > lastUpdatedAt.value) lastUpdatedAt.value = ts
+}
+
+// Manual refresh — bump a signal every tile watches to re-fetch immediately.
+// Tiles re-seed asynchronously; the brief spinner is just an affordance (the
+// "Updated" label reflects real freshness via onPanelUpdated).
+const refreshSignal = ref(0)
+const refreshing = ref(false)
+function refreshAll() {
+  refreshing.value = true
+  refreshSignal.value = Date.now()
+  setTimeout(() => { refreshing.value = false }, 700)
 }
 
 function duplicate(panel) {
@@ -771,7 +817,7 @@ onMounted(async () => {
     // first openCreate() call hits the cache instead of waiting for a fetch.
     if (t[0]?.table) {
       fetchSchemaColumns(t[0].table)
-        .then(cols => schemaColsCache.set(t[0].table, cols))
+        .then(cols => schemaColsCache.set(`app::${t[0].table}`, cols))
         .catch(() => {})
     }
   } catch (e) {
@@ -901,6 +947,10 @@ async function removeDashboard(dash) {
         <span v-if="lastUpdatedLabel" class="live__updated">Updated {{ lastUpdatedLabel }}</span>
       </div>
       <div class="live__actions">
+        <el-button :loading="refreshing" :disabled="!panels.length" @click="refreshAll">
+          <el-icon><Refresh /></el-icon>
+          <span>Refresh</span>
+        </el-button>
         <el-button
           v-if="canManage && panels.length"
           :type="editMode ? 'success' : 'default'"
@@ -957,6 +1007,7 @@ async function removeDashboard(dash) {
           :device-name="deviceName(panelById(item.i).device_id)"
           :can-manage="canManage"
           :edit-mode="editMode"
+          :refresh-signal="refreshSignal"
           @edit="openEdit"
           @duplicate="duplicate"
           @delete="remove"
@@ -978,6 +1029,7 @@ async function removeDashboard(dash) {
             placeholder="Default (app database)"
             clearable
             style="width: 100%"
+            @change="onDatasourceChange"
           >
             <el-option :value="null" label="Default (app database)" />
             <el-option
@@ -988,8 +1040,8 @@ async function removeDashboard(dash) {
             />
           </el-select>
           <span class="editor__hint">
-            Saved connections are managed in Settings → Data sources. The table list below
-            still reads the app database; routing queries to the selected connection is coming.
+            Saved connections are managed in Settings → Data sources. The tables and data below
+            come from the selected connection.
           </span>
         </el-form-item>
 
