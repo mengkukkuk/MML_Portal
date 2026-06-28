@@ -1017,216 +1017,220 @@ async function removeDashboard(dash) {
       </GridItem>
     </GridLayout>
 
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="1020px">
-      <el-form label-position="top">
-        <el-form-item label="Title">
-          <el-input v-model="form.title" placeholder="e.g. Panel 1" />
-        </el-form-item>
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="1000px" class="panel-dialog">
+      <el-form label-position="top" size="small" class="panel-dialog__form">
+        <div class="pde">
 
-        <el-form-item label="Connection">
-          <el-select
-            v-model="form.datasource_id"
-            placeholder="Default (app database)"
-            clearable
-            style="width: 100%"
-            @change="onDatasourceChange"
-          >
-            <el-option :value="null" label="Default (app database)" />
-            <el-option
-              v-for="ds in datasources"
-              :key="ds.id"
-              :value="ds.id"
-              :label="`${ds.name} — ${ds.host}:${ds.port}/${ds.database}`"
-            />
-          </el-select>
-          <span class="editor__hint">
-            Saved connections are managed in Settings → Data sources. The tables and data below
-            come from the selected connection.
-          </span>
-        </el-form-item>
-
-        <el-form-item label="Data source (table)">
-          <el-select
-            :model-value="form.table_name"
-            placeholder="Select a table"
-            filterable
-            style="width: 100%"
-            @update:model-value="onTableChange"
-          >
-            <el-option v-for="t in schemaTables" :key="t.table" :label="t.label" :value="t.table" />
-          </el-select>
-        </el-form-item>
-
-        <el-form-item label="Value column">
-          <div class="taglist">
-            <!-- Each value row: colour swatch · value column · its display unit. -->
-            <!-- Primary value column (stored in form.metric for back-compat). -->
-            <div class="taglist__row">
-              <span class="taglist__swatch" :style="{ background: colorAt(0) }" />
-              <el-select v-model="form.metric" placeholder="Value" filterable class="taglist__select">
-                <el-option v-for="c in schemaCols.value_columns" :key="c" :label="c" :value="c" />
-              </el-select>
-              <!-- Unit lives here only when there's no filter column (value columns
-                   are the series). Filtered panels show units in "Series values". -->
-              <el-select
-                v-if="!form.filter_col"
-                :model-value="form.units[form.metric]"
-                placeholder="Unit"
-                clearable
-                filterable
-                class="taglist__unit"
-                title="Display unit for this value"
-                @update:model-value="(v) => setUnit(form.metric, v)"
-              >
-                <el-option-group v-for="g in UNIT_GROUPS" :key="g.category" :label="g.category">
-                  <el-option v-for="u in g.units" :key="u.value" :label="u.label" :value="u.value" />
-                </el-option-group>
-              </el-select>
-              <!-- Spacer keeps row widths aligned with the extra rows that have a remove button. -->
-              <span class="taglist__remove taglist__remove--placeholder" />
-            </div>
-            <!-- Extra value columns: each becomes its own series, filtered the same way. -->
-            <div v-for="(c, i) in form.value_cols" :key="i" class="taglist__row">
-              <span class="taglist__swatch" :style="{ background: colorAt(i + 1) }" />
-              <el-select v-model="form.value_cols[i]" placeholder="Value" filterable class="taglist__select">
-                <el-option v-for="opt in schemaCols.value_columns" :key="opt" :label="opt" :value="opt" />
-              </el-select>
-              <el-select
-                v-if="!form.filter_col"
-                :model-value="form.units[form.value_cols[i]]"
-                placeholder="Unit"
-                clearable
-                filterable
-                class="taglist__unit"
-                title="Display unit for this value"
-                @update:model-value="(v) => setUnit(form.value_cols[i], v)"
-              >
-                <el-option-group v-for="g in UNIT_GROUPS" :key="g.category" :label="g.category">
-                  <el-option v-for="u in g.units" :key="u.value" :label="u.label" :value="u.value" />
-                </el-option-group>
-              </el-select>
-              <el-button
-                class="taglist__remove"
-                text
-                title="Remove value"
-                @click="removeValueCol(i)"
-              >×</el-button>
-            </div>
-            <el-button class="taglist__add" text @click="addValueCol">+ Value</el-button>
-          </div>
-        </el-form-item>
-        <el-form-item label="Timestamp column">
-          <el-select v-model="form.ts_col" placeholder="None (live sampling)" clearable style="width: 100%">
-            <el-option v-for="c in schemaCols.ts_columns" :key="c" :label="c" :value="c" />
-          </el-select>
-        </el-form-item>
-
-        <el-form-item label="Filter column (series)">
-          <el-select
-            :model-value="form.filter_col"
-            placeholder="None — whole table as one series"
-            clearable
-            filterable
-            style="width: 100%"
-            @update:model-value="onFilterColChange"
-          >
-            <el-option v-for="c in schemaCols.filter_columns" :key="c" :label="c" :value="c" />
-          </el-select>
-        </el-form-item>
-
-        <el-form-item v-if="form.filter_col" label="Series values">
-          <div class="taglist">
-            <div v-for="(v, i) in form.filters" :key="i" class="taglist__row">
-              <span class="taglist__swatch" :style="{ background: colorAt(i) }" />
-              <el-select v-model="form.filters[i]" placeholder="Value" filterable class="taglist__select">
-                <el-option v-for="opt in filterValues" :key="opt" :label="opt" :value="opt" />
-              </el-select>
-              <el-select
-                :model-value="form.units[form.filters[i]]"
-                placeholder="Unit"
-                clearable
-                filterable
-                class="taglist__unit"
-                title="Display unit for this series"
-                @update:model-value="(v) => setUnit(form.filters[i], v)"
-              >
-                <el-option-group v-for="g in UNIT_GROUPS" :key="g.category" :label="g.category">
-                  <el-option v-for="u in g.units" :key="u.value" :label="u.label" :value="u.value" />
-                </el-option-group>
-              </el-select>
-              <el-button
-                class="taglist__remove"
-                text
-                :disabled="form.filters.length <= 1"
-                title="Remove series"
-                @click="removeFilter(i)"
-              >×</el-button>
-            </div>
-            <el-button class="taglist__add" text @click="addFilter">+ Add series</el-button>
-          </div>
-        </el-form-item>
-
-        <el-form-item label="Expression (optional)">
-          <el-input
-            v-model="form.mathExpr"
-            placeholder="e.g. value * 1.8 + 32, sqrt(value), value / 100"
-            clearable
-          />
-          <span class="editor__hint">
-            Applied to every reading before display. Variable: <code>value</code>.
-            Functions: <code>abs sqrt pow min max floor ceil round</code>.
-          </span>
-        </el-form-item>
-
-        <div class="editor__row">
-          <el-form-item label="Window (minutes)" class="editor__col">
-            <el-input-number v-model="form.window_minutes" :min="1" :max="1440" style="width: 100%" />
-          </el-form-item>
-          <el-form-item label="Poll interval" class="editor__col">
-            <el-select v-model="form.poll_interval_seconds" style="width: 100%">
-              <el-option v-for="it in POLL_INTERVALS" :key="it.value" :label="it.label" :value="it.value" />
-            </el-select>
-          </el-form-item>
-        </div>
-
-        <!-- Visualization picker (Grafana-style) -->
-        <el-form-item label="Visualization">
-          <div class="vizpicker">
-            <button
-              v-for="v in VIZ_TYPES"
-              :key="v.value"
-              type="button"
-              class="vizpicker__item"
-              :class="{ 'vizpicker__item--active': form.chart_type === v.value }"
-              :title="v.hint"
-              @click="form.chart_type = v.value; onVizTypeChange(v.value)"
-            >
-              <el-icon class="vizpicker__icon"><component :is="v.icon" /></el-icon>
-              <span class="vizpicker__label">{{ v.label }}</span>
-            </button>
-          </div>
-        </el-form-item>
-
-        <!-- Per-type parameter sub-menu -->
-        <div class="submenu">
-          <div class="submenu__head">{{ VIZ_TYPES.find((v) => v.value === form.chart_type)?.label }} options</div>
-          <div class="submenu__grid">
-            <el-form-item v-for="f in currentSchema" :key="f.key" :label="f.label" class="submenu__field">
-              <el-switch v-if="f.type === 'switch'" v-model="form.options[f.key]" />
-              <el-select v-else-if="f.type === 'enum'" v-model="form.options[f.key]" style="width: 100%">
-                <el-option v-for="o in f.options" :key="o" :label="o" :value="o" />
-              </el-select>
-              <el-input-number
-                v-else
-                v-model="form.options[f.key]"
-                :min="f.min"
-                :max="f.max"
-                :controls="false"
-                :placeholder="f.nullable ? 'none' : ''"
-                style="width: 100%"
-              />
+          <!-- ── LEFT: data binding ── -->
+          <div class="pde__left">
+            <el-form-item label="Title">
+              <el-input v-model="form.title" placeholder="e.g. Boiler pressure" />
             </el-form-item>
+
+            <el-form-item label="Connection" title="Managed in Settings → Data sources">
+              <el-select
+                v-model="form.datasource_id"
+                placeholder="Default (app database)"
+                clearable
+                style="width: 100%"
+                @change="onDatasourceChange"
+              >
+                <el-option :value="null" label="Default (app database)" />
+                <el-option
+                  v-for="ds in datasources"
+                  :key="ds.id"
+                  :value="ds.id"
+                  :label="`${ds.name} — ${ds.host}:${ds.port}/${ds.database}`"
+                />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item label="Table">
+              <el-select
+                :model-value="form.table_name"
+                placeholder="Select a table"
+                filterable
+                style="width: 100%"
+                @update:model-value="onTableChange"
+              >
+                <el-option v-for="t in schemaTables" :key="t.table" :label="t.label" :value="t.table" />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item label="Value column">
+              <div class="taglist">
+                <div class="taglist__row">
+                  <span class="taglist__swatch" :style="{ background: colorAt(0) }" />
+                  <el-select v-model="form.metric" placeholder="Value" filterable class="taglist__select">
+                    <el-option v-for="c in schemaCols.value_columns" :key="c" :label="c" :value="c" />
+                  </el-select>
+                  <el-select
+                    v-if="!form.filter_col"
+                    :model-value="form.units[form.metric]"
+                    placeholder="Unit"
+                    clearable
+                    filterable
+                    class="taglist__unit"
+                    title="Display unit for this value"
+                    @update:model-value="(v) => setUnit(form.metric, v)"
+                  >
+                    <el-option-group v-for="g in UNIT_GROUPS" :key="g.category" :label="g.category">
+                      <el-option v-for="u in g.units" :key="u.value" :label="u.label" :value="u.value" />
+                    </el-option-group>
+                  </el-select>
+                  <span class="taglist__remove taglist__remove--placeholder" />
+                </div>
+                <div v-for="(c, i) in form.value_cols" :key="i" class="taglist__row">
+                  <span class="taglist__swatch" :style="{ background: colorAt(i + 1) }" />
+                  <el-select v-model="form.value_cols[i]" placeholder="Value" filterable class="taglist__select">
+                    <el-option v-for="opt in schemaCols.value_columns" :key="opt" :label="opt" :value="opt" />
+                  </el-select>
+                  <el-select
+                    v-if="!form.filter_col"
+                    :model-value="form.units[form.value_cols[i]]"
+                    placeholder="Unit"
+                    clearable
+                    filterable
+                    class="taglist__unit"
+                    title="Display unit for this value"
+                    @update:model-value="(v) => setUnit(form.value_cols[i], v)"
+                  >
+                    <el-option-group v-for="g in UNIT_GROUPS" :key="g.category" :label="g.category">
+                      <el-option v-for="u in g.units" :key="u.value" :label="u.label" :value="u.value" />
+                    </el-option-group>
+                  </el-select>
+                  <el-button class="taglist__remove" text title="Remove value" @click="removeValueCol(i)">×</el-button>
+                </div>
+                <el-button class="taglist__add" text @click="addValueCol">+ Value</el-button>
+              </div>
+            </el-form-item>
+
+            <div class="pde__pair">
+              <el-form-item label="Timestamp">
+                <el-select v-model="form.ts_col" placeholder="None" clearable style="width: 100%">
+                  <el-option v-for="c in schemaCols.ts_columns" :key="c" :label="c" :value="c" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="Filter column" title="Groups rows into separate series by this column's distinct values">
+                <el-select
+                  :model-value="form.filter_col"
+                  placeholder="None"
+                  clearable
+                  filterable
+                  style="width: 100%"
+                  @update:model-value="onFilterColChange"
+                >
+                  <el-option v-for="c in schemaCols.filter_columns" :key="c" :label="c" :value="c" />
+                </el-select>
+              </el-form-item>
+            </div>
+
+            <el-form-item v-if="form.filter_col" label="Series values">
+              <div class="taglist">
+                <div v-for="(v, i) in form.filters" :key="i" class="taglist__row">
+                  <span class="taglist__swatch" :style="{ background: colorAt(i) }" />
+                  <el-select v-model="form.filters[i]" placeholder="Value" filterable class="taglist__select">
+                    <el-option v-for="opt in filterValues" :key="opt" :label="opt" :value="opt" />
+                  </el-select>
+                  <el-select
+                    :model-value="form.units[form.filters[i]]"
+                    placeholder="Unit"
+                    clearable
+                    filterable
+                    class="taglist__unit"
+                    title="Display unit for this series"
+                    @update:model-value="(v) => setUnit(form.filters[i], v)"
+                  >
+                    <el-option-group v-for="g in UNIT_GROUPS" :key="g.category" :label="g.category">
+                      <el-option v-for="u in g.units" :key="u.value" :label="u.label" :value="u.value" />
+                    </el-option-group>
+                  </el-select>
+                  <el-button
+                    class="taglist__remove"
+                    text
+                    :disabled="form.filters.length <= 1"
+                    title="Remove series"
+                    @click="removeFilter(i)"
+                  >×</el-button>
+                </div>
+                <el-button class="taglist__add" text @click="addFilter">+ Add series</el-button>
+              </div>
+            </el-form-item>
+
+            <!-- Expression: collapsed by default, badge shows when active -->
+            <el-collapse class="pde__expr-wrap">
+              <el-collapse-item name="expr">
+                <template #title>
+                  <span class="pde__expr-head">
+                    Expression
+                    <span v-if="form.mathExpr?.trim()" class="pde__expr-badge">active</span>
+                  </span>
+                </template>
+                <el-input
+                  v-model="form.mathExpr"
+                  placeholder="e.g. value * 1.8 + 32, sqrt(value)"
+                  clearable
+                />
+                <p class="pde__hint">Variable: <code>value</code> — <code>abs sqrt pow min max floor ceil round</code></p>
+              </el-collapse-item>
+            </el-collapse>
           </div>
+
+          <!-- ── RIGHT: visualization ── -->
+          <div class="pde__right">
+            <div class="pde__right-top">
+              <div class="pde__section-label">Visualization</div>
+              <div class="vizpicker vizpicker--sm">
+                <button
+                  v-for="v in VIZ_TYPES"
+                  :key="v.value"
+                  type="button"
+                  class="vizpicker__item"
+                  :class="{ 'vizpicker__item--active': form.chart_type === v.value }"
+                  :title="v.hint"
+                  @click="form.chart_type = v.value; onVizTypeChange(v.value)"
+                >
+                  <el-icon class="vizpicker__icon"><component :is="v.icon" /></el-icon>
+                  <span class="vizpicker__label">{{ v.label }}</span>
+                </button>
+              </div>
+
+              <div class="submenu">
+                <div class="submenu__head">{{ VIZ_TYPES.find((v) => v.value === form.chart_type)?.label }} options</div>
+                <div class="submenu__grid">
+                  <el-form-item v-for="f in currentSchema" :key="f.key" :label="f.label" class="submenu__field">
+                    <el-switch v-if="f.type === 'switch'" v-model="form.options[f.key]" />
+                    <el-select v-else-if="f.type === 'enum'" v-model="form.options[f.key]" style="width: 100%">
+                      <el-option v-for="o in f.options" :key="o" :label="o" :value="o" />
+                    </el-select>
+                    <el-input-number
+                      v-else
+                      v-model="form.options[f.key]"
+                      :min="f.min"
+                      :max="f.max"
+                      :controls="false"
+                      :placeholder="f.nullable ? 'none' : ''"
+                      style="width: 100%"
+                    />
+                  </el-form-item>
+                </div>
+              </div>
+            </div>
+
+            <div class="pde__right-bottom">
+              <div class="pde__pair">
+                <el-form-item label="Window (min)">
+                  <el-input-number v-model="form.window_minutes" :min="1" :max="1440" :controls="false" style="width: 100%" />
+                </el-form-item>
+                <el-form-item label="Poll interval">
+                  <el-select v-model="form.poll_interval_seconds" style="width: 100%">
+                    <el-option v-for="it in POLL_INTERVALS" :key="it.value" :label="it.label" :value="it.value" />
+                  </el-select>
+                </el-form-item>
+              </div>
+            </div>
+          </div>
+
         </div>
       </el-form>
       <template #footer>
@@ -1641,5 +1645,153 @@ async function removeDashboard(dash) {
   margin: 0;
   font-size: 12px;
   color: var(--fg-muted);
+}
+
+/* ── Panel editor: two-column split layout ── */
+.panel-dialog :deep(.el-dialog__body) {
+  padding: 12px 20px 8px;
+}
+
+.panel-dialog__form :deep(.el-form-item) {
+  margin-bottom: 10px;
+}
+
+.panel-dialog__form :deep(.el-form-item__label) {
+  padding-bottom: 3px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.pde {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.pde__left {
+  display: flex;
+  flex-direction: column;
+  max-height: 65vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+  scrollbar-width: thin;
+}
+
+.pde__right {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  max-height: 65vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+}
+
+.pde__right-top {
+  flex: 1;
+}
+
+.pde__right-bottom {
+  padding-top: 10px;
+  margin-top: 10px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.pde__pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.pde__section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--fg-muted);
+  margin-bottom: 6px;
+}
+
+/* Expression collapsible */
+.pde__expr-wrap {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  margin-top: 2px;
+}
+
+.pde__expr-wrap :deep(.el-collapse-item__header) {
+  font-size: 12px;
+  background: transparent;
+  border-bottom: none;
+  height: 30px;
+  line-height: 30px;
+  padding: 0 10px;
+}
+
+.pde__expr-wrap :deep(.el-collapse-item__header.is-active) {
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.pde__expr-wrap :deep(.el-collapse-item__wrap) {
+  border-bottom: none;
+  background: transparent;
+}
+
+.pde__expr-wrap :deep(.el-collapse-item__content) {
+  padding: 10px 10px 8px;
+}
+
+.pde__expr-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.pde__expr-badge {
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--accent-soft, rgba(79, 156, 255, 0.12));
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.pde__hint {
+  margin: 5px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
+.pde__hint code {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10px;
+  padding: 0 3px;
+  background: var(--bg-elev, rgba(255, 255, 255, 0.06));
+  border-radius: 3px;
+}
+
+/* Compact viz picker for the narrower right column */
+.vizpicker--sm {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  margin-bottom: var(--space-2);
+}
+
+.vizpicker--sm .vizpicker__item {
+  padding: 5px 2px;
+}
+
+.vizpicker--sm .vizpicker__icon {
+  font-size: 14px;
+}
+
+.vizpicker--sm .vizpicker__label {
+  font-size: 9px;
 }
 </style>
