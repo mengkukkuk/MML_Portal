@@ -11,7 +11,7 @@
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { useSettingsStore, THEMES } from '@/stores/settings'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -80,6 +80,11 @@ const blankDs = () => ({
 })
 const dsForm = reactive(blankDs())
 const dsTest = reactive({ state: 'idle', message: '' }) // idle|testing|ok|error
+
+// Delete-confirmation dialog (mirrors LivePage's del-dialog).
+const deleteDialogVisible = ref(false)
+const deletingDs = ref(false)
+const deleteTarget = ref(null)
 
 const dsDialogTitle = computed(() => (editingDsId.value ? 'Edit connection' : 'Add connection'))
 const dsTestLed = computed(() => LED_BY_STATE[dsTest.state] || '')
@@ -185,23 +190,26 @@ async function saveDs() {
   }
 }
 
-async function removeDs(ds) {
-  try {
-    await ElMessageBox.confirm(
-      `Delete connection “${ds.name}”? Panels bound to it fall back to the app database.`,
-      'Delete connection',
-      { type: 'warning', confirmButtonText: 'Delete', cancelButtonText: 'Cancel' },
-    )
-  } catch {
-    return
-  }
+function removeDs(ds) {
+  deleteTarget.value = ds
+  deleteDialogVisible.value = true
+}
+
+async function confirmDeleteDs() {
+  const ds = deleteTarget.value
+  if (!ds) return
+  deletingDs.value = true
   try {
     await deleteDatasource(ds.id)
     datasources.value = datasources.value.filter((d) => d.id !== ds.id)
     delete rowTest[ds.id]
     ElMessage.success('Connection deleted.')
+    deleteDialogVisible.value = false
+    deleteTarget.value = null
   } catch (e) {
     ElMessage.error(e?.response?.data?.detail || 'Delete failed.')
+  } finally {
+    deletingDs.value = false
   }
 }
 
@@ -467,6 +475,27 @@ onMounted(async () => {
           <el-button @click="dialogVisible = false">Cancel</el-button>
           <el-button type="primary" :loading="savingDs" @click="saveDs">Save</el-button>
         </div>
+      </template>
+    </el-dialog>
+
+    <!-- Delete connection: small centred confirm dialog (matches LivePage) -->
+    <el-dialog
+      v-model="deleteDialogVisible"
+      title="Delete connection"
+      width="420px"
+      align-center
+      append-to-body
+      class="del-dialog"
+    >
+      <p v-if="deleteTarget" class="del-dialog__msg">
+        Delete <strong>{{ deleteTarget.name }}</strong>?
+      </p>
+      <p class="del-dialog__hint">
+        Panels bound to it fall back to the app database. This cannot be undone.
+      </p>
+      <template #footer>
+        <el-button @click="deleteDialogVisible = false">Cancel</el-button>
+        <el-button type="danger" :loading="deletingDs" @click="confirmDeleteDs">Delete</el-button>
       </template>
     </el-dialog>
   </div>
@@ -856,6 +885,18 @@ onMounted(async () => {
 }
 .ds-dialog__spacer {
   margin-left: auto;
+}
+
+/* ── Delete-connection dialog (mirrors LivePage's del-dialog) ─────────── */
+.del-dialog__msg {
+  margin: 0 0 var(--space-2) 0;
+  font-size: 14px;
+  color: var(--fg);
+}
+.del-dialog__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-muted);
 }
 
 /* ── Status LEDs ────────────────────────────────────────────────────── */
