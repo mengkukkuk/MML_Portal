@@ -27,6 +27,8 @@ const { theme, pollSeconds, notifyOnCritical } = storeToRefs(store)
 const auth = useAuthStore()
 const isAdmin = computed(() => auth.role === 'admin')
 
+const collapsed = reactive({ appearance: true, acquisition: true, datasources: true })
+
 const POLL_PRESETS = [
   { s: 5, label: '5s' },
   { s: 10, label: '10s' },
@@ -247,12 +249,13 @@ onMounted(async () => {
     </header>
 
     <!-- ── Module 1 · Appearance ──────────────────────────────────────── -->
-    <section class="mod">
-      <header class="mod__head">
+    <section class="mod" :class="{ 'mod--collapsed': collapsed.appearance }">
+      <header class="mod__head" @click="collapsed.appearance = !collapsed.appearance">
         <span class="mod__tag">Appearance</span>
         <span class="mod__sub">HMI color faceplate</span>
+        <el-icon class="mod__chevron" :class="{ 'mod__chevron--open': !collapsed.appearance }"><ArrowRight /></el-icon>
       </header>
-      <div class="mod__body">
+      <div class="mod__body" v-show="!collapsed.appearance">
         <p class="fld__label">Color theme</p>
         <div class="plates" role="group" aria-label="Color theme">
           <button
@@ -296,12 +299,13 @@ onMounted(async () => {
     </section>
 
     <!-- ── Module 2 · Acquisition ─────────────────────────────────────── -->
-    <section class="mod">
-      <header class="mod__head">
+    <section class="mod" :class="{ 'mod--collapsed': collapsed.acquisition }">
+      <header class="mod__head" @click="collapsed.acquisition = !collapsed.acquisition">
         <span class="mod__tag">Acquisition</span>
         <span class="mod__sub">Default polling cadence</span>
+        <el-icon class="mod__chevron" :class="{ 'mod__chevron--open': !collapsed.acquisition }"><ArrowRight /></el-icon>
       </header>
-      <div class="mod__body acq">
+      <div class="mod__body acq" v-show="!collapsed.acquisition">
         <div class="acq__row">
           <div class="acq__label">
             <p class="fld__label">Default poll interval</p>
@@ -340,8 +344,8 @@ onMounted(async () => {
     </section>
 
     <!-- ── Module 3 · Data sources ────────────────────────────────────── -->
-    <section class="mod">
-      <header class="mod__head">
+    <section class="mod" :class="{ 'mod--collapsed': collapsed.datasources }">
+      <header class="mod__head" @click="collapsed.datasources = !collapsed.datasources">
         <span class="mod__tag">Data sources</span>
         <span class="mod__sub">Saved database connections</span>
         <el-button
@@ -349,12 +353,13 @@ onMounted(async () => {
           class="mod__action"
           type="primary"
           size="small"
-          @click="openCreateDs"
+          @click.stop="openCreateDs"
         >
           + Add connection
         </el-button>
+        <el-icon class="mod__chevron" :class="{ 'mod__chevron--open': !collapsed.datasources }"><ArrowRight /></el-icon>
       </header>
-      <div class="mod__body">
+      <div class="mod__body" v-show="!collapsed.datasources">
         <p v-if="!isAdmin" class="ds__readonly">
           <span class="led"></span> Only administrators can manage connections.
         </p>
@@ -568,10 +573,15 @@ onMounted(async () => {
 }
 .mod__head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-3);
   padding: var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--border-soft);
+  cursor: pointer;
+  user-select: none;
+}
+.mod--collapsed .mod__head {
+  border-bottom: none;
 }
 .mod__tag {
   font-family: var(--font-display);
@@ -589,6 +599,20 @@ onMounted(async () => {
 .mod__action {
   margin-left: auto;
   align-self: center;
+}
+.mod__chevron {
+  font-size: 13px;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+  transition: transform 0.18s ease;
+  transform: rotate(0deg);
+}
+.mod__chevron--open {
+  transform: rotate(90deg);
+}
+/* Action button pushes chevron to far right; without action button use auto margin */
+.mod__head:not(:has(.mod__action)) .mod__chevron {
+  margin-left: auto;
 }
 .mod__body {
   padding: var(--space-5);
