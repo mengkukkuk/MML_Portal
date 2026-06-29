@@ -1,4 +1,4 @@
-import { apiClient } from './client'
+﻿import { apiClient } from './client'
 
 /**
  * Last `limit` alarms per (location, tag_name) from public.alarm_logs, newest
@@ -11,7 +11,7 @@ export async function fetchRecentAlarms(limit = 10) {
 }
 
 /**
- * Tags currently in alarm — status_tag rows with a non-null alarm_no, joined to
+ * Tags currently in alarm — variables_tag rows with a non-null alarm_no, joined to
  * the triggering alarm_logs row. Empty array when nothing is active.
  */
 export async function fetchActiveAlarms() {

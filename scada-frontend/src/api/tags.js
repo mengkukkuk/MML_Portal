@@ -1,7 +1,7 @@
-import { apiClient } from './client'
+﻿import { apiClient } from './client'
 
 /**
- * Status-tag API — backs the live dashboard against public.status_tag.
+ * Status-tag API — backs the live dashboard against public.variables_tag.
  * Mirrors the /api/tags router in scada-mml-backend/tags.py.
  */
 

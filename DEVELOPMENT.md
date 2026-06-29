@@ -1,4 +1,4 @@
-# SCADA Stack — Development Guide
+﻿# SCADA Stack — Development Guide
 
 End-to-end developer documentation for the SCADA monitoring system: a FastAPI backend with
 JWT auth backed by PostgreSQL, and a Vue 3 + Vite single-page frontend. Covers local
@@ -24,13 +24,13 @@ either via the one-shot installer or by hand, and production deployment behind I
                                               │  localhost:5432           │
                                               │  users, devices,          │
                                               │  sensor_readings,         │
-                                              │  status_tag (live SCADA), │
+                                              │  variables_tag (live SCADA), │
                                               │  dashboard_panels         │
                                               └──────────────────────────┘
 
   Live data path:
       simulate_data.py  ──▶ sensor_readings  ──┐
-      SCADA / PLC stack ──▶ status_tag        ──┴──▶ /api/readings, /api/tags
+      SCADA / PLC stack ──▶ variables_tag        ──┴──▶ /api/readings, /api/tags
                                                        ▲
                                                        │ poll every 5s–1h
                                                   LivePage tiles
@@ -39,7 +39,7 @@ either via the one-shot installer or by hand, and production deployment behind I
 - **Backend** terminates auth, exposes the historian / tag endpoints the Live & Trends
   pages read, and persists the admin-managed live dashboard layout.
 - **`simulate_data.py`** writes synthetic readings into `sensor_readings` so the UI has
-  data during development. In production, real PLCs/SCADA writes `status_tag` directly;
+  data during development. In production, real PLCs/SCADA writes `variables_tag` directly;
   the API only reads.
 - **Grafana** (optional) reads Postgres directly for richer dashboards; the embedded
   Grafana panel lives in `GrafanaPanel.vue` on the Trends page.
@@ -75,7 +75,7 @@ C:\dev\
 │   │                               calls db.init_panels_table() on startup, runs on :8088
 │   ├── config.py                 # Loads .env (DB, JWT, account, Brevo, SMTP, cookie)
 │   ├── db.py                     # psycopg 3 access layer (users CRUD, devices, sensor_readings,
-│   │                               status_tag with dynamic numeric-column discovery,
+│   │                               variables_tag with dynamic numeric-column discovery,
 │   │                               dashboard_panels CRUD)
 │   ├── security.py               # scrypt hashing + JWT create/decode (access/refresh/reset)
 │   ├── auth.py                   # /api/auth router
@@ -223,7 +223,7 @@ CREATE TABLE IF NOT EXISTS dashboard_panels (
 
 -- devices + sensor_readings (populated by simulate_data.py in dev; by your own
 -- ingest pipeline in prod). Schema is implicit — see simulate_data.py for shape.
--- public.status_tag is supplied by the real SCADA system; the backend just reads it.
+-- public.variables_tag is supplied by the real SCADA system; the backend just reads it.
 ```
 
 The `users_email_lower_key` index is **partial** (only enforced where `email IS NOT NULL`)
@@ -233,9 +233,9 @@ and case-insensitive, matching `db.get_user_by_email()`'s `lower(email) = lower(
 alarm/dashboard/report/integration/audit) — useful as a north star but **not** loaded by
 the running app today.
 
-### 6.2 Dynamic `status_tag` introspection
+### 6.2 Dynamic `variables_tag` introspection
 
-`public.status_tag` is owned by the SCADA system and may grow new numeric columns over
+`public.variables_tag` is owned by the SCADA system and may grow new numeric columns over
 time. Rather than redeploy on every column change, `db._discover_tag_fields()` queries
 `information_schema.columns` on first call and caches the result for the process lifetime
 (`db._tag_fields_cache`). The DB exposes the legacy "current value" as
@@ -309,17 +309,17 @@ Reads from `public.sensor_readings` joined with `public.devices`. Powers the
 
 ### 7.4 `/api/tags` — status-tag (Bearer, any role)
 
-Reads from `public.status_tag`. The DB row is updated in place by the SCADA system; the
+Reads from `public.variables_tag`. The DB row is updated in place by the SCADA system; the
 frontend builds its own series by polling at the panel's configured interval.
 
 | Method | Path                | Query        | Success response |
 |--------|---------------------|--------------|------------------|
 | GET    | `/api/tags`         | —            | `[{tag_name}]` — distinct names |
-| GET    | `/api/tags/fields`  | —            | `[{field, label}]` — numeric columns of `public.status_tag` a panel can bind to (dynamic) |
+| GET    | `/api/tags/fields`  | —            | `[{field, label}]` — numeric columns of `public.variables_tag` a panel can bind to (dynamic) |
 | GET    | `/api/tags/latest`  | `tag_name`   | `{tag_name, active?, ts?, <discovered_field>: float, ...}` — **404** if no row |
 
 The `LatestOut` model uses `extra='allow'`, so any new numeric column discovered in
-`status_tag` passes through to clients without a Pydantic schema change.
+`variables_tag` passes through to clients without a Pydantic schema change.
 
 ### 7.5 `/api/panels` — admin-managed Live dashboard
 
@@ -568,7 +568,7 @@ written to `C:\dev\verify_prod.log`.
 | Reset link says "Invalid or expired" | Reset tokens are **single-use** and expire after `RESET_EXPIRE_MIN` minutes. Request a fresh link. |
 | Login works in dev, then "Not authenticated" after page reload in prod | `COOKIE_SECURE=true` requires HTTPS — the browser refuses to send the refresh cookie over plain HTTP. Move the IIS binding to HTTPS, or temporarily set `COOKIE_SECURE=false`. |
 | `/accounts` redirects to `/` | The current user is not `role='admin'`. Sign in as `admin`, or `UPDATE users SET role='admin' WHERE username='you';`. |
-| New numeric column in `status_tag` doesn't appear in the panel editor | Fields are discovered once per process. `Restart-Service mml-api` to re-introspect. |
+| New numeric column in `variables_tag` doesn't appear in the panel editor | Fields are discovered once per process. `Restart-Service mml-api` to re-introspect. |
 | CORS error in browser console (prod) | Add the prod origin to `CORS_ORIGINS` in `.env` and restart. Wildcards aren't allowed because `allow_credentials=True`. |
 
 ---

@@ -1,4 +1,4 @@
-"""Thin PostgreSQL access layer using psycopg 3."""
+﻿"""Thin PostgreSQL access layer using psycopg 3."""
 from contextlib import contextmanager
 from typing import Any
 
@@ -176,7 +176,7 @@ def init_panels_table() -> None:
     ``options`` (JSONB) holds the per-visualization parameters (min/max,
     thresholds, decimals, orientation, …) so each panel can render in a
     different form. Added as an idempotent migration for existing tables.
-    ``source`` is 'device' (legacy device+metric) or 'tag' (status_tag row).
+    ``source`` is 'device' (legacy device+metric) or 'tag' (variables_tag row).
     """
     with get_connection() as conn:
         conn.execute(
@@ -314,7 +314,7 @@ def delete_dashboard(dashboard_id: int) -> bool:
         return cur.rowcount > 0
 
 
-# --- Status tags (real SCADA data — public.status_tag) ----------------------
+# --- Status tags (real SCADA data — public.variables_tag) ----------------------
 # API field names ↔ actual DB columns. The DB exposes the "current" value as
 # `current_value_tag`; we surface it as `current_value` for the frontend so
 # existing panels (metric == "current_value") keep working.
@@ -327,13 +327,13 @@ _NUMERIC_TYPES = (
     "real", "double precision", "numeric", "decimal",
 )
 
-# Process-lifetime cache of discovered API field names. DDL on status_tag is
+# Process-lifetime cache of discovered API field names. DDL on variables_tag is
 # rare and is only picked up on FastAPI restart — comment in plan.
 _tag_fields_cache: tuple[str, ...] | None = None
 
 
 def _discover_tag_fields() -> tuple[str, ...]:
-    """Introspect public.status_tag and return numeric columns as API field names.
+    """Introspect public.variables_tag and return numeric columns as API field names.
 
     Excludes primary-key columns (e.g. integer `id`) since they identify rows,
     not metric values.
@@ -350,11 +350,11 @@ def _discover_tag_fields() -> tuple[str, ...]:
                   AND kcu.table_schema   = tc.table_schema
                   AND kcu.table_name     = tc.table_name
                  WHERE tc.table_schema = 'public'
-                   AND tc.table_name   = 'status_tag'
+                   AND tc.table_name   = 'variables_tag'
                    AND tc.constraint_type = 'PRIMARY KEY'
                ) pk ON pk.column_name = c.column_name
                WHERE c.table_schema = 'public'
-                 AND c.table_name   = 'status_tag'
+                 AND c.table_name   = 'variables_tag'
                  AND c.data_type    = ANY(%s)
                  AND pk.column_name IS NULL
                ORDER BY c.ordinal_position""",
@@ -372,10 +372,10 @@ def tag_fields() -> tuple[str, ...]:
 
 
 def list_tags() -> list[dict[str, Any]]:
-    """All distinct tag names in status_tag, ordered alphabetically."""
+    """All distinct tag names in variables_tag, ordered alphabetically."""
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT tag_name FROM public.status_tag "
+            "SELECT DISTINCT tag_name FROM public.variables_tag "
             "WHERE tag_name IS NOT NULL ORDER BY tag_name"
         ).fetchall()
     return rows
@@ -388,7 +388,7 @@ def latest_tag(tag_name: str) -> dict[str, Any] | None:
     select_metrics = ", ".join(f'{_FIELD_DB_COLUMN.get(f, f)} AS {f}' for f in fields)
     sql = (
         f"SELECT tag_name, active, updated_at AS ts, {select_metrics} "
-        "FROM public.status_tag WHERE tag_name = %s "
+        "FROM public.variables_tag WHERE tag_name = %s "
         "ORDER BY updated_at DESC NULLS LAST LIMIT 1"
     )
     with get_connection() as conn:
@@ -453,7 +453,7 @@ def list_recent_alarms(limit: int) -> list[dict[str, Any]]:
 
 
 def list_active_alarms() -> list[dict[str, Any]]:
-    """Tags currently in alarm (status_tag.alarm_no not null), joined to the
+    """Tags currently in alarm (variables_tag.alarm_no not null), joined to the
     triggering alarm_logs row for the event text. Empty list when nothing active."""
     with get_connection() as conn:
         rows = conn.execute(
@@ -463,7 +463,7 @@ def list_active_alarms() -> list[dict[str, Any]]:
                       al.alarm_events  AS alarm,
                       al.severity,
                       al.created_at    AS at_date_time
-               FROM public.status_tag st
+               FROM public.variables_tag st
                JOIN public.alarm_logs al ON al.id = st.alarm_no
                WHERE st.alarm_no IS NOT NULL
                ORDER BY st.location, st.tag_name"""

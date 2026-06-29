@@ -1,4 +1,4 @@
----
+﻿---
 name: mmlportal-patterns
 description: >-
   Conventions for the MMLPortal SCADA monorepo. Apply when adding or modifying
@@ -35,7 +35,7 @@ grid). Auto-import via `unplugin-auto-import` + `unplugin-vue-components`.
 python-dotenv. **No ORM** — raw SQL via psycopg 3. Python 3.14 stdlib only for
 crypto (`hashlib.scrypt`).
 
-**DB** — PostgreSQL. App reads `public.sensor_readings` and `public.status_tag`;
+**DB** — PostgreSQL. App reads `public.sensor_readings` and `public.variables_tag`;
 persists its own `dashboard_panels` and `dashboards` tables.
 
 ---
@@ -190,7 +190,7 @@ resize; operators get a read-only grid (`canManage = auth.role === 'admin'`).
 The **panel model** (`panels.py` `PanelIn`/`PanelOut`, mirrored by
 `src/api/panels.js`) binds each panel to one `source`:
 - `device` — `device_id` + `metric` from `public.sensor_readings`
-- `tag` — `tag_name` + numeric `metric` column of `public.status_tag`
+- `tag` — `tag_name` + numeric `metric` column of `public.variables_tag`
   (columns discovered dynamically from `information_schema`, cached per process)
 - `table` — generic `table_name` + numeric `metric` (+ optional `filter_col`,
   `ts_col`, and `options.value_cols` for multi-column series)

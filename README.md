@@ -1,4 +1,4 @@
-# MMLPortal — SCADA Stack Deployment Guide
+﻿# MMLPortal — SCADA Stack Deployment Guide
 
 FastAPI backend + Vue 3 SPA, JWT auth backed by PostgreSQL, deployed on Windows behind IIS.
 This file is the **deployment-focused** guide; deeper internals live in
@@ -27,7 +27,7 @@ C:\dev\
 │   ├── users.py                    ← /api/users router (admin user CRUD, require_admin)
 │   ├── readings.py                 ← /api/readings router (sensor_readings: devices, metrics,
 │   │                                 latest, sliding-window series)
-│   ├── tags.py                     ← /api/tags router (public.status_tag: names, dynamic numeric
+│   ├── tags.py                     ← /api/tags router (public.variables_tag: names, dynamic numeric
 │   │                                 fields, latest row)
 │   ├── panels.py                   ← /api/panels router (Live dashboard CRUD; writes need admin)
 │   ├── mailer.py                   ← Brevo HTTP API → SMTP fallback → log-only delivery
@@ -76,7 +76,7 @@ C:\dev\
 |---|---|---|
 | **Python** | 3.14.x | Runs the FastAPI backend |
 | **Node.js + npm** | Node 20+ / npm 10+ | Builds the Vue SPA |
-| **PostgreSQL** | 18 (`postgresql-x64-18` Windows service) | Stores users, dashboard panels, `sensor_readings`, `status_tag` |
+| **PostgreSQL** | 18 (`postgresql-x64-18` Windows service) | Stores users, dashboard panels, `sensor_readings`, `variables_tag` |
 | **NSSM** | any recent build (`nssm.exe` is vendored at `scada-mml-backend\nssm.exe`) | Runs uvicorn as a Windows service `mml-api` |
 | **IIS** | 10+ on Windows Server / Windows 11 Pro | Serves the SPA and reverse-proxies `/api` and `/ws` |
 | **IIS — URL Rewrite Module** | 2.x | Required by the `<rewrite>` rules in `web.config` |
@@ -183,7 +183,7 @@ cd C:\dev\scada-mml-backend
 ```
 
 In production this is replaced by your real ingest pipeline; the SCADA system writes
-`public.status_tag` directly and the API only reads it.
+`public.variables_tag` directly and the API only reads it.
 
 ### 3.6 Frontend — build for production
 
@@ -386,10 +386,10 @@ step 3.7 above.
 | **Login OK in dev, then "Not authenticated" after page reload in prod** | `COOKIE_SECURE=true` requires HTTPS for the refresh-cookie to be sent. Either switch the IIS binding to HTTPS or set `COOKIE_SECURE=false` (dev only). |
 | **CORS error in the browser console (prod)** | Add your prod origin to `CORS_ORIGINS` in `.env` and restart. Wildcards aren't allowed because `allow_credentials=True`. |
 | **`/accounts` page redirects to `/`** | The current user isn't `role='admin'`. Sign in as `admin`, or promote a user via `UPDATE users SET role='admin' WHERE username='you'`. |
-| **New numeric column on `public.status_tag` doesn't show up in the panel editor** | Fields are introspected once per process and cached. `Restart-Service mml-api` to re-discover. |
+| **New numeric column on `public.variables_tag` doesn't show up in the panel editor** | Fields are introspected once per process and cached. `Restart-Service mml-api` to re-discover. |
 | **`Failed to fetch dynamically imported module …Page.vue` in dev** | Two Vite servers are fighting over port 5173. Kill stray `node` processes (`Get-CimInstance Win32_Process -Filter "Name='node.exe'" \| Where CommandLine -like '*vite*' \| Stop-Process -Force`). |
 | **`psql` not found** | Add `C:\Program Files\PostgreSQL\18\bin` to PATH, or call the full path. |
 
-For architecture, code internals, the full API reference, and the dynamic `status_tag` introspection,
+For architecture, code internals, the full API reference, and the dynamic `variables_tag` introspection,
 see [`DEVELOPMENT.md`](DEVELOPMENT.md). For a click-through end-to-end visualization,
 open [`workflow.html`](workflow.html).

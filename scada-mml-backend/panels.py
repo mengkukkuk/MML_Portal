@@ -1,10 +1,10 @@
-"""Dashboard-panel endpoints for the admin-managed live grid.
+﻿"""Dashboard-panel endpoints for the admin-managed live grid.
 
 Reads are open to any authenticated user (the Live dashboard renders them);
 writes (create / update / delete) require an admin token (``require_admin``).
 A panel binds to one of two data sources:
   - source='device': legacy device_id + metric (public.sensor_readings)
-  - source='tag'   : tag_name + metric one-of TAG_FIELDS (public.status_tag)
+  - source='tag'   : tag_name + metric one-of TAG_FIELDS (public.variables_tag)
 """
 from datetime import datetime
 
@@ -116,7 +116,7 @@ def _validate(body: PanelIn) -> None:
         if not body.tag_name or not body.metric:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="tag source requires tag_name and metric (a numeric column of public.status_tag)",
+                detail="tag source requires tag_name and metric (a numeric column of public.variables_tag)",
             )
         valid_fields = db.tag_fields()
         if body.metric not in valid_fields:

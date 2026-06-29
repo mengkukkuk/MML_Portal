@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 /**
  * LivePage — admin-managed live dashboard (route: /live).
  *
@@ -23,7 +23,7 @@ import { colorAt } from '@/utils/seriesPalette'
 import { compileExpr } from '@/utils/mathExpr'
 import { UNIT_GROUPS } from '@/utils/units'
 
-// Legacy tag API field names → real status_tag column names, so editing an old
+// Legacy tag API field names → real variables_tag column names, so editing an old
 // tag panel maps cleanly onto the generic table model.
 const TAG_FIELD_TO_COL = { current_value: 'current_value_tag' }
 
@@ -354,11 +354,11 @@ async function openCreate() {
 function legacyBinding(panel) {
   if (panel.source === 'tag') {
     return {
-      table: 'status_tag',
+      table: 'variables_tag',
       metric: TAG_FIELD_TO_COL[panel.metric] || panel.metric,
       filter_col: 'tag_name',
       filters: panel.options?.tags?.length ? [...panel.options.tags] : (panel.tag_name ? [panel.tag_name] : []),
-      // status_tag updates one row in place; leave ts unset so the tile samples
+      // variables_tag updates one row in place; leave ts unset so the tile samples
       // at the poll clock (its prior behaviour) instead of degenerate history.
       ts_col: null,
     }

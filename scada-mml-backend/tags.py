@@ -1,6 +1,6 @@
-"""Status-tag endpoints — backs the live dashboard against public.status_tag.
+﻿"""Status-tag endpoints — backs the live dashboard against public.variables_tag.
 
-The status_tag table is updated in place by the SCADA system (single row per
+The variables_tag table is updated in place by the SCADA system (single row per
 tag_name). There is no native history, so the frontend builds its own series
 by polling /api/tags/latest at the panel's configured poll interval.
 """
@@ -20,7 +20,7 @@ class TagOut(BaseModel):
 
 
 class TagLatestOut(BaseModel):
-    # extra='allow' so newly-discovered numeric columns from public.status_tag
+    # extra='allow' so newly-discovered numeric columns from public.variables_tag
     # pass through without a Pydantic schema change.
     model_config = ConfigDict(extra="allow")
 
@@ -54,13 +54,13 @@ def _humanise(name: str) -> str:
 
 @router.get("", response_model=list[TagOut])
 def list_tags(_user: dict = Depends(get_current_user)):
-    """All distinct tag names available in public.status_tag."""
+    """All distinct tag names available in public.variables_tag."""
     return db.list_tags()
 
 
 @router.get("/fields", response_model=list[FieldOut])
 def list_fields(_user: dict = Depends(get_current_user)):
-    """Numeric columns of public.status_tag a panel can bind to."""
+    """Numeric columns of public.variables_tag a panel can bind to."""
     return [
         {"field": f, "label": _FIELD_LABEL_OVERRIDES.get(f, _humanise(f))}
         for f in db.tag_fields()

@@ -1,4 +1,4 @@
-# Dashboard Dev Guide — ECharts Parameter Tuning (Expert Level)
+﻿# Dashboard Dev Guide — ECharts Parameter Tuning (Expert Level)
 
 How the Live dashboard renders charts, and exactly which knobs to turn to change
 their behaviour. This is the deep-dive reference for `LivePanel.vue` —
@@ -224,7 +224,7 @@ values via `api.value(i)`, map to pixels with `api.coord([...])`, return a shape
 Series are derived in **`seriesSpecs`** (`:87`). One entry per output series:
 
 - **`source: 'tag'`** — `options.tags[]` (or single `tag_name`) → one series each,
-  `metric` is the numeric column from `public.status_tag`. No native history → starts
+  `metric` is the numeric column from `public.variables_tag`. No native history → starts
   empty, accumulates per poll, sampled at wall-clock so steady values still advance.
 - **`source: 'table'`** — cartesian of `options.value_cols[]` × `options.filters[]`
   (with `filter_col`). With a `ts_col` it seeds real history; without one it behaves

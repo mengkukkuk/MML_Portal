@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 /**
  * AlarmsPage — alarm log viewer (route: /alarms).
  * Reads public.alarm_logs via /api/alarms/recent and renders a
@@ -82,7 +82,7 @@ onMounted(() => {
   reload()
   pollTimer = setInterval(reload, POLL_MS)
   // Dedicated fast poll so the active-alarm card appears within ~1s of the
-  // backend setting status_tag.alarm_no, independent of the 30s log refresh.
+  // backend setting variables_tag.alarm_no, independent of the 30s log refresh.
   activeTimer = setInterval(() => store.loadActive(), ACTIVE_POLL_MS)
 })
 

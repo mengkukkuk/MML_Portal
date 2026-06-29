@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 /**
  * LivePanel — a single self-polling tile in the Live dashboard grid.
  *
@@ -670,7 +670,7 @@ function trimWindow(arr) {
 
 async function seed() {
   if (isTag.value) {
-    // status_tag has no native history — start empty, accumulate via polling.
+    // variables_tag has no native history — start empty, accumulate via polling.
     const init = {}
     for (const s of seriesSpecs.value) init[s.key] = []
     seriesPoints.value = init
@@ -782,7 +782,7 @@ async function poll() {
   if (isTag.value) {
     // Fetch every tag concurrently; one dead tag must not blank the panel.
     const results = await Promise.allSettled(seriesTags.value.map((t) => fetchTagLatest(t)))
-    // status_tag has no history — sample at the poll wall-clock time so the line
+    // variables_tag has no history — sample at the poll wall-clock time so the line
     // advances every poll and looks live even when the tag value is steady.
     const sampleT = Date.now()
     const nextPoints = { ...seriesPoints.value }

@@ -1,4 +1,4 @@
-# CLAUDE.md
+﻿# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -74,10 +74,10 @@ cd C:\dev\scada-mml-backend
 | `auth.py` | 8 auth endpoints (login, register, me, refresh, logout, change-password, forgot-password, reset-password) |
 | `users.py` | Admin CRUD at `/api/users` |
 | `readings.py` | `/api/readings/*` — devices, metrics, latest reading, sliding-window series (reads `public.sensor_readings`) |
-| `tags.py` | `/api/tags/*` — distinct tag names, dynamic numeric fields, latest row from `public.status_tag` |
+| `tags.py` | `/api/tags/*` — distinct tag names, dynamic numeric fields, latest row from `public.variables_tag` |
 | `panels.py` | `/api/panels/*` — CRUD for the admin-managed Live dashboard (`dashboard_panels` table); admin token gates writes |
 | `security.py` | Password hashing via stdlib `hashlib.scrypt`, JWT sign/verify |
-| `db.py` | Psycopg 3 access layer — all SQL lives here, including dynamic `status_tag` column discovery |
+| `db.py` | Psycopg 3 access layer — all SQL lives here, including dynamic `variables_tag` column discovery |
 | `mailer.py` | Password-reset delivery: **Brevo HTTP API** (preferred) → SMTP fallback → log-only dev mode |
 | `config.py` | All env vars with fallback defaults |
 | `simulate_data.py` | Standalone CLI that writes synthetic time-series into `sensor_readings` |
@@ -103,7 +103,7 @@ Password hash format: `scrypt$<salt_hex>$<digest_hex>` (no third-party wheel nee
 and each tile self-polls at one of the whitelisted intervals (5s, 30s, 1m, 10m,
 30m, 1h). Each panel binds to one of:
 - `source='device'` — legacy `device_id` + `metric` from `public.sensor_readings`.
-- `source='tag'` — `tag_name` from `public.status_tag`, with the chosen
+- `source='tag'` — `tag_name` from `public.variables_tag`, with the chosen
   numeric column as the metric. Tag fields are discovered dynamically from
   `information_schema` on first request and cached for the process lifetime,
   so new numeric columns appear after a service restart with no schema PR.
