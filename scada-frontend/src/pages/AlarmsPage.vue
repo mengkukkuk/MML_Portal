@@ -272,15 +272,55 @@ onUnmounted(() => {
 }
 
 .alm__active-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
   padding: var(--space-3) var(--space-4);
-  background: var(--bg-elev);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0) 32%),
+    color-mix(in srgb, var(--bg-elev) 70%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
   border: 1px solid var(--border-soft);
   border-left-width: 3px;
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-1);
+  border-radius: var(--radius);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 6px 22px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  transition: box-shadow 0.3s ease, transform 0.3s ease;
+}
+
+.alm__active-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.5),
+    rgba(255, 255, 255, 0.06) 18%,
+    rgba(255, 255, 255, 0) 46%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.alm__active-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 12px 36px rgba(0, 0, 0, 0.5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .alm__active-card { transition: none; }
+  .alm__active-card:hover { transform: none; }
 }
 
 .alm__active-card--critical { border-left-color: var(--crit); }
@@ -299,6 +339,9 @@ onUnmounted(() => {
   font-weight: 700;
   font-family: var(--font-mono);
   color: var(--fg);
+  letter-spacing: 0.01em;
+  /* Lit-LCD halo on the live alarm value. */
+  text-shadow: 0 0 16px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .alm__active-tag {
@@ -431,13 +474,42 @@ onUnmounted(() => {
   gap: var(--space-2);
 }
 
+/* Liquid Crystal faceplate — frosted card + specular top rim. Severity is left
+   to the coloured left border / pill, so no accent bloom here (would clash with
+   crit/warn tints). See LIQCRYS.md. */
 .alm__tag {
-  background: var(--bg-elev);
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0) 32%),
+    color-mix(in srgb, var(--bg-elev) 72%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
   border: 1px solid var(--border-soft);
   border-left-width: 3px;
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-1);
+  border-radius: var(--radius-lg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 6px 22px rgba(0, 0, 0, 0.4);
   overflow: hidden;
+}
+
+.alm__tag::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.5),
+    rgba(255, 255, 255, 0.06) 18%,
+    rgba(255, 255, 255, 0) 46%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
 }
 
 .alm__tag--critical { border-left-color: var(--crit); }
