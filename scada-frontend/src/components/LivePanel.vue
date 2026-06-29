@@ -1019,18 +1019,77 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* ---------------------------------------------------------------------------
+ * Liquid Crystal faceplate
+ * A translucent, frosted glass tile over the dark app background. The body is
+ * a layered surface (iridescent accent bloom + top-down glass sheen + frosted
+ * base) and the signature is a specular rim-light: a masked gradient border
+ * that's bright along the top facet and fades by mid-panel, like light caught
+ * on the edge of a crystal. All colours derive from theme tokens so the look
+ * survives faceplate swaps (cobalt / graphite / carbon).
+ * ------------------------------------------------------------------------- */
 .panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  background: var(--bg-panel);
+  /* Frosted base + glass sheen + accent bloom, painted behind all content. */
+  background:
+    radial-gradient(130% 90% at 100% -10%, var(--accent-soft), transparent 55%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0) 32%),
+    color-mix(in srgb, var(--bg-panel) 68%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(165%);
+  backdrop-filter: blur(16px) saturate(165%);
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   padding: var(--space-4);
   /* Fill the GridLayout cell so corner-resize is reflected immediately. */
   height: 100%;
   box-sizing: border-box;
   overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 8px 30px rgba(0, 0, 0, 0.45),
+    0 2px 8px rgba(0, 0, 0, 0.3);
+  transition: box-shadow 0.3s ease, transform 0.3s ease;
+}
+
+/* Signature: specular rim-light. A masked 1px gradient border, bright at the
+   top facet and fading to nothing by the panel's midpoint. */
+.panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.55),
+    rgba(255, 255, 255, 0.08) 18%,
+    rgba(255, 255, 255, 0) 46%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.panel:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 14px 44px rgba(0, 0, 0, 0.5),
+    0 12px 48px -16px var(--accent-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel {
+    transition: none;
+  }
+  .panel:hover {
+    transform: none;
+  }
 }
 
 .panel__head {
@@ -1103,6 +1162,9 @@ onBeforeUnmount(() => {
   font-weight: 700;
   color: var(--fg);
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  /* Lit-LCD halo — a faint accent bloom behind the live readout. */
+  text-shadow: 0 0 18px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .panel__unit {
@@ -1117,6 +1179,13 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--fg);
   font-variant-numeric: tabular-nums;
+  /* Glass pill so multi-series chips read as frosted crystal tokens. */
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-elev) 55%, transparent);
+  border: 1px solid var(--border-soft);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
 }
 
 .panel__chipdot {
@@ -1202,6 +1271,9 @@ onBeforeUnmount(() => {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
+  letter-spacing: 0.01em;
+  /* Lit-LCD halo, tinted by the segment's own threshold colour. */
+  text-shadow: 0 0 26px color-mix(in srgb, currentColor 30%, transparent);
 }
 
 .panel__stat--multi .panel__statnum {
@@ -1246,7 +1318,10 @@ onBeforeUnmount(() => {
   padding: 6px 8px;
   position: sticky;
   top: 0;
-  background: var(--bg-panel);
+  /* Near-opaque so scrolled rows don't bleed through the frosted faceplate. */
+  background: color-mix(in srgb, var(--bg-elev) 92%, transparent);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border-soft);
 }
 
