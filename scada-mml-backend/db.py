@@ -396,11 +396,11 @@ def latest_tag(tag_name: str) -> dict[str, Any] | None:
     return row
 
 
-# --- Event log (real SCADA data — public.event_log, read-only) ---------------
+# --- Event log (real SCADA data — public.event_logs, read-only) ---------------
 def list_recent_events(limit: int) -> list[dict[str, Any]]:
     """Last `limit` events per (location, tag_name), newest first.
 
-    Reads the externally-populated public.event_log. Ordered so the frontend can
+    Reads the externally-populated public.event_logs. Ordered so the frontend can
     group location -> tag_name in a single pass.
     """
     with get_connection() as conn:
@@ -412,7 +412,7 @@ def list_recent_events(limit: int) -> list[dict[str, Any]]:
                           PARTITION BY location, tag_name
                           ORDER BY at_date_time DESC
                         ) AS rn
-                 FROM public.event_log
+                 FROM public.event_logs
                ) ranked
                WHERE rn <= %s
                ORDER BY location, tag_name, at_date_time DESC""",

@@ -1,7 +1,7 @@
 <script setup>
 /**
  * EventPage — discrete event log viewer (route: /events).
- * Reads public.event_log via /api/events/recent and renders a
+ * Reads public.event_logs via /api/events/recent and renders a
  * location -> tag_name -> events tree: each location is a band, each tag_name a
  * card, each card a timeline of its last N events (newest first).
  * Auto-polls every 30s; the per-card count (5 / 10 / 25) is user-selectable.

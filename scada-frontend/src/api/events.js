@@ -1,7 +1,7 @@
 import { apiClient } from './client'
 
 /**
- * Last `limit` events per (location, tag_name) from public.event_log, newest
+ * Last `limit` events per (location, tag_name) from public.event_logs, newest
  * first. Returns a flat array — the page groups it by location -> tag_name.
  */
 export async function fetchRecentEvents(limit = 10) {

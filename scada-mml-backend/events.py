@@ -1,6 +1,6 @@
-"""Event-log endpoints — backs the Events page against public.event_log.
+"""Event-log endpoints — backs the Events page against public.event_logs.
 
-The event_log table is populated in place by the SCADA system; this API is
+The event_logs table is populated in place by the SCADA system; this API is
 read-only. Each request returns the last N events per (location, tag_name) so
 the frontend can render a location -> tag_name -> events tree.
 """
@@ -27,5 +27,5 @@ def recent_events(
     limit: int = Query(10, ge=1, le=100),
     _user: dict = Depends(get_current_user),
 ):
-    """Last `limit` events per tag_name from public.event_log, newest first."""
+    """Last `limit` events per tag_name from public.event_logs, newest first."""
     return db.list_recent_events(limit)
