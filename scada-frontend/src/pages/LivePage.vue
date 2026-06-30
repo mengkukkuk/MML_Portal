@@ -37,6 +37,9 @@ const POLL_INTERVALS = [
   { value: 1800, label: '30 minutes' },
   { value: 3600, label: '1 hour' },
 ]
+// Date only
+const currentDate = new Date();
+const today = currentDate.toLocaleDateString();
 
 const auth = useAuthStore()
 const canManage = computed(() => auth.role === 'admin')
@@ -972,7 +975,7 @@ async function removeDashboard(dash) {
         <p class="live__sub">Real-time machine panels · per-panel poll interval</p>
       </div>
       <div class="live__clock">
-        <span v-if="lastUpdatedLabel" class="live__updated">Updated {{ lastUpdatedLabel }}</span>
+        <span v-if="lastUpdatedLabel" class="live__updated">Updated : {{today}} {{ lastUpdatedLabel }}</span>
       </div>
       <div class="live__actions">
         <el-button :loading="refreshing" :disabled="!panels.length" @click="refreshAll">
