@@ -7,8 +7,9 @@
  * Tag-source panels can plot MULTIPLE tags at once (panel.options.tags) — each
  * tag becomes its own coloured series. The per-viz parameters (min/max,
  * thresholds, decimals, orientation, …) come from `panel.options`. Streams a
- * sliding-window series per tag, refreshing every poll interval. Admins see
- * Edit / Delete controls in the header.
+ * sliding-window series per tag, refreshing every poll interval. Series
+ * value, time range, poll interval, and (for admins) Edit / Duplicate /
+ * Delete all live behind the header's gear button.
  */
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import VChart from 'vue-echarts'
@@ -105,6 +106,12 @@ function onRangeSelect(v) {
 function onFilterValueSelect(v) {
   filterOverride.value = v
 }
+
+// All per-panel controls (series value, time range, poll interval, admin
+// actions) collapse behind a single gear button so the header stays calm as
+// more controls are added — see panel__gear / gearpop below. Open state
+// drives the button's "live" glow, echoing the faceplate's lit-LCD signature.
+const gearOpen = ref(false)
 
 // Per-series data, keyed by series key (tag name for tag source, metric for
 // device source). Reassigned immutably so ECharts' :option recomputes & repaints.
@@ -965,47 +972,80 @@ onBeforeUnmount(() => {
         <h3 class="panel__title">{{ panel.title }}</h3>
       </div>
       <div class="panel__actions">
-        <el-select
-          v-if="showFilterChanger"
-          :model-value="effectiveFilters[0]"
-          size="small"
-          filterable
-          class="panel__filter"
-          title="Series value"
-          @update:model-value="onFilterValueSelect"
+        <el-popover
+          v-model:visible="gearOpen"
+          trigger="click"
+          placement="bottom-end"
+          width="200"
+          :show-arrow="false"
+          popper-class="panel-gear-pop"
         >
-          <el-option v-for="v in availableFilters" :key="v" :label="v" :value="v" />
-        </el-select>
-        <el-select
-          :model-value="rangeMinutes"
-          size="small"
-          class="panel__range"
-          title="Time range"
-          @update:model-value="onRangeSelect"
-        >
-          <el-option v-for="it in TIME_RANGES" :key="it.value" :label="it.label" :value="it.value" />
-        </el-select>
-        <el-select
-          :model-value="pollSeconds"
-          size="small"
-          class="panel__poll"
-          :disabled="!canManage"
-          :title="canManage ? 'Poll interval' : 'Poll interval (admin only)'"
-          @update:model-value="onPollIntervalSelect"
-        >
-          <el-option v-for="it in POLL_INTERVALS" :key="it.value" :label="it.label" :value="it.value" />
-        </el-select>
-        <template v-if="canManage">
-          <el-button size="small" text title="Edit panel" aria-label="Edit panel" @click="emit('edit', panel)">
-            <el-icon><Edit /></el-icon>
-          </el-button>
-          <el-button size="small" text title="Duplicate panel" aria-label="Duplicate panel" @click="emit('duplicate', panel)">
-            <el-icon><CopyDocument /></el-icon>
-          </el-button>
-          <el-button size="small" text type="danger" title="Delete panel" aria-label="Delete panel" @click="emit('delete', panel)">
-            <el-icon><Close /></el-icon>
-          </el-button>
-        </template>
+          <template #reference>
+            <button
+              type="button"
+              class="panel__gear"
+              :class="{ 'panel__gear--active': gearOpen }"
+              title="Panel settings"
+              aria-label="Panel settings"
+            >
+              <el-icon><Setting /></el-icon>
+            </button>
+          </template>
+
+          <div class="gearpop">
+            <div v-if="showFilterChanger" class="gearpop__row">
+              <span class="gearpop__label">Series value</span>
+              <el-select
+                :model-value="effectiveFilters[0]"
+                size="small"
+                filterable
+                class="gearpop__control"
+                @update:model-value="onFilterValueSelect"
+              >
+                <el-option v-for="v in availableFilters" :key="v" :label="v" :value="v" />
+              </el-select>
+            </div>
+
+            <div class="gearpop__row">
+              <span class="gearpop__label">Time range</span>
+              <el-select
+                :model-value="rangeMinutes"
+                size="small"
+                class="gearpop__control"
+                @update:model-value="onRangeSelect"
+              >
+                <el-option v-for="it in TIME_RANGES" :key="it.value" :label="it.label" :value="it.value" />
+              </el-select>
+            </div>
+
+            <div class="gearpop__row">
+              <span class="gearpop__label">Poll interval</span>
+              <el-select
+                :model-value="pollSeconds"
+                size="small"
+                class="gearpop__control"
+                :disabled="!canManage"
+                :title="canManage ? '' : 'Admin only'"
+                @update:model-value="onPollIntervalSelect"
+              >
+                <el-option v-for="it in POLL_INTERVALS" :key="it.value" :label="it.label" :value="it.value" />
+              </el-select>
+            </div>
+
+            <template v-if="canManage">
+              <div class="gearpop__divider" />
+              <button type="button" class="gearpop__action" @click="gearOpen = false; emit('edit', panel)">
+                <el-icon><Edit /></el-icon> Edit panel
+              </button>
+              <button type="button" class="gearpop__action" @click="gearOpen = false; emit('duplicate', panel)">
+                <el-icon><CopyDocument /></el-icon> Duplicate
+              </button>
+              <button type="button" class="gearpop__action gearpop__action--danger" @click="gearOpen = false; emit('delete', panel)">
+                <el-icon><Close /></el-icon> Delete
+              </button>
+            </template>
+          </div>
+        </el-popover>
       </div>
     </header>
 
@@ -1208,16 +1248,110 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
-.panel__filter {
-  width: 120px;
+/* Gear trigger — collapses series value / time range / poll interval / admin
+   actions into one control so the header stays calm as features are added. */
+.panel__gear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, box-shadow 0.15s;
 }
 
-.panel__range {
-  width: 118px;
+.panel__gear:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
-.panel__poll {
-  width: 78px;
+/* Open state borrows the faceplate's lit-LCD glow so the trigger itself
+   reads as "live" while its controls are exposed. */
+.panel__gear--active {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.gearpop {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.gearpop__row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gearpop__label {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.gearpop__control {
+  width: 100%;
+}
+
+.gearpop__divider {
+  height: 1px;
+  background: var(--border-soft);
+  margin: 2px 0;
+}
+
+.gearpop__action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 6px var(--space-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-size: 13px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s, color 0.15s;
+}
+
+.gearpop__action:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.gearpop__action--danger:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--crit);
+}
+
+/* Popper content is teleported but stays in this component's render tree, so
+   scoped styles still apply — reached via :deep() since Element Plus, not
+   this template, owns the wrapping .panel-gear-pop element. Mirrors the
+   faceplate's frosted-glass treatment so the popover reads as a facet of the
+   panel rather than a generic dropdown. */
+:deep(.panel-gear-pop) {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0) 32%),
+    color-mix(in srgb, var(--bg-elev) 88%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(165%);
+  backdrop-filter: blur(16px) saturate(165%);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 8px 30px rgba(0, 0, 0, 0.45);
+  padding: var(--space-3);
 }
 
 .panel__meta {
