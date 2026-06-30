@@ -18,7 +18,7 @@ import { LineChart, BarChart, GaugeChart, PieChart, ScatterChart, HeatmapChart, 
 import { GridComponent, TooltipComponent, LegendComponent, VisualMapComponent } from 'echarts/components'
 import { fetchSeries, fetchLatest } from '@/api/readings'
 import { fetchTagLatest } from '@/api/tags'
-import { fetchSchemaLatest, fetchSchemaSeries } from '@/api/schema'
+import { fetchSchemaLatest, fetchSchemaSeries, fetchSchemaValues } from '@/api/schema'
 import { SERIES_PALETTE, colorAt } from '@/utils/seriesPalette'
 import { compileExpr, applyExpr } from '@/utils/mathExpr'
 
@@ -61,6 +61,14 @@ const TIME_RANGES = [
 ]
 const rangeMinutes = ref(10)
 
+// Series-value changer — lets a viewer swap which single filter-column value
+// (e.g. tag_name) a panel shows, without admin rights. View-only (not
+// persisted): null means "use the panel's configured value". Only offered on
+// panels configured with exactly one filter value — multi-value panels
+// intentionally overlay several entities, so swapping one would be ambiguous.
+const filterOverride = ref(null)
+const availableFilters = ref([])
+
 const pollSeconds = computed(() => props.panel.poll_interval_seconds || 5)
 const isTag = computed(() => props.panel.source === 'tag')
 const isTable = computed(() => props.panel.source === 'table')
@@ -76,7 +84,15 @@ const tableFilters = computed(() => {
   const f = props.panel.options?.filters
   return Array.isArray(f) ? f.filter(Boolean) : []
 })
-const tableHasFilter = computed(() => !!props.panel.filter_col && tableFilters.value.length > 0)
+// What seriesSpecs actually fetches: the viewer's override when set, else the
+// panel's configured filter values.
+const effectiveFilters = computed(() => (
+  filterOverride.value != null ? [filterOverride.value] : tableFilters.value
+))
+const tableHasFilter = computed(() => !!props.panel.filter_col && effectiveFilters.value.length > 0)
+const showFilterChanger = computed(() => (
+  isTable.value && !!props.panel.filter_col && tableFilters.value.length === 1
+))
 
 function onPollIntervalSelect(v) {
   emit('poll-interval-change', props.panel, v)
@@ -84,6 +100,10 @@ function onPollIntervalSelect(v) {
 
 function onRangeSelect(v) {
   rangeMinutes.value = v
+}
+
+function onFilterValueSelect(v) {
+  filterOverride.value = v
 }
 
 // Per-series data, keyed by series key (tag name for tag source, metric for
@@ -116,7 +136,7 @@ const seriesSpecs = computed(() => {
   }
   if (isTable.value) {
     const vcs = tableValueCols.value
-    const fvs = tableHasFilter.value ? tableFilters.value : [null]
+    const fvs = tableHasFilter.value ? effectiveFilters.value : [null]
     const multiVc = vcs.length > 1
     const specs = []
     for (const vc of vcs) {
@@ -918,6 +938,11 @@ watch(
 watch(() => props.refreshSignal, () => { seed() })
 
 onMounted(async () => {
+  if (showFilterChanger.value) {
+    availableFilters.value = await fetchSchemaValues(
+      props.panel.table_name, props.panel.filter_col, 500, props.panel.datasource_id || undefined,
+    ).catch(() => [])
+  }
   await seed()
   startTimer()
 })
@@ -940,6 +965,17 @@ onBeforeUnmount(() => {
         <h3 class="panel__title">{{ panel.title }}</h3>
       </div>
       <div class="panel__actions">
+        <el-select
+          v-if="showFilterChanger"
+          :model-value="effectiveFilters[0]"
+          size="small"
+          filterable
+          class="panel__filter"
+          title="Series value"
+          @update:model-value="onFilterValueSelect"
+        >
+          <el-option v-for="v in availableFilters" :key="v" :label="v" :value="v" />
+        </el-select>
         <el-select
           :model-value="rangeMinutes"
           size="small"
@@ -975,7 +1011,7 @@ onBeforeUnmount(() => {
 
     <span class="panel__conn">
       <template v-if="isTable">
-        {{ panel.table_name }}<template v-if="tableHasFilter"> · {{ tableFilters.join(', ') }}</template> · {{ tableValueCols.join(', ') }}
+        {{ panel.table_name }}<template v-if="tableHasFilter"> · {{ effectiveFilters.join(', ') }}</template> · {{ tableValueCols.join(', ') }}
       </template>
       <template v-else-if="isTag">tag · {{ seriesTags.join(', ') }} · {{ panel.metric }}</template>
       <template v-else>{{ deviceName || `device #${panel.device_id}` }} · {{ panel.metric }}</template>
@@ -1170,6 +1206,10 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: var(--space-1);
   flex-shrink: 0;
+}
+
+.panel__filter {
+  width: 120px;
 }
 
 .panel__range {

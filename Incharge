@@ -4,5 +4,8 @@
 Panel :
     Table: show date time / current issue is show only time without date
 
-    Add tag changer to the left side of the time-range selector.
-The tag changer will be used to change tag_name of selected datasource table.
+    Add Series values changer to the left side of the time-range selector.
+This changer will be used to change Series in table's Filter column.
+Example: 1.[Temperature1 : value_tag, setpoint, high_value, low_value]
+2.Change the series values to [Temperature2]
+3.Show same parameter values in the table but in different series [Temperature2]
