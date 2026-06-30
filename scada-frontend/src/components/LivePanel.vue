@@ -22,6 +22,7 @@ import { fetchTagLatest } from '@/api/tags'
 import { fetchSchemaLatest, fetchSchemaSeries, fetchSchemaValues } from '@/api/schema'
 import { SERIES_PALETTE, colorAt } from '@/utils/seriesPalette'
 import { compileExpr, applyExpr } from '@/utils/mathExpr'
+import { alertingSeries } from '@/utils/alertConditions'
 
 use([CanvasRenderer, LineChart, BarChart, GaugeChart, PieChart, ScatterChart, HeatmapChart, CandlestickChart, CustomChart, GridComponent, TooltipComponent, LegendComponent, VisualMapComponent])
 
@@ -196,6 +197,17 @@ const seriesList = computed(() =>
 
 // Unit shown in the single-value header (first/only series).
 const headerUnit = computed(() => seriesList.value[0]?.unit || '')
+
+// Series currently in alert — the de-duped union of every true condition's
+// referenced series. Recomputes each poll via seriesLatest → seriesList.
+// Renders a single red "… ALERTS" pill above the chart.
+const alertSeries = computed(() => {
+  const conds = props.panel.options?.conditions
+  if (!Array.isArray(conds) || !conds.length) return []
+  const vars = {}
+  for (const s of seriesList.value) if (s.latest) vars[s.valueCol] = s.latest.value
+  return alertingSeries(conds, vars)
+})
 
 const isMulti = computed(() => seriesList.value.length > 1)
 
@@ -1096,6 +1108,11 @@ onBeforeUnmount(() => {
 
     <p v-if="error" class="panel__error">{{ error }}</p>
 
+    <!-- Alert pill: shown above the chart when any condition is true. -->
+    <div v-if="alertSeries.length" class="panel__alert" role="status">
+      {{ alertSeries.join(', ') }} ALERTS
+    </div>
+
     <!-- Stat: big number(s) + optional sparkline (single tag only) -->
     <div v-if="vizType === 'stat'" class="panel__stat" :class="{ 'panel__stat--multi': isMulti }">
       <div v-for="(s, i) in seriesList" :key="s.key" class="panel__statrow">
@@ -1426,6 +1443,25 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
+/* Alert pill — a red frosted token, modeled on .panel__chip, surfacing a
+   true alert condition above the chart. Uses the crit red (#f56c6c). */
+.panel__alert {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #ffd7d7;
+  padding: 3px 11px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #f56c6c 22%, transparent);
+  border: 1px solid color-mix(in srgb, #f56c6c 70%, transparent);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 0 14px color-mix(in srgb, #f56c6c 30%, transparent);
+}
+
 .panel__chart {
   width: 100%;
   height: 220px;
@@ -1465,7 +1501,7 @@ onBeforeUnmount(() => {
 
 .panel__minilabel {
   font-size: 11px;
-  margin-top: -10px;
+  margin-top: 0px;
   text-align: center;
   max-width: 100%;
   overflow: hidden;

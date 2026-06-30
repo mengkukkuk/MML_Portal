@@ -21,6 +21,7 @@ import { fetchDashboards, createDashboard, updateDashboard, deleteDashboard } fr
 import { fetchDatasources } from '@/api/datasources'
 import { colorAt } from '@/utils/seriesPalette'
 import { compileExpr } from '@/utils/mathExpr'
+import { COMPARATOR_OPS } from '@/utils/alertConditions'
 import { UNIT_GROUPS } from '@/utils/units'
 
 // Legacy tag API field names → real variables_tag column names, so editing an old
@@ -39,7 +40,7 @@ const POLL_INTERVALS = [
 ]
 // Date only
 const currentDate = new Date();
-const today = currentDate.toLocaleDateString();
+const today = currentDate.toISOString().split('T')[0];
 
 const auth = useAuthStore()
 const canManage = computed(() => auth.role === 'admin')
@@ -178,6 +179,9 @@ const form = reactive({
   // Optional math transform applied to every reading before display.
   // Kept outside form.options because onVizTypeChange replaces options wholesale.
   mathExpr: '',
+  // Optional alert conditions — each fires a red "… ALERTS" pill on the tile.
+  // Kept outside form.options for the same reason as mathExpr.
+  conditions: [],
   window_minutes: 15,
   chart_type: 'timeseries',
   options: defaultOptions('timeseries'),
@@ -187,6 +191,40 @@ const form = reactive({
 // All currently-selected value columns (primary first, then extras), used both
 // as the source of truth for the editor's value rows and for "unused" lookups.
 const allValueCols = computed(() => [form.metric, ...form.value_cols].filter(Boolean))
+
+// Value columns available for alert condition LHS/RHS selectors.
+// Always uses the panel's value columns regardless of any filter column, so
+// conditions reference the data columns (e.g. "temperature") not filter values.
+const conditionSeriesOptions = computed(() => allValueCols.value)
+
+// --- Alert-condition builder ----------------------------------------------
+const CONNECTORS = ['AND', 'OR']
+
+function addCondition() {
+  const first = conditionSeriesOptions.value[0] || null
+  form.conditions.push({ rows: [{ lhs: first, op: '>', rhsType: 'value', rhs: 0 }] })
+}
+
+function removeCondition(ci) {
+  form.conditions.splice(ci, 1)
+}
+
+function addRow(ci, connector) {
+  const first = conditionSeriesOptions.value[0] || null
+  form.conditions[ci].rows.push({ lhs: first, op: '>', rhsType: 'value', rhs: 0, connector })
+}
+
+function removeRow(ci, ri) {
+  const rows = form.conditions[ci].rows
+  rows.splice(ri, 1)
+  if (!rows.length) form.conditions.splice(ci, 1)
+  else if (ri === 0) delete rows[0].connector // promoted row carries no connector
+}
+
+// On rhsType flip, reset rhs to a sensible default for the new kind.
+function onRhsTypeChange(row) {
+  row.rhs = row.rhsType === 'series' ? (conditionSeriesOptions.value[0] || null) : 0
+}
 
 // First value column not already chosen, so [+ Value] defaults to a fresh pick.
 function firstUnusedValueCol() {
@@ -373,6 +411,7 @@ async function openCreate() {
   form.title = ''
   form.datasource_id = null
   form.mathExpr = ''
+  form.conditions = []
   form.window_minutes = 15
   form.chart_type = 'timeseries'
   form.options = defaultOptions('timeseries')
@@ -414,9 +453,10 @@ async function openEdit(panel) {
   form.chart_type = panel.chart_type === 'line' ? 'timeseries' : panel.chart_type
   // `filters`/`tags` and `mathExpr` live outside form.options — onVizTypeChange
   // replaces form.options wholesale and would otherwise drop them.
-  const { tags: _t, filters: _f, value_cols: _v, mathExpr: _m, units: _u, gaugeSeries: _g, ...vizOpts } = panel.options || {}
+  const { tags: _t, filters: _f, value_cols: _v, mathExpr: _m, units: _u, gaugeSeries: _g, conditions: _c, ...vizOpts } = panel.options || {}
   form.options = { ...defaultOptions(form.chart_type), ...vizOpts }
   form.mathExpr = panel.options?.mathExpr || ''
+  form.conditions = JSON.parse(JSON.stringify(panel.options?.conditions || []))
   form.units = { ...(panel.options?.units || {}) }
   form.gaugeSeries = { ...(panel.options?.gaugeSeries || {}) }
   form.window_minutes = panel.window_minutes
@@ -456,10 +496,29 @@ async function save() {
     ElMessage.error(`Expression: ${compiled.error}`)
     return
   }
+  // Prune incomplete conditions: a row needs lhs, op and a non-empty rhs; a
+  // condition needs at least one row. The first surviving row carries no connector.
+  const known = new Set(conditionSeriesOptions.value)
+  const cleanConditions = []
+  for (const c of form.conditions) {
+    const rows = []
+    for (const r of c.rows || []) {
+      if (!r.lhs || !r.op || r.rhs === '' || r.rhs == null) continue
+      if (r.rhsType === 'series' && !known.has(r.rhs)) {
+        ElMessage.error(`Condition references unknown series "${r.rhs}".`)
+        return
+      }
+      const row = { lhs: r.lhs, op: r.op, rhsType: r.rhsType, rhs: r.rhsType === 'series' ? r.rhs : Number(r.rhs) }
+      if (rows.length) row.connector = r.connector === 'OR' ? 'OR' : 'AND'
+      rows.push(row)
+    }
+    if (rows.length) cleanConditions.push({ rows })
+  }
   saving.value = true
   try {
     const trimmedExpr = form.mathExpr?.trim() || ''
     const extraOpts = trimmedExpr ? { mathExpr: trimmedExpr } : {}
+    const condOpts = cleanConditions.length ? { conditions: cleanConditions } : {}
     // Per-series display units: keyed by filter value when filtered, else by
     // value column. Pruned to the active keys so stale cross-mode keys don't ride.
     const unitKeys = form.filter_col ? form.filters : allValueCols.value
@@ -500,6 +559,7 @@ async function save() {
         ...(Object.keys(unitMap).length ? { units: unitMap } : {}),
         ...(Object.keys(gaugeMap).length ? { gaugeSeries: gaugeMap } : {}),
         ...extraOpts,
+        ...condOpts,
         ...layoutOpt,
       },
       poll_interval_seconds: form.poll_interval_seconds,
@@ -1053,6 +1113,61 @@ async function removeDashboard(dash) {
       <el-form label-position="top" size="small" class="panel-dialog__form">
         <div class="pde">
 
+          <!-- ── RIGHT: visualization ── -->
+          <div class="pde__right">
+            <div class="pde__right-top">
+              <div class="pde__section-label">Visualization</div>
+              <div class="vizpicker vizpicker--sm">
+                <button
+                    v-for="v in VIZ_TYPES"
+                    :key="v.value"
+                    type="button"
+                    class="vizpicker__item"
+                    :class="{ 'vizpicker__item--active': form.chart_type === v.value }"
+                    :title="v.hint"
+                    @click="form.chart_type = v.value; onVizTypeChange(v.value)"
+                >
+                  <el-icon class="vizpicker__icon"><component :is="v.icon" /></el-icon>
+                  <span class="vizpicker__label">{{ v.label }}</span>
+                </button>
+              </div>
+
+              <div class="submenu">
+                <div class="submenu__head">{{ VIZ_TYPES.find((v) => v.value === form.chart_type)?.label }} options</div>
+                <div class="submenu__grid">
+                  <el-form-item v-for="f in currentSchema" :key="f.key" :label="f.label" class="submenu__field">
+                    <el-switch v-if="f.type === 'switch'" v-model="form.options[f.key]" />
+                    <el-select v-else-if="f.type === 'enum'" v-model="form.options[f.key]" style="width: 100%">
+                      <el-option v-for="o in f.options" :key="o" :label="o" :value="o" />
+                    </el-select>
+                    <el-input-number
+                        v-else
+                        v-model="form.options[f.key]"
+                        :min="f.min"
+                        :max="f.max"
+                        :controls="false"
+                        :placeholder="f.nullable ? 'none' : ''"
+                        style="width: 100%"
+                    />
+                  </el-form-item>
+                </div>
+              </div>
+            </div>
+
+            <div class="pde__right-bottom">
+              <div class="pde__pair">
+                <el-form-item label="Window (min)">
+                  <el-input-number v-model="form.window_minutes" :min="1" :max="1440" :controls="false" style="width: 100%" />
+                </el-form-item>
+                <el-form-item label="Poll interval">
+                  <el-select v-model="form.poll_interval_seconds" style="width: 100%">
+                    <el-option v-for="it in POLL_INTERVALS" :key="it.value" :label="it.label" :value="it.value" />
+                  </el-select>
+                </el-form-item>
+              </div>
+            </div>
+          </div>
+
           <!-- ── LEFT: data binding ── -->
           <div class="pde__left">
             <el-form-item label="Title">
@@ -1271,63 +1386,68 @@ async function removeDashboard(dash) {
                 <p class="pde__hint">Variable: <code>value</code> — <code>abs sqrt pow min max floor ceil round</code></p>
               </el-collapse-item>
             </el-collapse>
-          </div>
 
-          <!-- ── RIGHT: visualization ── -->
-          <div class="pde__right">
-            <div class="pde__right-top">
-              <div class="pde__section-label">Visualization</div>
-              <div class="vizpicker vizpicker--sm">
-                <button
-                  v-for="v in VIZ_TYPES"
-                  :key="v.value"
-                  type="button"
-                  class="vizpicker__item"
-                  :class="{ 'vizpicker__item--active': form.chart_type === v.value }"
-                  :title="v.hint"
-                  @click="form.chart_type = v.value; onVizTypeChange(v.value)"
-                >
-                  <el-icon class="vizpicker__icon"><component :is="v.icon" /></el-icon>
-                  <span class="vizpicker__label">{{ v.label }}</span>
-                </button>
-              </div>
+            <!-- Alert conditions: each true condition fires a red "… ALERTS"
+                 pill on the tile. Built from dropdowns — no syntax to type. -->
+            <el-collapse class="pde__expr-wrap">
+              <el-collapse-item name="conditions">
+                <template #title>
+                  <span class="pde__expr-head">
+                    Alert conditions
+                    <span v-if="form.conditions.length" class="pde__expr-badge">{{ form.conditions.length }}</span>
+                  </span>
+                </template>
 
-              <div class="submenu">
-                <div class="submenu__head">{{ VIZ_TYPES.find((v) => v.value === form.chart_type)?.label }} options</div>
-                <div class="submenu__grid">
-                  <el-form-item v-for="f in currentSchema" :key="f.key" :label="f.label" class="submenu__field">
-                    <el-switch v-if="f.type === 'switch'" v-model="form.options[f.key]" />
-                    <el-select v-else-if="f.type === 'enum'" v-model="form.options[f.key]" style="width: 100%">
-                      <el-option v-for="o in f.options" :key="o" :label="o" :value="o" />
+                <div v-for="(cond, ci) in form.conditions" :key="ci" class="pde__cond">
+                  <div v-for="(row, ri) in cond.rows" :key="ri" class="pde__cond-row">
+                    <el-select
+                      v-if="ri > 0"
+                      v-model="row.connector"
+                      size="small"
+                      class="pde__cond-conn"
+                    >
+                      <el-option v-for="c in CONNECTORS" :key="c" :label="c" :value="c" />
                     </el-select>
+                    <span v-else class="pde__cond-when">When</span>
+
+                    <el-select v-model="row.lhs" size="small" filterable placeholder="series" class="pde__cond-series">
+                      <el-option v-for="s in conditionSeriesOptions" :key="s" :label="s" :value="s" />
+                    </el-select>
+
+                    <el-select v-model="row.op" size="small" class="pde__cond-op">
+                      <el-option v-for="op in COMPARATOR_OPS" :key="op" :label="op" :value="op" />
+                    </el-select>
+
+                    <el-select v-model="row.rhsType" size="small" class="pde__cond-rhstype" @change="onRhsTypeChange(row)">
+                      <el-option label="value" value="value" />
+                      <el-option label="series" value="series" />
+                    </el-select>
+
                     <el-input-number
-                      v-else
-                      v-model="form.options[f.key]"
-                      :min="f.min"
-                      :max="f.max"
+                      v-if="row.rhsType !== 'series'"
+                      v-model="row.rhs"
                       :controls="false"
-                      :placeholder="f.nullable ? 'none' : ''"
-                      style="width: 100%"
+                      size="small"
+                      class="pde__cond-rhs"
                     />
-                  </el-form-item>
+                    <el-select v-else v-model="row.rhs" size="small" filterable placeholder="series" class="pde__cond-rhs">
+                      <el-option v-for="s in conditionSeriesOptions" :key="s" :label="s" :value="s" />
+                    </el-select>
+
+                    <button type="button" class="pde__cond-x" title="Remove row" @click="removeRow(ci, ri)">×</button>
+                  </div>
+                  <div class="pde__cond-actions">
+                    <el-button text size="small" @click="addRow(ci, 'AND')">+ AND</el-button>
+                    <el-button text size="small" @click="addRow(ci, 'OR')">+ OR</el-button>
+                    <el-button text size="small" type="danger" @click="removeCondition(ci)">Remove condition</el-button>
+                  </div>
                 </div>
-              </div>
-            </div>
 
-            <div class="pde__right-bottom">
-              <div class="pde__pair">
-                <el-form-item label="Window (min)">
-                  <el-input-number v-model="form.window_minutes" :min="1" :max="1440" :controls="false" style="width: 100%" />
-                </el-form-item>
-                <el-form-item label="Poll interval">
-                  <el-select v-model="form.poll_interval_seconds" style="width: 100%">
-                    <el-option v-for="it in POLL_INTERVALS" :key="it.value" :label="it.label" :value="it.value" />
-                  </el-select>
-                </el-form-item>
-              </div>
-            </div>
+                <el-button text size="small" @click="addCondition">+ Add condition</el-button>
+                <p class="pde__hint">Pick a series, a comparator and a value (or another series). The pill shows <code>series ALERTS</code> when true.</p>
+              </el-collapse-item>
+            </el-collapse>
           </div>
-
         </div>
       </el-form>
       <template #footer>
@@ -1894,6 +2014,67 @@ async function removeDashboard(dash) {
   padding: 0 3px;
   background: var(--bg-elev, rgba(255, 255, 255, 0.06));
   border-radius: 3px;
+}
+
+/* Alert-condition builder */
+.pde__cond {
+  padding: var(--space-2);
+  margin-bottom: var(--space-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-elev, rgba(255, 255, 255, 0.03));
+}
+
+.pde__cond-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.pde__cond-when {
+  font-size: 11px;
+  color: var(--fg-muted);
+  width: 64px;
+}
+
+.pde__cond-conn {
+  width: 64px;
+}
+
+.pde__cond-series,
+.pde__cond-rhs {
+  flex: 1 1 90px;
+  min-width: 90px;
+}
+
+.pde__cond-op {
+  width: 64px;
+}
+
+.pde__cond-rhstype {
+  width: 84px;
+}
+
+.pde__cond-x {
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.pde__cond-x:hover {
+  color: var(--crit, #f56c6c);
+}
+
+.pde__cond-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
 }
 
 /* Compact viz picker for the narrower right column */
