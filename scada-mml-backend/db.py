@@ -1,5 +1,8 @@
 ﻿"""Thin PostgreSQL access layer using psycopg 3."""
+import threading
+from collections import deque
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import psycopg
@@ -396,6 +399,56 @@ def latest_tag(tag_name: str) -> dict[str, Any] | None:
     return row
 
 
+# --- Tag history buffer ------------------------------------------------------
+# public.variables_tag is overwritten in place by the external SCADA writer
+# (single row per tag_name — see tag_fields() above), so it has no real row
+# history a SQL query can window over. snapshot_variables_tag() polls it on a
+# timer (see main.py) and appends a wall-clock-stamped point per (tag_name,
+# column) here; table_series() then serves variables_tag from this buffer
+# instead of issuing its usual (always-≤1-row) SQL query. Process-lifetime
+# only — resets on backend restart — and capped to TAG_BUFFER_RETENTION_MINUTES
+# regardless of how far back a panel's range selector asks.
+_tag_buffer: dict[tuple[str, str], deque[tuple[datetime, float]]] = {}
+_tag_buffer_lock = threading.Lock()
+
+
+def snapshot_variables_tag() -> None:
+    """Sample every tag's current numeric columns into the history buffer."""
+    fields = tag_fields()
+    if not fields:
+        return
+    select_cols = ", ".join(f'{_FIELD_DB_COLUMN.get(f, f)} AS {f}' for f in fields)
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"SELECT tag_name, {select_cols} FROM public.variables_tag "
+            "WHERE tag_name IS NOT NULL"
+        ).fetchall()
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=config.TAG_BUFFER_RETENTION_MINUTES)
+    with _tag_buffer_lock:
+        for row in rows:
+            tag = row["tag_name"]
+            for f in fields:
+                v = row[f]
+                if v is None:
+                    continue
+                key = (tag, _FIELD_DB_COLUMN.get(f, f))
+                buf = _tag_buffer.setdefault(key, deque())
+                buf.append((now, float(v)))
+                while buf and buf[0][0] < cutoff:
+                    buf.popleft()
+
+
+def buffered_tag_series(tag_name: str, value_col: str, minutes: int) -> list[dict[str, Any]]:
+    """In-memory substitute for table_series() against variables_tag."""
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        minutes=min(minutes, config.TAG_BUFFER_RETENTION_MINUTES)
+    )
+    with _tag_buffer_lock:
+        buf = _tag_buffer.get((tag_name, value_col), deque())
+        return [{"ts": ts, "value": v} for ts, v in buf if ts >= cutoff]
+
+
 # --- Event log (real SCADA data — public.event_logs, read-only) ---------------
 def list_recent_events(limit: int) -> list[dict[str, Any]]:
     """Last `limit` events per (location, tag_name), newest first.
@@ -780,7 +833,20 @@ def table_series(
     minutes: int,
     datasource_id: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Time-ordered rows over the last `minutes` (requires a timestamp column)."""
+    """Time-ordered rows over the last `minutes` (requires a timestamp column).
+
+    variables_tag is a special case: it has no real row history (overwritten
+    in place — see snapshot_variables_tag's docstring), so a panel bound
+    directly to it (the app's own database, filtered by tag_name) is served
+    from the in-memory buffer instead of the table's always-≤1-row SQL query.
+    """
+    if (
+        datasource_id is None
+        and table == "variables_tag"
+        and filter_col == "tag_name"
+        and filter_val is not None
+    ):
+        return buffered_tag_series(filter_val, value_col, minutes)
     with _table_source_conn(datasource_id) as (conn, schema):
         _safe_identifiers(conn, schema, table, value_col, filter_col, ts_col)
         query = sql.SQL(

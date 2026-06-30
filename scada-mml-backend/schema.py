@@ -124,7 +124,7 @@ def get_series(
     ts_col: str = Query(..., min_length=1),
     filter_col: str | None = Query(None),
     filter_val: str | None = Query(None),
-    minutes: int = Query(15, ge=1, le=1440),
+    minutes: int = Query(15, ge=1, le=10080),
     datasource_id: int | None = Query(None),
     _user: dict = Depends(get_current_user),
 ):

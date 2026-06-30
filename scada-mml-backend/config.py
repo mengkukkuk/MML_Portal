@@ -57,3 +57,8 @@ SMTP_FROM = os.getenv("SMTP_FROM", "") or SMTP_USER
 # "starttls" (default, port 587), "ssl" (port 465), or "none" (plaintext).
 SMTP_SECURITY = os.getenv("SMTP_SECURITY", "starttls").lower()
 SMTP_TIMEOUT = int(os.getenv("SMTP_TIMEOUT", "10"))
+
+# --- Tag history buffer (in-memory substitute for variables_tag's missing
+# row history — see db.snapshot_variables_tag) ---
+TAG_BUFFER_POLL_SECONDS = int(os.getenv("TAG_BUFFER_POLL_SECONDS", "5"))
+TAG_BUFFER_RETENTION_MINUTES = int(os.getenv("TAG_BUFFER_RETENTION_MINUTES", "60"))

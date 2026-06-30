@@ -85,7 +85,7 @@ def get_latest(
 def get_series(
     device_id: int = Query(..., ge=1),
     metric: str = Query(..., min_length=1),
-    minutes: int = Query(15, ge=1, le=1440),
+    minutes: int = Query(15, ge=1, le=10080),
     _user: dict = Depends(get_current_user),
 ):
     """Time-series over the last `minutes` — used to seed the chart on load."""

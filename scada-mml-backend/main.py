@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 
@@ -6,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import alarms
 import auth
+import config
 import dashboards
 import datasources
 import db
@@ -58,6 +60,33 @@ def _ensure_tables() -> None:
     db.init_panels_table()
     db.init_dashboards_table()
     db.init_datasources_table()
+
+
+_tag_buffer_task: asyncio.Task | None = None
+
+
+async def _tag_buffer_loop() -> None:
+    """Snapshot public.variables_tag into db's in-memory history buffer on a
+    timer, so Live panels bound to it can chart real `last N minutes` data
+    despite the table holding only the current value per tag."""
+    while True:
+        try:
+            await asyncio.to_thread(db.snapshot_variables_tag)
+        except Exception:
+            logger.exception("Tag buffer snapshot failed")
+        await asyncio.sleep(config.TAG_BUFFER_POLL_SECONDS)
+
+
+@app.on_event("startup")
+async def _start_tag_buffer() -> None:
+    global _tag_buffer_task
+    _tag_buffer_task = asyncio.create_task(_tag_buffer_loop())
+
+
+@app.on_event("shutdown")
+async def _stop_tag_buffer() -> None:
+    if _tag_buffer_task:
+        _tag_buffer_task.cancel()
 
 
 @app.get("/health")

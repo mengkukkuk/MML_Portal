@@ -1,13 +1,8 @@
-Browser -> ISS manager ✅ exposed url
-   ↓
-Python Web Application
-   ├─ Login/Auth + Reset Password ✅ -> JWT + bcrypt
-   ├─ User Role ✅ Add role
-   ├─ Business Logic X
-   ├─ Machine Control X
-   ├─ API ✅ -> FastAPI
-   └─ Embed Grafana Dashboard ✅
-           ↓
-        Grafana Server ✅ -> localhost:3000
-           ↓
-        PostgreSQL -> port:5432, host=26.252.139.132
+30/6/2026
+
+/live
+Panel :
+    Table: show date time / current issue is show only time without date
+
+    Add tag changer to the left side of the time-range selector.
+The tag changer will be used to change tag_name of selected datasource table.

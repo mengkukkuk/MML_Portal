@@ -48,6 +48,19 @@ const POLL_INTERVALS = [
   { value: 3600, label: '1h' },
 ]
 
+// Time-range selector — how far back this tile's chart/history fetches go.
+// A view-only preference (not persisted to the panel record), so any viewer
+// can widen or narrow their own window independent of the admin's config.
+const TIME_RANGES = [
+  { value: 10, label: 'Last 10 min' },
+  { value: 30, label: 'Last 30 min' },
+  { value: 60, label: 'Last 1 hour' },
+  { value: 480, label: 'Last 8 hours' },
+  { value: 1440, label: 'Last 24 hours' },
+  { value: 10080, label: 'Last week' },
+]
+const rangeMinutes = ref(10)
+
 const pollSeconds = computed(() => props.panel.poll_interval_seconds || 5)
 const isTag = computed(() => props.panel.source === 'tag')
 const isTable = computed(() => props.panel.source === 'table')
@@ -67,6 +80,10 @@ const tableHasFilter = computed(() => !!props.panel.filter_col && tableFilters.v
 
 function onPollIntervalSelect(v) {
   emit('poll-interval-change', props.panel, v)
+}
+
+function onRangeSelect(v) {
+  rangeMinutes.value = v
 }
 
 // Per-series data, keyed by series key (tag name for tag source, metric for
@@ -661,7 +678,7 @@ const tableRows = computed(() => {
 
 // --- Polling ---------------------------------------------------------------
 function trimWindow(arr) {
-  const cutoff = Date.now() - props.panel.window_minutes * 60_000
+  const cutoff = Date.now() - rangeMinutes.value * 60_000
   const kept = arr.filter(([t]) => t >= cutoff)
   // Never blank the chart: if every point has aged out of the window (a stale or
   // lagging source), keep the most recent one so time-series/bar still show it.
@@ -701,7 +718,7 @@ async function seed() {
           tsCol: props.panel.ts_col,
           filterCol: props.panel.filter_col,
           filterVal: s.filterVal,
-          minutes: props.panel.window_minutes,
+          minutes: rangeMinutes.value,
           datasourceId: props.panel.datasource_id,
         }),
       ),
@@ -751,7 +768,7 @@ async function seed() {
   }
   try {
     const key = props.panel.metric
-    const res = await fetchSeries(props.panel.device_id, props.panel.metric, props.panel.window_minutes)
+    const res = await fetchSeries(props.panel.device_id, props.panel.metric, rangeMinutes.value)
     unit.value = res.unit || ''
     const fn = mathFn.value
     const arr = res.points.map((p) => [new Date(p.ts).getTime(), applyExpr(fn, p.value)])
@@ -887,7 +904,7 @@ watch(pollSeconds, startTimer)
 watch(
   () => JSON.stringify([
     props.panel.source, props.panel.device_id, props.panel.metric,
-    props.panel.window_minutes, seriesTags.value,
+    rangeMinutes.value, seriesTags.value,
     props.panel.table_name, props.panel.filter_col, props.panel.ts_col,
     props.panel.datasource_id,
   ]),
@@ -923,6 +940,15 @@ onBeforeUnmount(() => {
         <h3 class="panel__title">{{ panel.title }}</h3>
       </div>
       <div class="panel__actions">
+        <el-select
+          :model-value="rangeMinutes"
+          size="small"
+          class="panel__range"
+          title="Time range"
+          @update:model-value="onRangeSelect"
+        >
+          <el-option v-for="it in TIME_RANGES" :key="it.value" :label="it.label" :value="it.value" />
+        </el-select>
         <el-select
           :model-value="pollSeconds"
           size="small"
@@ -1144,6 +1170,10 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: var(--space-1);
   flex-shrink: 0;
+}
+
+.panel__range {
+  width: 118px;
 }
 
 .panel__poll {
