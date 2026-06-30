@@ -1,7 +1,9 @@
 ﻿"""Dashboard-panel endpoints for the admin-managed live grid.
 
 Reads are open to any authenticated user (the Live dashboard renders them);
-writes (create / update / delete) require an admin token (``require_admin``).
+writes (create / update / delete) require an admin token (``require_admin``),
+except changing a panel's poll interval — operators may do that too via the
+narrow PATCH .../poll-interval endpoint (``require_operator_or_admin``).
 A panel binds to one of two data sources:
   - source='device': legacy device_id + metric (public.sensor_readings)
   - source='tag'   : tag_name + metric one-of TAG_FIELDS (public.variables_tag)
@@ -13,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 import db
-from auth import get_current_user, require_admin
+from auth import get_current_user, require_admin, require_operator_or_admin
 
 router = APIRouter(prefix="/api/panels", tags=["panels"])
 
@@ -76,6 +78,10 @@ class PanelIn(BaseModel):
     ts_col: str | None = None
     dashboard_id: int | None = None
     datasource_id: int | None = None
+
+
+class PollIntervalIn(BaseModel):
+    poll_interval_seconds: int
 
 
 # --- Helpers ---------------------------------------------------------------
@@ -226,6 +232,23 @@ def update_panel(panel_id: int, body: PanelIn, _admin: dict = Depends(require_ad
         body.dashboard_id,
         body.datasource_id,
     )
+    if panel is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Panel not found")
+    return panel
+
+
+@router.patch("/{panel_id}/poll-interval", response_model=PanelOut)
+def update_poll_interval(
+    panel_id: int, body: PollIntervalIn, _user: dict = Depends(require_operator_or_admin)
+):
+    """Operators (and admins) may change a panel's poll cadence without the
+    full panel-edit rights update_panel() requires."""
+    if body.poll_interval_seconds not in VALID_POLL_INTERVALS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"poll_interval_seconds must be one of: {sorted(VALID_POLL_INTERVALS)}",
+        )
+    panel = db.update_panel_poll_interval(panel_id, body.poll_interval_seconds)
     if panel is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Panel not found")
     return panel

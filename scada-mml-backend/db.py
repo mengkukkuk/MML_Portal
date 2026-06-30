@@ -641,6 +641,25 @@ def update_panel(
     return row
 
 
+def update_panel_poll_interval(panel_id: int, poll_interval_seconds: int) -> dict[str, Any] | None:
+    """Update only a panel's poll cadence. Returns None if no such panel.
+
+    Narrower than update_panel() so operators can be granted this one write
+    without exposing the rest of a panel's config (title, source, options, …)
+    to a non-admin role.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            f"""UPDATE dashboard_panels
+            SET poll_interval_seconds = %s
+            WHERE id = %s
+            RETURNING {_PANEL_COLS}""",
+            (poll_interval_seconds, panel_id),
+        ).fetchone()
+        conn.commit()
+    return row
+
+
 def delete_panel(panel_id: int) -> bool:
     """Delete a panel. Returns True if a row was removed."""
     with get_connection() as conn:

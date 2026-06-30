@@ -32,6 +32,9 @@ const props = defineProps({
   panel: { type: Object, required: true },
   deviceName: { type: String, default: '' },
   canManage: { type: Boolean, default: false },
+  // Narrower than canManage: operators may change poll interval without
+  // full panel-edit rights (Edit/Duplicate/Delete still gate on canManage).
+  canChangePollInterval: { type: Boolean, default: false },
   editMode: { type: Boolean, default: false },
   // Bumped by the Live page's Refresh button to force an immediate re-fetch.
   refreshSignal: { type: Number, default: 0 },
@@ -184,6 +187,7 @@ const seriesList = computed(() =>
     label: s.label,
     color: colorAt(i),
     valueCol: s.valueCol,
+    unitKey: s.unitKey,
     unit: unitFor(s),
     points: seriesPoints.value[s.key] || [],
     latest: seriesLatest.value[s.key] || null,
@@ -211,11 +215,13 @@ function fmt(v) {
 }
 
 // Threshold → colour. warn/crit are "value ≥" cut-offs; otherwise the series base.
-function thColor(v, base = colorAt(0)) {
-  const { warn, crit } = opts.value
+function thColorWithThresholds(v, base, warn, crit) {
   if (crit != null && v >= crit) return CRIT_COLOR
   if (warn != null && v >= warn) return WARN_COLOR
   return base
+}
+function thColor(v, base = colorAt(0)) {
+  return thColorWithThresholds(v, base, opts.value.warn, opts.value.crit)
 }
 
 // --- Shared ECharts fragments ----------------------------------------------
@@ -619,19 +625,34 @@ function candlestickOption() {
   }
 }
 
-// Gauge: rendered as small multiples (one radial gauge per series).
+// Per-series gauge override: panel.options.gaugeSeries[unitKey] = {min,max,
+// decimals,warn,crit}, set by the admin editor. Any field left unset falls
+// back to the gauge's shared (panel-wide) value, so an override only needs to
+// name what differs for that one series.
+function gaugeParamsFor(s) {
+  const override = opts.value.gaugeSeries?.[s.unitKey] || {}
+  return {
+    min: override.min ?? Number(opts.value.min ?? 0),
+    max: override.max ?? Number(opts.value.max ?? 100),
+    decimals: override.decimals ?? opts.value.decimals,
+    warn: override.warn ?? opts.value.warn,
+    crit: override.crit ?? opts.value.crit,
+  }
+}
+
+// Gauge: rendered as small multiples (one radial gauge per series, each
+// resolving its own min/max/decimals/warn/crit via gaugeParamsFor).
 function gaugeOptionFor(s, i) {
-  const min = Number(opts.value.min ?? 0)
-  const max = Number(opts.value.max ?? 100)
+  const { min, max, decimals, warn, crit } = gaugeParamsFor(s)
   const span = max - min || 1
   const color = colorAt(i)
-  const { warn, crit } = opts.value
   const stops = []
   if (warn != null) stops.push([(warn - min) / span, color])
   if (crit != null) stops.push([(crit - min) / span, warn != null ? WARN_COLOR : color])
   stops.push([1, crit != null ? CRIT_COLOR : warn != null ? WARN_COLOR : color])
   const val = s.latest?.value ?? min
-  const pc = thColor(val, color)
+  const pc = thColorWithThresholds(val, color, warn, crit)
+  const fmtGauge = (v) => (decimals == null ? `${v}` : Number(v).toFixed(decimals))
   return {
     series: [{
       type: 'gauge', min, max, radius: '92%', center: ['50%', '58%'],
@@ -642,7 +663,7 @@ function gaugeOptionFor(s, i) {
       splitLine: { length: 10, lineStyle: { color: 'rgba(255,255,255,0.25)' } },
       axisLabel: { color: '#8a99b3', fontSize: 9, distance: 12 },
       anchor: { show: true, size: 8, itemStyle: { color: pc } },
-      detail: { valueAnimation: true, formatter: (v) => `${fmt(v)}${s.unit ? ' ' + s.unit : ''}`, color: '#e6edf7', fontSize: isMulti.value ? 14 : 18, offsetCenter: [0, '78%'] },
+      detail: { valueAnimation: true, formatter: (v) => `${fmtGauge(v)}${s.unit ? ' ' + s.unit : ''}`, color: '#e6edf7', fontSize: isMulti.value ? 14 : 18, offsetCenter: [0, '78%'] },
       data: [{ value: val }],
     }],
   }
@@ -1024,8 +1045,8 @@ onBeforeUnmount(() => {
                 :model-value="pollSeconds"
                 size="small"
                 class="gearpop__control"
-                :disabled="!canManage"
-                :title="canManage ? '' : 'Admin only'"
+                :disabled="!canChangePollInterval"
+                :title="canChangePollInterval ? '' : 'Operator or admin only'"
                 @update:model-value="onPollIntervalSelect"
               >
                 <el-option v-for="it in POLL_INTERVALS" :key="it.value" :label="it.label" :value="it.value" />

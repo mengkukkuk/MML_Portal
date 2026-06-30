@@ -16,7 +16,7 @@ import { useAuthStore } from '@/stores/auth'
 import LivePanel from '@/components/LivePanel.vue'
 import { fetchDevices } from '@/api/readings'
 import { fetchSchemaTables, fetchSchemaColumns, fetchSchemaValues } from '@/api/schema'
-import { fetchPanels, createPanel, updatePanel, deletePanel } from '@/api/panels'
+import { fetchPanels, createPanel, updatePanel, deletePanel, updatePollInterval } from '@/api/panels'
 import { fetchDashboards, createDashboard, updateDashboard, deleteDashboard } from '@/api/dashboards'
 import { fetchDatasources } from '@/api/datasources'
 import { colorAt } from '@/utils/seriesPalette'
@@ -40,6 +40,9 @@ const POLL_INTERVALS = [
 
 const auth = useAuthStore()
 const canManage = computed(() => auth.role === 'admin')
+// Narrower than canManage: operators may change a panel's poll cadence
+// without full panel-edit rights (backed by PATCH .../poll-interval).
+const canChangePollInterval = computed(() => auth.role === 'admin' || auth.role === 'operator')
 const route = useRoute()
 const router = useRouter()
 
@@ -162,6 +165,10 @@ const form = reactive({
   metric: null,
   value_cols: [],    // additional value columns (each becomes its own series)
   units: {},         // value-column name → display unit suffix (e.g. { value_tag: 'bar' })
+  // Gauge-only: per-series override of the shared min/max/decimals/warn/crit,
+  // keyed the same way as units (filter value when filtered, else value column).
+  // Kept outside form.options like units/filters — see save()'s gaugeMap build.
+  gaugeSeries: {},
   filter_col: null,  // optional series-key column
   filters: [],       // chosen filter values, each its own series/color
   ts_col: null,      // optional timestamp column (enables real history)
@@ -205,6 +212,29 @@ function setUnit(key, val) {
   else delete form.units[key]
 }
 
+// Series this gauge panel will render — same key precedence as units (filter
+// value when filtered, else value column). Per-series override fields only
+// make sense once there's more than one series; the editor hides the section
+// otherwise since it would just duplicate the shared options above it.
+const gaugeSeriesKeys = computed(() => {
+  if (form.chart_type !== 'gauge') return []
+  return form.filter_col ? form.filters.filter(Boolean) : allValueCols.value
+})
+
+// Set (or clear, on null) one field of a series' gauge override. Drops the
+// whole entry once it has no overridden fields left so empty {} never rides
+// into options.gaugeSeries.
+function setGaugeSeriesField(key, field, value) {
+  const entry = { ...(form.gaugeSeries[key] || {}) }
+  if (value == null) delete entry[field]
+  else entry[field] = value
+  if (Object.keys(entry).length) form.gaugeSeries[key] = entry
+  else delete form.gaugeSeries[key]
+}
+function hasGaugeOverride(key) {
+  return !!form.gaugeSeries[key] && Object.keys(form.gaugeSeries[key]).length > 0
+}
+
 // First filter value not already chosen, so [+ Add series] picks something fresh.
 function firstUnusedFilter() {
   const used = new Set(form.filters)
@@ -219,7 +249,10 @@ function addFilter() {
 function removeFilter(i) {
   const fv = form.filters[i]
   form.filters.splice(i, 1)
-  if (fv != null && !form.filters.includes(fv)) delete form.units[fv]
+  if (fv != null && !form.filters.includes(fv)) {
+    delete form.units[fv]
+    delete form.gaugeSeries[fv]
+  }
 }
 
 const dialogTitle = computed(() => (editingId.value ? 'Edit panel' : 'Add panel'))
@@ -294,6 +327,7 @@ async function applyBinding({ table, metric, value_cols, filter_col, filters, ts
   // across modes doesn't lose data; save() does the final mode-specific prune.
   const liveKeys = new Set([form.metric, ...form.value_cols, ...form.filters].filter(Boolean))
   for (const k of Object.keys(form.units)) if (!liveKeys.has(k)) delete form.units[k]
+  for (const k of Object.keys(form.gaugeSeries)) if (!liveKeys.has(k)) delete form.gaugeSeries[k]
 }
 
 async function onTableChange(table) {
@@ -341,6 +375,7 @@ async function openCreate() {
   form.options = defaultOptions('timeseries')
   form.poll_interval_seconds = 5
   form.units = {}
+  form.gaugeSeries = {}
   dialogVisible.value = true  // show immediately; dropdowns populate once schema resolves
   // Reset to the app DB's tables (a prior edit may have left a datasource's list).
   await loadTablesFor(null)
@@ -376,10 +411,11 @@ async function openEdit(panel) {
   form.chart_type = panel.chart_type === 'line' ? 'timeseries' : panel.chart_type
   // `filters`/`tags` and `mathExpr` live outside form.options — onVizTypeChange
   // replaces form.options wholesale and would otherwise drop them.
-  const { tags: _t, filters: _f, value_cols: _v, mathExpr: _m, units: _u, ...vizOpts } = panel.options || {}
+  const { tags: _t, filters: _f, value_cols: _v, mathExpr: _m, units: _u, gaugeSeries: _g, ...vizOpts } = panel.options || {}
   form.options = { ...defaultOptions(form.chart_type), ...vizOpts }
   form.mathExpr = panel.options?.mathExpr || ''
   form.units = { ...(panel.options?.units || {}) }
+  form.gaugeSeries = { ...(panel.options?.gaugeSeries || {}) }
   form.window_minutes = panel.window_minutes
   form.poll_interval_seconds = panel.poll_interval_seconds || 5
 
@@ -426,6 +462,12 @@ async function save() {
     const unitKeys = form.filter_col ? form.filters : allValueCols.value
     const unitMap = {}
     for (const k of unitKeys) if (form.units[k]) unitMap[k] = form.units[k]
+    // Per-series gauge overrides — same key precedence as units, pruned the
+    // same way so a stale series' min/max/warn/crit never rides into save().
+    const gaugeMap = {}
+    if (form.chart_type === 'gauge') {
+      for (const k of unitKeys) if (form.gaugeSeries[k]) gaugeMap[k] = { ...form.gaugeSeries[k] }
+    }
     // Preserve the panel's layout when editing; seed a bottom slot when creating.
     const existing = editingId.value
       ? panels.value.find((p) => p.id === editingId.value)
@@ -453,6 +495,7 @@ async function save() {
         filters: [...form.filters],
         ...(form.value_cols.length ? { value_cols: [...form.value_cols] } : {}),
         ...(Object.keys(unitMap).length ? { units: unitMap } : {}),
+        ...(Object.keys(gaugeMap).length ? { gaugeSeries: gaugeMap } : {}),
         ...extraOpts,
         ...layoutOpt,
       },
@@ -582,27 +625,12 @@ async function confirmDelete() {
 }
 
 // Persist a single panel's poll-interval change without opening the editor.
+// Operators may do this too (narrower than the full panel-edit endpoint
+// canManage gates elsewhere), so this checks canChangePollInterval instead.
 async function onPollIntervalChange(panel, seconds) {
-  if (!canManage.value) return
+  if (!canChangePollInterval.value) return
   try {
-    const payload = {
-      title: panel.title,
-      source: panel.source || 'device',
-      device_id: panel.device_id,
-      tag_name: panel.tag_name,
-      datasource_id: panel.datasource_id ?? null,
-      table_name: panel.table_name,
-      filter_col: panel.filter_col,
-      ts_col: panel.ts_col,
-      metric: panel.metric,
-      window_minutes: panel.window_minutes,
-      chart_type: panel.chart_type === 'line' ? 'timeseries' : panel.chart_type,
-      options: panel.options || {},
-      poll_interval_seconds: seconds,
-      dashboard_id: panel.dashboard_id ?? activeDashboardId.value,
-      position: panel.position,
-    }
-    const updated = await updatePanel(panel.id, payload)
+    const updated = await updatePollInterval(panel.id, seconds)
     const i = panels.value.findIndex((p) => p.id === panel.id)
     if (i !== -1) panels.value[i] = updated
   } catch (e) {
@@ -1006,6 +1034,7 @@ async function removeDashboard(dash) {
           :panel="panelById(item.i)"
           :device-name="deviceName(panelById(item.i).device_id)"
           :can-manage="canManage"
+          :can-change-poll-interval="canChangePollInterval"
           :edit-mode="editMode"
           :refresh-signal="refreshSignal"
           @edit="openEdit"
@@ -1155,6 +1184,71 @@ async function removeDashboard(dash) {
                 </div>
                 <el-button class="taglist__add" text @click="addFilter">+ Add series</el-button>
               </div>
+            </el-form-item>
+
+            <!-- Gauge only, and only once there's more than one series to tell
+                 apart — a single gauge already has the shared options above. -->
+            <el-form-item v-if="form.chart_type === 'gauge' && gaugeSeriesKeys.length > 1" label="Per-series gauge options">
+              <el-collapse class="gaugeopts">
+                <el-collapse-item v-for="(key, i) in gaugeSeriesKeys" :key="key" :name="key">
+                  <template #title>
+                    <span class="gaugeopts__head">
+                      <span class="taglist__swatch" :style="{ background: colorAt(i) }" />
+                      {{ key }}
+                      <span v-if="hasGaugeOverride(key)" class="pde__expr-badge">custom</span>
+                    </span>
+                  </template>
+                  <div class="gaugeopts__grid">
+                    <el-form-item label="Min">
+                      <el-input-number
+                        :model-value="form.gaugeSeries[key]?.min"
+                        :controls="false"
+                        placeholder="default"
+                        style="width: 100%"
+                        @update:model-value="(v) => setGaugeSeriesField(key, 'min', v)"
+                      />
+                    </el-form-item>
+                    <el-form-item label="Max">
+                      <el-input-number
+                        :model-value="form.gaugeSeries[key]?.max"
+                        :controls="false"
+                        placeholder="default"
+                        style="width: 100%"
+                        @update:model-value="(v) => setGaugeSeriesField(key, 'max', v)"
+                      />
+                    </el-form-item>
+                    <el-form-item label="Decimals">
+                      <el-input-number
+                        :model-value="form.gaugeSeries[key]?.decimals"
+                        :controls="false"
+                        :min="0"
+                        :max="4"
+                        placeholder="default"
+                        style="width: 100%"
+                        @update:model-value="(v) => setGaugeSeriesField(key, 'decimals', v)"
+                      />
+                    </el-form-item>
+                    <el-form-item label="Warning ≥">
+                      <el-input-number
+                        :model-value="form.gaugeSeries[key]?.warn"
+                        :controls="false"
+                        placeholder="default"
+                        style="width: 100%"
+                        @update:model-value="(v) => setGaugeSeriesField(key, 'warn', v)"
+                      />
+                    </el-form-item>
+                    <el-form-item label="Critical ≥">
+                      <el-input-number
+                        :model-value="form.gaugeSeries[key]?.crit"
+                        :controls="false"
+                        placeholder="default"
+                        style="width: 100%"
+                        @update:model-value="(v) => setGaugeSeriesField(key, 'crit', v)"
+                      />
+                    </el-form-item>
+                  </div>
+                </el-collapse-item>
+              </el-collapse>
             </el-form-item>
 
             <!-- Expression: collapsed by default, badge shows when active -->
@@ -1557,6 +1651,29 @@ async function removeDashboard(dash) {
 
 .taglist__add {
   align-self: flex-start;
+}
+
+/* Per-series gauge option overrides — one collapsed row per series so the
+ * dialog stays calm; expand a row to set just the fields that differ from
+ * the gauge's shared min/max/decimals/warn/crit above. */
+.gaugeopts {
+  width: 100%;
+  border: none;
+  --el-collapse-border-color: var(--border-soft);
+}
+
+.gaugeopts__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.gaugeopts__grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-1) 0;
 }
 
 .vizpicker {

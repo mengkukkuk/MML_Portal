@@ -1,11 +1,15 @@
 30/6/2026
 
 /live
-Panel :
+Panel:
+    ALL: Add 'Condition' option to panel editor,
+         1. Condition is input box with MATH comparison operators (=,>,>=,<,<=,AND,OR,NOT).
+            1.1 "IF [Pressure1] > 20"
+            1.2 "IF [Pressure1] > 20 AND [Pressure2] > 20"
+         2. Shows "[Pressure1]ALERTS" in red color above the graph if the condition is true.
+         3. Condition is not required. And can be more than one.
+
     Table: show date time / current issue is show only time without date
 
-    Add Series values changer to the left side of the time-range selector.
-This changer will be used to change Series in table's Filter column.
-Example: 1.[Temperature1 : value_tag, setpoint, high_value, low_value]
-2.Change the series values to [Temperature2]
-3.Show same parameter values in the table but in different series [Temperature2]
+    Gauges: Separate 'Gauge options' for each series values. Each gauge will have its own options.
+

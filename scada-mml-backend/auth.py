@@ -147,6 +147,20 @@ def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
     return current_user
 
 
+def require_operator_or_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    """Allow operators and admins through. Use for writes an operator may make
+    without full admin (panel-editing) rights — e.g. changing a panel's poll
+    interval. Named explicitly (rather than reusing get_current_user) so the
+    intent reads at the call site even though every account today is one of
+    these two roles."""
+    if current_user["role"] not in ("admin", "operator"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Operator or admin access required",
+        )
+    return current_user
+
+
 # --- Endpoints -------------------------------------------------------------
 @router.post("/login")
 def login(body: LoginRequest, response: Response):
