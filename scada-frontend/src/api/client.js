@@ -38,6 +38,23 @@ function drainQueue(newToken, error) {
   pendingQueue = []
 }
 
+// Transient failures (client-side timeout, dropped connection, or a gateway
+// error from the IIS ARR proxy) get one quick retry before we give up — these
+// are unrelated to auth and would otherwise surface as a bare rejection that
+// callers like LivePanel's polling silently conflate with "no data".
+const RETRYABLE_STATUSES = new Set([502, 503, 504])
+const RETRY_DELAY_MS = 1500
+
+function isRetryableFailure(error) {
+  if (error.response) return RETRYABLE_STATUSES.has(error.response.status)
+  // No response at all → network error or client-side timeout (ECONNABORTED).
+  return true
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -79,9 +96,14 @@ apiClient.interceptors.response.use(
       }
     }
 
-    if (import.meta.env.DEV) {
-      console.warn('[api]', error.config?.url, error.message)
+    console.error('[api]', original?.url, error.response?.status || error.code || error.message)
+
+    if (!original._networkRetry && isRetryableFailure(error) && !isAuthCall) {
+      original._networkRetry = true
+      await delay(RETRY_DELAY_MS)
+      return apiClient(original)
     }
+
     return Promise.reject(error)
   },
 )

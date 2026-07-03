@@ -125,6 +125,27 @@ const unit = ref('')
 const error = ref('')
 
 let timer = null
+let retryTimer = null
+const POLL_RETRY_DELAY_MS = 4000
+
+// A failed poll (network error, timeout, gateway error) gets one quick retry
+// instead of waiting for the panel's full configured interval — otherwise a
+// single bad poll can strand a slow panel (10m/30m/1h) looking "stuck" until
+// its next scheduled tick.
+function clearRetryTimer() {
+  if (retryTimer) {
+    clearTimeout(retryTimer)
+    retryTimer = null
+  }
+}
+
+function scheduleRetry() {
+  clearRetryTimer()
+  retryTimer = setTimeout(() => {
+    retryTimer = null
+    poll()
+  }, POLL_RETRY_DELAY_MS)
+}
 
 // Normalize legacy "line" panels to the time-series renderer.
 const vizType = computed(() => (props.panel.chart_type === 'line' ? 'timeseries' : props.panel.chart_type))
@@ -856,6 +877,7 @@ async function seed() {
 }
 
 async function poll() {
+  clearRetryTimer()
   if (isTag.value) {
     // Fetch every tag concurrently; one dead tag must not blank the panel.
     const results = await Promise.allSettled(seriesTags.value.map((t) => fetchTagLatest(t)))
@@ -865,10 +887,15 @@ async function poll() {
     const nextPoints = { ...seriesPoints.value }
     const nextLatest = { ...seriesLatest.value }
     let anyOk = false
+    let anyFailed = false
     const fn = mathFn.value
     results.forEach((res, i) => {
       const tag = seriesTags.value[i]
-      if (res.status !== 'fulfilled') return
+      if (res.status !== 'fulfilled') {
+        anyFailed = true
+        console.error('[live-panel] tag fetch failed:', tag, res.reason)
+        return
+      }
       const raw = res.value[props.panel.metric]
       if (raw == null) return
       anyOk = true
@@ -880,8 +907,15 @@ async function poll() {
     })
     seriesPoints.value = nextPoints
     seriesLatest.value = nextLatest
-    error.value = anyOk ? '' : 'No value reported.'
-    if (anyOk) emit('updated', sampleT)
+    if (anyOk) {
+      error.value = ''
+      emit('updated', sampleT)
+    } else if (anyFailed) {
+      error.value = 'Connection error — retrying…'
+      scheduleRetry()
+    } else {
+      error.value = 'No value reported.'
+    }
     return
   }
   if (isTable.value) {
@@ -903,11 +937,16 @@ async function poll() {
     const nextPoints = { ...seriesPoints.value }
     const nextLatest = { ...seriesLatest.value }
     let anyOk = false
+    let anyFailed = false
     let newest = 0
     const fn = mathFn.value
     results.forEach((res, i) => {
       const key = specs[i].key
-      if (res.status !== 'fulfilled') return
+      if (res.status !== 'fulfilled') {
+        anyFailed = true
+        console.error('[live-panel] series fetch failed:', key, res.reason)
+        return
+      }
       const raw = res.value.value
       if (raw == null) return
       anyOk = true
@@ -924,8 +963,15 @@ async function poll() {
     })
     seriesPoints.value = nextPoints
     seriesLatest.value = nextLatest
-    error.value = anyOk ? '' : 'No value reported.'
-    if (anyOk) emit('updated', newest || sampleT)
+    if (anyOk) {
+      error.value = ''
+      emit('updated', newest || sampleT)
+    } else if (anyFailed) {
+      error.value = 'Connection error — retrying…'
+      scheduleRetry()
+    } else {
+      error.value = 'No value reported.'
+    }
     return
   }
   try {
@@ -947,8 +993,13 @@ async function poll() {
     seriesLatest.value = { ...seriesLatest.value, [key]: { value, ts: r.ts } }
     emit('updated', t)
   } catch (e) {
-    if (e?.response?.status === 404) error.value = 'No readings yet for this connection.'
-    else error.value = e?.message || 'Failed to fetch latest reading.'
+    if (e?.response?.status === 404) {
+      error.value = 'No readings yet for this connection.'
+    } else {
+      console.error('[live-panel] latest fetch failed:', props.panel.device_id, props.panel.metric, e)
+      error.value = 'Connection error — retrying…'
+      scheduleRetry()
+    }
   }
 }
 
@@ -989,6 +1040,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer)
+  clearRetryTimer()
 })
 </script>
 

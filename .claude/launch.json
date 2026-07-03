@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "scada-frontend", "run", "dev"],
       "port": 5173
+    },
+    {
+      "name": "backend",
+      "runtimeExecutable": "scada-mml-backend/venv/Scripts/python.exe",
+      "runtimeArgs": ["scada-mml-backend/main.py"],
+      "port": 8088
     }
   ]
 }
