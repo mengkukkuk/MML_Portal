@@ -40,4 +40,14 @@ export default defineConfig({
       '/ws': { target: 'ws://127.0.0.1:8088', ws: true },
     },
   },
+  // TEMP: mirrors server.proxy so `vite preview` (serving the production dist/
+  // build) can be soak-tested against the real backend, same as IIS ARR would
+  // proxy /api. Remove after diagnosing the ACCESS_EXPIRE_MIN issue.
+  preview: {
+    port: 4173,
+    proxy: {
+      '/api': 'http://127.0.0.1:8088',
+      '/ws': { target: 'ws://127.0.0.1:8088', ws: true },
+    },
+  },
 })
