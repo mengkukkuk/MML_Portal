@@ -8,7 +8,8 @@
       "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(''''bin:'''', d.get\\(''''bin''''\\)\\); print\\(''''main:'''', d.get\\(''''main''''\\)\\)\")",
       "Bash(claude mcp:*)",
       "mcp__Claude_Preview__preview_start",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(powershell -NoProfile -Command \"Get-Service | Where-Object {$_Name -like ''*mml*'' -or $_Name -like ''*scada*'' -or $_DisplayName -like ''*mml*''} | Select-Object Name,Status,DisplayName; sc.exe queryex mml-api 2>&1 | Select-String ''STATE''\")"
     ]
   }
 }

@@ -8,7 +8,7 @@
  * (device + metric), pick a Grafana-style visualization type and tune that
  * type's parameters via a sub-menu. Operators get a read-only grid.
  */
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { GridLayout, GridItem } from 'grid-layout-plus'
@@ -38,9 +38,6 @@ const POLL_INTERVALS = [
   { value: 1800, label: '30 minutes' },
   { value: 3600, label: '1 hour' },
 ]
-// Date only
-const currentDate = new Date();
-const today = currentDate.toISOString().split('T')[0];
 
 const auth = useAuthStore()
 const canManage = computed(() => auth.role === 'admin')
@@ -598,9 +595,15 @@ const deleting = ref(false)
 const deleteTarget = ref(null)
 
 const lastUpdatedAt = ref(0)
-const lastUpdatedLabel = computed(() =>
-  lastUpdatedAt.value ? new Date(lastUpdatedAt.value).toLocaleTimeString() : '',
-)
+// Build date + time from the same timestamp, both in local time, so they never
+// disagree and the date advances past midnight. (Previously the date came from a
+// UTC string frozen at page load, which mismatched the local time and looked stuck.)
+const lastUpdatedLabel = computed(() => {
+  if (!lastUpdatedAt.value) return ''
+  const d = new Date(lastUpdatedAt.value)
+  const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return `${date} ${d.toLocaleTimeString()}`
+})
 function onPanelUpdated(ts) {
   if (ts > lastUpdatedAt.value) lastUpdatedAt.value = ts
 }
@@ -615,6 +618,20 @@ function refreshAll() {
   refreshSignal.value = Date.now()
   setTimeout(() => { refreshing.value = false }, 700)
 }
+
+// Background auto-refresh: fire the same re-fetch the Refresh button triggers,
+// on a fixed cadence, so tiles stay live without a manual click. Bumps the
+// signal silently (no button spinner) and is cleared on unmount.
+const AUTO_REFRESH_MS = 5000
+let autoRefreshTimer = null
+onMounted(() => {
+  autoRefreshTimer = setInterval(() => {
+    refreshSignal.value = Date.now()
+  }, AUTO_REFRESH_MS)
+})
+onUnmounted(() => {
+  if (autoRefreshTimer) clearInterval(autoRefreshTimer)
+})
 
 function duplicate(panel) {
   duplicateSource.value = panel
@@ -1035,7 +1052,7 @@ async function removeDashboard(dash) {
         <p class="live__sub">Real-time machine panels · per-panel poll interval</p>
       </div>
       <div class="live__clock">
-        <span v-if="lastUpdatedLabel" class="live__updated">Updated : {{today}} {{ lastUpdatedLabel }}</span>
+        <span v-if="lastUpdatedLabel" class="live__updated">Updated : {{ lastUpdatedLabel }}</span>
       </div>
       <div class="live__actions">
         <el-button :loading="refreshing" :disabled="!panels.length" @click="refreshAll">

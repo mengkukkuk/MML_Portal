@@ -938,7 +938,6 @@ async function poll() {
     const nextLatest = { ...seriesLatest.value }
     let anyOk = false
     let anyFailed = false
-    let newest = 0
     const fn = mathFn.value
     results.forEach((res, i) => {
       const key = specs[i].key
@@ -959,13 +958,15 @@ async function poll() {
       const lastT = arr.length ? arr[arr.length - 1][0] : -1
       if (t > lastT) nextPoints[key] = trimWindow([...arr, [t, value]])
       nextLatest[key] = { value, ts: res.value.ts || new Date(sampleT).toISOString() }
-      if (t > newest) newest = t
     })
     seriesPoints.value = nextPoints
     seriesLatest.value = nextLatest
     if (anyOk) {
       error.value = ''
-      emit('updated', newest || sampleT)
+      // "Updated" tracks the last successful refresh (wall-clock), not the row's
+      // updated_at — current-state tables leave static columns (e.g. setpoint)
+      // stamped at their last write, which would freeze the header at old dates.
+      emit('updated', sampleT)
     } else if (anyFailed) {
       error.value = 'Connection error — retrying…'
       scheduleRetry()
@@ -991,7 +992,9 @@ async function poll() {
     if (t > lastT) next[key] = trimWindow([...arr, [t, value]])
     seriesPoints.value = next
     seriesLatest.value = { ...seriesLatest.value, [key]: { value, ts: r.ts } }
-    emit('updated', t)
+    // "Updated" tracks the last successful refresh (wall-clock), consistent with
+    // the tag/table paths — not the reading's own timestamp, which may lag.
+    emit('updated', Date.now())
   } catch (e) {
     if (e?.response?.status === 404) {
       error.value = 'No readings yet for this connection.'

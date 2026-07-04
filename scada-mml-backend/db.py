@@ -449,6 +449,24 @@ def buffered_tag_series(tag_name: str, value_col: str, minutes: int) -> list[dic
         return [{"ts": ts, "value": v} for ts, v in buf if ts >= cutoff]
 
 
+def buffered_tag_latest(tag_name: str, value_col: str) -> dict[str, Any] | None:
+    """In-memory substitute for table_latest() against variables_tag.
+
+    variables_tag is overwritten in place and its updated_at is not maintained,
+    so the table's own "ORDER BY updated_at DESC LIMIT 1" returns a frozen row —
+    which strands each Live tile on a stale value. The snapshot buffer carries
+    the real, wall-clock-stamped current value, so serve the newest sample here
+    (mirrors buffered_tag_series). None when the buffer has no point yet, so the
+    caller falls back to the direct SQL query.
+    """
+    with _tag_buffer_lock:
+        buf = _tag_buffer.get((tag_name, value_col))
+        if not buf:
+            return None
+        ts, v = buf[-1]
+    return {"value": v, "ts": ts}
+
+
 # --- Event log (real SCADA data — public.event_logs, read-only) ---------------
 def list_recent_events(limit: int) -> list[dict[str, Any]]:
     """Last `limit` events per (location, tag_name), newest first.
@@ -822,7 +840,22 @@ def table_latest(
     ts_col: str | None,
     datasource_id: int | None = None,
 ) -> dict[str, Any] | None:
-    """Newest matching row's value (+ ts when a timestamp column is given)."""
+    """Newest matching row's value (+ ts when a timestamp column is given).
+
+    variables_tag is a special case (same rationale as table_series): the table
+    is overwritten in place and its updated_at is stale, so ORDER BY updated_at
+    would return a frozen row. Serve the newest buffered sample instead, falling
+    back to the direct SQL query only when the buffer is empty.
+    """
+    if (
+        datasource_id is None
+        and table == "variables_tag"
+        and filter_col == "tag_name"
+        and filter_val is not None
+    ):
+        buffered = buffered_tag_latest(filter_val, value_col)
+        if buffered is not None:
+            return buffered
     with _table_source_conn(datasource_id) as (conn, schema):
         _safe_identifiers(conn, schema, table, value_col, filter_col, ts_col)
         ts_select = (
