@@ -1,0 +1,36 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.cpuCell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.cpuBar {
+  flex: 1;
+  min-width: 80px;
+}
+
+.cpuText {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  width: 34px;
+  flex-shrink: 0;
+}

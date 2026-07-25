@@ -1,0 +1,267 @@
+/* PanelEditorDialog — Grafana-style two-column data-binding + visualization
+ * editor. Ported from LivePage.vue's <style scoped> block (pde__*, taglist__*,
+ * vizpicker__*, submenu__*, gaugeopts__* rules, ~lines 1590-2115). */
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-2) !important;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: var(--space-5);
+}
+
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.left,
+.right {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fieldLabel {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin: 6px 0 0;
+}
+
+.hint code {
+  font-family: var(--font-mono);
+  background: var(--bg-elev);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+/* --- taglist: value-column / filter-value rows -------------------------- */
+.taglist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.taglistRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.taglistSelect {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.taglistUnit {
+  flex: 0 0 140px;
+}
+
+.removePlaceholder {
+  width: 34px;
+  flex: 0 0 34px;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* --- visualization picker ------------------------------------------------ */
+.sectionLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.vizpicker {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.vizItem {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.vizItem:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+.vizItemActive {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.vizIcon {
+  font-size: 20px !important;
+}
+
+.vizLabel {
+  font-size: 10.5px;
+  text-align: center;
+  line-height: 1.2;
+}
+
+/* --- per-type options sub-menu ------------------------------------------ */
+.submenu {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  background: var(--bg-elev);
+}
+
+.submenuHead {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  margin-bottom: var(--space-2);
+}
+
+.submenuGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.submenuField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.submenuLabel {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+/* --- accordions (expression / conditions / gauge overrides) ------------- */
+.accordion {
+  background: var(--bg-elev) !important;
+  border: 1px solid var(--border-soft) !important;
+  border-radius: var(--radius-sm) !important;
+}
+
+.accordion::before {
+  display: none;
+}
+
+.badge {
+  margin-left: 8px;
+  height: 18px !important;
+}
+
+.gaugeHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.gaugeGrid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: var(--space-2);
+}
+
+@media (max-width: 700px) {
+  .gaugeGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* --- alert-condition builder --------------------------------------------- */
+.condBlock {
+  border-top: 1px solid var(--border-soft);
+  padding: var(--space-2) 0;
+}
+
+.condBlock:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.condRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.condWhen {
+  font-size: 12px;
+  color: var(--fg-muted);
+  width: 64px;
+  flex: 0 0 64px;
+}
+
+.condConn {
+  width: 64px;
+  flex: 0 0 64px;
+}
+
+.condSeries {
+  flex: 1 1 140px;
+  min-width: 120px;
+}
+
+.condOp {
+  width: 72px;
+  flex: 0 0 72px;
+}
+
+.condRhstype {
+  width: 88px;
+  flex: 0 0 88px;
+}
+
+.condRhs {
+  flex: 1 1 120px;
+  min-width: 100px;
+}
+
+.condActions {
+  display: flex;
+  gap: 4px;
+}

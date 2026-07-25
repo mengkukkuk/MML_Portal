@@ -1,0 +1,89 @@
+/* LivePage — admin-managed live dashboard grid. Ported from LivePage.vue's
+ * <style scoped> block (header/bar/grid rules). */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.titleWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.clock {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  justify-content: center;
+  min-width: 0;
+}
+
+.updated {
+  font-size: 12px;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.empty {
+  margin: var(--space-6) 0;
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: 14px;
+}
+
+.grid {
+  position: relative;
+}
+
+.grid :global(.react-grid-item) {
+  transition: transform 0.12s ease, width 0.12s ease, height 0.12s ease;
+}
+
+.grid :global(.react-grid-item.react-grid-placeholder) {
+  background: var(--accent);
+  opacity: 0.15;
+  border-radius: var(--radius-sm);
+}
+
+.gridEditing :global(.react-grid-item) {
+  outline: 1px dashed var(--border-soft);
+  outline-offset: 2px;
+}
+
+.smallDialogContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-2) !important;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin: 0;
+}

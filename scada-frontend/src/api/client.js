@@ -79,7 +79,7 @@ apiClient.interceptors.response.use(
       isRefreshing = true
       try {
         const { useAuthStore } = await import('@/stores/auth')
-        const auth = useAuthStore()
+        const auth = useAuthStore.getState()
         const newToken = await auth.refresh()
         drainQueue(newToken, null)
         original.headers.Authorization = `Bearer ${newToken}`
@@ -87,7 +87,7 @@ apiClient.interceptors.response.use(
       } catch (refreshError) {
         drainQueue(null, refreshError)
         const { useAuthStore } = await import('@/stores/auth')
-        const auth = useAuthStore()
+        const auth = useAuthStore.getState()
         auth._clearSession()
         window.location.href = '/login'
         return Promise.reject(refreshError)

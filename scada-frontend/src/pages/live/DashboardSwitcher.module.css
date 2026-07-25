@@ -1,0 +1,30 @@
+.wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.select {
+  min-width: 180px;
+}
+
+.heading {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.manageContent,
+.renameContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-2) !important;
+}
+
+.newRow {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}

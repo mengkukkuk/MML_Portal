@@ -1,0 +1,43 @@
+.header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.left,
+.right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.toggle {
+  font-size: 18px;
+  color: var(--fg-muted);
+}
+
+.user {
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: none;
+}
+
+.userName {
+  font-size: 13px;
+}
+
+@media (max-width: 640px) {
+  .userName {
+    display: none;
+  }
+}

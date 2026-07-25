@@ -1,0 +1,56 @@
+.shell {
+  height: 100vh;
+  background: var(--bg-app);
+  display: flex;
+}
+
+.aside {
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border-soft);
+  transition: width 0.18s ease;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.header {
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-soft);
+  padding: 0 var(--space-5);
+  display: flex;
+  align-items: center;
+  height: var(--header-h);
+  flex-shrink: 0;
+}
+
+.content {
+  padding: var(--space-6);
+  background: var(--bg-app);
+  overflow: auto;
+  flex: 1;
+}
+
+.fade {
+  animation: fadeIn 0.12s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 960px) {
+  .content {
+    padding: var(--space-4);
+  }
+}

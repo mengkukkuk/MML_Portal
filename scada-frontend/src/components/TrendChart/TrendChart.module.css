@@ -1,0 +1,9 @@
+.trend {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+}
+.trendChart {
+  width: 100%;
+}

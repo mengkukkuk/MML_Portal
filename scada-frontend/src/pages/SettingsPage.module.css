@@ -1,0 +1,506 @@
+/* Ported verbatim from SettingsPage.vue's <style scoped> — BEM class names
+   become camelCase CSS-module identifiers; visuals are pixel-matched. */
+
+.cfg {
+  --plate-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  max-width: 1500px;
+  padding-bottom: 88px;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+.cfgHead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+.cfgEyebrow {
+  margin: 0 0 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+.cfgTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  color: var(--fg);
+}
+.cfgSync {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--fg-muted);
+}
+
+/* ── Rack module ────────────────────────────────────────────────────── */
+.mod {
+  position: relative;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.mod::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), transparent 65%);
+  opacity: 0.7;
+}
+.modHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-soft);
+  cursor: pointer;
+  user-select: none;
+}
+.modCollapsed .modHead {
+  border-bottom: none;
+}
+.modTag {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fg);
+}
+.modSub {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.modAction {
+  margin-left: auto;
+  align-self: center;
+}
+.modChevron {
+  font-size: 16px !important;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+  transition: transform 0.18s ease;
+  transform: rotate(0deg);
+}
+.modChevronOpen {
+  transform: rotate(90deg);
+}
+/* Action button pushes chevron to far right; without an action button use auto margin */
+.modHead:not(:has(.modAction)) .modChevron {
+  margin-left: auto;
+}
+.modBody {
+  padding: var(--space-5);
+}
+
+.fldLabel {
+  display: block;
+  margin: 0 0 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+.fldHint {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--fg-dim);
+}
+
+/* ── Signature: theme faceplates ────────────────────────────────────── */
+.plates {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-4);
+}
+.plate {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--plate-radius);
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+  font: inherit;
+  color: inherit;
+}
+.plate:hover {
+  transform: translateY(-2px);
+  border-color: var(--fg-dim);
+}
+.plateActive {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 8px 24px -10px var(--accent);
+}
+.plateScreen {
+  position: relative;
+  display: block;
+  height: 84px;
+  border-radius: 7px;
+  padding: 10px;
+  overflow: hidden;
+}
+.plateWin {
+  position: relative;
+  display: block;
+  height: 100%;
+  border: 1px solid;
+  border-radius: 5px;
+  padding: 9px;
+}
+.plateAccent {
+  display: block;
+  width: 34px;
+  height: 4px;
+  border-radius: 2px;
+  margin-bottom: 8px;
+}
+.plateRow {
+  display: block;
+  width: 70%;
+  height: 4px;
+  border-radius: 2px;
+  margin-bottom: 5px;
+  opacity: 0.32;
+}
+.plateRowShort {
+  width: 45%;
+  opacity: 0.18;
+}
+.plateGauge {
+  position: absolute;
+  right: 9px;
+  bottom: 8px;
+  width: 22px;
+  height: 22px;
+  border: 2px solid;
+  border-radius: 50%;
+}
+.plateFoot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.plateName {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--fg);
+}
+.plateHex {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+.plateBlurb {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+/* ── Acquisition ────────────────────────────────────────────────────── */
+.acqRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+}
+.acqRowDivider {
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-soft);
+}
+.acqLabel {
+  max-width: 360px;
+}
+.acqLabel .fldLabel {
+  margin-bottom: 0;
+}
+.acqCtl {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.acqUnit {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.acqState {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--fg-muted);
+}
+.pollField {
+  width: 110px;
+}
+.chips {
+  display: inline-flex;
+  gap: 6px;
+}
+.chip {
+  padding: 5px 11px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-muted);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+.chip:hover {
+  color: var(--fg);
+  border-color: var(--fg-dim);
+}
+.chipOn {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* ── Data sources ───────────────────────────────────────────────────── */
+.dsReadonly,
+.dsEmpty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+.dsReadonly + .dsEmpty,
+.dsReadonly + .conns {
+  margin-top: var(--space-3);
+}
+.conns {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.conn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.connMain {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.connName {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--fg);
+}
+.connType {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-muted);
+}
+.connDsn {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.connResult {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+.connActions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  flex: none;
+}
+
+/* form grid shared by the datasource dialog */
+.dsGrid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: var(--space-4);
+  padding-top: var(--space-1);
+}
+.fld {
+  grid-column: span 6;
+  min-width: 0;
+}
+.fldSpan2 {
+  grid-column: span 2;
+}
+.fldSpan3 {
+  grid-column: span 3;
+}
+.fldSpan6 {
+  grid-column: span 6;
+}
+.dsStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.dsStatusShow {
+  opacity: 1;
+}
+.dsMsg {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+.dsDialogFoot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  flex-wrap: wrap;
+}
+.dsDialogSpacer {
+  margin-left: auto;
+}
+
+/* ── Delete-connection dialog ──────────────────────────────────────── */
+.delDialogMsg {
+  margin: 0 0 var(--space-2) 0;
+  font-size: 14px;
+  color: var(--fg);
+}
+.delDialogHint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+/* ── Status LEDs ────────────────────────────────────────────────────── */
+.led {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+  flex: none;
+  display: inline-block;
+}
+.ledOk {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+}
+.ledWarn {
+  background: var(--warn);
+  box-shadow: 0 0 8px var(--warn);
+}
+.ledCrit {
+  background: var(--crit);
+  box-shadow: 0 0 8px var(--crit);
+}
+.ledPulse {
+  animation: ledPulse 0.9s ease-in-out infinite;
+}
+@keyframes ledPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ── Commit bar ─────────────────────────────────────────────────────── */
+.cfgBar {
+  position: sticky;
+  bottom: calc(-1 * var(--space-6));
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-4);
+  margin: var(--space-2) calc(-1 * var(--space-6)) calc(-1 * var(--space-6));
+  padding: var(--space-4) var(--space-6);
+  background: color-mix(in srgb, var(--bg-app) 86%, transparent);
+  border-top: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+}
+.cfgBarhint {
+  margin-right: auto;
+  font-size: 12.5px;
+  color: var(--fg-dim);
+}
+
+@media (max-width: 720px) {
+  .plates {
+    grid-template-columns: 1fr;
+  }
+  .acqRow {
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  .acqCtl {
+    justify-content: flex-start;
+  }
+  .fldSpan2,
+  .fldSpan3 {
+    grid-column: span 6;
+  }
+  .connActions {
+    margin-left: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plate,
+  .chip,
+  .dsStatus {
+    transition: none;
+  }
+  .ledPulse {
+    animation: none;
+  }
+}

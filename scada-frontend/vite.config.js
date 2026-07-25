@@ -1,36 +1,22 @@
 import { defineConfig } from 'vite'
-import vue from '@vitejs/plugin-vue'
-import AutoImport from 'unplugin-auto-import/vite'
-import Components from 'unplugin-vue-components/vite'
-import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
+import react from '@vitejs/plugin-react'
 import { fileURLToPath, URL } from 'node:url'
 
 export default defineConfig({
   // App is deployed at the root of a dedicated IIS site, so assets live at /assets/...
   // (no sub-path prefix). `import.meta.env.BASE_URL` will be '/', which is what
-  // createWebHistory(BASE_URL) in src/router/index.js expects for root deployment.
+  // createBrowserRouter's basename expects for root deployment.
   // If you ever move this back under an IIS sub-application like /scada, change to '/scada/'
   // and also update .env.local + the web.config SPA-fallback condition.
   base: '/',
-  plugins: [
-    vue(),
-    AutoImport({
-      imports: ['vue', 'vue-router', 'pinia'],
-      resolvers: [ElementPlusResolver()],
-      dts: 'src/auto-imports.d.ts',
-    }),
-    Components({
-      resolvers: [ElementPlusResolver()],
-      dts: 'src/components.d.ts',
-    }),
-  ],
+  plugins: [react()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
   optimizeDeps: {
-    include: ['element-plus/es', 'element-plus/es/locale/lang/en'],
+    include: ['@mui/material', '@mui/icons-material', 'echarts'],
   },
   server: {
     port: Number(process.env.PORT) || 5173,

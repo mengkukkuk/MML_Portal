@@ -1,4 +1,7 @@
 {
+  "env": {
+    "ECC_GATEGUARD": "off"
+  },
   "permissions": {
     "allow": [
       "mcp__plugin_everything-claude-code_playwright__browser_navigate",
@@ -14,7 +17,37 @@
       "Bash(./venv/Scripts/python.exe main.py)",
       "Bash(curl -s http://127.0.0.1:8088/openapi.json)",
       "Bash(powershell -Command \"Stop-Process -Id 18340 -Force\")",
-      "Bash(curl -s http://127.0.0.1:8088/api/panels -H \"Authorization: Bearer x\" -o /dev/null -w \"%{http_code}\\\\n\")"
+      "Bash(curl -s http://127.0.0.1:8088/api/panels -H \"Authorization: Bearer x\" -o /dev/null -w \"%{http_code}\\\\n\")",
+      "Bash(npm install:*)",
+      "Bash(grep -rn \"element-plus\\\\|grid-layout-plus\\\\|vue-echarts\\\\|from ''''pinia''''\\\\|from \"\"pinia\"\"\\\\|vue-router\" src/main.jsx src/App.jsx src/stores/*.js src/api/client.js src/router/*.jsx src/layouts/*.jsx src/components/AppHeader src/components/AppSidebar src/components/ConnectionPill src/pages/LoginPage.jsx)",
+      "Bash(echo \"exit: $?\" echo \"=== grafana check ===\")",
+      "Bash(grep -rni \"grafana\" src --include=*.jsx --include=*.js)",
+      "Bash(grep -lE \"<[A-Za-z]\" src/stores/auth.js src/stores/settings.js src/stores/connection.js src/lib/*.js src/api/client.js)",
+      "Bash(rm -rf dist)",
+      "Bash(npm run:*)",
+      "Bash(grep -rn \"StatCard\" src/pages/*.vue)",
+      "Bash(pkill -f \"vite preview\")",
+      "Bash(cat G:/Code/DEV/scada-frontend/.eslintrc*)",
+      "Bash(cat G:/Code/DEV/scada-frontend/eslint.config.*)",
+      "Bash(head -20 echo \"---\" grep -n \"^</script>\\\\|^<template>\\\\|^<style\" \"G:/Code/DEV/scada-frontend/src/components/LivePanel.vue\")",
+      "Bash(npx eslint:*)",
+      "Bash(grep -E \"^\\(TableChartOutlined|ScatterPlotOutlined\\)\\\\.js$\")",
+      "Bash(ls /g/Code/DEV/scada-frontend/src/pages/*.module.css)",
+      "Bash(head -30 echo --- grep -n \"led\\\\|--active\\\\|--on\\\\b\" \"G:/Code/DEV/scada-frontend/src/pages/live/PanelEditorDialog.module.css\")",
+      "Bash(head -30 echo ---LIVEPAGE--- grep -n \"led\\\\|classNames\\\\|clsx\" \"G:/Code/DEV/scada-frontend/src/pages/live/LivePage.jsx\")",
+      "Bash(grep -n \"router/index\\\\|from ''@/router''\\\\|from \"\"@/router\"\"\" src/router/RequireAuth.jsx src/router/TitleSync.jsx)",
+      "Bash(rm -f src/App.vue src/main.js src/router/index.js src/stores/users.js)",
+      "Bash(rm -f src/components/AppHeader.vue src/components/AppSidebar.vue src/components/ConnectionPill.vue src/components/GaugeTile.vue src/components/LivePanel.vue src/components/StatCard.vue src/components/TrendChart.vue)",
+      "Bash(rm -f src/layouts/AppShell.vue)",
+      "Bash(rm -f src/pages/AccountsPage.vue src/pages/AlarmsPage.vue src/pages/DevicesPage.vue src/pages/EventPage.vue src/pages/LivePage.vue src/pages/LoginPage.vue src/pages/NotFoundPage.vue src/pages/OverviewPage.vue src/pages/ResetPasswordPage.vue src/pages/SettingsPage.vue)",
+      "Bash(for pid:*)",
+      "Bash(do powershell:*)",
+      "Bash(done)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(PGPASSWORD='P@ssw0rd' psql -h localhost -p 5432 -U postgres -l)",
+      "Bash(PGPASSWORD='P@ssw0rd' createdb -h localhost -p 5432 -U postgres MMLData)",
+      "Bash(PGPASSWORD='P@ssw0rd' psql -h localhost -p 5432 -U postgres -d MMLData -c \"\\\\dt\")",
+      "Bash(./venv/Scripts/python.exe seed_users.py)"
     ]
   }
 }

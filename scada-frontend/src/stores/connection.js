@@ -1,14 +1,13 @@
-import { defineStore } from 'pinia'
+import { create } from 'zustand'
 
-export const useConnectionStore = defineStore('connection', {
-  state: () => ({
-    status: 'connected', // 'connected' | 'degraded' | 'offline'
-    lastHeartbeatAt: new Date().toISOString(),
-  }),
-  actions: {
-    markHeartbeat(status = 'connected') {
-      this.status = status
-      this.lastHeartbeatAt = new Date().toISOString()
-    },
-  },
-})
+/**
+ * connection — ported 1:1 from the Pinia store (src/stores/connection.js).
+ * Tracks a simple connectivity indicator shown in the header ConnectionPill.
+ */
+export const useConnectionStore = create((set) => ({
+  status: 'connected', // 'connected' | 'degraded' | 'offline'
+  lastHeartbeatAt: new Date().toISOString(),
+
+  markHeartbeat: (status = 'connected') =>
+    set({ status, lastHeartbeatAt: new Date().toISOString() }),
+}))

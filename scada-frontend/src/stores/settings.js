@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia'
+import { create } from 'zustand'
 
 /**
  * settings — application-wide preferences persisted to localStorage.
@@ -10,6 +10,11 @@ import { defineStore } from 'pinia'
  * Theme palettes live in styles/tokens.css keyed by `[data-theme]`; the
  * `preview` colors below mirror those values so the faceplate chips on the
  * Settings page can render a true-to-theme thumbnail without reading the DOM.
+ *
+ * NOTE: deliberately NOT using zustand's `persist` middleware — it would
+ * rewrite `mml.theme` / `mml.prefs` into a `{state,version}` envelope and
+ * orphan every existing user's saved theme. localStorage reads/writes are
+ * hand-rolled below to match the Vue/Pinia version byte-for-byte.
  */
 
 const THEME_KEY = 'mml.theme'
@@ -47,37 +52,34 @@ function readJSON(key, fallback) {
   }
 }
 
-export const useSettingsStore = defineStore('settings', {
-  state: () => {
-    const prefs = readJSON(PREFS_KEY, { pollSeconds: 5, notifyOnCritical: true })
-    const stored = localStorage.getItem(THEME_KEY)
-    return {
-      theme: THEME_IDS.includes(stored) ? stored : 'cobalt',
-      pollSeconds: prefs.pollSeconds,
-      notifyOnCritical: prefs.notifyOnCritical,
-    }
+function initialTheme() {
+  const stored = localStorage.getItem(THEME_KEY)
+  return THEME_IDS.includes(stored) ? stored : 'cobalt'
+}
+
+const initialPrefs = readJSON(PREFS_KEY, { pollSeconds: 5, notifyOnCritical: true })
+
+export const useSettingsStore = create((set, get) => ({
+  theme: initialTheme(),
+  pollSeconds: initialPrefs.pollSeconds,
+  notifyOnCritical: initialPrefs.notifyOnCritical,
+
+  /** Apply the data-theme attribute and persist. Called eagerly so the
+   *  whole app re-skins live, not just the Settings page. */
+  applyTheme(id) {
+    if (!THEME_IDS.includes(id)) return
+    set({ theme: id })
+    document.documentElement.dataset.theme = id
+    localStorage.setItem(THEME_KEY, id)
   },
 
-  actions: {
-    /** Apply the data-theme attribute and persist. Called eagerly so the
-     *  whole app re-skins live, not just the Settings page. */
-    applyTheme(id) {
-      if (!THEME_IDS.includes(id)) return
-      this.theme = id
-      document.documentElement.dataset.theme = id
-      localStorage.setItem(THEME_KEY, id)
-    },
-
-    /** Run once at app start to reflect persisted theme on first paint. */
-    init() {
-      document.documentElement.dataset.theme = this.theme
-    },
-
-    savePrefs() {
-      localStorage.setItem(
-        PREFS_KEY,
-        JSON.stringify({ pollSeconds: this.pollSeconds, notifyOnCritical: this.notifyOnCritical }),
-      )
-    },
+  /** Run once at app start to reflect persisted theme on first paint. */
+  init() {
+    document.documentElement.dataset.theme = get().theme
   },
-})
+
+  savePrefs() {
+    const { pollSeconds, notifyOnCritical } = get()
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ pollSeconds, notifyOnCritical }))
+  },
+}))

@@ -1,0 +1,20 @@
+.nf {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  height: 100vh;
+  background: var(--bg-app);
+  color: var(--fg);
+}
+
+.code {
+  font-size: 64px;
+  margin: 0;
+  color: var(--fg-muted);
+}
+
+.msg {
+  color: var(--fg-muted);
+}
