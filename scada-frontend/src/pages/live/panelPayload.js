@@ -221,11 +221,25 @@ export function nextLayoutSlot(layout) {
 // Build the react-grid-layout item array from panels. Uses each panel's
 // persisted options.layout when present; otherwise synthesizes a two-up
 // 12-col layout from the array index (vertical-compact then tidies gaps).
+//
+// Saved w/h are floored at the panel's own panelMinSize. A stored size below
+// that floor is invalid by definition — the editor never produces one, and RGL
+// enforces it as minW/minH during resize — so it can only come from a layout
+// captured while the grid was collapsed to a narrower column count, which
+// clamps every w down. Repairing on read keeps one bad save from permanently
+// rendering a tile too small to show its own chart.
 export function layoutFromPanels(panels) {
   return (panels || []).map((p, idx) => {
+    const min = panelMinSize(p)
     const saved = p.options?.layout
     if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
-      return { i: String(p.id), x: saved.x, y: saved.y, w: saved.w || 6, h: saved.h || 9 }
+      return {
+        i: String(p.id),
+        x: saved.x,
+        y: saved.y,
+        w: Math.max(min.w, saved.w || 6),
+        h: Math.max(min.h, saved.h || 9),
+      }
     }
     return { i: String(p.id), x: (idx % 2) * 6, y: Math.floor(idx / 2) * 9, w: 6, h: 9 }
   })

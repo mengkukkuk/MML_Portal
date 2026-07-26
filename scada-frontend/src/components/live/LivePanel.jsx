@@ -73,7 +73,7 @@ export default function LivePanel({
   const pollSeconds = panel.poll_interval_seconds || 5
 
   const {
-    seriesPoints, seriesLatest, unit, error,
+    seriesPoints, seriesLatest, unit, error, isLoading, isFetching, isReseeding,
   } = usePanelPolling({
     panel, seriesSpecs, seriesTags, isTag, isTable, mathFn, rangeMinutes, refreshSignal, onUpdated,
   })
@@ -121,8 +121,15 @@ export default function LivePanel({
   })
   const availableFilters = filtersQuery.data || []
 
+  const pollLabel = POLL_INTERVALS.find((it) => it.value === pollSeconds)?.label || `${pollSeconds}s`
+
   return (
-    <article className={styles.panel}>
+    <article className={`${styles.panel} ${isReseeding ? styles['panel--reseeding'] : ''}`}>
+      {/* Indeterminate bar pinned to the tile's top edge. Absolutely positioned
+          so showing it never reflows the panel body — the values underneath
+          stay exactly where they are while the new data lands. */}
+      {(isLoading || isReseeding) && <span className={styles.panel__progress} aria-hidden="true" />}
+
       <header className={styles.panel__head}>
         <div className={styles.panel__titlewrap}>
           {editMode && canManage && (
@@ -143,6 +150,16 @@ export default function LivePanel({
         </div>
 
         <div className={styles.panel__actions}>
+          {/* Heartbeat: proves the tile is live and states its cadence, so a
+              steady value can't be mistaken for a frozen panel. */}
+          <span
+            className={`${styles.panel__live} ${isFetching ? styles['panel__live--busy'] : ''}`}
+            title={`Live · refreshing every ${pollLabel}`}
+          >
+            <span className={styles.panel__livedot} />
+            {pollLabel}
+          </span>
+
           <button
             type="button"
             className={`${styles.panel__gear} ${gearOpen ? styles['panel__gear--active'] : ''}`}

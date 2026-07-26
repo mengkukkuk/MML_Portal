@@ -30,20 +30,44 @@ import PanelEditorDialog from './PanelEditorDialog'
 import DashboardSwitcher from './DashboardSwitcher'
 import styles from './LivePage.module.css'
 
-// measureBeforeMount is passed as a *prop* on the wrapped component (not an
-// argument to WidthProvider) — without it the grid measures 0 width on first
-// paint and every tile collapses to the left edge until a resize fires.
+// Do NOT pass measureBeforeMount here. WidthProvider observes
+// `elementRef.current` in componentDidMount, which under measureBeforeMount is
+// the throwaway placeholder div. The real grid then renders as a *different*
+// node, leaving the ResizeObserver bound to a detached element: it reports
+// width 0 once and never fires again, pinning the grid to the narrowest
+// breakpoint (1 column) for the page's whole lifetime. Without it, the observer
+// attaches to the grid's own node and tracks it correctly.
 const ResponsiveGridLayout = WidthProvider(Responsive)
 
-const AUTO_REFRESH_MS = 5000
+// NOTE: WidthProvider measures the *grid container*, not the window. With the
+// app sidebar + page padding taking ~270px, a 1200px container needs a ~1470px
+// window — so keeping 12 columns exclusive to `lg` made multi-column layout
+// (and therefore Edit Layout) unreachable on ordinary laptop screens. Single
+// column is now reserved for genuinely phone-width grids.
+const GRID_COLS = {
+  lg: 12, md: 12, sm: 12, xs: 1, xxs: 1,
+}
+const GRID_BREAKPOINTS = {
+  lg: 1200, md: 900, sm: 640, xs: 480, xxs: 0,
+}
+
+/**
+ * Layout is persisted once per panel (`options.layout`), not per breakpoint, so
+ * a drag is only safe to save at a breakpoint that shares `lg`'s column count —
+ * anywhere else the same {x,w} means something different and saving would
+ * permanently flatten the dashboard. That's a property of `cols`, not of the
+ * breakpoint's name, so derive it instead of hardcoding 'lg'.
+ */
+const EDITABLE_BREAKPOINTS = Object.keys(GRID_COLS).filter((bp) => GRID_COLS[bp] === GRID_COLS.lg)
+const EDIT_MIN_WIDTH = Math.min(...EDITABLE_BREAKPOINTS.map((bp) => GRID_BREAKPOINTS[bp]))
 
 /**
  * LivePage — admin-managed live dashboard (route: /live).
  *
  * Renders a react-grid-layout grid of LivePanel tiles for the active
  * dashboard's panels, a dashboard switcher, edit-mode drag/resize (admin
- * only, gated to the `lg` breakpoint — see the mandatory "zero layout writes
- * below 1200px" constraint below), and Add/Edit/Duplicate/Delete panel
+ * only, gated to breakpoints that share `lg`'s column count — see the column
+ * gate below), and Add/Edit/Duplicate/Delete panel
  * actions via PanelEditorDialog. Ported from LivePage.vue.
  *
  * Layout persists inside each panel's `options.layout = {x,y,w,h}` (no
@@ -153,22 +177,35 @@ export default function LivePage() {
       const min = panelMinSize(panel)
       return { ...it, minW: min.w, minH: min.h }
     })
-    return { lg: withConstraints }
+    // Hand RGL an explicit entry for every editable breakpoint. Left to
+    // synthesise one it would run the layout through correctBounds/compact and
+    // drop the per-item minW/minH, so resize floors silently stopped applying
+    // outside lg.
+    return Object.fromEntries(EDITABLE_BREAKPOINTS.map((bp) => [bp, withConstraints]))
   }, [layout, panels])
 
-  // --- lg-only breakpoint gate (mandatory: zero layout writes below 1200px) -
-  // RGL's Responsive fires onBreakpointChange synchronously before
-  // onLayoutChange within the same internal handler, so a ref (not state,
-  // which batches) is required to gate saveLayout()'s guard correctly.
-  const breakpointRef = useRef('lg')
-  const [breakpoint, setBreakpointState] = useState('lg')
-  function handleBreakpointChange(newBp) {
-    breakpointRef.current = newBp
-    setBreakpointState(newBp)
-  }
+  // --- column gate (zero layout writes at any 1-column breakpoint) ----------
+  // Gate on the column count RGL reports, not the breakpoint name: a saved
+  // {x,w} is only meaningful in `lg`'s coordinate space. Both callbacks feed it
+  // because onBreakpointChange never fires for the *initial* breakpoint, while
+  // onWidthChange fires on every width change — including the first correction
+  // away from WidthProvider's 1280px default.
+  //
+  // RGL fires these synchronously before onLayoutChange within the same
+  // internal handler, so a ref (not state, which batches) is required to gate
+  // saveLayout()'s guard correctly.
+  const colsRef = useRef(GRID_COLS.lg)
+  const [gridCols, setGridCols] = useState(GRID_COLS.lg)
+  const canEditLayout = gridCols === GRID_COLS.lg
+  const noteCols = useCallback((cols) => {
+    colsRef.current = cols
+    setGridCols(cols)
+  }, [])
+  const handleBreakpointChange = useCallback((_bp, cols) => noteCols(cols), [noteCols])
+  const handleWidthChange = useCallback((_w, _margin, cols) => noteCols(cols), [noteCols])
   useEffect(() => {
-    if (breakpoint !== 'lg') setEditMode(false)
-  }, [breakpoint])
+    if (!canEditLayout) setEditMode(false)
+  }, [canEditLayout])
 
   function handleLayoutChange(newLayout) {
     // Fires on every drag/resize tick — local React state only, never a
@@ -183,7 +220,7 @@ export default function LivePage() {
   const [savingLayout, setSavingLayout] = useState(false)
 
   async function saveLayout(layoutToSave) {
-    if (breakpointRef.current !== 'lg') return // hard guard, see risk note above
+    if (colsRef.current !== GRID_COLS.lg) return // hard guard, see risk note above
     if (!canManage) return
     const dirty = []
     for (const item of layoutToSave) {
@@ -210,7 +247,7 @@ export default function LivePage() {
   }
 
   function toggleEditMode() {
-    if (breakpointRef.current !== 'lg') return // can't even enter edit mode below lg
+    if (colsRef.current !== GRID_COLS.lg) return // can't even enter edit mode at 1 column
     if (editMode) {
       setEditMode(false)
       saveLayout(layout)
@@ -219,7 +256,13 @@ export default function LivePage() {
     }
   }
 
-  // --- manual + background auto-refresh -------------------------------------
+  // --- manual refresh ---------------------------------------------------------
+  // Deliberately NO page-level auto-refresh timer: `refreshSignal` is part of
+  // every panel's query key, so bumping it on a clock discards each panel's
+  // accumulated series and forces a full re-seed, overriding the per-panel
+  // `poll_interval_seconds` that the whole Live page is built around. Panels
+  // self-poll (see usePanelPolling); this signal is reserved for the explicit
+  // Refresh button, where a full re-seed is exactly what the user asked for.
   const [refreshSignal, setRefreshSignal] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   function refreshAll() {
@@ -227,14 +270,6 @@ export default function LivePage() {
     setRefreshSignal(Date.now())
     setTimeout(() => setRefreshing(false), 700)
   }
-
-  useEffect(() => {
-    // StrictMode-safe: the id is a local const captured by this exact effect
-    // invocation and cleared by the matching cleanup — never a ref reused
-    // across renders/remounts.
-    const id = setInterval(() => setRefreshSignal(Date.now()), AUTO_REFRESH_MS)
-    return () => clearInterval(id)
-  }, [])
 
   const [lastUpdatedAt, setLastUpdatedAt] = useState(0)
   const handlePanelUpdated = useCallback((ts) => {
@@ -358,8 +393,10 @@ export default function LivePage() {
             <Button
               variant={editMode ? 'contained' : 'outlined'}
               color={editMode ? 'success' : 'inherit'}
-              disabled={breakpoint !== 'lg'}
-              title={breakpoint !== 'lg' ? 'Edit layout is only available at desktop widths (≥1200px)' : ''}
+              disabled={!canEditLayout}
+              title={canEditLayout
+                ? 'Drag the panel header to move, drag the bottom-right corner to resize'
+                : `Edit layout needs a grid area at least ${EDIT_MIN_WIDTH}px wide — narrower layouts are single-column and can't be saved`}
               loading={savingLayout}
               onClick={toggleEditMode}
             >
@@ -392,12 +429,8 @@ export default function LivePage() {
         <ResponsiveGridLayout
           className={`${styles.grid} ${editMode ? styles.gridEditing : ''}`}
           layouts={gridLayouts}
-          cols={{
-            lg: 12, md: 12, sm: 1, xs: 1, xxs: 1,
-          }}
-          breakpoints={{
-            lg: 1200, md: 900, sm: 700, xs: 480, xxs: 0,
-          }}
+          cols={GRID_COLS}
+          breakpoints={GRID_BREAKPOINTS}
           rowHeight={26}
           margin={[16, 16]}
           isDraggable={editMode && canManage}
@@ -405,8 +438,8 @@ export default function LivePage() {
           verticalCompact
           useCSSTransforms
           draggableHandle=".panel__drag"
-          measureBeforeMount
           onBreakpointChange={handleBreakpointChange}
+          onWidthChange={handleWidthChange}
           onLayoutChange={handleLayoutChange}
         >
           {layout.map((item) => {

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { fetchSeries, fetchLatest } from '@/api/readings'
 import { fetchTagLatest } from '@/api/tags'
 import { fetchSchemaLatest, fetchSchemaSeries } from '@/api/schema'
@@ -210,6 +210,35 @@ async function seedFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinu
   }
 }
 
+const PULSE_MS = 450
+
+/**
+ * Latch each rising edge of `active` on for `ms`.
+ *
+ * A poll against a LAN backend completes in ~20ms, so `isFetching` alone
+ * flickers far too briefly to register as feedback. Holding each fetch for a
+ * fixed minimum turns it into a deliberate, readable pulse. Falling edges are
+ * ignored on purpose — only the timer clears the latch, so a fast response
+ * can't cut the pulse short.
+ */
+function usePulse(active, ms) {
+  const [on, setOn] = useState(false)
+  const wasActive = useRef(false)
+
+  useEffect(() => {
+    if (active && !wasActive.current) setOn(true)
+    wasActive.current = active
+  }, [active])
+
+  useEffect(() => {
+    if (!on) return undefined
+    const id = setTimeout(() => setOn(false), ms)
+    return () => clearTimeout(id)
+  }, [on, ms])
+
+  return on
+}
+
 /**
  * usePanelPolling — TanStack Query wrapper around seed()/poll().
  *
@@ -255,6 +284,10 @@ export function usePanelPolling({ panel, seriesSpecs, seriesTags, isTag, isTable
       const result = prev
         ? await pollFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinutes, prev })
         : await seedFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinutes })
+      // Only the live key's accumulator is worth keeping — any other entry
+      // belongs to a superseded config (or an old refreshSignal) and can never
+      // be read again, so without this the map grows for the page's lifetime.
+      accumRef.current.clear()
       accumRef.current.set(hashedKey, result)
       if (result.updated) onUpdated?.(Date.now())
       return result
@@ -262,7 +295,15 @@ export function usePanelPolling({ panel, seriesSpecs, seriesTags, isTag, isTable
     refetchInterval: pollSeconds * 1000,
     // SCADA wall display must not freeze in a hidden/background tab.
     refetchIntervalInBackground: true,
+    // A key change (panel edited, range switched, manual Refresh) starts a
+    // fresh query whose data is undefined until the seed lands. Without this
+    // the tile blanks and the chart re-animates from empty every time; keeping
+    // the previous render's data means the old values stay on screen and are
+    // swapped in place, with `isFetching` driving the refresh affordance.
+    placeholderData: keepPreviousData,
   })
+
+  const pulse = usePulse(query.isFetching, PULSE_MS)
 
   // A failed poll (network error, timeout, gateway error) gets one quick
   // retry instead of waiting for the panel's full configured interval —
@@ -282,7 +323,14 @@ export function usePanelPolling({ panel, seriesSpecs, seriesTags, isTag, isTable
     seriesLatest: query.data?.latest || {},
     unit: query.data?.unit || '',
     error: query.data?.error || (query.isError ? (query.error?.message || 'Failed to load series.') : ''),
+    // First-ever load for this panel: nothing to show yet, so the tile renders
+    // a skeleton rather than a row of em-dashes.
     isLoading: query.isLoading,
-    isFetching: query.isFetching,
+    // Any request in flight, including a routine incremental poll — latched to
+    // a minimum duration so the header heartbeat is actually perceptible.
+    isFetching: pulse,
+    // A full re-seed is in flight and the values on screen are the previous
+    // key's data being held over. Drives the stronger "refreshing" treatment.
+    isReseeding: query.isPlaceholderData,
   }
 }

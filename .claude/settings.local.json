@@ -47,7 +47,13 @@
       "Bash(PGPASSWORD='P@ssw0rd' psql -h localhost -p 5432 -U postgres -l)",
       "Bash(PGPASSWORD='P@ssw0rd' createdb -h localhost -p 5432 -U postgres MMLData)",
       "Bash(PGPASSWORD='P@ssw0rd' psql -h localhost -p 5432 -U postgres -d MMLData -c \"\\\\dt\")",
-      "Bash(./venv/Scripts/python.exe seed_users.py)"
+      "Bash(./venv/Scripts/python.exe seed_users.py)",
+      "Bash(ls *.py)",
+      "Bash(for f:*)",
+      "Bash(do echo:*)",
+      "Read(//g/Code/DEV/scada-frontend/node_modules/react-draggable/build/cjs/**)",
+      "Bash(grep -rn process.env cjs/*.js cjs/*.mjs web/*)",
+      "Bash(python -c \":*)"
     ]
   }
 }

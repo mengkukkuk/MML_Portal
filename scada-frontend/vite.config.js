@@ -10,6 +10,15 @@ export default defineConfig({
   // and also update .env.local + the web.config SPA-fallback condition.
   base: '/',
   plugins: [react()],
+  // react-draggable's ESM build (used by react-grid-layout for panel drag and
+  // resize) calls `if (process.env.DRAGGABLE_DEBUG) ...` on every drag start.
+  // `process` doesn't exist in the browser and Vite only substitutes
+  // process.env.NODE_ENV, so that line throws ReferenceError the moment a
+  // handle is grabbed — silently killing Live-page layout editing in both dev
+  // and the production build. Substituting the flag compiles the branch away.
+  define: {
+    'process.env.DRAGGABLE_DEBUG': 'false',
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
