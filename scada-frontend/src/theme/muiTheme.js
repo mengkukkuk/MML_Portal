@@ -6,17 +6,22 @@ import { createTheme } from '@mui/material/styles'
  * Two layers, because MUI runs alpha()/darken()/augmentColor() over palette
  * values and those color-math parsers throw on `var(--accent)`:
  *   - Literal hex for anything MUI does colour maths on (primary/success/
- *     warning/error, and — discovered the hard way — text.primary/secondary,
- *     since Button's own base styles unconditionally compute
- *     `alpha(theme.palette.text.primary, action.hoverOpacity)` for the
- *     text/outlined hover state, before any styleOverrides ever run). These
- *     must mirror the `cobalt` (default) values in tokens.css. They
- *     intentionally do NOT react to `data-theme` swaps; the `styleOverrides`
- *     below re-assert `var(--accent)` / `var(--fg)` on the specific
- *     components where the visible chrome must track the active faceplate.
+ *     warning/error, text.primary/secondary — since Button's own base styles
+ *     unconditionally compute `alpha(theme.palette.text.primary,
+ *     action.hoverOpacity)` for the text/outlined hover state — and divider,
+ *     since TableCell's own base styles unconditionally compute
+ *     `darken(alpha(theme.palette.divider, 1), 0.68)` for its border. In all
+ *     three cases the color-math runs while the base style FUNCTION is being
+ *     evaluated, before any styleOverrides are merged in, so overriding the
+ *     resulting CSS property doesn't help — decomposeColor() has already
+ *     thrown on `var(...)` by then. These must mirror the `cobalt` (default)
+ *     values in tokens.css. They intentionally do NOT react to `data-theme`
+ *     swaps; the `styleOverrides` below re-assert `var(--accent)` /
+ *     `var(--fg)` / `var(--border-soft)` on the specific components where the
+ *     visible chrome must track the active faceplate.
  *   - var(--...) only where MUI emits the value verbatim with no color math
- *     (background.default/paper, divider) — these DO react live to
- *     `data-theme` changes on <html>.
+ *     (background.default/paper) — these DO react live to `data-theme`
+ *     changes on <html>.
  *
  * <StyledEngineProvider injectFirst> (see main.jsx) is required alongside
  * this theme — otherwise emotion's <style> tags are appended after
@@ -43,7 +48,10 @@ export const muiTheme = createTheme({
       primary: '#e6edf7',
       secondary: '#8a99b3',
     },
-    divider: 'var(--border-soft)',
+    // Literal hex (cobalt default) — see file header. `MuiTableCell` below
+    // re-asserts `var(--border-soft)` so visible borders still track
+    // `data-theme` swaps.
+    divider: 'rgba(255, 255, 255, 0.06)',
   },
   typography: {
     fontFamily: 'var(--font-sans)',
@@ -102,6 +110,18 @@ export const muiTheme = createTheme({
       styleOverrides: {
         root: {
           backgroundImage: 'none',
+        },
+      },
+    },
+    MuiTableCell: {
+      styleOverrides: {
+        root: {
+          // TableCell's own base styles unconditionally run
+          // darken(alpha(theme.palette.divider, 1), ...) to compute this
+          // border — alpha()/darken() throw on a raw `var(--border-soft)`
+          // string. Re-assert the var literally, same workaround as
+          // MuiButton/MuiSwitch/MuiTabs above.
+          borderBottom: '1px solid var(--border-soft)',
         },
       },
     },
