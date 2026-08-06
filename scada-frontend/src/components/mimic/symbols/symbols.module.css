@@ -1,0 +1,333 @@
+/* symbols.module.css — the drawing language for every mimic symbol.
+ *
+ * Stroke weights, fills and *all* keyframes live here so the 12 symbol files
+ * stay pure geometry. Everything is expressed in logical viewBox units (the
+ * <svg> is a fixed 1600x900 viewBox scaled by CSS), which is why stroke
+ * widths are plain numbers rather than px.
+ *
+ * Two kinds of animation live here and must not be conflated:
+ *   1. steady-state  — runs while a drive is running / product is moving.
+ *      Paused via `animation-play-state`, never removed, so the impeller
+ *      resumes from where it stopped.
+ *   2. on-change     — one-shot, mounted by a `key={pulse}` bump in
+ *      InstrumentBubble/Tank when the *displayed* number changed.
+ */
+
+/* --- shared strokes / fills ------------------------------------------- */
+
+.body {
+  fill: var(--bg-panel);
+  stroke: var(--fg-muted);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.bodyElev {
+  fill: var(--bg-elev);
+  stroke: var(--fg-muted);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.hair {
+  fill: none;
+  stroke: var(--fg-dim);
+  stroke-width: 1;
+}
+
+.hairFill {
+  fill: var(--fg-dim);
+  stroke: none;
+}
+
+.accentStroke {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.accentFill {
+  fill: var(--accent);
+  stroke: none;
+}
+
+/* Status is derived once in mockPlant.js; symbols only wear it. */
+.statusWarn .body,
+.statusWarn .bodyElev {
+  stroke: var(--warn);
+}
+
+.statusCrit .body,
+.statusCrit .bodyElev {
+  stroke: var(--crit);
+}
+
+.statusCrit .liquid {
+  fill: var(--crit);
+}
+
+.statusWarn .liquid {
+  fill: var(--warn);
+}
+
+/* --- text ------------------------------------------------------------- */
+
+.label {
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  fill: var(--fg-muted);
+  pointer-events: none;
+  user-select: none;
+}
+
+.labelDim {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  fill: var(--fg-dim);
+  pointer-events: none;
+  user-select: none;
+}
+
+.readout {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  fill: var(--fg);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* --- level fill (tanks, drums) ---------------------------------------- */
+
+.liquid {
+  fill: var(--accent);
+  opacity: 0.32;
+  /* On-change: the level tweens to its new height rather than jumping. */
+  transition: y 0.6s cubic-bezier(0.22, 0.61, 0.36, 1),
+              height 0.6s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.liquidLine {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  transition: transform 0.6s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* --- gauge needle (on-change: sweeps to the new value) ---------------- */
+
+.needle {
+  stroke: var(--fg);
+  stroke-width: 2;
+  stroke-linecap: round;
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 0.55s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.dialBand {
+  fill: none;
+  stroke-width: 4;
+  stroke-linecap: butt;
+  opacity: 0.55;
+}
+
+.dialBandWarn { stroke: var(--warn); }
+.dialBandCrit { stroke: var(--crit); }
+
+/* --- steady-state animations ------------------------------------------ */
+
+.spin {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mimic-spin 1.4s linear infinite;
+}
+
+.spinSlow {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mimic-spin 3.2s linear infinite;
+}
+
+.march {
+  stroke-dasharray: 8 6;
+  animation: mimic-march 1.1s linear infinite;
+}
+
+.belt {
+  animation: mimic-belt 1.6s linear infinite;
+}
+
+.beacon {
+  animation: mimic-beacon 1.1s steps(1, end) infinite;
+}
+
+.beam {
+  animation: mimic-beam 1.8s ease-in-out infinite;
+}
+
+/* Applied by every symbol whose drive is stopped. Freezes only that symbol. */
+.stopped .spin,
+.stopped .spinSlow,
+.stopped .march,
+.stopped .belt,
+.stopped .beacon,
+.stopped .beam {
+  animation-play-state: paused;
+}
+
+.stopped .liquid {
+  opacity: 0.14;
+}
+
+@keyframes mimic-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes mimic-march {
+  to { stroke-dashoffset: -28; }
+}
+
+@keyframes mimic-belt {
+  to { transform: translateX(24px); }
+}
+
+@keyframes mimic-beacon {
+  0%, 55% { opacity: 1; }
+  56%, 100% { opacity: 0.22; }
+}
+
+@keyframes mimic-beam {
+  0%, 100% { opacity: 0.15; }
+  50% { opacity: 0.55; }
+}
+
+/* --- on-change: the readout digit roll -------------------------------- */
+
+.roll {
+  animation: mimic-roll 0.34s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+@keyframes mimic-roll {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* --- ISA instrument bubble -------------------------------------------
+ * The signature element. A conventional ISA-5.1 balloon is a circle split
+ * by a hairline with the function letters over the loop number. Here the
+ * lower half carries the live number instead, so reading the drawing is
+ * reading the instrument — there is no floating card layer above the P&ID.
+ */
+
+.bubbleFace {
+  fill: var(--bg-app);
+  stroke: var(--fg-muted);
+  stroke-width: 1.5;
+}
+
+.bubbleSplit {
+  stroke: var(--fg-muted);
+  stroke-width: 1;
+}
+
+.bubbleLead {
+  fill: none;
+  stroke: var(--fg-dim);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+}
+
+.bubbleTag {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  fill: var(--fg-muted);
+  text-anchor: middle;
+  pointer-events: none;
+  user-select: none;
+}
+
+.bubbleValue {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  fill: var(--fg);
+  text-anchor: middle;
+  pointer-events: none;
+  user-select: none;
+}
+
+.bubbleUnit {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 400;
+  fill: var(--fg-dim);
+  text-anchor: middle;
+  pointer-events: none;
+  user-select: none;
+}
+
+.bubbleWarn .bubbleFace { stroke: var(--warn); }
+.bubbleWarn .bubbleSplit { stroke: var(--warn); }
+.bubbleWarn .bubbleValue { fill: var(--warn); }
+
+.bubbleCrit .bubbleFace { stroke: var(--crit); stroke-width: 2; }
+.bubbleCrit .bubbleSplit { stroke: var(--crit); }
+.bubbleCrit .bubbleValue { fill: var(--crit); }
+
+/* On-change: one hairline ring, tinted by direction. Mounted by key={pulse}
+ * so an unchanged tick renders nothing at all. */
+.ring {
+  fill: none;
+  stroke-width: 1.5;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mimic-ring 0.85s ease-out forwards;
+}
+
+.ringRise { stroke: var(--accent); }
+.ringFall { stroke: var(--fg-muted); }
+.ringWarn { stroke: var(--warn); stroke-width: 2.5; }
+.ringCrit { stroke: var(--crit); stroke-width: 2.5; }
+
+@keyframes mimic-ring {
+  from { transform: scale(1); opacity: 0.9; }
+  to   { transform: scale(1.75); opacity: 0; }
+}
+
+/* --- reduced motion ---------------------------------------------------
+ * Every animation above is disabled here. Values keep updating; only the
+ * movement stops. tokens.css:96 sets this precedent for the app shell.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .spin,
+  .spinSlow,
+  .march,
+  .belt,
+  .beacon,
+  .beam,
+  .roll,
+  .ring {
+    animation: none;
+  }
+
+  .ring {
+    display: none;
+  }
+
+  .liquid,
+  .liquidLine,
+  .needle {
+    transition: none;
+  }
+}

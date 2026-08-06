@@ -53,7 +53,10 @@
       "Bash(do echo:*)",
       "Read(//g/Code/DEV/scada-frontend/node_modules/react-draggable/build/cjs/**)",
       "Bash(grep -rn process.env cjs/*.js cjs/*.mjs web/*)",
-      "Bash(python -c \":*)"
+      "Bash(python -c \":*)",
+      "Bash(grep -rn \"data-theme\" src --include=*.js --include=*.jsx)",
+      "Bash(node --input-type=module -e \":*)",
+      "Bash(python -:*)"
     ]
   }
 }
