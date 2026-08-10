@@ -1,0 +1,158 @@
+/* MimicCanvas — the P&ID stage.
+ *
+ * Everything here is token-only; the mimic must read correctly in all three
+ * faceplates (cobalt / graphite / carbon) with no second palette.
+ */
+
+.stage {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+
+/* Below this, scaling the drawing to fit would put the instrument readouts
+ * under 6px. A mimic is a technical drawing, so it holds its size and the
+ * operator pans it — see .body's overflow rule in MonitorPage.module.css. */
+@media (max-width: 1000px) {
+  .stage {
+    min-width: 940px;
+  }
+}
+
+.stage:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Only edit mode captures the pointer, so only edit mode may take touch away
+ * from the scroll container. */
+.stageEditing {
+  cursor: crosshair;
+  touch-action: none;
+}
+
+/* --- service-coded process lines --------------------------------------
+ * Style is the legend: an operator reads what a line carries from how it is
+ * drawn, not from a colour key sitting off to one side.
+ */
+
+.line {
+  fill: none;
+  stroke-linejoin: round;
+  stroke-linecap: butt;
+}
+
+.feedwater {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.steam {
+  stroke: var(--fg);
+  stroke-width: 2.5;
+}
+
+/* the second hairline that makes steam read as steam */
+.steamInner {
+  fill: none;
+  stroke: var(--bg-panel);
+  stroke-width: 0.75;
+}
+
+.fuelgas {
+  stroke: var(--warn);
+  stroke-width: 2;
+  stroke-dasharray: 12 5;
+}
+
+.fluegas {
+  stroke: var(--fg-dim);
+  stroke-width: 3.5;
+  opacity: 0.45;
+}
+
+/* Marching dashes ride *above* the service line so the fuel line's own
+ * dash pattern is not disturbed. */
+.flow {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 7 13;
+  animation: mimic-flow 1.2s linear infinite;
+  opacity: 0.85;
+}
+
+.flowSteam { stroke: var(--fg); }
+.flowFuelgas { stroke: var(--warn); }
+.flowFluegas { stroke: var(--fg-muted); opacity: 0.5; }
+
+.flowStopped {
+  animation-play-state: paused;
+  opacity: 0.2;
+}
+
+@keyframes mimic-flow {
+  to { stroke-dashoffset: -40; }
+}
+
+/* --- nodes ------------------------------------------------------------- */
+
+.node {
+  cursor: pointer;
+}
+
+.nodeEditing {
+  cursor: grab;
+}
+
+.nodeDragging {
+  cursor: grabbing;
+}
+
+.hitbox {
+  fill: transparent;
+  stroke: none;
+}
+
+.selection {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  pointer-events: none;
+}
+
+.node:focus {
+  outline: none;
+}
+
+.node:focus-visible .hitbox {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+/* --- edit-mode chrome -------------------------------------------------- */
+
+.grid {
+  stroke: var(--border-soft);
+  stroke-width: 0.5;
+}
+
+.legendText {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  fill: var(--fg-dim);
+  user-select: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow {
+    animation: none;
+  }
+}

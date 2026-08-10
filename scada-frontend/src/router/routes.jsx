@@ -16,6 +16,7 @@ import PlayCircleOutlined from '@mui/icons-material/PlayCircleOutlined'
 import ListAltOutlined from '@mui/icons-material/ListAltOutlined'
 import SettingsOutlined from '@mui/icons-material/SettingsOutlined'
 import PersonOutlined from '@mui/icons-material/PersonOutlined'
+import AccountTreeOutlined from '@mui/icons-material/AccountTreeOutlined'
 
 const LoginPage = lazy(() => import('../pages/LoginPage.jsx'))
 const ResetPasswordPage = lazy(() => import('../pages/ResetPasswordPage.jsx'))
@@ -23,6 +24,7 @@ const OverviewPage = lazy(() => import('../pages/OverviewPage.jsx'))
 const DevicesPage = lazy(() => import('../pages/DevicesPage.jsx'))
 const AlarmsPage = lazy(() => import('../pages/AlarmsPage.jsx'))
 const LivePage = lazy(() => import('../pages/live/LivePage.jsx'))
+const MonitorPage = lazy(() => import('../pages/monitor/MonitorPage.jsx'))
 const EventPage = lazy(() => import('../pages/EventPage.jsx'))
 const SettingsPage = lazy(() => import('../pages/SettingsPage.jsx'))
 const AccountsPage = lazy(() => import('../pages/AccountsPage.jsx'))
@@ -72,6 +74,11 @@ export const router = createBrowserRouter(
               path: 'live',
               element: page(LivePage),
               handle: { title: 'Live', icon: PlayCircleOutlined },
+            },
+            {
+              path: 'monitor',
+              element: page(MonitorPage),
+              handle: { title: 'Monitor', icon: AccountTreeOutlined },
             },
             {
               path: 'events',
