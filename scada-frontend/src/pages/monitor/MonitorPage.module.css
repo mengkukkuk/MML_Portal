@@ -265,3 +265,29 @@
   text-align: center;
   line-height: 1.2;
 }
+
+/* --- added with datasource binding -------------------------------------- */
+
+.loading {
+  margin: var(--space-8) 0;
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: 14px;
+}
+
+.demoToggle {
+  margin: 0 var(--space-2) 0 0;
+}
+
+.demoToggle :global(.MuiFormControlLabel-label) {
+  font-size: 12px;
+  color: var(--fg-muted);
+  letter-spacing: 0.04em;
+}
+
+/* An unconnected symbol reads as an uncommissioned loop in the strip too —
+ * present on the plant, but visibly not reporting. */
+.chipUnbound {
+  opacity: 0.5;
+  border-style: dashed;
+}

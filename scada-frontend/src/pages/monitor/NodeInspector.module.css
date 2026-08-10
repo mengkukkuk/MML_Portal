@@ -1,0 +1,120 @@
+/* NodeInspector — the edit-mode rail for one selected symbol. Sized and
+ * spaced to match DetailRail so switching between them doesn't move the
+ * canvas. Tokens only. */
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  width: 320px;
+  flex: 0 0 320px;
+  padding: var(--space-4);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  overflow-y: auto;
+}
+
+@media (max-width: 1180px) {
+  .rail {
+    width: auto;
+    flex: 1 1 auto;
+  }
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.back {
+  align-self: flex-start;
+  margin-bottom: var(--space-2);
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+}
+
+.back:hover {
+  color: var(--accent);
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.name {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg);
+}
+
+.tagId {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.sectionTitle {
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-soft);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px var(--space-3);
+  margin: 0;
+  font-size: 12px;
+}
+
+.summary dt {
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+.summary dd {
+  margin: 0;
+  color: var(--fg);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.unbound,
+.hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--fg-dim);
+}

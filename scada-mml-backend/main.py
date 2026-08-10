@@ -12,6 +12,7 @@ import dashboards
 import datasources
 import db
 import events
+import mimic
 import panels
 import readings
 import schema
@@ -48,18 +49,21 @@ app.include_router(schema.router)
 app.include_router(panels.router)
 app.include_router(dashboards.router)
 app.include_router(datasources.router)
+app.include_router(mimic.router)
 app.include_router(events.router)
 app.include_router(alarms.router)
 
 
 @app.on_event("startup")
 def _ensure_tables() -> None:
-    """Create the dashboard_panels + dashboards + datasources tables on boot so
-    the Live grid and saved connections can persist. Dashboards must run after
-    panels (it alters dashboard_panels)."""
+    """Create the dashboard_panels + dashboards + datasources + mimic_layouts
+    tables on boot so the Live grid, saved connections and the /monitor drawing
+    can persist. Dashboards must run after panels (it alters dashboard_panels);
+    mimic_layouts stands alone, so its position here doesn't matter."""
     db.init_panels_table()
     db.init_dashboards_table()
     db.init_datasources_table()
+    db.init_mimic_table()
 
 
 _tag_buffer_task: asyncio.Task | None = None

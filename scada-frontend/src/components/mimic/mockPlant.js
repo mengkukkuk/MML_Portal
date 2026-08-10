@@ -24,7 +24,25 @@
  * Analog tags leave `state` null, discrete tags leave `value` null, and a
  * pump carries both. `status` is derived here exactly once — symbols and the
  * detail rail never recompute it.
+ *
+ * The snapshot *helpers* (status derivation, formatting, flow test) live in
+ * ./tagStatus so the live poller in ./deriveTag can share one implementation
+ * and a page on real data never imports this simulator.
  */
+import { analogStatus, worseStatus } from './tagStatus'
+
+// Generator arithmetic — local to the simulator. `analogStatus`/`worseStatus`
+// are shared with the live path because they describe the tag *shape*; these
+// two just shape a sine wave and belong with the thing that makes one.
+function clamp(v, lo, hi) {
+  return v < lo ? lo : v > hi ? hi : v
+}
+
+function round(v, decimals) {
+  if (v == null) return null
+  const f = 10 ** decimals
+  return Math.round(v * f) / f
+}
 
 const HISTORY_POINTS = 120
 const EVENT_LOG_SIZE = 30
@@ -198,31 +216,6 @@ export const TAG_IDS = Object.keys(TAG_DEFS)
 
 /** Tags a symbol can be bound to, in the order the tag strip lists them. */
 export const ANALOG_TAG_IDS = TAG_IDS.filter((id) => TAG_DEFS[id].kind !== 'discrete')
-
-const STATUS_RANK = { normal: 0, stale: 1, warn: 2, crit: 3 }
-
-export function worseStatus(a, b) {
-  return (STATUS_RANK[b] ?? 0) > (STATUS_RANK[a] ?? 0) ? b : a
-}
-
-function clamp(v, lo, hi) {
-  return v < lo ? lo : v > hi ? hi : v
-}
-
-function round(v, decimals) {
-  if (v == null) return null
-  const f = 10 ** decimals
-  return Math.round(v * f) / f
-}
-
-function analogStatus(def, value) {
-  if (value == null) return 'normal'
-  if (def.critLo != null && value <= def.critLo) return 'crit'
-  if (def.critHi != null && value >= def.critHi) return 'crit'
-  if (def.warnLo != null && value <= def.warnLo) return 'warn'
-  if (def.warnHi != null && value >= def.warnHi) return 'warn'
-  return 'normal'
-}
 
 /**
  * Small LCG so noise is reproducible within a session and does not depend on
@@ -399,16 +392,3 @@ export function createPlantSim() {
   return { tick, excite }
 }
 
-/** Formats a tag's live number for a readout. Never returns undefined. */
-export function formatValue(tag) {
-  if (!tag) return '—'
-  if (tag.display == null) return tag.state ? tag.state.toUpperCase() : '—'
-  return tag.display.toFixed(tag.decimals)
-}
-
-/** True when a drive/flow tag is actively moving product. */
-export function isFlowing(tag) {
-  if (!tag) return true
-  if (tag.state) return tag.state !== 'stop' && tag.state !== 'closed'
-  return tag.value == null || tag.value > 0
-}

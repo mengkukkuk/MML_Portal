@@ -1,7 +1,9 @@
 import { useMemo } from 'react'
+import Button from '@mui/material/Button'
+import LinkOutlined from '@mui/icons-material/LinkOutlined'
 import EChart from '@/components/charts/EChart'
 import { SYMBOLS } from '@/components/mimic/symbols'
-import { formatValue } from '@/components/mimic/mockPlant'
+import { formatValue } from '@/components/mimic/tagStatus'
 import { useSettingsStore } from '@/stores/settings'
 import styles from './DetailRail.module.css'
 
@@ -24,7 +26,9 @@ function clockTime(ts) {
  * Works with or without a node: selecting a symbol passes both, clicking a
  * tag in the strip passes the tag alone.
  */
-export default function DetailRail({ tag, node, history, events }) {
+export default function DetailRail({
+  tag, node, history, events, canBind = false, onConnect,
+}) {
   const theme = useSettingsStore((s) => s.theme)
 
   const sparkOption = useMemo(() => {
@@ -59,6 +63,35 @@ export default function DetailRail({ tag, node, history, events }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [history, theme])
 
+  // A selected symbol with no reading behind it is a different state from
+  // nothing being selected: it has a name and an obvious next step.
+  if (!tag && node) {
+    return (
+      <aside className={styles.rail}>
+        <div className={styles.head}>
+          <span className={styles.eyebrow}>{SYMBOLS[node.type]?.label}</span>
+          <span className={styles.tagId}>{node.tagId || 'No loop id'}</span>
+          <span className={styles.tagLabel}>{node.label}</span>
+        </div>
+        <p className={styles.quiet}>
+          Not connected. This symbol is drawn on the plant but has no reading behind it.
+        </p>
+        {canBind && (
+          <div className={styles.connectRow}>
+            <Button
+              fullWidth
+              variant="contained"
+              startIcon={<LinkOutlined />}
+              onClick={() => onConnect(node)}
+            >
+              Connect data source
+            </Button>
+          </div>
+        )}
+      </aside>
+    )
+  }
+
   if (!tag) {
     return (
       <aside className={styles.rail}>
@@ -84,7 +117,11 @@ export default function DetailRail({ tag, node, history, events }) {
   const lim = tag.limits || {}
   const range = tag.range
   const pos = (v) => (range ? ((v - range[0]) / (range[1] - range[0])) * 100 : 0)
-  const tagEvents = events.filter((e) => e.tag === tag.id)
+  // Scoped to the selected *node*, not the loop id: two symbols may print the
+  // same loop, and one's transitions must never appear under the other.
+  const tagEvents = node
+    ? events.filter((e) => e.nodeId === node.id)
+    : events.filter((e) => e.tag === tag.id)
 
   return (
     <aside className={styles.rail} aria-live="polite">
@@ -192,6 +229,22 @@ export default function DetailRail({ tag, node, history, events }) {
           <span className={styles.metaVal}>{clockTime(tag.ts)}</span>
         </div>
       </div>
+
+      {/* An admin shouldn't have to enter edit mode just to retune a limit or
+          repoint a symbol at a different column. */}
+      {canBind && node && (
+        <div className={styles.connectRow}>
+          <Button
+            fullWidth
+            variant="outlined"
+            color="inherit"
+            startIcon={<LinkOutlined />}
+            onClick={() => onConnect(node)}
+          >
+            {node.binding ? 'Edit connection' : 'Connect data source'}
+          </Button>
+        </div>
+      )}
     </aside>
   )
 }

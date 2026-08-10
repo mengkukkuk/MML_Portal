@@ -16,6 +16,11 @@ export default function useMockPlant({ tickMs = 1000 } = {}) {
   const [snapshot, setSnapshot] = useState(() => simRef.current.tick())
 
   useEffect(() => {
+    // `tickMs: null` means "don't run" — the page is on live data and this
+    // hook is only still mounted because hooks can't be called conditionally.
+    // It must return before setInterval: `setInterval(fn, null)` coerces the
+    // delay to 0 and spins the simulator as fast as the event loop allows.
+    if (tickMs == null) return undefined
     const id = setInterval(() => setSnapshot(simRef.current.tick()), tickMs)
     return () => clearInterval(id)
   }, [tickMs])

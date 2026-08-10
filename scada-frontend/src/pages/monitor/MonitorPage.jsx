@@ -1,24 +1,49 @@
-import { useCallback, useMemo, useState } from 'react'
+import {
+  useCallback, useEffect, useMemo, useRef, useState,
+} from 'react'
+import { useQuery } from '@tanstack/react-query'
 import Button from '@mui/material/Button'
+import Alert from '@mui/material/Alert'
+import Snackbar from '@mui/material/Snackbar'
+import FormControlLabel from '@mui/material/FormControlLabel'
+import Switch from '@mui/material/Switch'
 import BoltOutlined from '@mui/icons-material/BoltOutlined'
 import RestartAltOutlined from '@mui/icons-material/RestartAltOutlined'
 import { useAuthStore } from '@/stores/auth'
-import useMockPlant from '@/components/mimic/useMockPlant'
+import usePlantData from '@/components/mimic/usePlantData'
 import { SYMBOLS } from '@/components/mimic/symbols'
-import { TAG_IDS, formatValue, worseStatus } from '@/components/mimic/mockPlant'
+import { formatValue, worseStatus } from '@/components/mimic/tagStatus'
+import { fetchMimicLayout, saveMimicLayout } from '@/api/mimic'
+import { fetchDatasources } from '@/api/datasources'
 import MimicCanvas, { VIEW_W, VIEW_H } from './MimicCanvas'
 import DetailRail from './DetailRail'
 import SymbolPalette from './SymbolPalette'
-import { loadLayout, saveLayout, resetLayout } from './layoutStorage'
+import NodeInspector from './NodeInspector'
+import SymbolBindingDialog from './SymbolBindingDialog'
+import {
+  migrateLayout, readLegacyLayout, clearLegacyLayout, seedLayout,
+} from './layoutDoc'
 import styles from './MonitorPage.module.css'
 
-const CADENCES = [
+const PLANT_SLUG = 'boiler-1'
+
+/**
+ * Demo runs the simulator, so it can tick as fast as it likes. Live opens a
+ * fresh libpq connection per reading (`_table_source_conn`, no pool) and Live
+ * enforces a 5s floor server-side — so the live cadences start there.
+ */
+const DEMO_CADENCES = [
   { ms: 1000, label: '1s' },
   { ms: 2000, label: '2s' },
   { ms: 5000, label: '5s' },
 ]
+const LIVE_CADENCES = [
+  { s: 5, label: '5s' },
+  { s: 30, label: '30s' },
+  { s: 60, label: '1m' },
+]
 
-/** The tag "Simulate excursion" pushes over its high-high limit. */
+/** The tag "Simulate excursion" pushes over its high-high limit (demo only). */
 const EXCURSION_TAG = 'TT-202'
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v)
@@ -26,50 +51,97 @@ const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v)
 let addCounter = 0
 
 /**
- * MonitorPage — single-asset mimic for Boiler House 1 (route: /monitor).
+ * MonitorPage — single-asset mimic for one plant (route: /monitor).
  *
  * /live answers "how are all my things doing?". This answers "what is this
- * plant doing right now, and why?" — one P&ID-style drawing where the live
- * values sit inside ISA instrument balloons, symbols animate from their own
- * state, and selecting an asset opens its full context in the rail.
+ * plant doing right now, and why?" — one P&ID drawing where the live values
+ * sit inside ISA balloons, symbols animate from their own state, and
+ * selecting an asset opens its full context in the rail.
  *
- * There is no backend here: values come from the local simulator in
- * components/mimic/mockPlant.js and the layout persists to localStorage.
+ * Each symbol is bound to a real column on a real connection
+ * (SymbolBindingDialog), and a mimic may span several backends — one boiler
+ * on a historian, a conveyor on another. Bindings and geometry are saved
+ * server-side so every operator sees the same commissioned plant; the
+ * simulator survives behind the Demo data toggle.
  */
 export default function MonitorPage() {
   const role = useAuthStore((s) => s.user?.role ?? null)
   const canEdit = role === 'admin'
 
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' })
+  const notify = useCallback((message, severity = 'success') => {
+    setSnackbar({ open: true, message, severity })
+  }, [])
+
+  // --- layout: server is the source of truth ------------------------------
+  const layoutQuery = useQuery({
+    queryKey: ['mimic-layout', PLANT_SLUG],
+    queryFn: () => fetchMimicLayout(PLANT_SLUG),
+    // 404 is the normal first-run answer, not a failure to retry.
+    retry: (count, err) => err?.response?.status !== 404 && count < 2,
+  })
+
+  const [layout, setLayout] = useState(null)
+  const legacyPendingRef = useRef(false)
+
+  useEffect(() => {
+    if (layout || layoutQuery.isPending) return
+    const server = layoutQuery.data?.doc ? migrateLayout(layoutQuery.data.doc) : null
+    if (server) { setLayout(server); return }
+    // Nothing on the server. An admin may still have a hand-arranged drawing
+    // in this browser from before /monitor had a backend — carry its geometry
+    // into the first save rather than replacing it with the seed.
+    const legacy = readLegacyLayout()
+    if (legacy) {
+      legacyPendingRef.current = true
+      setLayout(legacy)
+      return
+    }
+    setLayout(seedLayout())
+  }, [layout, layoutQuery.isPending, layoutQuery.data])
+
+  const nodes = useMemo(() => layout?.nodes ?? [], [layout])
+
+  // --- data ----------------------------------------------------------------
+  const [demo, setDemo] = useState(false)
   const [tickMs, setTickMs] = useState(1000)
+  const [pollSeconds, setPollSeconds] = useState(5)
+
   const {
-    tags, history, events, simulateExcursion, excursionTag,
-  } = useMockPlant({ tickMs })
+    tags, history, events, error: dataError, simulateExcursion, excursionTag,
+  } = usePlantData({
+    nodes, demo, tickMs, pollSeconds,
+  })
 
-  const [layout, setLayout] = useState(loadLayout)
-  const [selectedId, setSelectedId] = useState(null)
-  const [selectedTagId, setSelectedTagId] = useState(null)
-  const [editMode, setEditMode] = useState(false)
+  const datasourcesQuery = useQuery({ queryKey: ['datasources'], queryFn: fetchDatasources })
 
-  const selectedNode = layout.nodes.find((n) => n.id === selectedId) ?? null
-  const activeTagId = selectedNode?.tag ?? selectedTagId
-  const activeTag = activeTagId ? tags[activeTagId] : null
+  const connected = useMemo(
+    () => nodes.filter((n) => n.binding?.table && n.binding?.value_col).length,
+    [nodes],
+  )
+  const backendCount = useMemo(() => {
+    const ids = new Set()
+    nodes.forEach((n) => {
+      if (n.binding?.table && n.binding?.value_col) ids.add(n.binding.datasource_id ?? 'app')
+    })
+    return ids.size
+  }, [nodes])
 
   const plantStatus = useMemo(
     () => Object.values(tags).reduce((acc, t) => worseStatus(acc, t.status), 'normal'),
     [tags],
   )
 
-  const selectNode = useCallback((id) => {
-    setSelectedId(id)
-    setSelectedTagId(null)
-  }, [])
+  // --- selection -----------------------------------------------------------
+  const [selectedId, setSelectedId] = useState(null)
+  const [editMode, setEditMode] = useState(false)
 
-  const selectTag = useCallback((tagId) => {
-    const owner = layout.nodes.find((n) => n.tag === tagId)
-    setSelectedId(owner?.id ?? null)
-    setSelectedTagId(owner ? null : tagId)
-  }, [layout.nodes])
+  const selectedNode = nodes.find((n) => n.id === selectedId) ?? null
+  const selectedTag = selectedId ? tags[selectedId] ?? null : null
 
+  const selectNode = useCallback((id) => setSelectedId(id), [])
+
+  // --- geometry edits ------------------------------------------------------
   const moveNode = useCallback((id, pos) => {
     setLayout((prev) => ({
       ...prev,
@@ -77,9 +149,8 @@ export default function MonitorPage() {
     }))
   }, [])
 
-  // Keyboard nudge. Resolved against the node in `prev` rather than the
-  // rendered one so a burst of key repeats accumulates instead of collapsing
-  // to whichever keydown happened to land last.
+  // Resolved against the node in `prev` rather than the rendered one so a
+  // burst of key repeats accumulates instead of collapsing to the last one.
   const nudgeNode = useCallback((id, dx, dy) => {
     setLayout((prev) => ({
       ...prev,
@@ -107,11 +178,12 @@ export default function MonitorPage() {
   const addSymbol = useCallback((type) => {
     const def = SYMBOLS[type]
     addCounter += 1
-    const id = `n-new-${addCounter}`
+    const id = `n-new-${Date.now().toString(36)}-${addCounter}`
     const node = {
       id,
       type,
-      tag: null,
+      tagId: null,
+      binding: null,
       label: def.label,
       x: Math.round((VIEW_W - def.defaultSize.w) / 2),
       y: Math.round((VIEW_H - def.defaultSize.h) / 2),
@@ -123,27 +195,115 @@ export default function MonitorPage() {
     setSelectedId(id)
   }, [])
 
+  // --- persistence ---------------------------------------------------------
+  const [saving, setSaving] = useState(false)
+
+  const persist = useCallback(async (doc) => {
+    setSaving(true)
+    try {
+      await saveMimicLayout(PLANT_SLUG, doc.name || 'Boiler House 1', doc)
+      if (legacyPendingRef.current) {
+        clearLegacyLayout()
+        legacyPendingRef.current = false
+      }
+      notify('Layout saved.')
+      return true
+    } catch (e) {
+      notify(e?.response?.data?.detail || 'Failed to save the layout.', 'error')
+      return false
+    } finally {
+      setSaving(false)
+    }
+  }, [notify])
+
+  // --- binding dialog ------------------------------------------------------
+  const [bindingNode, setBindingNode] = useState(null)
+
+  const openBinding = useCallback((node) => setBindingNode(node), [])
+
+  const applyBinding = useCallback(({ tagId, label, binding }) => {
+    const next = {
+      ...layout,
+      nodes: layout.nodes.map((n) => (n.id === bindingNode.id
+        ? { ...n, tagId, label, binding }
+        : n)),
+    }
+    setLayout(next)
+    setBindingNode(null)
+    // Commissioning a loop publishes straight away. Geometry waits for Done
+    // because a drag is provisional until you let go of it, but a binding is a
+    // decision — and an admin who rebinds from the read-only rail never enters
+    // edit mode at all, so there would otherwise be nothing to save it with.
+    if (editMode) {
+      notify(binding ? 'Binding set. Saved when you leave edit mode.' : 'Symbol disconnected.')
+    } else {
+      persist(next)
+    }
+  }, [bindingNode, editMode, layout, notify, persist])
+
   const toggleEdit = useCallback(() => {
-    setEditMode((on) => {
-      if (on) saveLayout(layout)
-      return !on
-    })
-  }, [layout])
+    if (editMode) {
+      persist(layout)
+      setEditMode(false)
+    } else {
+      setEditMode(true)
+    }
+  }, [editMode, layout, persist])
 
   const handleReset = useCallback(() => {
-    setLayout(resetLayout())
+    setLayout(seedLayout())
     setSelectedId(null)
   }, [])
 
   const dotClass = plantStatus === 'crit' ? styles.dotCrit
     : plantStatus === 'warn' ? styles.dotWarn : ''
 
+  if (!layout) {
+    return <p className={styles.loading}>Loading the plant drawing…</p>
+  }
+
+  const cadence = demo ? (
+    <div className={styles.cadence} role="group" aria-label="Update interval">
+      {DEMO_CADENCES.map((c) => (
+        <button
+          key={c.ms}
+          type="button"
+          className={`${styles.cadenceBtn} ${tickMs === c.ms ? styles.cadenceOn : ''}`}
+          aria-pressed={tickMs === c.ms}
+          onClick={() => setTickMs(c.ms)}
+        >
+          {c.label}
+        </button>
+      ))}
+    </div>
+  ) : (
+    <div className={styles.cadence} role="group" aria-label="Poll interval">
+      {LIVE_CADENCES.map((c) => (
+        <button
+          key={c.s}
+          type="button"
+          className={`${styles.cadenceBtn} ${pollSeconds === c.s ? styles.cadenceOn : ''}`}
+          aria-pressed={pollSeconds === c.s}
+          onClick={() => setPollSeconds(c.s)}
+        >
+          {c.label}
+        </button>
+      ))}
+    </div>
+  )
+
+  const subtitle = demo
+    ? 'Steam skid · simulated process · no datasource'
+    : connected === 0
+      ? 'Steam skid · no symbols connected yet'
+      : `Steam skid · ${connected} of ${nodes.length} symbols connected · ${backendCount} ${backendCount === 1 ? 'connection' : 'connections'}`
+
   return (
     <div className={styles.page}>
       <header className={styles.bar}>
         <div className={styles.titleWrap}>
-          <h2 className={styles.title}>Boiler House 1</h2>
-          <p className={styles.sub}>Steam skid · simulated process · no datasource</p>
+          <h2 className={styles.title}>{layout.name || 'Boiler House 1'}</h2>
+          <p className={styles.sub}>{subtitle}</p>
         </div>
 
         <span className={styles.plantState}>
@@ -152,28 +312,25 @@ export default function MonitorPage() {
         </span>
 
         <div className={styles.actions}>
-          <div className={styles.cadence} role="group" aria-label="Update interval">
-            {CADENCES.map((c) => (
-              <button
-                key={c.ms}
-                type="button"
-                className={`${styles.cadenceBtn} ${tickMs === c.ms ? styles.cadenceOn : ''}`}
-                aria-pressed={tickMs === c.ms}
-                onClick={() => setTickMs(c.ms)}
-              >
-                {c.label}
-              </button>
-            ))}
-          </div>
+          <FormControlLabel
+            className={styles.demoToggle}
+            control={<Switch size="small" checked={demo} onChange={(e) => setDemo(e.target.checked)} />}
+            label="Demo data"
+          />
 
-          <Button
-            startIcon={<BoltOutlined />}
-            color={excursionTag ? 'warning' : 'inherit'}
-            onClick={() => simulateExcursion(EXCURSION_TAG)}
-            title={`Drive ${EXCURSION_TAG} past its high-high limit for 15 seconds`}
-          >
-            Simulate excursion
-          </Button>
+          {cadence}
+
+          {/* Outside demo mode this drives a simulator nothing is reading. */}
+          {demo && (
+            <Button
+              startIcon={<BoltOutlined />}
+              color={excursionTag ? 'warning' : 'inherit'}
+              onClick={() => simulateExcursion(EXCURSION_TAG)}
+              title={`Drive ${EXCURSION_TAG} past its high-high limit for 15 seconds`}
+            >
+              Simulate excursion
+            </Button>
+          )}
 
           {canEdit && (
             <>
@@ -185,6 +342,7 @@ export default function MonitorPage() {
               <Button
                 variant={editMode ? 'contained' : 'outlined'}
                 color={editMode ? 'success' : 'inherit'}
+                loading={saving}
                 onClick={toggleEdit}
               >
                 {editMode ? 'Done' : 'Edit layout'}
@@ -193,6 +351,8 @@ export default function MonitorPage() {
           )}
         </div>
       </header>
+
+      {dataError && <Alert severity="warning">{dataError}</Alert>}
 
       <div className={styles.body}>
         <MimicCanvas
@@ -204,42 +364,76 @@ export default function MonitorPage() {
           onMoveNode={moveNode}
           onNudgeNode={nudgeNode}
           onDeleteNode={deleteNode}
+          onOpenBinding={canEdit ? openBinding : undefined}
         />
 
         {editMode && canEdit
-          ? <SymbolPalette onAdd={addSymbol} />
+          ? (selectedNode
+            ? (
+              <NodeInspector
+                node={selectedNode}
+                datasources={datasourcesQuery.data || []}
+                onConnect={() => openBinding(selectedNode)}
+                onDelete={deleteNode}
+                onBack={() => setSelectedId(null)}
+              />
+            )
+            : <SymbolPalette onAdd={addSymbol} />)
           : (
             <DetailRail
-              tag={activeTag}
+              tag={selectedTag}
               node={selectedNode}
-              history={activeTagId ? history[activeTagId] : null}
+              history={selectedId ? history[selectedId] : null}
               events={events}
+              canBind={canEdit}
+              onConnect={openBinding}
             />
           )}
       </div>
 
       <div className={styles.strip} role="group" aria-label="All plant tags">
-        {TAG_IDS.map((id) => {
-          const tag = tags[id]
-          if (!tag) return null
-          const on = activeTagId === id
-          const tone = tag.status === 'crit' ? styles.chipCrit
-            : tag.status === 'warn' ? styles.chipWarn : ''
+        {nodes.map((node) => {
+          const tag = tags[node.id]
+          const on = selectedId === node.id
+          const tone = tag?.status === 'crit' ? styles.chipCrit
+            : tag?.status === 'warn' ? styles.chipWarn : ''
           return (
             <button
-              key={id}
+              key={node.id}
               type="button"
-              className={`${styles.chip} ${on ? styles.chipOn : ''} ${tone}`}
+              className={`${styles.chip} ${on ? styles.chipOn : ''} ${tone} ${tag ? '' : styles.chipUnbound}`}
               aria-pressed={on}
-              onClick={() => selectTag(id)}
+              onClick={() => selectNode(node.id)}
             >
-              <span className={styles.chipId}>{id}</span>
-              <span className={styles.chipValue}>{formatValue(tag)}</span>
-              {tag.unit && <span className={styles.chipUnit}>{tag.unit}</span>}
+              <span className={styles.chipId}>{node.tagId || node.label}</span>
+              <span className={styles.chipValue}>{tag ? formatValue(tag) : '—'}</span>
+              {tag?.unit && <span className={styles.chipUnit}>{tag.unit}</span>}
             </button>
           )
         })}
       </div>
+
+      <SymbolBindingDialog
+        open={!!bindingNode}
+        node={bindingNode}
+        onClose={() => setBindingNode(null)}
+        onSave={applyBinding}
+      />
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={4000}
+        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert
+          severity={snackbar.severity}
+          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+          sx={{ width: '100%' }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </div>
   )
 }

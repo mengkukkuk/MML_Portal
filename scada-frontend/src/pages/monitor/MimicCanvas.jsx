@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { SYMBOLS, portPoint } from '@/components/mimic/symbols'
 import InstrumentBubble from '@/components/mimic/InstrumentBubble'
-import { isFlowing } from '@/components/mimic/mockPlant'
+import { isFlowing } from '@/components/mimic/tagStatus'
 import styles from './MimicCanvas.module.css'
 
 export const VIEW_W = 1600
@@ -72,6 +72,7 @@ export default function MimicCanvas({
   onMoveNode,
   onNudgeNode,
   onDeleteNode,
+  onOpenBinding,
 }) {
   const svgRef = useRef(null)
   const dragRef = useRef(null)
@@ -169,7 +170,11 @@ export default function MimicCanvas({
           const to = nodeById(edge.to.node)
           if (!from || !to) return null
           const d = routeEdge(from, edge.from.port, to, edge.to.port)
-          const flowing = isFlowing(edge.flowTag ? tags[edge.flowTag] : null)
+          // The snapshot is keyed by node id, so a pipe names the *drive* that
+          // moves product through it, not a loop number — a tag id could belong
+          // to two symbols, and dragging one would leave the other's line
+          // marching to a pump that isn't there.
+          const flowing = isFlowing(edge.flowNode ? tags[edge.flowNode] : null)
           const flowTint = {
             steam: styles.flowSteam, fuelgas: styles.flowFuelgas, fluegas: styles.flowFluegas,
           }[edge.service]
@@ -192,21 +197,41 @@ export default function MimicCanvas({
           const def = SYMBOLS[node.type]
           if (!def) return null
           const { Component } = def
-          const tag = node.tag ? tags[node.tag] : null
+          // Keyed by node id, not loop id: two symbols may legitimately watch
+          // the same loop, and each still needs its own reading and its own
+          // pulse.
+          const tag = tags[node.id] ?? null
           const selected = selectedId === node.id
+          // A symbol that carries an instrument but has nothing bound to it is
+          // an uncommissioned loop — drawn, but visibly not yet reading.
+          const unbound = def.binding !== 'none' && !tag
           return (
             <g
               key={node.id}
-              className={`${styles.node} ${editMode ? styles.nodeEditing : ''} ${draggingId === node.id ? styles.nodeDragging : ''}`}
+              className={`${styles.node} ${editMode ? styles.nodeEditing : ''} ${draggingId === node.id ? styles.nodeDragging : ''} ${unbound ? styles.nodeUnbound : ''}`}
               transform={`translate(${node.x} ${node.y})${node.rot ? ` rotate(${node.rot} ${node.w / 2} ${node.h / 2})` : ''}`}
               onPointerDown={(e) => handleNodePointerDown(e, node)}
+              // Double-click is the shortcut past the rail: "click the symbol
+              // to choose its data source" should work straight off the
+              // drawing, not only through the inspector.
+              onDoubleClick={onOpenBinding ? (e) => { e.stopPropagation(); onOpenBinding(node) } : undefined}
               tabIndex={0}
               role="button"
-              aria-label={`${def.label} ${node.label}`}
+              aria-label={`${def.label} ${node.label}${node.binding ? '' : ' — not connected'}`}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(node.id) } }}
             >
               <rect className={styles.hitbox} x={-6} y={-6} width={node.w + 12} height={node.h + 12} />
               <Component node={node} tag={tag} selected={selected} />
+              {unbound && (
+                <rect
+                  className={styles.unboundOutline}
+                  x={-8}
+                  y={-8}
+                  width={node.w + 16}
+                  height={node.h + 16}
+                  rx={4}
+                />
+              )}
               {selected && (
                 <rect
                   className={styles.selection}
@@ -226,14 +251,18 @@ export default function MimicCanvas({
       <g>
         {layout.nodes.map((node) => {
           const def = SYMBOLS[node.type]
-          const tag = node.tag ? tags[node.tag] : null
-          if (!def?.bubble || !tag) return null
+          const tag = tags[node.id] ?? null
+          // An unbound loop still gets its balloon (empty), so the drawing
+          // reads as commissioned-in-progress rather than as a symbol that
+          // never had an instrument.
+          if (!def?.bubble || (!tag && !node.tagId)) return null
           const ax = node.x + def.bubble.anchor[0] * node.w
           const ay = node.y + def.bubble.anchor[1] * node.h
           return (
             <InstrumentBubble
               key={`b-${node.id}`}
               tag={tag}
+              tagId={node.tagId}
               anchorX={ax}
               anchorY={ay}
               cx={ax + def.bubble.offset[0]}

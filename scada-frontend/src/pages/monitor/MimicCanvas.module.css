@@ -125,6 +125,21 @@
   pointer-events: none;
 }
 
+/* An uncommissioned loop: drawn, but visibly not reading yet. The hairline
+   dashed box is the drawing convention for equipment shown for reference
+   rather than in service, and it reads honestly at a glance across a room. */
+.nodeUnbound {
+  opacity: 0.45;
+}
+
+.unboundOutline {
+  fill: none;
+  stroke: var(--fg-dim);
+  stroke-width: 1;
+  stroke-dasharray: 3 5;
+  pointer-events: none;
+}
+
 .node:focus {
   outline: none;
 }

@@ -696,7 +696,9 @@ def delete_panel(panel_id: int) -> bool:
 # Tables never exposed to the picker (credentials / app-internal state).
 # `datasources` holds saved connection passwords — must never be chartable, or a
 # text filter column could leak secrets via distinct_column_values.
-SENSITIVE_TABLES = {"users", "dashboard_panels", "mmldatabuffer", "datasources"}
+SENSITIVE_TABLES = {
+    "users", "dashboard_panels", "mmldatabuffer", "datasources", "mimic_layouts",
+}
 
 # Postgres date/time data_types usable as a panel's timestamp/x-axis column.
 _TS_TYPES = (
@@ -1049,3 +1051,65 @@ def delete_datasource(datasource_id: int) -> bool:
         cur = conn.execute("DELETE FROM datasources WHERE id = %s", (datasource_id,))
         conn.commit()
         return cur.rowcount > 0
+
+
+# --- Mimic layouts (/monitor) -----------------------------------------------
+# One row per plant drawing. The whole layout document — nodes, edges, ports,
+# geometry and each node's datasource binding — lives in `doc` as JSONB: none
+# of it has query needs, and the frontend document is already flat and
+# serialisable. Reads are open to any authenticated user (every operator sees
+# the same commissioned plant); writes are admin-only, enforced in mimic.py.
+# `mimic_layouts` is in SENSITIVE_TABLES so a layout can never be charted back
+# through the generic table source.
+def init_mimic_table() -> None:
+    """Create the mimic_layouts table if it doesn't exist. Idempotent."""
+    with get_connection() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS mimic_layouts (
+                id         SERIAL PRIMARY KEY,
+                slug       TEXT NOT NULL UNIQUE,
+                name       TEXT NOT NULL,
+                doc        JSONB NOT NULL DEFAULT '{}'::jsonb,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )"""
+        )
+        conn.commit()
+
+
+def list_mimic_layouts() -> list[dict[str, Any]]:
+    """Every saved drawing, without its document, ordered by name."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT slug, name, updated_at FROM mimic_layouts ORDER BY name"
+        ).fetchall()
+    return rows
+
+
+def get_mimic_layout(slug: str) -> dict[str, Any] | None:
+    """One drawing with its full document. None if it has never been saved —
+    the client then falls back to its seeded layout."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT slug, name, doc, updated_at FROM mimic_layouts WHERE slug = %s",
+            (slug,),
+        ).fetchone()
+    return row
+
+
+def upsert_mimic_layout(slug: str, name: str, doc: dict[str, Any]) -> dict[str, Any]:
+    """Create or replace a drawing. The document is stored whole — a partial
+    save would leave the drawing and its bindings out of step."""
+    with get_connection() as conn:
+        row = conn.execute(
+            """INSERT INTO mimic_layouts (slug, name, doc)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (slug) DO UPDATE
+                SET name = EXCLUDED.name,
+                    doc = EXCLUDED.doc,
+                    updated_at = now()
+            RETURNING slug, name, doc, updated_at""",
+            (slug, name, Json(doc)),
+        ).fetchone()
+        conn.commit()
+    return row

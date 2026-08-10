@@ -285,6 +285,12 @@
 .bubbleCrit .bubbleSplit { stroke: var(--crit); }
 .bubbleCrit .bubbleValue { fill: var(--crit); }
 
+/* Nothing bound yet: the balloon is drawn as an empty loop, hairline and
+   dashed, so an uncommissioned instrument is never mistaken for a dead one. */
+.bubbleUnbound .bubbleFace { stroke: var(--fg-dim); stroke-dasharray: 3 4; }
+.bubbleUnbound .bubbleTag { fill: var(--fg-dim); }
+.bubbleUnbound .bubbleValue { fill: var(--fg-dim); }
+
 /* On-change: one hairline ring, tinted by direction. Mounted by key={pulse}
  * so an unchanged tick renders nothing at all. */
 .ring {
