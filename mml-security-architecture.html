@@ -1,0 +1,1234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MMLPortal — Security Architecture</title>
+<style>
+  :root {
+    --bg:     #0d1117;
+    --bg2:    #161b22;
+    --bg3:    #1c2333;
+    --border: #30363d;
+    --text:   #e6edf3;
+    --muted:  #8b949e;
+    --accent: #58a6ff;
+    --green:  #3fb950;
+    --orange: #f0883e;
+    --purple: #d2a8ff;
+    --red:    #f85149;
+    --yellow: #e3b341;
+    --teal:   #39d353;
+    --pink:   #f778ba;
+    --cyan:   #76e3ea;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  code, .mono { font-family: 'Cascadia Code', 'Consolas', monospace; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ── HEADER ── */
+  header {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 18px 32px;
+  }
+  .badges { display:flex; gap:8px; margin-bottom:6px; flex-wrap:wrap; }
+  .badge {
+    border-radius:6px; padding:3px 10px;
+    font-size:11px; font-weight:700; letter-spacing:.5px; text-transform:uppercase;
+    border: 1px solid;
+  }
+  .badge-react { background:#082530; color:var(--cyan);   border-color:#164a5a; }
+  .badge-py    { background:#1a1a3a; color:var(--accent); border-color:#2a2a6a; }
+  .badge-pg    { background:#0d2530; color:var(--cyan);   border-color:#1a4a6a; }
+  .badge-iis   { background:#2d1a08; color:var(--orange); border-color:#3d2008; }
+  .badge-jwt   { background:#201634; color:var(--purple); border-color:#2a1e40; }
+  .badge-scr   { background:#0d2218; color:var(--green);  border-color:#1a4a28; }
+  header h1  { font-size:18px; font-weight:700; }
+  header p   { color:var(--muted); font-size:13px; margin-top:2px; }
+
+  /* ── CONTROLS ── */
+  .controls {
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 32px;
+    position: sticky; top: 0; z-index: 20;
+  }
+  .nav-btn, .step-btn {
+    background: var(--bg3); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 5px 11px; font-size: 12px; cursor: pointer;
+    font-family: inherit;
+  }
+  .nav-btn:hover, .step-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .step-btn.active {
+    background: #12324f; border-color: var(--accent); color: var(--accent); font-weight: 600;
+  }
+  .step-counter { color: var(--muted); font-size: 12px; margin-right: 6px; }
+  .sec-divider { width:1px; height:22px; background:var(--border); margin:0 4px; }
+  .sec-label { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.6px; }
+
+  /* ── STAGE ── */
+  main { padding: 26px 32px 70px; max-width: 1180px; margin: 0 auto; }
+  .step { display: none; animation: fade .25s ease; }
+  .step.active { display: block; }
+  @keyframes fade { from { opacity:0; transform: translateY(6px); } to { opacity:1; transform:none; } }
+
+  .step-head { margin-bottom: 18px; }
+  .kicker {
+    font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--muted); font-weight: 700;
+  }
+  .step-head h2 { font-size: 22px; margin-top: 4px; }
+  .step-head p  { color: var(--muted); margin-top: 6px; max-width: 78ch; line-height: 1.6; }
+
+  .panel {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 20px; margin-bottom: 16px;
+  }
+  .panel h3 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .7px;
+    color: var(--accent); margin-bottom: 12px;
+  }
+  .panel h3.g { color: var(--green); }
+  .panel h3.o { color: var(--orange); }
+  .panel h3.p { color: var(--purple); }
+  .panel h3.r { color: var(--red); }
+
+  .grid2 { display:grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap:16px; }
+
+  ul.clean { list-style: none; }
+  ul.clean li {
+    padding: 7px 0 7px 20px; position: relative;
+    border-bottom: 1px dashed #232b36; line-height: 1.55;
+  }
+  ul.clean li:last-child { border-bottom: none; }
+  ul.clean li::before {
+    content: '▸'; position: absolute; left: 2px; color: var(--accent);
+  }
+  ul.clean li.ok::before   { content:'✓'; color: var(--green); }
+  ul.clean li.warn::before { content:'!'; color: var(--yellow); font-weight:700; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #232b36; vertical-align: top; }
+  th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing:.5px; font-weight:700; }
+  tbody tr:last-child td { border-bottom: none; }
+  td code { font-size: 12px; }
+
+  code.inl {
+    background: #0b1220; border: 1px solid #1e2937; border-radius: 4px;
+    padding: 1px 5px; font-size: 12.5px; color: var(--cyan);
+  }
+  .pill {
+    display:inline-block; border-radius:4px; padding:1px 7px;
+    font-size:11px; font-weight:700; border:1px solid;
+  }
+  .pill-any   { background:#0f1c2b; color:var(--accent); border-color:#1d3550; }
+  .pill-op    { background:#2b2109; color:var(--yellow); border-color:#4a3a10; }
+  .pill-admin { background:#33121a; color:var(--red);    border-color:#5a2028; }
+  .pill-pub   { background:#12261a; color:var(--green);  border-color:#1e4a2c; }
+
+  pre {
+    background: #0b1220; border: 1px solid #1e2937; border-radius: 8px;
+    padding: 12px 14px; overflow-x: auto; font-size: 12.5px; line-height: 1.6;
+    color: #c9d6e4;
+  }
+  pre .c { color: var(--muted); }
+  pre .k { color: var(--pink); }
+  pre .s { color: var(--green); }
+
+  .note {
+    border-left: 3px solid var(--accent); background: #0f1a26;
+    padding: 10px 14px; border-radius: 0 6px 6px 0; margin-top: 12px;
+    color: #c3d3e2; line-height: 1.6; font-size: 13px;
+  }
+  .note.warn { border-left-color: var(--yellow); background: #211c0d; }
+  .note.risk { border-left-color: var(--red);    background: #22110f; }
+
+  svg { display:block; max-width:100%; height:auto; margin: 4px auto 2px; }
+  .svg-cap { text-align:center; color:var(--muted); font-size:12px; margin-top:6px; }
+
+  footer {
+    border-top: 1px solid var(--border); background: var(--bg2);
+    padding: 14px 32px; color: var(--muted); font-size: 12px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="badges">
+    <span class="badge badge-react">React 19 SPA</span>
+    <span class="badge badge-py">FastAPI</span>
+    <span class="badge badge-jwt">JWT HS256</span>
+    <span class="badge badge-scr">scrypt</span>
+    <span class="badge badge-pg">PostgreSQL</span>
+    <span class="badge badge-iis">IIS + ARR</span>
+  </div>
+  <h1>MMLPortal — Security Architecture</h1>
+  <p>What the security layer is built from, and how each flow actually works. Generated from the source on branch <code class="mono">react_cvt</code>.</p>
+</header>
+
+<div class="controls">
+  <button class="nav-btn" id="prevBtn">← Prev</button>
+  <button class="nav-btn" id="nextBtn">Next →</button>
+  <span class="step-counter" id="stepCounter">1 / 12</span>
+  <div class="sec-divider"></div>
+  <button class="step-btn" data-step="0">0 · Map</button>
+  <div class="sec-divider"></div>
+  <span class="sec-label">1 · Uses</span>
+  <button class="step-btn" data-step="1">Frontend</button>
+  <button class="step-btn" data-step="2">Backend</button>
+  <button class="step-btn" data-step="3">Secrets</button>
+  <button class="step-btn" data-step="4">Deploy</button>
+  <div class="sec-divider"></div>
+  <span class="sec-label">2 · Works</span>
+  <button class="step-btn" data-step="5">Login</button>
+  <button class="step-btn" data-step="6">Refresh</button>
+  <button class="step-btn" data-step="7">Logout</button>
+  <button class="step-btn" data-step="8">Reset</button>
+  <button class="step-btn" data-step="9">RBAC</button>
+  <button class="step-btn" data-step="10">SQL</button>
+  <div class="sec-divider"></div>
+  <button class="step-btn" data-step="11">Gaps</button>
+</div>
+
+<main>
+
+<!-- ══════════════ STEP 0 — MAP ══════════════ -->
+<section class="step active" data-step="0">
+  <div class="step-head">
+    <div class="kicker">Overview</div>
+    <h2>The trust boundaries</h2>
+    <p>Four zones, three boundaries. Everything below explains one of the crossings: how a browser proves who it is, how the API decides what that identity may do, and how user-supplied names reach SQL without becoming SQL.</p>
+  </div>
+
+  <div class="panel">
+    <svg viewBox="0 0 1080 470" role="img" aria-label="Trust boundary diagram">
+      <defs>
+        <marker id="ar" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+          <path d="M0,0 L9,4.5 L0,9 Z" fill="#58a6ff"/>
+        </marker>
+        <marker id="arg" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+          <path d="M0,0 L9,4.5 L0,9 Z" fill="#3fb950"/>
+        </marker>
+      </defs>
+
+      <!-- zone: untrusted -->
+      <rect x="14" y="40" width="240" height="400" rx="10" fill="#1a0f10" stroke="#5a2028" stroke-dasharray="5 4"/>
+      <text x="134" y="30" fill="#f85149" font-size="12" font-weight="700" text-anchor="middle">UNTRUSTED — end user</text>
+
+      <rect x="34" y="70" width="200" height="122" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="134" y="94" fill="#76e3ea" font-size="13" font-weight="700" text-anchor="middle">Browser SPA</text>
+      <text x="134" y="115" fill="#8b949e" font-size="11" text-anchor="middle">React 19 · Zustand · axios</text>
+      <text x="134" y="140" fill="#e6edf3" font-size="11" text-anchor="middle">access token → JS memory</text>
+      <text x="134" y="158" fill="#e6edf3" font-size="11" text-anchor="middle">refresh token → HttpOnly</text>
+      <text x="134" y="176" fill="#8b949e" font-size="11" text-anchor="middle">(never localStorage)</text>
+
+      <rect x="34" y="216" width="200" height="86" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="134" y="240" fill="#d2a8ff" font-size="12" font-weight="700" text-anchor="middle">Route guard</text>
+      <text x="134" y="260" fill="#8b949e" font-size="11" text-anchor="middle">RequireAuth.jsx</text>
+      <text x="134" y="282" fill="#8b949e" font-size="10.5" text-anchor="middle">UX only — not enforcement</text>
+
+      <rect x="34" y="326" width="200" height="86" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="134" y="350" fill="#e3b341" font-size="12" font-weight="700" text-anchor="middle">Email inbox</text>
+      <text x="134" y="370" fill="#8b949e" font-size="11" text-anchor="middle">reset link (30 min, 1 use)</text>
+      <text x="134" y="392" fill="#8b949e" font-size="10.5" text-anchor="middle">out-of-band channel</text>
+
+      <!-- zone: edge -->
+      <rect x="300" y="40" width="200" height="400" rx="10" fill="#1c1409" stroke="#4a3a10" stroke-dasharray="5 4"/>
+      <text x="400" y="30" fill="#f0883e" font-size="12" font-weight="700" text-anchor="middle">EDGE — IIS host</text>
+
+      <rect x="320" y="90" width="160" height="140" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="400" y="116" fill="#f0883e" font-size="13" font-weight="700" text-anchor="middle">IIS + ARR</text>
+      <text x="400" y="140" fill="#8b949e" font-size="11" text-anchor="middle">TLS terminates here</text>
+      <text x="400" y="162" fill="#e6edf3" font-size="11" text-anchor="middle">/api/* → :8088</text>
+      <text x="400" y="182" fill="#e6edf3" font-size="11" text-anchor="middle">/*    → dist/</text>
+      <text x="400" y="208" fill="#8b949e" font-size="10.5" text-anchor="middle">web.config rewrite</text>
+
+      <rect x="320" y="266" width="160" height="100" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="400" y="292" fill="#3fb950" font-size="12" font-weight="700" text-anchor="middle">Static SPA</text>
+      <text x="400" y="312" fill="#8b949e" font-size="11" text-anchor="middle">no secrets shipped</text>
+      <text x="400" y="336" fill="#8b949e" font-size="11" text-anchor="middle">public/ + dist/</text>
+
+      <!-- zone: app -->
+      <rect x="546" y="40" width="290" height="400" rx="10" fill="#0d1a26" stroke="#1d3550" stroke-dasharray="5 4"/>
+      <text x="691" y="30" fill="#58a6ff" font-size="12" font-weight="700" text-anchor="middle">APPLICATION — mml-api service</text>
+
+      <rect x="566" y="70" width="250" height="96" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="691" y="94" fill="#58a6ff" font-size="13" font-weight="700" text-anchor="middle">CORS middleware</text>
+      <text x="691" y="115" fill="#8b949e" font-size="11" text-anchor="middle">explicit origin allowlist</text>
+      <text x="691" y="136" fill="#8b949e" font-size="11" text-anchor="middle">allow_credentials = True</text>
+      <text x="691" y="155" fill="#8b949e" font-size="10.5" text-anchor="middle">wildcard origin impossible</text>
+
+      <rect x="566" y="184" width="250" height="112" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="691" y="208" fill="#d2a8ff" font-size="13" font-weight="700" text-anchor="middle">Auth dependencies</text>
+      <text x="691" y="230" fill="#e6edf3" font-size="11" text-anchor="middle">get_current_user()</text>
+      <text x="691" y="250" fill="#e6edf3" font-size="11" text-anchor="middle">require_operator_or_admin()</text>
+      <text x="691" y="270" fill="#e6edf3" font-size="11" text-anchor="middle">require_admin()</text>
+      <text x="691" y="288" fill="#8b949e" font-size="10.5" text-anchor="middle">the real enforcement point</text>
+
+      <rect x="566" y="314" width="250" height="106" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="691" y="338" fill="#3fb950" font-size="13" font-weight="700" text-anchor="middle">Query builder</text>
+      <text x="691" y="359" fill="#8b949e" font-size="11" text-anchor="middle">values → %s parameters</text>
+      <text x="691" y="379" fill="#8b949e" font-size="11" text-anchor="middle">names → allowlist + Identifier</text>
+      <text x="691" y="402" fill="#8b949e" font-size="10.5" text-anchor="middle">db.py is the only SQL author</text>
+
+      <!-- zone: data -->
+      <rect x="882" y="40" width="184" height="400" rx="10" fill="#0d1f14" stroke="#1e4a2c" stroke-dasharray="5 4"/>
+      <text x="974" y="30" fill="#3fb950" font-size="12" font-weight="700" text-anchor="middle">DATA</text>
+
+      <rect x="898" y="90" width="152" height="106" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="974" y="114" fill="#76e3ea" font-size="12" font-weight="700" text-anchor="middle">PostgreSQL</text>
+      <text x="974" y="136" fill="#8b949e" font-size="11" text-anchor="middle">users (scrypt)</text>
+      <text x="974" y="156" fill="#8b949e" font-size="11" text-anchor="middle">datasources</text>
+      <text x="974" y="176" fill="#8b949e" font-size="11" text-anchor="middle">dashboard_panels</text>
+
+      <rect x="898" y="222" width="152" height="94" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="974" y="246" fill="#e3b341" font-size="12" font-weight="700" text-anchor="middle">Remote DBs</text>
+      <text x="974" y="266" fill="#8b949e" font-size="11" text-anchor="middle">saved connections</text>
+      <text x="974" y="288" fill="#8b949e" font-size="11" text-anchor="middle">admin-configured</text>
+      <text x="974" y="306" fill="#8b949e" font-size="10.5" text-anchor="middle">SENSITIVE_TABLES denied</text>
+
+      <rect x="898" y="342" width="152" height="78" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="974" y="366" fill="#f778ba" font-size="12" font-weight="700" text-anchor="middle">Brevo / SMTP</text>
+      <text x="974" y="386" fill="#8b949e" font-size="11" text-anchor="middle">reset delivery</text>
+      <text x="974" y="406" fill="#8b949e" font-size="10.5" text-anchor="middle">API key in .env</text>
+
+      <!-- arrows -->
+      <line x1="234" y1="131" x2="318" y2="131" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#ar)"/>
+      <text x="276" y="123" fill="#58a6ff" font-size="10" text-anchor="middle">HTTPS</text>
+      <line x1="480" y1="140" x2="564" y2="140" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#ar)"/>
+      <text x="522" y="132" fill="#8b949e" font-size="10" text-anchor="middle">HTTP</text>
+      <text x="522" y="156" fill="#8b949e" font-size="9.5" text-anchor="middle">127.0.0.1</text>
+      <line x1="816" y1="140" x2="896" y2="140" stroke="#3fb950" stroke-width="1.6" marker-end="url(#arg)"/>
+      <line x1="816" y1="367" x2="896" y2="367" stroke="#3fb950" stroke-width="1.6" marker-end="url(#arg)"/>
+      <line x1="816" y1="367" x2="816" y2="140" stroke="#3fb950" stroke-width="1.2" opacity=".4"/>
+      <line x1="898" y1="380" x2="234" y2="380" stroke="#e3b341" stroke-width="1.3" stroke-dasharray="4 4"/>
+      <text x="566" y="374" fill="#e3b341" font-size="10" text-anchor="middle">reset email — leaves the system boundary</text>
+    </svg>
+    <div class="svg-cap">Trust boundaries. The dashed red/orange/blue/green frames mark zones; every arrow across a frame is a place a check has to exist.</div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3 class="g">Section 1 — What it uses</h3>
+      <ul class="clean">
+        <li><b>Frontend</b> — token custody, guards, safe expression evaluator</li>
+        <li><b>Backend</b> — FastAPI dependencies, PyJWT, scrypt, psycopg 3</li>
+        <li><b>Secrets</b> — hash format, <code class="inl">.env</code>, datasource passwords</li>
+        <li><b>Deployment</b> — IIS/ARR, NSSM, CORS, cookie attributes</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3 class="p">Section 2 — How it works</h3>
+      <ul class="clean">
+        <li><b>Login</b> — password verification and token issue</li>
+        <li><b>Refresh</b> — the 401 interceptor and request queue</li>
+        <li><b>Logout</b> — revocation, and what it does not cover</li>
+        <li><b>Password reset</b> — the out-of-band, single-use path</li>
+        <li><b>RBAC</b> — the endpoint-by-endpoint role map</li>
+        <li><b>SQL</b> — how dynamic table/column names stay safe</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ STEP 1 — FRONTEND ══════════════ -->
+<section class="step" data-step="1">
+  <div class="step-head">
+    <div class="kicker">1 · What it uses — Frontend</div>
+    <h2>Token custody in the browser</h2>
+    <p>The SPA's security job is narrow but real: hold the access token somewhere XSS-resistant, attach it to every call, and never pretend the route guard is an access control.</p>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3>Stack</h3>
+      <table>
+        <tbody>
+          <tr><td><b>React</b> 19.1 + <b>react-dom</b></td><td class="mono" style="color:var(--muted)">SPA runtime</td></tr>
+          <tr><td><b>react-router-dom</b> 7.6</td><td class="mono" style="color:var(--muted)">routing + guards</td></tr>
+          <tr><td><b>Zustand</b> 5</td><td class="mono" style="color:var(--muted)">auth store</td></tr>
+          <tr><td><b>axios</b> 1.16</td><td class="mono" style="color:var(--muted)">interceptors</td></tr>
+          <tr><td><b>MUI</b> 7.1</td><td class="mono" style="color:var(--muted)">UI — escapes by default</td></tr>
+          <tr><td><b>Vite</b> 8</td><td class="mono" style="color:var(--muted)">build + dev proxy</td></tr>
+        </tbody>
+      </table>
+      <div class="note">CLAUDE.md still describes Vue 3 + Pinia. On this branch that is stale — the running code is React + Zustand.</div>
+    </div>
+
+    <div class="panel">
+      <h3 class="g">Where each token lives</h3>
+      <ul class="clean">
+        <li class="ok"><b>Access token</b> — a module-scope variable in <code class="inl">api/client.js</code>. Survives navigation, dies on reload. Never written to <code class="inl">localStorage</code> or <code class="inl">sessionStorage</code>.</li>
+        <li class="ok"><b>Refresh token</b> — <code class="inl">HttpOnly</code> cookie. JavaScript cannot read it at all, so an XSS payload cannot exfiltrate a long-lived credential.</li>
+        <li class="ok">The Zustand store keeps only a boolean <code class="inl">hasToken</code> plus the user profile — components can render conditionally without ever touching the token.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3 class="p">Route guard — <span class="mono">RequireAuth.jsx</span></h3>
+      <p style="color:var(--muted); line-height:1.6; margin-bottom:10px;">Reads three flags off the matched routes' <code class="inl">handle</code>:</p>
+      <ul class="clean">
+        <li><code class="inl">requiresAuth</code> → redirect to <code class="inl">/login?redirect=…</code></li>
+        <li><code class="inl">requiresRole</code> → redirect to <code class="inl">/</code> on role mismatch</li>
+        <li><code class="inl">isLoginRoute</code> → bounce signed-in users off <code class="inl">/login</code></li>
+      </ul>
+      <div class="note warn">This is <b>navigation UX, not authorization</b>. Anyone can call the API directly. The only real gate is the FastAPI dependency on each endpoint — see the RBAC step.</div>
+    </div>
+
+    <div class="panel">
+      <h3 class="g">Safe expression evaluator — <span class="mono">mathExpr.js</span></h3>
+      <p style="color:var(--muted); line-height:1.6; margin-bottom:10px;">Live panels let an admin write a value transform such as <code class="inl">value/10</code>. That string is admin-supplied data rendered in every viewer's browser, so it must not be executable.</p>
+      <ul class="clean">
+        <li class="ok">Hand-written tokenizer + recursive-descent parser</li>
+        <li class="ok">No <code class="inl">eval</code>, no <code class="inl">new Function</code>, no DOM or prototype access</li>
+        <li class="ok">Fixed function table — <code class="inl">abs sqrt pow min max floor ceil round</code></li>
+        <li class="ok">Only identifier recognised is <code class="inl">value</code></li>
+      </ul>
+      <div class="note">A transform string can produce a wrong number. It cannot produce code execution.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ STEP 2 — BACKEND ══════════════ -->
+<section class="step" data-step="2">
+  <div class="step-head">
+    <div class="kicker">1 · What it uses — Backend</div>
+    <h2>Primitives and where they are enforced</h2>
+    <p>No third-party auth framework, no ORM. Password hashing is stdlib, tokens are PyJWT, and authorization is expressed as FastAPI dependencies that every protected route declares explicitly.</p>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3 class="g">Password hashing — <span class="mono">security.py</span></h3>
+      <pre><span class="c"># stored format, self-describing</span>
+scrypt$&lt;salt_hex&gt;$&lt;digest_hex&gt;
+
+N     = 16384   <span class="c"># CPU/memory cost</span>
+r     = 8
+p     = 1
+dklen = 64      <span class="c"># 64-byte derived key</span>
+salt  = os.urandom(16)  <span class="c"># per user</span></pre>
+      <ul class="clean">
+        <li class="ok"><code class="inl">hashlib.scrypt</code> — memory-hard, stdlib only, no native wheel needed on Python 3.14</li>
+        <li class="ok">Fresh 16-byte random salt per password; stored inline, so parameters can be migrated later</li>
+        <li class="ok">Comparison uses <code class="inl">hmac.compare_digest</code> — constant time</li>
+        <li class="ok">A malformed stored hash returns <code class="inl">False</code>, never raises</li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h3 class="p">Tokens — PyJWT, HS256</h3>
+      <table>
+        <thead><tr><th>Type</th><th>Life</th><th>Carried in</th></tr></thead>
+        <tbody>
+          <tr><td><code>access</code></td><td>30 min</td><td>JSON body → <code>Authorization: Bearer</code></td></tr>
+          <tr><td><code>refresh</code></td><td>7 days</td><td>HttpOnly cookie, <code>path=/api/auth</code></td></tr>
+          <tr><td><code>reset</code></td><td>30 min</td><td>emailed link, single use</td></tr>
+        </tbody>
+      </table>
+      <p style="color:var(--muted); line-height:1.6; margin-top:12px;">Every token is stamped with <code class="inl">iat</code>, <code class="inl">exp</code>, a random <code class="inl">jti</code>, and an explicit <code class="inl">type</code> claim. Each verifier re-checks the <code class="inl">type</code>, so a refresh token cannot be replayed as an access token.</p>
+      <div class="note">The access token carries <code class="inl">role</code>, but <code class="inl">get_current_user</code> ignores it and re-reads the user row from the database — a deleted or demoted account loses access without waiting for token expiry.</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Enforcement points — <span class="mono">auth.py</span></h3>
+    <pre><span class="k">def</span> get_current_user(creds = Depends(bearer_scheme)):
+    payload = security.decode_token(creds.credentials)   <span class="c"># signature + exp</span>
+    <span class="k">if</span> payload.get(<span class="s">"type"</span>) != <span class="s">"access"</span>: <span class="k">raise</span> InvalidTokenError
+    user = db.get_user_by_id(<span class="k">int</span>(payload[<span class="s">"sub"</span>]))    <span class="c"># DB is the truth</span>
+    <span class="k">if</span> user <span class="k">is None</span>: <span class="k">raise</span> HTTPException(401)
+    <span class="k">return</span> user
+
+<span class="k">def</span> require_admin(current_user = Depends(get_current_user)):
+    <span class="k">if</span> current_user[<span class="s">"role"</span>] != <span class="s">"admin"</span>: <span class="k">raise</span> HTTPException(403)
+    <span class="k">return</span> current_user</pre>
+    <ul class="clean">
+      <li>Any decode failure — bad signature, expired, wrong type, missing <code class="inl">sub</code> — collapses to one generic <b>401 "Invalid or expired token"</b>. No oracle for the attacker.</li>
+      <li>Three levels exist: <code class="inl">get_current_user</code>, <code class="inl">require_operator_or_admin</code>, <code class="inl">require_admin</code>.</li>
+      <li>Other libraries in the chain: <b>Pydantic</b> (request-body typing and length bounds), <b>psycopg 3</b> (parameterized SQL, <code class="inl">sql.Identifier</code>), <b>python-dotenv</b> (config load).</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ══════════════ STEP 3 — SECRETS ══════════════ -->
+<section class="step" data-step="3">
+  <div class="step-head">
+    <div class="kicker">1 · What it uses — Secrets</div>
+    <h2>Every secret in the system, and how it is held</h2>
+    <p>Five distinct secrets. Three are held correctly, one is held in plaintext by design, and one has a fallback default that will silently boot an insecure deployment.</p>
+  </div>
+
+  <div class="panel">
+    <table>
+      <thead><tr><th>Secret</th><th>Lives in</th><th>At rest</th><th>Exposure</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>User passwords</b></td>
+          <td><code>users.password_hash</code></td>
+          <td><span class="pill pill-pub">scrypt, salted</span></td>
+          <td>Never returned by any endpoint. <code>users</code> is in <code>SENSITIVE_TABLES</code>, so it cannot be charted.</td>
+        </tr>
+        <tr>
+          <td><b>JWT_SECRET</b></td>
+          <td><code>.env</code></td>
+          <td><span class="pill pill-op">plaintext file</span></td>
+          <td>Signs all three token types. Compromise = full account impersonation.</td>
+        </tr>
+        <tr>
+          <td><b>DB_PASSWORD</b></td>
+          <td><code>.env</code></td>
+          <td><span class="pill pill-op">plaintext file</span></td>
+          <td>Assembled into the libpq connection string at import time.</td>
+        </tr>
+        <tr>
+          <td><b>Datasource passwords</b></td>
+          <td><code>datasources.password</code></td>
+          <td><span class="pill pill-admin">plaintext column</span></td>
+          <td>Never returned — the public projection exposes only <code>(password &lt;&gt; '') AS has_password</code>.</td>
+        </tr>
+        <tr>
+          <td><b>BREVO_API_KEY / SMTP_PASS</b></td>
+          <td><code>.env</code></td>
+          <td><span class="pill pill-op">plaintext file</span></td>
+          <td>Sent as a request header; error logging deliberately truncates response bodies rather than echoing key material.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3 class="g">Two layers keep datasource passwords out of reach</h3>
+      <ul class="clean">
+        <li class="ok"><b>Projection</b> — <code class="inl">_DS_PUBLIC_COLS</code> never selects <code class="inl">password</code>; the API returns a boolean instead. On update, a null password keeps the stored secret rather than blanking it.</li>
+        <li class="ok"><b>Denylist</b> — <code class="inl">SENSITIVE_TABLES = {users, dashboard_panels, mmldatabuffer, datasources}</code>. Without this, an admin could bind a panel's filter column to <code class="inl">datasources.password</code> and read secrets out through the distinct-values picker.</li>
+      </ul>
+      <div class="note">The denylist is the load-bearing control here, and its purpose is documented at the definition site. Adding a new credential-bearing table means adding it to that set.</div>
+    </div>
+
+    <div class="panel">
+      <h3 class="r">Config defaults that do not fail closed</h3>
+      <pre><span class="c"># config.py — the _get() helper raises on missing vars…</span>
+<span class="k">def</span> _get(name, default=<span class="k">None</span>):
+    <span class="k">if</span> value <span class="k">is None</span>: <span class="k">raise</span> RuntimeError(...)
+
+<span class="c"># …but neither of these calls it:</span>
+DB_PASSWORD = os.getenv(<span class="s">"DB_PASSWORD"</span>, <span class="s">""</span>)
+JWT_SECRET  = os.getenv(<span class="s">"JWT_SECRET"</span>, <span class="s">"dev-insecure-change-me"</span>)</pre>
+      <div class="note risk">CLAUDE.md and <code class="inl">.env.example</code> both call these <b>required</b>. The code treats them as optional with defaults. A deployment that forgets <code class="inl">JWT_SECRET</code> starts successfully and signs every token with a value published in this repository — anyone can then mint a valid admin token. Carried to the gaps step as item #1.</div>
+    </div>
+  </div>
+
+  <div class="note warn"><b>Seeded accounts.</b> <code class="inl">seed_users.py</code> upserts two demo accounts — one <code class="inl">admin</code>, one <code class="inl">operator</code> — with known passwords committed to the repo, and re-applies them every time it runs. It is a local-auth testing helper. If it has been run against a production database, both passwords must be rotated and the script kept out of the deployment path.</div>
+</section>
+
+<!-- ══════════════ STEP 4 — DEPLOY ══════════════ -->
+<section class="step" data-step="4">
+  <div class="step-head">
+    <div class="kicker">1 · What it uses — Deployment</div>
+    <h2>Transport, origin, and cookie posture</h2>
+    <p>The production shape is IIS in front of a loopback-bound FastAPI service. TLS exists only on the outer hop, which is what makes the cookie's <code class="inl">Secure</code> flag a deployment decision rather than a constant.</p>
+  </div>
+
+  <div class="panel">
+    <svg viewBox="0 0 1000 220" role="img" aria-label="Request path">
+      <defs>
+        <marker id="ar2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+          <path d="M0,0 L9,4.5 L0,9 Z" fill="#58a6ff"/>
+        </marker>
+      </defs>
+      <rect x="20"  y="70" width="170" height="80" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="105" y="100" fill="#76e3ea" font-size="13" font-weight="700" text-anchor="middle">Browser</text>
+      <text x="105" y="122" fill="#8b949e" font-size="11" text-anchor="middle">TLS client</text>
+
+      <rect x="290" y="70" width="190" height="80" rx="8" fill="#161b22" stroke="#f0883e"/>
+      <text x="385" y="100" fill="#f0883e" font-size="13" font-weight="700" text-anchor="middle">IIS + ARR</text>
+      <text x="385" y="122" fill="#8b949e" font-size="11" text-anchor="middle">TLS terminates</text>
+
+      <rect x="580" y="70" width="190" height="80" rx="8" fill="#161b22" stroke="#58a6ff"/>
+      <text x="675" y="100" fill="#58a6ff" font-size="13" font-weight="700" text-anchor="middle">FastAPI :8088</text>
+      <text x="675" y="122" fill="#8b949e" font-size="11" text-anchor="middle">NSSM service</text>
+
+      <rect x="860" y="70" width="120" height="80" rx="8" fill="#161b22" stroke="#3fb950"/>
+      <text x="920" y="100" fill="#3fb950" font-size="13" font-weight="700" text-anchor="middle">Postgres</text>
+      <text x="920" y="122" fill="#8b949e" font-size="11" text-anchor="middle">local</text>
+
+      <line x1="192" y1="110" x2="286" y2="110" stroke="#58a6ff" stroke-width="1.8" marker-end="url(#ar2)"/>
+      <text x="239" y="100" fill="#3fb950" font-size="11" text-anchor="middle" font-weight="700">HTTPS</text>
+      <line x1="482" y1="110" x2="576" y2="110" stroke="#58a6ff" stroke-width="1.8" marker-end="url(#ar2)"/>
+      <text x="529" y="100" fill="#e3b341" font-size="11" text-anchor="middle" font-weight="700">HTTP</text>
+      <text x="529" y="136" fill="#8b949e" font-size="10" text-anchor="middle">127.0.0.1 loopback</text>
+      <line x1="772" y1="110" x2="856" y2="110" stroke="#58a6ff" stroke-width="1.8" marker-end="url(#ar2)"/>
+
+      <text x="385" y="180" fill="#8b949e" font-size="11" text-anchor="middle">rewrite: ^api/(.*) → :8088/api/{R:1}</text>
+      <text x="385" y="198" fill="#8b949e" font-size="11" text-anchor="middle">everything else → index.html (SPA fallback)</text>
+      <text x="675" y="180" fill="#8b949e" font-size="11" text-anchor="middle">install.ps1 binds 127.0.0.1 behind IIS,</text>
+      <text x="675" y="198" fill="#8b949e" font-size="11" text-anchor="middle">or 0.0.0.0 for standalone</text>
+    </svg>
+    <div class="svg-cap">The inner hop is plaintext by design — it never leaves the host. That assumption breaks the moment the service binds <code>0.0.0.0</code>.</div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3>Cookie attributes — <span class="mono">auth.py</span></h3>
+      <table>
+        <tbody>
+          <tr><td><code>httponly</code></td><td><span class="pill pill-pub">True</span></td><td style="color:var(--muted)">blocks JS read</td></tr>
+          <tr><td><code>samesite</code></td><td><span class="pill pill-pub">strict</span></td><td style="color:var(--muted)">blocks cross-site CSRF</td></tr>
+          <tr><td><code>path</code></td><td><span class="pill pill-pub">/api/auth</span></td><td style="color:var(--muted)">not sent to data endpoints</td></tr>
+          <tr><td><code>max_age</code></td><td><span class="pill pill-any">7 days</span></td><td style="color:var(--muted)">matches token exp</td></tr>
+          <tr><td><code>secure</code></td><td><span class="pill pill-op">env-controlled</span></td><td style="color:var(--muted)">defaults to <b>false</b></td></tr>
+        </tbody>
+      </table>
+      <div class="note warn"><code class="inl">COOKIE_SECURE</code> must be set to <code class="inl">true</code> on any HTTPS deployment. Left at its default, the refresh cookie will be transmitted over a plain-HTTP request to the same host.</div>
+    </div>
+
+    <div class="panel">
+      <h3 class="g">CORS — <span class="mono">main.py</span></h3>
+      <pre>_ORIGINS = os.getenv(<span class="s">"CORS_ORIGINS"</span>,
+    <span class="s">"http://localhost:5173,http://127.0.0.1:5173"</span>).split(<span class="s">","</span>)
+
+app.add_middleware(CORSMiddleware,
+    allow_origins=_ORIGINS,      <span class="c"># explicit list</span>
+    allow_credentials=<span class="k">True</span>,     <span class="c"># forbids "*"</span>
+    allow_methods=[<span class="s">"*"</span>], allow_headers=[<span class="s">"*"</span>])</pre>
+      <ul class="clean">
+        <li class="ok"><code class="inl">allow_credentials=True</code> makes a wildcard origin structurally impossible — the browser rejects it. The allowlist is therefore enforced, not merely intended.</li>
+        <li>In the standard IIS deployment the SPA and API share an origin, so CORS is not on the request path at all; it matters for the Vite dev server and any split-host setup.</li>
+        <li class="warn">Set <code class="inl">CORS_ORIGINS</code> in production. Left unset, the two localhost dev origins stay allowlisted.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ STEP 5 — LOGIN ══════════════ -->
+<section class="step" data-step="5">
+  <div class="step-head">
+    <div class="kicker">2 · How it works — Login</div>
+    <h2>From password to two tokens</h2>
+    <p>One round trip. The response body carries the short-lived credential; the long-lived one is written straight to a cookie the page's own JavaScript can never read.</p>
+  </div>
+
+  <div class="panel">
+    <svg viewBox="0 0 1020 400" role="img" aria-label="Login sequence">
+      <defs>
+        <marker id="ar3" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0,0 L8,4 L0,8 Z" fill="#58a6ff"/>
+        </marker>
+        <marker id="ar3g" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0,0 L8,4 L0,8 Z" fill="#3fb950"/>
+        </marker>
+      </defs>
+      <!-- lifelines -->
+      <rect x="40"  y="16" width="150" height="34" rx="6" fill="#161b22" stroke="#30363d"/>
+      <text x="115" y="38" fill="#76e3ea" font-size="12" font-weight="700" text-anchor="middle">SPA</text>
+      <line x1="115" y1="50" x2="115" y2="380" stroke="#30363d" stroke-dasharray="4 4"/>
+
+      <rect x="330" y="16" width="180" height="34" rx="6" fill="#161b22" stroke="#30363d"/>
+      <text x="420" y="38" fill="#58a6ff" font-size="12" font-weight="700" text-anchor="middle">POST /api/auth/login</text>
+      <line x1="420" y1="50" x2="420" y2="380" stroke="#30363d" stroke-dasharray="4 4"/>
+
+      <rect x="620" y="16" width="150" height="34" rx="6" fill="#161b22" stroke="#30363d"/>
+      <text x="695" y="38" fill="#d2a8ff" font-size="12" font-weight="700" text-anchor="middle">security.py</text>
+      <line x1="695" y1="50" x2="695" y2="380" stroke="#30363d" stroke-dasharray="4 4"/>
+
+      <rect x="860" y="16" width="130" height="34" rx="6" fill="#161b22" stroke="#30363d"/>
+      <text x="925" y="38" fill="#3fb950" font-size="12" font-weight="700" text-anchor="middle">Postgres</text>
+      <line x1="925" y1="50" x2="925" y2="380" stroke="#30363d" stroke-dasharray="4 4"/>
+
+      <!-- steps -->
+      <line x1="115" y1="82" x2="416" y2="82" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar3)"/>
+      <text x="266" y="74" fill="#e6edf3" font-size="11" text-anchor="middle">{ username, password }</text>
+
+      <line x1="420" y1="118" x2="921" y2="118" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar3)"/>
+      <text x="670" y="110" fill="#e6edf3" font-size="11" text-anchor="middle">SELECT … FROM users WHERE username = %s</text>
+
+      <line x1="420" y1="156" x2="691" y2="156" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar3)"/>
+      <text x="555" y="148" fill="#e6edf3" font-size="11" text-anchor="middle">verify_password()</text>
+      <text x="555" y="172" fill="#8b949e" font-size="10.5" text-anchor="middle">re-derive scrypt with stored salt → compare_digest</text>
+
+      <rect x="330" y="192" width="380" height="44" rx="6" fill="#22110f" stroke="#5a2028"/>
+      <text x="520" y="210" fill="#f85149" font-size="11" font-weight="700" text-anchor="middle">no user  OR  mismatch  →  401</text>
+      <text x="520" y="228" fill="#8b949e" font-size="10.5" text-anchor="middle">same message either way — no username enumeration</text>
+
+      <line x1="420" y1="264" x2="691" y2="264" stroke="#3fb950" stroke-width="1.5" marker-end="url(#ar3g)"/>
+      <text x="555" y="256" fill="#3fb950" font-size="11" text-anchor="middle">create access + refresh token</text>
+
+      <line x1="416" y1="302" x2="119" y2="302" stroke="#3fb950" stroke-width="1.5" marker-end="url(#ar3g)"/>
+      <text x="266" y="294" fill="#3fb950" font-size="11" text-anchor="middle">200 { access_token, expires_in, user }</text>
+      <text x="266" y="318" fill="#e3b341" font-size="11" text-anchor="middle">Set-Cookie: refresh_token — HttpOnly</text>
+
+      <rect x="40" y="338" width="360" height="44" rx="6" fill="#0d1f14" stroke="#1e4a2c"/>
+      <text x="220" y="356" fill="#3fb950" font-size="11" font-weight="700" text-anchor="middle">setAccessToken() → module memory</text>
+      <text x="220" y="374" fill="#8b949e" font-size="10.5" text-anchor="middle">store records only hasToken = true + user</text>
+    </svg>
+    <div class="svg-cap">Login. The refresh token never appears in the response body — the handler comments call that out explicitly.</div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3 class="g">What this gets right</h3>
+      <ul class="clean">
+        <li class="ok">Unknown username and wrong password produce an identical 401 body — no user enumeration.</li>
+        <li class="ok">Failed attempts are logged with the attempted username, giving detection a signal.</li>
+        <li class="ok">Self-registration hardcodes <code class="inl">SELF_REGISTER_ROLE = "operator"</code>. The role is never read from the request body, so privilege escalation via a crafted registration payload is not possible.</li>
+        <li class="ok">Password length is validated against <code class="inl">MIN_PASSWORD_LEN</code> on register, change, and reset alike.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3 class="o">What it does not do</h3>
+      <ul class="clean">
+        <li class="warn"><b>No rate limiting and no lockout.</b> Nothing in the app or in <code class="inl">web.config</code> throttles <code class="inl">/api/auth/login</code>. Password guessing is bounded only by scrypt's cost per attempt.</li>
+        <li class="warn">Timing is not equalised: a missing user short-circuits before the scrypt derivation runs, so a non-existent username answers measurably faster than a real one.</li>
+        <li class="warn">Registration is open to anyone who can reach the API. If that is not intended, it needs to be disabled at the router.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ STEP 6 — REFRESH ══════════════ -->
+<section class="step" data-step="6">
+  <div class="step-head">
+    <div class="kicker">2 · How it works — Session continuity</div>
+    <h2>The 401 interceptor</h2>
+    <p>A 30-minute access token means an open dashboard will hit 401 mid-session. The axios response interceptor absorbs that: one refresh, a queue for everything in flight, and a hard redirect if the refresh itself fails.</p>
+  </div>
+
+  <div class="panel">
+    <svg viewBox="0 0 1020 350" role="img" aria-label="Refresh flow">
+      <defs>
+        <marker id="ar4" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0,0 L8,4 L0,8 Z" fill="#58a6ff"/>
+        </marker>
+      </defs>
+      <rect x="30" y="30" width="170" height="62" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="115" y="56" fill="#e6edf3" font-size="12" font-weight="700" text-anchor="middle">Any API call</text>
+      <text x="115" y="76" fill="#8b949e" font-size="10.5" text-anchor="middle">Bearer attached</text>
+
+      <path d="M200,61 L268,61" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#ar4)"/>
+
+      <rect x="272" y="30" width="150" height="62" rx="8" fill="#22110f" stroke="#5a2028"/>
+      <text x="347" y="56" fill="#f85149" font-size="12" font-weight="700" text-anchor="middle">401</text>
+      <text x="347" y="76" fill="#8b949e" font-size="10.5" text-anchor="middle">token expired</text>
+
+      <path d="M422,61 L490,61" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#ar4)"/>
+
+      <rect x="494" y="18" width="200" height="86" rx="8" fill="#161b22" stroke="#e3b341"/>
+      <text x="594" y="42" fill="#e3b341" font-size="12" font-weight="700" text-anchor="middle">guards</text>
+      <text x="594" y="62" fill="#8b949e" font-size="10.5" text-anchor="middle">not already _retry</text>
+      <text x="594" y="80" fill="#8b949e" font-size="10.5" text-anchor="middle">url is not an /auth/ call</text>
+      <text x="594" y="97" fill="#8b949e" font-size="10" text-anchor="middle">→ no infinite loop</text>
+
+      <path d="M594,104 L594,140" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#ar4)"/>
+
+      <rect x="464" y="144" width="260" height="70" rx="8" fill="#161b22" stroke="#58a6ff"/>
+      <text x="594" y="168" fill="#58a6ff" font-size="12" font-weight="700" text-anchor="middle">POST /api/auth/refresh</text>
+      <text x="594" y="188" fill="#8b949e" font-size="10.5" text-anchor="middle">cookie sent automatically</text>
+      <text x="594" y="205" fill="#8b949e" font-size="10.5" text-anchor="middle">withCredentials: true</text>
+
+      <rect x="90" y="144" width="300" height="70" rx="8" fill="#1c1409" stroke="#4a3a10"/>
+      <text x="240" y="168" fill="#e3b341" font-size="12" font-weight="700" text-anchor="middle">isRefreshing → pendingQueue</text>
+      <text x="240" y="188" fill="#8b949e" font-size="10.5" text-anchor="middle">concurrent 401s wait, they do not</text>
+      <text x="240" y="205" fill="#8b949e" font-size="10.5" text-anchor="middle">each fire their own refresh</text>
+      <path d="M462,179 L394,179" stroke="#e3b341" stroke-width="1.4" stroke-dasharray="4 3"/>
+
+      <path d="M724,179 L790,179" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#ar4)"/>
+
+      <rect x="794" y="126" width="196" height="52" rx="8" fill="#0d1f14" stroke="#1e4a2c"/>
+      <text x="892" y="148" fill="#3fb950" font-size="12" font-weight="700" text-anchor="middle">200 → new access token</text>
+      <text x="892" y="167" fill="#8b949e" font-size="10.5" text-anchor="middle">queue drains, calls replay</text>
+
+      <rect x="794" y="192" width="196" height="52" rx="8" fill="#22110f" stroke="#5a2028"/>
+      <text x="892" y="214" fill="#f85149" font-size="12" font-weight="700" text-anchor="middle">401 → session over</text>
+      <text x="892" y="233" fill="#8b949e" font-size="10.5" text-anchor="middle">clear + redirect /login</text>
+
+      <rect x="90" y="256" width="900" height="66" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="540" y="280" fill="#e6edf3" font-size="12" font-weight="700" text-anchor="middle">Server side: rotate the refresh cookie, re-read the user row, issue a fresh access token</text>
+      <text x="540" y="302" fill="#8b949e" font-size="11" text-anchor="middle">type must be "refresh" · jti must not be in the revocation set · user must still exist · else clear the cookie and 401</text>
+    </svg>
+    <div class="svg-cap">Session continuity. The <code>_retry</code> flag and the <code>/auth/</code> exclusion together guarantee a failed refresh terminates instead of looping.</div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3 class="g">Design properties</h3>
+      <ul class="clean">
+        <li class="ok">The refresh cookie is scoped to <code class="inl">path=/api/auth</code>, so it is not attached to the dozens of polling calls the Live grid makes. Less exposure, smaller requests.</li>
+        <li class="ok">A refresh re-reads the user from the database, so revoking an account takes effect at the next refresh rather than at token expiry.</li>
+        <li class="ok">Transient failures (502/503/504 and network timeouts) get exactly one retry — deliberately separated from the auth path so a gateway blip is not mistaken for a session end.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3 class="o">Rotation is partial</h3>
+      <pre><span class="c"># auth.py — rotate refresh token (…) old one stays</span>
+<span class="c"># valid until expiry in this simple in-memory</span>
+<span class="c"># implementation, but production should add to denylist</span>
+new_refresh = security.create_refresh_token(user_id)
+_set_refresh_cookie(response, new_refresh)</pre>
+      <div class="note warn">A new refresh token is issued on every refresh, but the previous one is <b>not</b> denylisted. A stolen refresh token therefore stays usable for its full 7-day window even after the legitimate user's cookie has rotated past it — so rotation here does not give you stolen-token detection. The code comments this honestly.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ STEP 7 — LOGOUT ══════════════ -->
+<section class="step" data-step="7">
+  <div class="step-head">
+    <div class="kicker">2 · How it works — Logout</div>
+    <h2>Revocation, and the shape of its limits</h2>
+    <p>Logout does two things: denylists the refresh token's <code class="inl">jti</code> and deletes the cookie. Both the strength and the weakness come from where that denylist lives.</p>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3>The sequence</h3>
+      <ul class="clean">
+        <li><b>1.</b> SPA calls <code class="inl">POST /api/auth/logout</code>; the browser attaches the refresh cookie automatically.</li>
+        <li><b>2.</b> Server decodes it, extracts <code class="inl">jti</code>, adds it to <code class="inl">_revoked_refresh</code>. An already-invalid token is silently ignored — nothing to revoke.</li>
+        <li><b>3.</b> <code class="inl">delete_cookie</code> with matching path and attributes, then <code class="inl">204 No Content</code>.</li>
+        <li><b>4.</b> Client-side <code class="inl">_clearSession()</code> drops the in-memory access token and resets the store. This runs in a <code class="inl">finally</code> block, so a failed network call still logs the user out locally.</li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h3 class="r">Where revocation state lives</h3>
+      <pre><span class="c"># auth.py — module-level, process-local</span>
+_revoked_refresh: <span class="k">set</span>[<span class="k">str</span>] = <span class="k">set</span>()
+_used_reset:      <span class="k">set</span>[<span class="k">str</span>] = <span class="k">set</span>()</pre>
+      <p style="color:var(--muted); line-height:1.6; margin-top:10px;">Two consequences follow directly, and the source comments state both:</p>
+      <ul class="clean">
+        <li class="warn"><b>A service restart clears the denylist.</b> A refresh token revoked by logout becomes valid again after the next deploy, NSSM restart, or crash — for whatever remains of its 7 days.</li>
+        <li class="warn"><b>Single-worker only.</b> With more than one uvicorn worker, a logout handled by worker A does not revoke anything in worker B, and a reset link consumed in one worker can be replayed in another.</li>
+      </ul>
+      <div class="note risk">The fix is the same for both: move <code class="inl">jti</code> denylisting into Postgres (or Redis) with a TTL matching token lifetime. Until then, revocation is best-effort within one process lifetime.</div>
+    </div>
+  </div>
+
+  <div class="note">The access token is never revocable by design — it is stateless and short-lived. Its 30-minute lifetime <i>is</i> the containment window. Shortening <code class="inl">ACCESS_EXPIRE_MIN</code> tightens that window at the cost of more refresh traffic.</div>
+</section>
+
+<!-- ══════════════ STEP 8 — RESET ══════════════ -->
+<section class="step" data-step="8">
+  <div class="step-head">
+    <div class="kicker">2 · How it works — Password reset</div>
+    <h2>Out-of-band, generic, single use</h2>
+    <p>The reset flow proves control of a mailbox rather than knowledge of a password. Its two interesting properties are that the request endpoint reveals nothing, and the token can only be spent once.</p>
+  </div>
+
+  <div class="panel">
+    <svg viewBox="0 0 1020 330" role="img" aria-label="Password reset flow">
+      <defs>
+        <marker id="ar5" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0,0 L8,4 L0,8 Z" fill="#58a6ff"/>
+        </marker>
+      </defs>
+      <rect x="20" y="40" width="180" height="72" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="110" y="66" fill="#e6edf3" font-size="12" font-weight="700" text-anchor="middle">forgot-password</text>
+      <text x="110" y="86" fill="#8b949e" font-size="10.5" text-anchor="middle">{ email }</text>
+      <text x="110" y="103" fill="#8b949e" font-size="10.5" text-anchor="middle">public endpoint</text>
+
+      <path d="M200,76 L262,76" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#ar5)"/>
+
+      <rect x="266" y="28" width="200" height="96" rx="8" fill="#161b22" stroke="#e3b341"/>
+      <text x="366" y="52" fill="#e3b341" font-size="12" font-weight="700" text-anchor="middle">lookup by email</text>
+      <text x="366" y="74" fill="#8b949e" font-size="10.5" text-anchor="middle">found → queue BackgroundTask</text>
+      <text x="366" y="92" fill="#8b949e" font-size="10.5" text-anchor="middle">not found → log only</text>
+      <text x="366" y="113" fill="#3fb950" font-size="10.5" text-anchor="middle" font-weight="700">both return the same 200</text>
+
+      <path d="M466,76 L528,76" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#ar5)"/>
+
+      <rect x="532" y="28" width="220" height="96" rx="8" fill="#161b22" stroke="#f778ba"/>
+      <text x="642" y="52" fill="#f778ba" font-size="12" font-weight="700" text-anchor="middle">mailer.py — first wins</text>
+      <text x="642" y="72" fill="#8b949e" font-size="10.5" text-anchor="middle">1 · Brevo HTTP API</text>
+      <text x="642" y="89" fill="#8b949e" font-size="10.5" text-anchor="middle">2 · SMTP (STARTTLS / SSL)</text>
+      <text x="642" y="106" fill="#f85149" font-size="10.5" text-anchor="middle">3 · log the link (dev)</text>
+
+      <path d="M752,76 L816,76" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#ar5)"/>
+
+      <rect x="820" y="40" width="170" height="72" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="905" y="66" fill="#76e3ea" font-size="12" font-weight="700" text-anchor="middle">user's inbox</text>
+      <text x="905" y="88" fill="#8b949e" font-size="10.5" text-anchor="middle">?token=&lt;reset JWT&gt;</text>
+
+      <path d="M905,112 L905,168" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#ar5)"/>
+
+      <rect x="640" y="172" width="350" height="72" rx="8" fill="#161b22" stroke="#58a6ff"/>
+      <text x="815" y="196" fill="#58a6ff" font-size="12" font-weight="700" text-anchor="middle">POST /api/auth/reset-password</text>
+      <text x="815" y="216" fill="#8b949e" font-size="10.5" text-anchor="middle">type == "reset" · exp valid · jti unused</text>
+      <text x="815" y="234" fill="#8b949e" font-size="10.5" text-anchor="middle">length checked before the token is even decoded</text>
+
+      <path d="M638,208 L568,208" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#ar5)"/>
+
+      <rect x="290" y="172" width="270" height="72" rx="8" fill="#0d1f14" stroke="#1e4a2c"/>
+      <text x="425" y="196" fill="#3fb950" font-size="12" font-weight="700" text-anchor="middle">set_password(scrypt hash)</text>
+      <text x="425" y="218" fill="#8b949e" font-size="10.5" text-anchor="middle">then jti → _used_reset</text>
+      <text x="425" y="236" fill="#8b949e" font-size="10.5" text-anchor="middle">replay now fails</text>
+
+      <rect x="20" y="264" width="970" height="48" rx="8" fill="#1c1409" stroke="#4a3a10"/>
+      <text x="505" y="284" fill="#e3b341" font-size="11.5" font-weight="700" text-anchor="middle">Failures return 400, not 401 — deliberately</text>
+      <text x="505" y="302" fill="#8b949e" font-size="10.5" text-anchor="middle">a 401 on this public page would trip the axios refresh interceptor and hide the real error from the user</text>
+    </svg>
+    <div class="svg-cap">Password reset. Delivery runs as a FastAPI BackgroundTask so a slow relay cannot stall the response — or leak timing information about whether the address existed.</div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3 class="g">Properties worth keeping</h3>
+      <ul class="clean">
+        <li class="ok"><b>Generic response.</b> Registered and unregistered addresses get byte-identical replies, and because the send is backgrounded they also get near-identical timing.</li>
+        <li class="ok"><b>Single use.</b> The <code class="inl">jti</code> is recorded after a successful password change, so the same link cannot be replayed.</li>
+        <li class="ok"><b>Short life.</b> 30 minutes by default, and the expiry is stated in the email body.</li>
+        <li class="ok"><b>Silent failures.</b> <code class="inl">send_password_reset</code> never raises; SMTP and Brevo errors are logged, never surfaced. Brevo error bodies are truncated so key material cannot ride along into the log.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3 class="r">Two operational hazards</h3>
+      <ul class="clean">
+        <li class="warn"><b>Log-only mode is a live credential channel.</b> With neither <code class="inl">BREVO_API_KEY</code> nor <code class="inl">SMTP_HOST</code> set, <code class="inl">mailer.py</code> writes the full reset URL to the service log at INFO. That is intended as a dev convenience — in production it hands account takeover to anyone who can read <code class="inl">logs/</code>.</li>
+        <li class="warn"><b>The token rides in a query string.</b> <code class="inl">{APP_BASE_URL}/reset-password?token=…</code> lands in browser history, and would land in any proxy or access log that records query strings. Bounded by the 30-minute expiry and single use, but worth knowing.</li>
+        <li class="warn">No rate limit on <code class="inl">forgot-password</code> — it can be used to send repeated mail to a known address.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ STEP 9 — RBAC ══════════════ -->
+<section class="step" data-step="9">
+  <div class="step-head">
+    <div class="kicker">2 · How it works — Authorization</div>
+    <h2>The role map, endpoint by endpoint</h2>
+    <p>Two roles exist: <code class="inl">admin</code> and <code class="inl">operator</code>. The rule of thumb is "reads for any authenticated user, writes for admin" — with two deliberate exceptions and one asymmetry worth reviewing.</p>
+  </div>
+
+  <div class="panel">
+    <table>
+      <thead><tr><th style="width:26%">Endpoint group</th><th style="width:14%">Read</th><th style="width:14%">Write</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>/api/auth/*</code></td>
+          <td><span class="pill pill-pub">public</span></td>
+          <td><span class="pill pill-pub">public</span></td>
+          <td>login, register, refresh, logout, forgot/reset-password. <code>me</code> and <code>change-password</code> require a valid token.</td>
+        </tr>
+        <tr>
+          <td><code>/api/users/*</code></td>
+          <td><span class="pill pill-admin">admin</span></td>
+          <td><span class="pill pill-admin">admin</span></td>
+          <td>Full CRUD is admin-only — including list. The only endpoint group where reads are gated too.</td>
+        </tr>
+        <tr>
+          <td><code>/api/readings/*</code></td>
+          <td><span class="pill pill-any">any user</span></td>
+          <td>—</td>
+          <td>Read-only telemetry.</td>
+        </tr>
+        <tr>
+          <td><code>/api/tags/*</code></td>
+          <td><span class="pill pill-any">any user</span></td>
+          <td>—</td>
+          <td>Read-only telemetry.</td>
+        </tr>
+        <tr>
+          <td><code>/api/panels/*</code></td>
+          <td><span class="pill pill-any">any user</span></td>
+          <td><span class="pill pill-admin">admin</span></td>
+          <td><b>Exception:</b> <code>PATCH /{id}/poll-interval</code> uses <code>require_operator_or_admin</code> — an operator may retune polling without gaining panel-editing rights.</td>
+        </tr>
+        <tr>
+          <td><code>/api/dashboards/*</code></td>
+          <td><span class="pill pill-any">any user</span></td>
+          <td><span class="pill pill-admin">admin</span></td>
+          <td>Create / update / delete are admin-only.</td>
+        </tr>
+        <tr>
+          <td><code>/api/datasources/*</code></td>
+          <td><span class="pill pill-any">any user</span></td>
+          <td><span class="pill pill-admin">admin</span></td>
+          <td>Reads are password-free. <code>POST /test</code> is admin-only <i>because it opens an outbound connection to an arbitrary host</i>.</td>
+        </tr>
+        <tr>
+          <td><code>/api/schema/*</code></td>
+          <td><span class="pill pill-any">any user</span></td>
+          <td>—</td>
+          <td>Table / column / distinct-value catalogue. Accepts <code>datasource_id</code>. <b>See the note below.</b></td>
+        </tr>
+        <tr>
+          <td><code>/api/alarms/*</code>, <code>/api/events/*</code></td>
+          <td><span class="pill pill-any">any user</span></td>
+          <td><span class="pill pill-any">any user</span></td>
+          <td>Acknowledge is available to any authenticated user, with the acting user recorded.</td>
+        </tr>
+        <tr>
+          <td><code>/health</code></td>
+          <td><span class="pill pill-pub">public</span></td>
+          <td>—</td>
+          <td>Liveness probe for NSSM. Returns <code>{"status":"ok"}</code> only — no version or config disclosure.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3 class="g">Why the model holds</h3>
+      <ul class="clean">
+        <li class="ok">Authorization is a <b>declared dependency on every route</b>, not middleware pattern-matching on URLs. A new endpoint without a dependency is visibly unprotected in review rather than silently covered by a wildcard.</li>
+        <li class="ok">The role is read from the database row, not from the token claim, so it cannot be forged by re-signing and cannot go stale.</li>
+        <li class="ok">Self-registration cannot produce an admin — <code class="inl">SELF_REGISTER_ROLE</code> is a module constant, not a request field. Roles are only assignable through the admin-gated <code class="inl">/api/users</code> endpoints.</li>
+        <li class="warn"><b>But registration itself is ungated.</b> <code class="inl">POST /api/auth/register</code> takes no token, no invite, no flag — so the whole "any user" column above is one anonymous request away. Gaps item #5.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3 class="o">The asymmetry to review</h3>
+      <p style="color:var(--muted); line-height:1.6;"><code class="inl">datasources.py</code> gates its connection test on <code class="inl">require_admin</code>, and says why: "The test endpoint can probe arbitrary hosts, so it is admin-only."</p>
+      <p style="color:var(--muted); line-height:1.6; margin-top:10px;">All five <code class="inl">/api/schema/*</code> endpoints also accept a <code class="inl">datasource_id</code> — and all five are gated on <code class="inl">get_current_user</code>, not <code class="inl">require_admin</code>.</p>
+      <div class="note warn">Net effect: any authenticated <b>operator</b> can enumerate tables, columns, and distinct column values on every admin-configured remote database, using the admin's stored credentials. The <code class="inl">SENSITIVE_TABLES</code> denylist limits what is reachable on the app's own database, but a remote datasource's tables are only filtered by that same fixed name list. Either intentional (operators build panels) or an oversight — worth an explicit decision.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ STEP 10 — SQL ══════════════ -->
+<section class="step" data-step="10">
+  <div class="step-head">
+    <div class="kicker">2 · How it works — Injection defence</div>
+    <h2>Dynamic table and column names, safely</h2>
+    <p>The Live grid lets an admin chart any numeric column of any non-sensitive table. That means table and column names arrive from HTTP — and identifiers cannot be parameterized. This is the most interesting security mechanism in the codebase.</p>
+  </div>
+
+  <div class="panel">
+    <svg viewBox="0 0 1020 260" role="img" aria-label="SQL identifier validation pipeline">
+      <defs>
+        <marker id="ar6" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M0,0 L8,4 L0,8 Z" fill="#3fb950"/>
+        </marker>
+      </defs>
+      <rect x="16" y="60" width="150" height="76" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="91" y="86" fill="#e6edf3" font-size="12" font-weight="700" text-anchor="middle">?table=&amp;column=</text>
+      <text x="91" y="106" fill="#f85149" font-size="10.5" text-anchor="middle">untrusted</text>
+      <text x="91" y="124" fill="#8b949e" font-size="10.5" text-anchor="middle">from query string</text>
+
+      <path d="M166,98 L222,98" stroke="#3fb950" stroke-width="1.6" marker-end="url(#ar6)"/>
+
+      <rect x="226" y="48" width="180" height="100" rx="8" fill="#161b22" stroke="#e3b341"/>
+      <text x="316" y="72" fill="#e3b341" font-size="12" font-weight="700" text-anchor="middle">1 · Allowlist</text>
+      <text x="316" y="93" fill="#8b949e" font-size="10.5" text-anchor="middle">information_schema.tables</text>
+      <text x="316" y="111" fill="#8b949e" font-size="10.5" text-anchor="middle">minus SENSITIVE_TABLES</text>
+      <text x="316" y="132" fill="#f85149" font-size="10.5" text-anchor="middle">not in set → ValueError</text>
+
+      <path d="M406,98 L462,98" stroke="#3fb950" stroke-width="1.6" marker-end="url(#ar6)"/>
+
+      <rect x="466" y="48" width="180" height="100" rx="8" fill="#161b22" stroke="#e3b341"/>
+      <text x="556" y="72" fill="#e3b341" font-size="12" font-weight="700" text-anchor="middle">2 · Column check</text>
+      <text x="556" y="93" fill="#8b949e" font-size="10.5" text-anchor="middle">information_schema.columns</text>
+      <text x="556" y="111" fill="#8b949e" font-size="10.5" text-anchor="middle">must exist on that table</text>
+      <text x="556" y="132" fill="#f85149" font-size="10.5" text-anchor="middle">not present → ValueError</text>
+
+      <path d="M646,98 L702,98" stroke="#3fb950" stroke-width="1.6" marker-end="url(#ar6)"/>
+
+      <rect x="706" y="48" width="180" height="100" rx="8" fill="#161b22" stroke="#3fb950"/>
+      <text x="796" y="72" fill="#3fb950" font-size="12" font-weight="700" text-anchor="middle">3 · Compose</text>
+      <text x="796" y="93" fill="#8b949e" font-size="10.5" text-anchor="middle">psycopg sql.Identifier()</text>
+      <text x="796" y="111" fill="#8b949e" font-size="10.5" text-anchor="middle">quotes + escapes properly</text>
+      <text x="796" y="132" fill="#8b949e" font-size="10.5" text-anchor="middle">never f-string concat</text>
+
+      <path d="M886,98 L942,98" stroke="#3fb950" stroke-width="1.6" marker-end="url(#ar6)"/>
+      <rect x="946" y="66" width="60" height="64" rx="8" fill="#0d1f14" stroke="#1e4a2c"/>
+      <text x="976" y="94" fill="#3fb950" font-size="11" font-weight="700" text-anchor="middle">exec</text>
+      <text x="976" y="112" fill="#8b949e" font-size="10" text-anchor="middle">safe</text>
+
+      <rect x="226" y="176" width="660" height="62" rx="8" fill="#0d1a26" stroke="#1d3550"/>
+      <text x="556" y="200" fill="#58a6ff" font-size="11.5" font-weight="700" text-anchor="middle">Meanwhile: every <tspan font-family="monospace">value</tspan> — filter values, limits, time windows, ids — goes through %s parameters</text>
+      <text x="556" y="222" fill="#8b949e" font-size="10.5" text-anchor="middle">Identifiers get validated-then-quoted. Values are never interpolated at all. The two paths are kept separate on purpose.</text>
+    </svg>
+    <div class="svg-cap">The validation gate lives in <code>db.py</code>'s <code>_table_columns()</code> / <code>_safe_identifiers()</code> — every dynamic-SQL builder must pass through it first.</div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3 class="g">What makes this sound</h3>
+      <ul class="clean">
+        <li class="ok"><b>All SQL lives in one module.</b> <code class="inl">db.py</code> is the only file that writes queries — routers pass values, never fragments. One place to audit.</li>
+        <li class="ok"><b>Allowlist, not sanitisation.</b> A name is accepted only if PostgreSQL itself reports it as an existing base table/column. There is no escaping heuristic to bypass.</li>
+        <li class="ok"><b>Then still quoted.</b> Even a validated name goes through <code class="inl">sql.Identifier</code> rather than string concatenation — defence in depth against a name containing quotes or case surprises.</li>
+        <li class="ok"><b>Bounded input.</b> Pydantic <code class="inl">Query</code> constraints cap <code class="inl">limit</code> at 2000 and the series window at 10080 minutes, so a single call cannot ask for unbounded work.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>The f-strings that are not injection</h3>
+      <pre><span class="c"># db.py — looks alarming, is not</span>
+select_metrics = <span class="s">", "</span>.join(
+    <span class="k">f</span><span class="s">'{_FIELD_DB_COLUMN.get(f, f)} AS {f}'</span>
+    <span class="k">for</span> f <span class="k">in</span> fields)          <span class="c"># ← from _discover_tag_fields()</span>
+
+sql = <span class="k">f</span><span class="s">"SELECT tag_name, active, … {select_metrics} "</span>
+      <span class="s">"FROM public.variables_tag WHERE tag_name = %s"</span></pre>
+      <div class="note">These interpolate column names discovered from <code class="inl">information_schema</code> at startup — server-controlled data, not request data. The tag name itself is still a <code class="inl">%s</code> parameter. Same pattern for <code class="inl">_PANEL_COLS</code>, <code class="inl">_DASH_COLS</code>, <code class="inl">_DS_PUBLIC_COLS</code>: fixed constants defined in the module. Worth a comment at each site so a future reader does not have to re-derive it.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ STEP 11 — GAPS ══════════════ -->
+<section class="step" data-step="11">
+  <div class="step-head">
+    <div class="kicker">Closing</div>
+    <h2>Known limitations and the hardening order</h2>
+    <p>Everything here is visible in the source, and several items are already acknowledged in code comments. Ordered by what a real deployment should fix first.</p>
+  </div>
+
+  <div class="panel">
+    <h3 class="r">Deployment-blocking</h3>
+    <table>
+      <thead><tr><th style="width:34%">Item</th><th style="width:30%">Where</th><th>Fix</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>1 · JWT_SECRET has a public default</b><br><span style="color:var(--muted)">Docs say required; code says optional</span></td>
+          <td><code>config.py</code></td>
+          <td>Route it through the existing <code>_get()</code> helper so a missing value refuses to boot. Same for <code>DB_PASSWORD</code>.</td>
+        </tr>
+        <tr>
+          <td><b>2 · COOKIE_SECURE defaults to false</b></td>
+          <td><code>auth.py</code></td>
+          <td>Set <code>COOKIE_SECURE=true</code> in every HTTPS <code>.env</code>; consider inverting the default.</td>
+        </tr>
+        <tr>
+          <td><b>3 · Seeded demo accounts</b><br><span style="color:var(--muted)">Known passwords, re-applied on every run</span></td>
+          <td><code>seed_users.py</code></td>
+          <td>Rotate both if it has ever run against production; keep the script out of the deploy path.</td>
+        </tr>
+        <tr>
+          <td><b>4 · Reset links written to the log</b><br><span style="color:var(--muted)">Only when no mailer is configured</span></td>
+          <td><code>mailer.py</code></td>
+          <td>Always configure <code>BREVO_API_KEY</code> or <code>SMTP_HOST</code> in production; restrict access to <code>logs/</code>.</td>
+        </tr>
+        <tr>
+          <td><b>5 · Self-registration is open to anyone</b><br><span style="color:var(--muted)">No invite, no approval, no feature flag</span></td>
+          <td><code>auth.py</code> — <code>POST /api/auth/register</code></td>
+          <td>Gate it behind <code>require_admin</code>, an invite token, or an <code>ALLOW_SELF_REGISTER</code> flag defaulting to off. The SPA has no <code>/register</code> route, so nothing in the UI depends on it today.</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="note risk"><b>Why this one ranks above the architectural items.</b> The endpoint is unauthenticated and mints a working <code class="inl">operator</code> account. Everything in the "any user" column of the role map — all telemetry, every dashboard and panel, alarm acknowledgement — is reachable from that account, and so is item&nbsp;11: catalogue enumeration against every admin-configured remote database, using the admin's stored credentials. On a plant network that turns "can reach the API" into "can read the plant". Because the SPA never links to it, the exposure is easy to miss during review.</div>
+  </div>
+
+  <div class="panel">
+    <h3 class="o">Architectural — acknowledged in code</h3>
+    <table>
+      <thead><tr><th style="width:34%">Item</th><th style="width:30%">Where</th><th>Impact</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>6 · Revocation state is in-memory</b></td>
+          <td><code>auth.py</code> — <code>_revoked_refresh</code>, <code>_used_reset</code></td>
+          <td>Logout revocation and single-use reset both reset on restart, and neither works across multiple workers.</td>
+        </tr>
+        <tr>
+          <td><b>7 · Refresh rotation without denylisting</b></td>
+          <td><code>auth.py</code> — comment at the rotation site</td>
+          <td>A stolen refresh token remains valid for its full 7 days; no reuse detection.</td>
+        </tr>
+        <tr>
+          <td><b>8 · Open redirect on the login bounce</b></td>
+          <td><code>RequireAuth.jsx</code> — flagged in its own docblock</td>
+          <td><code>/login?redirect=//evil.com</code> is honoured. Pre-existing, carried over from the Vue router.</td>
+        </tr>
+        <tr>
+          <td><b>9 · No rate limiting anywhere</b></td>
+          <td><code>login</code>, <code>register</code>, <code>forgot-password</code></td>
+          <td>Password guessing and mail-flooding are bounded only by scrypt cost and network speed.</td>
+        </tr>
+        <tr>
+          <td><b>10 · Datasource passwords stored plaintext</b></td>
+          <td><code>db.py</code> — <code>password TEXT</code></td>
+          <td>Deliberate parity with the app's own <code>.env</code> credential. Mitigated by the public projection and the table denylist; DB-file read access still yields them.</td>
+        </tr>
+        <tr>
+          <td><b>11 · <code>/api/schema/*</code> open to operators</b></td>
+          <td><code>schema.py</code> vs <code>datasources.py</code></td>
+          <td>Operators can enumerate remote datasource catalogues. Inconsistent with the admin gate on the connection test.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3 class="g">Controls that are working as intended</h3>
+      <ul class="clean">
+        <li class="ok">scrypt with per-user salt and constant-time comparison</li>
+        <li class="ok">Access token never persisted; refresh token unreadable by JavaScript</li>
+        <li class="ok">Refresh cookie scoped to <code class="inl">/api/auth</code> with <code class="inl">SameSite=Strict</code></li>
+        <li class="ok">Explicit CORS allowlist, enforced by <code class="inl">allow_credentials=True</code></li>
+        <li class="ok">Token <code class="inl">type</code> claims checked at every verifier</li>
+        <li class="ok">Role re-read from the database on every request</li>
+        <li class="ok">Self-registration cannot escalate to admin <span style="color:var(--muted)">— though it is ungated, see item 5</span></li>
+        <li class="ok">Generic responses on login and forgot-password</li>
+        <li class="ok">SQL identifiers allowlisted then quoted; values always parameterized</li>
+        <li class="ok"><code class="inl">SENSITIVE_TABLES</code> keeps credential tables off the charting surface</li>
+        <li class="ok"><code class="inl">mathExpr.js</code> parses instead of evaluating — no <code class="inl">eval</code>, no <code class="inl">Function</code></li>
+        <li class="ok">All SQL confined to <code class="inl">db.py</code></li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3 class="p">Scope of this document</h3>
+      <p style="color:var(--muted); line-height:1.7;">This is a design document describing the security architecture as implemented on branch <code class="inl">react_cvt</code>, read from source. It is not a penetration test and not an exhaustive audit — nothing here was verified by running exploits against a deployment.</p>
+      <p style="color:var(--muted); line-height:1.7; margin-top:12px;">The limitations listed above are the ones legible from reading the code. Absence from this list is not evidence of absence.</p>
+      <div class="note">Files read: <code class="inl">security.py</code>, <code class="inl">auth.py</code>, <code class="inl">config.py</code>, <code class="inl">main.py</code>, <code class="inl">db.py</code>, <code class="inl">schema.py</code>, <code class="inl">datasources.py</code>, <code class="inl">mailer.py</code>, <code class="inl">seed_users.py</code>, <code class="inl">client.js</code>, <code class="inl">stores/auth.js</code>, <code class="inl">RequireAuth.jsx</code>, <code class="inl">mathExpr.js</code>, <code class="inl">web.config</code>, <code class="inl">.env.example</code>, <code class="inl">package.json</code>.</div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  MMLPortal security architecture · generated from source on branch <code class="mono">react_cvt</code> · navigate with ← → arrow keys
+</footer>
+
+<script>
+(function () {
+  var steps = Array.prototype.slice.call(document.querySelectorAll('.step'));
+  var btns  = Array.prototype.slice.call(document.querySelectorAll('.step-btn'));
+  var counter = document.getElementById('stepCounter');
+  var current = 0;
+
+  function show(i) {
+    current = Math.max(0, Math.min(steps.length - 1, i));
+    steps.forEach(function (s, n) { s.classList.toggle('active', n === current); });
+    btns.forEach(function (b) {
+      b.classList.toggle('active', Number(b.dataset.step) === current);
+    });
+    counter.textContent = (current + 1) + ' / ' + steps.length;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  btns.forEach(function (b) {
+    b.addEventListener('click', function () { show(Number(b.dataset.step)); });
+  });
+  document.getElementById('prevBtn').addEventListener('click', function () { show(current - 1); });
+  document.getElementById('nextBtn').addEventListener('click', function () { show(current + 1); });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight' || e.key === 'PageDown') { show(current + 1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { show(current - 1); }
+    else if (e.key === 'Home') { show(0); }
+    else if (e.key === 'End') { show(steps.length - 1); }
+  });
+
+  show(0);
+})();
+</script>
+
+</body>
+</html>
