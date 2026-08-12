@@ -20,15 +20,9 @@
   min-width: 0;
 }
 
-.title {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: 19px;
-  font-weight: 700;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--fg);
-}
+/* The drawing's name is MimicSwitcher's job now — it carries the title type
+ * on a select, so switching plants is the same gesture as reading which one
+ * you are on. */
 
 .sub {
   margin: 0;
@@ -221,10 +215,106 @@
   color: var(--fg-muted);
 }
 
+/* Forty symbols will not sit on the page at once, so the groups scroll inside
+ * the rail — the canvas beside them must not move as sections open and close. */
+.paletteGroups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 58vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.paletteGroupHead {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 7px 8px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  text-align: left;
+}
+
+.paletteGroupHead:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+.paletteGroupHead:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.paletteGroupOpen {
+  color: var(--fg);
+}
+
+/* Only the chevron turns; the label must not shift as a group opens. */
+.paletteChevron {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--fg-dim);
+  transition: transform 140ms ease-out;
+}
+
+.paletteChevronOpen {
+  transform: rotate(90deg);
+}
+
+.paletteGroupName {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.paletteCount {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--fg-dim);
+}
+
+.paletteFilter {
+  width: 100%;
+  padding: 7px 9px;
+  background: var(--bg-app);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+
+.paletteFilter:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.paletteEmpty {
+  margin: 0;
+  padding: var(--space-3) 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
 .paletteGrid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-2);
+  padding: var(--space-2) 0 var(--space-1);
 }
 
 .paletteItem {
@@ -251,9 +341,11 @@
   outline-offset: 1px;
 }
 
+/* Tall enough for the wide symbols — a 240x44 bus bar or a 220x120 rod maker
+ * scales to nothing at 44px and the preview stops being a drawing. */
 .paletteSvg {
   width: 100%;
-  height: 44px;
+  height: 52px;
 }
 
 .paletteLabel {

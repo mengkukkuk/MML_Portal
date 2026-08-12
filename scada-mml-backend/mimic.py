@@ -36,7 +36,13 @@ SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 # Symbol types the frontend registry (src/components/mimic/symbols/index.js)
 # can render. A node whose type is unknown would draw as a hole in the mimic,
 # so reject it at save time rather than storing an unrenderable document.
+#
+# Grouped by the registry's own categories so the two lists stay diffable.
+# This set must be deployed *before* a frontend that can draw new types,
+# otherwise an admin saves a layout the server rejects. It is also safe for it
+# to run ahead of the frontend: a type nobody can draw is simply never saved.
 VALID_NODE_TYPES = {
+    # process
     "tank",
     "pump",
     "valve",
@@ -49,6 +55,38 @@ VALID_NODE_TYPES = {
     "stacklight",
     "sensoreye",
     "actuator",
+    # electrical
+    "busbar",
+    "breaker",
+    "disconnector",
+    "transformer",
+    "mccstarter",
+    "vfd",
+    "capbank",
+    # automation
+    "plc",
+    "remoteio",
+    "networkswitch",
+    "hmipanel",
+    "controlloop",
+    "safetyrelay",
+    "edgegateway",
+    # water treatment
+    "clarifier",
+    "sandfilter",
+    "dosingpump",
+    "uvreactor",
+    "membrane",
+    "blower",
+    "weir",
+    # cigarette production line
+    "tobaccofeed",
+    "rodmaker",
+    "tipper",
+    "packer",
+    "cellophaner",
+    "cartoner",
+    "rejectstation",
 }
 
 # How a binding turns a number into a run/stop state.
@@ -187,9 +225,10 @@ def _validate(doc: dict) -> None:
             raise _bad(f"{where}: duplicate node id {node_id!r}")
         seen_ids.add(node_id)
         if node.get("type") not in VALID_NODE_TYPES:
-            raise _bad(
-                f"{where}: type must be one of: {', '.join(sorted(VALID_NODE_TYPES))}"
-            )
+            # Naming the offender beats listing forty valid slugs: the client
+            # picked this type from a palette, so the useful fact is which one
+            # this server build cannot draw.
+            raise _bad(f"{where}: unknown symbol type {node.get('type')!r}")
         binding = node.get("binding")
         if binding is None:
             continue
@@ -236,3 +275,19 @@ def save_layout(slug: str, body: MimicIn, _admin: dict = Depends(require_admin))
         )
     _validate(body.doc)
     return db.upsert_mimic_layout(slug, body.name.strip(), body.doc)
+
+
+@router.delete("/layouts/{slug}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_layout(slug: str, _admin: dict = Depends(require_admin)):
+    """Remove a drawing entirely. There is no soft delete: a mimic is a
+    commissioned document, and leaving a hidden one behind would let its slug
+    silently block a later drawing of the same name."""
+    slug = slug.strip()
+    if not SLUG_RE.match(slug):
+        raise _bad(
+            "slug must be lowercase letters, digits, dash or underscore (max 64 characters)"
+        )
+    if not db.delete_mimic_layout(slug):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Layout not found"
+        )

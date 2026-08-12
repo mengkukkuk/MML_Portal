@@ -1,0 +1,183 @@
+/* EdgeInspector — the edit-mode rail for one selected pipe. Sized and spaced
+ * to match NodeInspector and DetailRail so switching between them doesn't move
+ * the canvas. Tokens only. */
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  width: 320px;
+  flex: 0 0 320px;
+  padding: var(--space-4);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  overflow-y: auto;
+}
+
+@media (max-width: 1180px) {
+  .rail {
+    width: auto;
+    flex: 1 1 auto;
+  }
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.back {
+  align-self: flex-start;
+  margin-bottom: var(--space-2);
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+}
+
+.back:hover {
+  color: var(--accent);
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.name {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg);
+}
+
+.ports {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.sectionTitle {
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-soft);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+/* The picker shows each service drawn the way the canvas draws it — the line
+   style is the legend, so choosing one should look like choosing a line. */
+.services {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.service {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px 10px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.service:hover {
+  border-color: var(--accent);
+}
+
+.serviceOn {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+.swatch {
+  width: 22px;
+  height: 0;
+  flex: 0 0 22px;
+  border-top-style: solid;
+}
+
+.feedwater {
+  border-top-width: 2px;
+  border-top-color: var(--accent);
+}
+
+.steam {
+  border-top-width: 3px;
+  border-top-color: var(--fg);
+}
+
+.fuelgas {
+  border-top-width: 2px;
+  border-top-style: dashed;
+  border-top-color: var(--warn);
+}
+
+.fluegas {
+  border-top-width: 4px;
+  border-top-color: var(--fg-dim);
+  opacity: 0.5;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field > span {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.field select {
+  width: 100%;
+  padding: 7px 9px;
+  background: var(--bg-app);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+
+.field select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--fg-dim);
+}

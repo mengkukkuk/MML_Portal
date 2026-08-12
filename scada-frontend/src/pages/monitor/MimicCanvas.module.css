@@ -98,6 +98,77 @@
   to { stroke-dashoffset: -40; }
 }
 
+/* A 2px pipe is not a click target; its invisible twin is. */
+.edgeHit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 16;
+  cursor: pointer;
+}
+
+.edgeSelected {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.28;
+  pointer-events: none;
+}
+
+/* --- wiring ------------------------------------------------------------
+ * Ports are only ever shown while the drawing is being edited: on a running
+ * mimic they would read as instrumentation that isn't there.
+ */
+
+.port {
+  cursor: crosshair;
+}
+
+.portHit {
+  fill: transparent;
+  stroke: none;
+}
+
+.portDot {
+  fill: var(--bg-panel);
+  stroke: var(--fg-dim);
+  stroke-width: 1.5;
+  pointer-events: none;
+  transition: r 90ms ease-out;
+}
+
+.port:hover .portDot {
+  stroke: var(--accent);
+}
+
+.portOrigin {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+
+.portHot {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+
+/* Dashed until it has somewhere to land — the line only reads as a real pipe
+   once releasing would actually make one. */
+.wire {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 6 5;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.wireLocked {
+  stroke-dasharray: none;
+  stroke-width: 2.5;
+  opacity: 1;
+}
+
 /* --- nodes ------------------------------------------------------------- */
 
 .node {
@@ -154,6 +225,21 @@
 .grid {
   stroke: var(--border-soft);
   stroke-width: 0.5;
+}
+
+/* The balloon is draggable in edit mode: the default placement suits one
+   symbol alone, and a crowded drawing needs the readout somewhere else. */
+.bubbleEditing {
+  cursor: grab;
+}
+
+.bubbleEditing:active {
+  cursor: grabbing;
+}
+
+.bubbleHandle {
+  fill: transparent;
+  stroke: none;
 }
 
 .legendText {

@@ -93,7 +93,24 @@ export function clearLegacyLayout() {
   } catch { /* private mode — nothing to clean up */ }
 }
 
-/** A fresh, uncommissioned drawing. */
+/** A fresh, uncommissioned drawing — the seeded boiler skid. */
 export function seedLayout() {
   return cloneDefaultLayout()
+}
+
+/**
+ * A brand-new mimic: a blank sheet.
+ *
+ * Deliberately *not* seedLayout(). The seed is one specific plant, and a
+ * drawing someone just named "Water Treatment" should not open onto a boiler
+ * whose seventeen symbols have to be deleted before any real work starts.
+ */
+export function emptyLayout(name) {
+  return {
+    version: LAYOUT_VERSION,
+    name,
+    viewBox: { w: 1600, h: 900 },
+    nodes: [],
+    edges: [],
+  }
 }

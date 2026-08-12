@@ -23,7 +23,15 @@ export async function fetchMimicLayout(slug) {
   return data // { slug, name, doc, updated_at }
 }
 
+/**
+ * Upsert. There is no PATCH: the whole document goes every time, so a rename
+ * must send the existing `doc` back or it erases the drawing.
+ */
 export async function saveMimicLayout(slug, name, doc) {
   const { data } = await apiClient.put(`/mimic/layouts/${encodeURIComponent(slug)}`, { name, doc })
   return data // { slug, name, doc, updated_at }
+}
+
+export async function deleteMimicLayout(slug) {
+  await apiClient.delete(`/mimic/layouts/${encodeURIComponent(slug)}`)
 }

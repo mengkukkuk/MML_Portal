@@ -1,0 +1,141 @@
+/* MimicSwitcher — the control that stands where the page title used to.
+ * It has to keep reading as a title: the drawing's name is the largest thing
+ * on the page, and a boxed dropdown there would demote it to a form field. So
+ * the select inherits .title's type and only shows its edges on hover/focus.
+ * Tokens only. */
+
+.wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.heading,
+.select {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--fg);
+}
+
+.selectWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.select {
+  appearance: none;
+  max-width: 420px;
+  /* Room for the chevron, which sits outside the text flow. */
+  padding: 2px 26px 2px 6px;
+  margin-left: -6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+
+.select:hover:not(:disabled) {
+  border-color: var(--border);
+}
+
+.select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Edit mode owns the drawing until Done. Switching away would drop unsaved
+ * geometry, so the control goes quiet rather than disappearing — the name is
+ * still the page title. */
+.select:disabled {
+  cursor: default;
+  opacity: 1;
+  color: var(--fg);
+}
+
+.chevron {
+  position: absolute;
+  right: 4px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  pointer-events: none;
+}
+
+.select:disabled + .chevron {
+  visibility: hidden;
+}
+
+/* --- manage dialog ------------------------------------------------------ */
+
+.dialogContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-2) !important;
+}
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.row:last-child { border-bottom: 0; }
+
+.rowName {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14px;
+  color: var(--fg);
+}
+
+/* The slug is the address, not decoration — an admin renaming a drawing needs
+ * to see which link it answers to. */
+.rowSlug {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--fg-dim);
+}
+
+.rowActions {
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.newRow {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.newRow :global(.MuiButton-root) {
+  margin-top: 4px;
+}
+
+.confirm {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--fg);
+}

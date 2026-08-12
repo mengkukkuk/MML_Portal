@@ -1,7 +1,8 @@
 import Button from '@mui/material/Button'
 import LinkOutlined from '@mui/icons-material/LinkOutlined'
 import DeleteOutlineOutlined from '@mui/icons-material/DeleteOutlineOutlined'
-import { SYMBOLS } from '@/components/mimic/symbols'
+import RestartAltOutlined from '@mui/icons-material/RestartAltOutlined'
+import { SYMBOLS, bubbleSpec, bubbleMoved } from '@/components/mimic/symbols'
 import styles from './NodeInspector.module.css'
 
 /**
@@ -13,10 +14,11 @@ import styles from './NodeInspector.module.css'
  * now shows the palette when nothing is selected and this when something is.
  */
 export default function NodeInspector({
-  node, datasources = [], onConnect, onDelete, onBack,
+  node, datasources = [], onConnect, onDelete, onResetBubble, onBack,
 }) {
   const def = SYMBOLS[node.type]
   const b = node.binding
+  const bubble = bubbleSpec(node)
   const connection = b?.datasource_id == null
     ? 'Default (app database)'
     : datasources.find((d) => d.id === b.datasource_id)?.name
@@ -74,10 +76,34 @@ export default function NodeInspector({
         </Button>
       </div>
 
+      {bubble && (
+        <div className={styles.section}>
+          <div className={styles.sectionTitle}>Balloon</div>
+          <p className={styles.hint}>
+            Drag the reading itself to move it. The offset is kept from the
+            symbol, so the balloon travels with it.
+          </p>
+          <dl className={styles.summary}>
+            <dt>Offset</dt>
+            <dd className={styles.mono}>{bubble.offset[0]}, {bubble.offset[1]}</dd>
+          </dl>
+          <Button
+            fullWidth
+            color="inherit"
+            startIcon={<RestartAltOutlined />}
+            disabled={!bubbleMoved(node)}
+            onClick={() => onResetBubble(node.id)}
+          >
+            Reset balloon position
+          </Button>
+        </div>
+      )}
+
       <div className={styles.section}>
         <div className={styles.sectionTitle}>Placement</div>
         <p className={styles.hint}>
           Drag to move. Arrow keys nudge by one grid step, Shift for one unit.
+          Drag from any port dot to run a pipe to another symbol.
         </p>
         <Button
           fullWidth

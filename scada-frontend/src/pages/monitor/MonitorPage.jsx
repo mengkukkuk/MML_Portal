@@ -1,7 +1,8 @@
 import {
   useCallback, useEffect, useMemo, useRef, useState,
 } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import Button from '@mui/material/Button'
 import Alert from '@mui/material/Alert'
 import Snackbar from '@mui/material/Snackbar'
@@ -13,19 +14,27 @@ import { useAuthStore } from '@/stores/auth'
 import usePlantData from '@/components/mimic/usePlantData'
 import { SYMBOLS } from '@/components/mimic/symbols'
 import { formatValue, worseStatus } from '@/components/mimic/tagStatus'
-import { fetchMimicLayout, saveMimicLayout } from '@/api/mimic'
+import { fetchMimicLayout, fetchMimicLayouts, saveMimicLayout } from '@/api/mimic'
 import { fetchDatasources } from '@/api/datasources'
 import MimicCanvas, { VIEW_W, VIEW_H } from './MimicCanvas'
 import DetailRail from './DetailRail'
 import SymbolPalette from './SymbolPalette'
 import NodeInspector from './NodeInspector'
+import EdgeInspector from './EdgeInspector'
 import SymbolBindingDialog from './SymbolBindingDialog'
+import MimicSwitcher from './MimicSwitcher'
 import {
-  migrateLayout, readLegacyLayout, clearLegacyLayout, seedLayout,
+  migrateLayout, readLegacyLayout, clearLegacyLayout, seedLayout, emptyLayout,
 } from './layoutDoc'
 import styles from './MonitorPage.module.css'
 
-const PLANT_SLUG = 'boiler-1'
+/**
+ * Where a fresh install lands. /monitor drew only this plant before it could
+ * hold several, so the slug is also the one the pre-server localStorage
+ * drawing belongs to — no other mimic may inherit it.
+ */
+const FALLBACK_SLUG = 'boiler-1'
+const FALLBACK_NAME = 'Boiler House 1'
 
 /**
  * Demo runs the simulator, so it can tick as fast as it likes. Live opens a
@@ -67,38 +76,96 @@ let addCounter = 0
 export default function MonitorPage() {
   const role = useAuthStore((s) => s.user?.role ?? null)
   const canEdit = role === 'admin'
+  const queryClient = useQueryClient()
 
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' })
   const notify = useCallback((message, severity = 'success') => {
     setSnackbar({ open: true, message, severity })
   }, [])
 
+  // --- which drawing (?mimic=<slug>) --------------------------------------
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  const layoutsQuery = useQuery({ queryKey: ['mimic-layouts'], queryFn: fetchMimicLayouts })
+  const layouts = useMemo(() => layoutsQuery.data || [], [layoutsQuery.data])
+
+  const [activeSlug, setActiveSlug] = useState(null)
+  const initializedRef = useRef(false)
+
+  const putSlugInUrl = useCallback((slug) => {
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev)
+      p.set('mimic', slug)
+      return p
+    }, { replace: true })
+  }, [setSearchParams])
+
+  useEffect(() => {
+    if (initializedRef.current || layoutsQuery.isPending) return
+    initializedRef.current = true
+    const wanted = searchParams.get('mimic')
+    const next = layouts.find((l) => l.slug === wanted)?.slug
+      ?? layouts[0]?.slug
+      ?? FALLBACK_SLUG
+    setActiveSlug(next)
+    putSlugInUrl(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layoutsQuery.isPending, layouts])
+
+  // The open drawing was deleted — here or in another admin's tab. Fall back to
+  // whatever is left rather than polling a slug the server no longer knows.
+  useEffect(() => {
+    if (!initializedRef.current || !layouts.length) return
+    if (activeSlug && layouts.some((l) => l.slug === activeSlug)) return
+    setActiveSlug(layouts[0].slug)
+    putSlugInUrl(layouts[0].slug)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layouts])
+
   // --- layout: server is the source of truth ------------------------------
   const layoutQuery = useQuery({
-    queryKey: ['mimic-layout', PLANT_SLUG],
-    queryFn: () => fetchMimicLayout(PLANT_SLUG),
+    queryKey: ['mimic-layout', activeSlug],
+    queryFn: () => fetchMimicLayout(activeSlug),
+    enabled: !!activeSlug,
     // 404 is the normal first-run answer, not a failure to retry.
     retry: (count, err) => err?.response?.status !== 404 && count < 2,
   })
 
   const [layout, setLayout] = useState(null)
   const legacyPendingRef = useRef(false)
+  // Which slug the drawing on screen belongs to. Without this the seed guard
+  // below would read "have I seeded anything?" and a switch would keep showing
+  // the previous plant under the new plant's name.
+  const seededSlugRef = useRef(null)
 
   useEffect(() => {
-    if (layout || layoutQuery.isPending) return
+    if (!activeSlug || seededSlugRef.current === activeSlug || layoutQuery.isPending) return
     const server = layoutQuery.data?.doc ? migrateLayout(layoutQuery.data.doc) : null
+    seededSlugRef.current = activeSlug
     if (server) { setLayout(server); return }
     // Nothing on the server. An admin may still have a hand-arranged drawing
     // in this browser from before /monitor had a backend — carry its geometry
-    // into the first save rather than replacing it with the seed.
-    const legacy = readLegacyLayout()
-    if (legacy) {
-      legacyPendingRef.current = true
-      setLayout(legacy)
+    // into the first save rather than replacing it with the seed. It belongs
+    // to one plant, so only that plant's slug may claim it.
+    if (activeSlug === FALLBACK_SLUG) {
+      const legacy = readLegacyLayout()
+      if (legacy) {
+        legacyPendingRef.current = true
+        setLayout(legacy)
+        return
+      }
+      setLayout(seedLayout())
       return
     }
-    setLayout(seedLayout())
-  }, [layout, layoutQuery.isPending, layoutQuery.data])
+    setLayout(emptyLayout(layouts.find((l) => l.slug === activeSlug)?.name ?? activeSlug))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSlug, layoutQuery.isPending, layoutQuery.data])
+
+  // The document's own name wins: it is what the last save wrote, so it is
+  // right even in the moment before the list query catches up with a rename.
+  const activeName = layout?.name
+    || layouts.find((l) => l.slug === activeSlug)?.name
+    || FALLBACK_NAME
 
   const nodes = useMemo(() => layout?.nodes ?? [], [layout])
 
@@ -133,13 +200,44 @@ export default function MonitorPage() {
   )
 
   // --- selection -----------------------------------------------------------
+  // A symbol and a pipe are never selected at once: the rail shows one
+  // inspector, so two selections would leave one of them unreachable.
   const [selectedId, setSelectedId] = useState(null)
+  const [selectedEdgeId, setSelectedEdgeId] = useState(null)
   const [editMode, setEditMode] = useState(false)
+  const [bindingNode, setBindingNode] = useState(null)
+
+  // Switching drawings: nothing from the old one survives. Every id here names
+  // a node or pipe that is about to stop existing, and the binding dialog in
+  // particular would otherwise write its result into the plant next door.
+  useEffect(() => {
+    if (seededSlugRef.current === null || seededSlugRef.current === activeSlug) return
+    seededSlugRef.current = null
+    setLayout(null)
+    setSelectedId(null)
+    setSelectedEdgeId(null)
+    setBindingNode(null)
+  }, [activeSlug])
+
+  const selectMimic = useCallback((slug) => {
+    if (!slug || slug === activeSlug) return
+    setActiveSlug(slug)
+    putSlugInUrl(slug)
+  }, [activeSlug, putSlugInUrl])
 
   const selectedNode = nodes.find((n) => n.id === selectedId) ?? null
+  const selectedEdge = (layout?.edges ?? []).find((e) => e.id === selectedEdgeId) ?? null
   const selectedTag = selectedId ? tags[selectedId] ?? null : null
 
-  const selectNode = useCallback((id) => setSelectedId(id), [])
+  const selectNode = useCallback((id) => {
+    setSelectedId(id)
+    setSelectedEdgeId(null)
+  }, [])
+
+  const selectEdge = useCallback((id) => {
+    setSelectedEdgeId(id)
+    setSelectedId(null)
+  }, [])
 
   // --- geometry edits ------------------------------------------------------
   const moveNode = useCallback((id, pos) => {
@@ -173,6 +271,74 @@ export default function MonitorPage() {
       edges: prev.edges.filter((e) => e.from.node !== id && e.to.node !== id),
     }))
     setSelectedId(null)
+    // One of the pipes that just went with it may have been the selection.
+    setSelectedEdgeId(null)
+  }, [])
+
+  // --- balloon placement ---------------------------------------------------
+  // Stored as an offset from the symbol's own anchor, so a repositioned
+  // reading follows its equipment the next time that equipment is dragged.
+  const moveBubble = useCallback((id, offset) => {
+    setLayout((prev) => ({
+      ...prev,
+      nodes: prev.nodes.map((n) => (n.id === id ? { ...n, bubble: { offset } } : n)),
+    }))
+  }, [])
+
+  const resetBubble = useCallback((id) => {
+    setLayout((prev) => ({
+      ...prev,
+      nodes: prev.nodes.map((n) => (n.id === id ? { ...n, bubble: null } : n)),
+    }))
+  }, [])
+
+  // --- wiring --------------------------------------------------------------
+  // Carried between draws so running a fuel branch doesn't mean re-picking the
+  // service for every segment of it.
+  const lastServiceRef = useRef('feedwater')
+
+  const addEdge = useCallback((from, to) => {
+    if (from.node === to.node) {
+      notify('A pipe runs between two different symbols.', 'warning')
+      return
+    }
+    const ends = { from, to: { node: to.node, port: to.port } }
+    // Direction is a drawing choice, not a fact about the plant, so a pipe
+    // drawn back the other way is the same pipe — select it rather than
+    // stacking a second line on the identical route.
+    const existing = layout.edges.find((e) => (
+      (e.from.node === from.node && e.from.port === from.port
+        && e.to.node === ends.to.node && e.to.port === ends.to.port)
+      || (e.from.node === ends.to.node && e.from.port === ends.to.port
+        && e.to.node === from.node && e.to.port === from.port)
+    ))
+    if (existing) {
+      selectEdge(existing.id)
+      notify('These ports are already connected.', 'info')
+      return
+    }
+    addCounter += 1
+    const id = `e-new-${Date.now().toString(36)}-${addCounter}`
+    setLayout((prev) => ({
+      ...prev,
+      edges: [...prev.edges, {
+        id, ...ends, service: lastServiceRef.current, flowNode: null,
+      }],
+    }))
+    selectEdge(id)
+  }, [layout, notify, selectEdge])
+
+  const updateEdge = useCallback((id, patch) => {
+    if (patch.service) lastServiceRef.current = patch.service
+    setLayout((prev) => ({
+      ...prev,
+      edges: prev.edges.map((e) => (e.id === id ? { ...e, ...patch } : e)),
+    }))
+  }, [])
+
+  const deleteEdge = useCallback((id) => {
+    setLayout((prev) => ({ ...prev, edges: prev.edges.filter((e) => e.id !== id) }))
+    setSelectedEdgeId(null)
   }, [])
 
   const addSymbol = useCallback((type) => {
@@ -192,8 +358,8 @@ export default function MonitorPage() {
       rot: 0,
     }
     setLayout((prev) => ({ ...prev, nodes: [...prev.nodes, node] }))
-    setSelectedId(id)
-  }, [])
+    selectNode(id)
+  }, [selectNode])
 
   // --- persistence ---------------------------------------------------------
   const [saving, setSaving] = useState(false)
@@ -201,11 +367,14 @@ export default function MonitorPage() {
   const persist = useCallback(async (doc) => {
     setSaving(true)
     try {
-      await saveMimicLayout(PLANT_SLUG, doc.name || 'Boiler House 1', doc)
+      await saveMimicLayout(activeSlug, doc.name || activeName, doc)
       if (legacyPendingRef.current) {
         clearLegacyLayout()
         legacyPendingRef.current = false
       }
+      // On a fresh install this PUT is what puts the fallback plant in the
+      // table for the first time, so the switcher's list is now out of date.
+      queryClient.invalidateQueries({ queryKey: ['mimic-layouts'] })
       notify('Layout saved.')
       return true
     } catch (e) {
@@ -214,11 +383,9 @@ export default function MonitorPage() {
     } finally {
       setSaving(false)
     }
-  }, [notify])
+  }, [activeName, activeSlug, notify, queryClient])
 
   // --- binding dialog ------------------------------------------------------
-  const [bindingNode, setBindingNode] = useState(null)
-
   const openBinding = useCallback((node) => setBindingNode(node), [])
 
   const applyBinding = useCallback(({ tagId, label, binding }) => {
@@ -245,22 +412,25 @@ export default function MonitorPage() {
     if (editMode) {
       persist(layout)
       setEditMode(false)
+      // The read-only rail has no inspector for a pipe, so a pipe left
+      // selected on the way out would simply vanish from the page.
+      setSelectedEdgeId(null)
     } else {
       setEditMode(true)
     }
   }, [editMode, layout, persist])
 
+  // "Back to how this drawing started" — which is the seeded steam skid for
+  // the plant /monitor shipped with, and a blank sheet for one an admin drew.
   const handleReset = useCallback(() => {
-    setLayout(seedLayout())
+    setLayout(activeSlug === FALLBACK_SLUG ? seedLayout() : emptyLayout(activeName))
     setSelectedId(null)
-  }, [])
+    setSelectedEdgeId(null)
+  }, [activeName, activeSlug])
 
   const dotClass = plantStatus === 'crit' ? styles.dotCrit
     : plantStatus === 'warn' ? styles.dotWarn : ''
 
-  if (!layout) {
-    return <p className={styles.loading}>Loading the plant drawing…</p>
-  }
 
   const cadence = demo ? (
     <div className={styles.cadence} role="group" aria-label="Update interval">
@@ -293,16 +463,27 @@ export default function MonitorPage() {
   )
 
   const subtitle = demo
-    ? 'Steam skid · simulated process · no datasource'
-    : connected === 0
-      ? 'Steam skid · no symbols connected yet'
-      : `Steam skid · ${connected} of ${nodes.length} symbols connected · ${backendCount} ${backendCount === 1 ? 'connection' : 'connections'}`
+    ? 'Simulated process · no datasource'
+    : nodes.length === 0
+      ? 'Empty drawing · add symbols from the palette in edit mode'
+      : connected === 0
+        ? 'No symbols connected yet'
+        : `${connected} of ${nodes.length} symbols connected · ${backendCount} ${backendCount === 1 ? 'connection' : 'connections'}`
 
   return (
     <div className={styles.page}>
       <header className={styles.bar}>
         <div className={styles.titleWrap}>
-          <h2 className={styles.title}>{layout.name || 'Boiler House 1'}</h2>
+          <MimicSwitcher
+            layouts={layouts}
+            activeSlug={activeSlug}
+            activeName={activeName}
+            canManage={canEdit}
+            // Geometry is provisional until Done, so it lives only in local
+            // state. Switching away would throw it out with no way back.
+            disabled={editMode}
+            onSelect={selectMimic}
+          />
           <p className={styles.sub}>{subtitle}</p>
         </div>
 
@@ -332,7 +513,7 @@ export default function MonitorPage() {
             </Button>
           )}
 
-          {canEdit && (
+          {canEdit && !!layout && (
             <>
               {editMode && (
                 <Button startIcon={<RestartAltOutlined />} color="inherit" onClick={handleReset}>
@@ -354,31 +535,52 @@ export default function MonitorPage() {
 
       {dataError && <Alert severity="warning">{dataError}</Alert>}
 
+      {/* Only the drawing waits on the switch — the switcher itself stays put,
+        * so the control you just used does not vanish under your cursor. */}
+      {!layout && <p className={styles.loading}>Loading the plant drawing…</p>}
+
+      {layout && (
       <div className={styles.body}>
         <MimicCanvas
           layout={layout}
           tags={tags}
           selectedId={selectedId}
           onSelect={selectNode}
+          selectedEdgeId={selectedEdgeId}
+          onSelectEdge={selectEdge}
           editMode={editMode && canEdit}
           onMoveNode={moveNode}
           onNudgeNode={nudgeNode}
           onDeleteNode={deleteNode}
+          onAddEdge={addEdge}
+          onDeleteEdge={deleteEdge}
+          onMoveBubble={moveBubble}
           onOpenBinding={canEdit ? openBinding : undefined}
         />
 
         {editMode && canEdit
-          ? (selectedNode
+          ? (selectedEdge
             ? (
-              <NodeInspector
-                node={selectedNode}
-                datasources={datasourcesQuery.data || []}
-                onConnect={() => openBinding(selectedNode)}
-                onDelete={deleteNode}
-                onBack={() => setSelectedId(null)}
+              <EdgeInspector
+                edge={selectedEdge}
+                nodes={nodes}
+                onChange={(patch) => updateEdge(selectedEdge.id, patch)}
+                onDelete={deleteEdge}
+                onBack={() => setSelectedEdgeId(null)}
               />
             )
-            : <SymbolPalette onAdd={addSymbol} />)
+            : selectedNode
+              ? (
+                <NodeInspector
+                  node={selectedNode}
+                  datasources={datasourcesQuery.data || []}
+                  onConnect={() => openBinding(selectedNode)}
+                  onDelete={deleteNode}
+                  onResetBubble={resetBubble}
+                  onBack={() => setSelectedId(null)}
+                />
+              )
+              : <SymbolPalette onAdd={addSymbol} />)
           : (
             <DetailRail
               tag={selectedTag}
@@ -390,7 +592,11 @@ export default function MonitorPage() {
             />
           )}
       </div>
+      )}
 
+      {/* An empty drawing has no ticker to show; the bare strip would just be
+        * a box with nothing in it. */}
+      {nodes.length > 0 && (
       <div className={styles.strip} role="group" aria-label="All plant tags">
         {nodes.map((node) => {
           const tag = tags[node.id]
@@ -412,6 +618,7 @@ export default function MonitorPage() {
           )
         })}
       </div>
+      )}
 
       <SymbolBindingDialog
         open={!!bindingNode}

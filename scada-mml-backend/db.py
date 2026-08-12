@@ -1113,3 +1113,13 @@ def upsert_mimic_layout(slug: str, name: str, doc: dict[str, Any]) -> dict[str, 
         ).fetchone()
         conn.commit()
     return row
+
+
+def delete_mimic_layout(slug: str) -> bool:
+    """Remove a drawing. True if a row went, False if the slug was already
+    gone — the caller turns that into the 404, so a double-delete from two
+    admin tabs reports honestly instead of claiming success twice."""
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM mimic_layouts WHERE slug = %s", (slug,))
+        conn.commit()
+    return cur.rowcount > 0

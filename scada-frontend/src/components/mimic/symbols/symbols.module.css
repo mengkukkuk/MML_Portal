@@ -173,13 +173,21 @@
   animation: mimic-beam 1.8s ease-in-out infinite;
 }
 
+/* A positive-displacement head does not rotate — it strokes. Dosing pumps and
+   diaphragm heads read as running from the stroke, not from a spinning vane. */
+.recip {
+  transform-box: fill-box;
+  animation: mimic-recip 1.2s ease-in-out infinite;
+}
+
 /* Applied by every symbol whose drive is stopped. Freezes only that symbol. */
 .stopped .spin,
 .stopped .spinSlow,
 .stopped .march,
 .stopped .belt,
 .stopped .beacon,
-.stopped .beam {
+.stopped .beam,
+.stopped .recip {
   animation-play-state: paused;
 }
 
@@ -207,6 +215,21 @@
 @keyframes mimic-beam {
   0%, 100% { opacity: 0.15; }
   50% { opacity: 0.55; }
+}
+
+@keyframes mimic-recip {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(10px); }
+}
+
+/* --- on-change: discrete travel --------------------------------------
+ * A blade, blade-contact or diverter arm moving between two positions. The
+ * travel is the information — a breaker that snaps between states tells you
+ * nothing about which way it went.
+ */
+.slide {
+  transform-box: fill-box;
+  transition: transform 0.55s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 /* --- on-change: the readout digit roll -------------------------------- */
@@ -322,6 +345,7 @@
   .belt,
   .beacon,
   .beam,
+  .recip,
   .roll,
   .ring {
     animation: none;
@@ -333,7 +357,8 @@
 
   .liquid,
   .liquidLine,
-  .needle {
+  .needle,
+  .slide {
     transition: none;
   }
 }
