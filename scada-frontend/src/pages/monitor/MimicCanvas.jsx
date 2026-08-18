@@ -1,26 +1,37 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import {
   SYMBOLS, portPoint, bubbleSpec,
 } from '@/components/mimic/symbols'
 import InstrumentBubble from '@/components/mimic/InstrumentBubble'
 import { isFlowing } from '@/components/mimic/tagStatus'
+import { NORMAL_WIRE, WirePath, wireType } from '@/components/mimic/wireTypes'
 import styles from './MimicCanvas.module.css'
 
 export const VIEW_W = 1600
 export const VIEW_H = 900
 export const GRID = 8
 
-export const SERVICES = [
-  { id: 'feedwater', label: 'Feedwater' },
-  { id: 'steam', label: 'Steam' },
-  { id: 'fuelgas', label: 'Fuel' },
-  { id: 'fluegas', label: 'Flue gas' },
-]
-
 /** How near a dropped wire must land to count as hitting a port. */
 const PORT_SNAP = 26
 /** InstrumentBubble's circle radius — kept in step so the handle covers it. */
 const BUBBLE_R = 34
+/** Below this a symbol stops being a drawing and becomes a smudge. */
+const MIN_NODE = 24
+
+/**
+ * The eight resize grips, as fractions of the node box, with the edges each
+ * one moves. Corners move two edges, so they also carry the aspect lock.
+ */
+const HANDLES = [
+  { id: 'nw', fx: 0, fy: 0, ex: 'l', ey: 't', cursor: 'nwse-resize' },
+  { id: 'n', fx: 0.5, fy: 0, ex: null, ey: 't', cursor: 'ns-resize' },
+  { id: 'ne', fx: 1, fy: 0, ex: 'r', ey: 't', cursor: 'nesw-resize' },
+  { id: 'e', fx: 1, fy: 0.5, ex: 'r', ey: null, cursor: 'ew-resize' },
+  { id: 'se', fx: 1, fy: 1, ex: 'r', ey: 'b', cursor: 'nwse-resize' },
+  { id: 's', fx: 0.5, fy: 1, ex: null, ey: 'b', cursor: 'ns-resize' },
+  { id: 'sw', fx: 0, fy: 1, ex: 'l', ey: 'b', cursor: 'nesw-resize' },
+  { id: 'w', fx: 0, fy: 0.5, ex: 'l', ey: null, cursor: 'ew-resize' },
+]
 
 const snap = (v) => Math.round(v / GRID) * GRID
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v)
@@ -58,6 +69,48 @@ function routeEdge(fromNode, fromPort, toNode, toPort) {
 }
 
 /**
+ * The box a resize drag has arrived at.
+ *
+ * `drag` holds the box as it was when the grip was grabbed; deltas are
+ * measured from there rather than accumulated, so a drag that wanders out to
+ * the clamp and back comes home to the size it started from.
+ *
+ * The grip that moves snaps to the grid; the opposite edge does not move at
+ * all. Resizing from the left is therefore "drag this edge to a grid line",
+ * not "drag this edge and watch the other one drift".
+ */
+function resizeBox(drag, dx, dy, lockAspect) {
+  const {
+    x0, y0, w0, h0, handle,
+  } = drag
+  let { x, y, w, h } = { x: x0, y: y0, w: w0, h: h0 }
+
+  if (handle.ex === 'l') {
+    x = clamp(snap(x0 + dx), 0, x0 + w0 - MIN_NODE)
+    w = x0 + w0 - x
+  } else if (handle.ex === 'r') {
+    w = clamp(snap(w0 + dx), MIN_NODE, VIEW_W - x0)
+  }
+
+  if (handle.ey === 't') {
+    y = clamp(snap(y0 + dy), 0, y0 + h0 - MIN_NODE)
+    h = y0 + h0 - y
+  } else if (handle.ey === 'b') {
+    h = clamp(snap(h0 + dy), MIN_NODE, VIEW_H - y0)
+  }
+
+  // Shift on a corner keeps the symbol's proportions. Width leads, because the
+  // pointer has travelled further horizontally on almost every corner drag.
+  if (lockAspect && handle.ex && handle.ey && w0 > 0) {
+    h = clamp(Math.round((w * h0) / w0), MIN_NODE, VIEW_H)
+    if (handle.ey === 't') y = clamp(y0 + h0 - h, 0, VIEW_H - h)
+    else h = Math.min(h, VIEW_H - y0)
+  }
+
+  return { x, y, w, h }
+}
+
+/**
  * MimicCanvas — the P&ID stage.
  *
  * Free-position SVG rather than react-grid-layout: a mimic needs arbitrary
@@ -70,9 +123,10 @@ function routeEdge(fromNode, fromPort, toNode, toPort) {
  * factor and the letterboxing introduced by preserveAspectRatio, which a raw
  * width ratio does not.
  *
- * Edit mode adds three direct-manipulation gestures, all going through the one
- * `dragRef`: drag a symbol to move it, drag from a port handle to run a new
- * pipe, drag a balloon to reposition its readout.
+ * Edit mode adds four direct-manipulation gestures, all going through the one
+ * `dragRef`: drag a symbol to move it, drag a grip on its selection box to
+ * resize it, drag from a port handle to run a new wire, drag a balloon to
+ * reposition its readout.
  */
 export default function MimicCanvas({
   layout,
@@ -82,8 +136,10 @@ export default function MimicCanvas({
   selectedEdgeId = null,
   onSelectEdge,
   editMode = false,
+  wirePen = NORMAL_WIRE,
   onMoveNode,
   onNudgeNode,
+  onResizeNode,
   onDeleteNode,
   onAddEdge,
   onDeleteEdge,
@@ -93,9 +149,14 @@ export default function MimicCanvas({
   const svgRef = useRef(null)
   const dragRef = useRef(null)
   const [draggingId, setDraggingId] = useState(null)
+  // Which node is being resized, so the size readout only appears on the
+  // symbol actually changing — a dimension shown on a symbol at rest is noise.
+  const [resizingId, setResizingId] = useState(null)
   // The in-flight wire: start port, current cursor, and the port it would land
   // on if released now. Never committed until pointerup finds a target.
   const [wire, setWire] = useState(null)
+
+  const penWire = wireType(wirePen)
 
   const nodeById = useCallback((id) => layout.nodes.find((n) => n.id === id), [layout.nodes])
 
@@ -127,6 +188,17 @@ export default function MimicCanvas({
     return best
   }, [layout.nodes])
 
+  /**
+   * A drag calls preventDefault to keep the pointer capture clean, and that
+   * also suppresses the browser's focus-on-press. Selecting anything therefore
+   * has to hand focus to the stage itself, or arrow-key nudge and Delete would
+   * only answer after someone happened to Tab here first. `.stage:focus-visible`
+   * keeps the ring on the keyboard path, so a click still shows nothing.
+   */
+  const focusStage = useCallback(() => {
+    svgRef.current?.focus({ preventScroll: true })
+  }, [])
+
   const capture = useCallback((evt) => {
     evt.preventDefault()
     svgRef.current.setPointerCapture(evt.pointerId)
@@ -143,6 +215,28 @@ export default function MimicCanvas({
     setDraggingId(node.id)
     capture(evt)
   }, [capture, editMode, onSelect, toLogical])
+
+  const handleResizePointerDown = useCallback((evt, node, handle) => {
+    // The grips sit on top of the symbol; without this the gesture would also
+    // start a move drag on the node underneath.
+    evt.stopPropagation()
+    const p = toLogical(evt)
+    if (!p) return
+    dragRef.current = {
+      kind: 'resize',
+      id: node.id,
+      handle,
+      px: p.x,
+      py: p.y,
+      x0: node.x,
+      y0: node.y,
+      w0: node.w,
+      h0: node.h,
+      rot: node.rot || 0,
+    }
+    setResizingId(node.id)
+    capture(evt)
+  }, [capture, toLogical])
 
   const handlePortPointerDown = useCallback((evt, node, port) => {
     // Ports sit on top of the symbol; without this the gesture would also
@@ -187,6 +281,20 @@ export default function MimicCanvas({
       return
     }
 
+    if (drag.kind === 'resize') {
+      // The grips ride inside the node's own rotate transform, so the pointer
+      // delta has to come back out of it before it can be read as "the left
+      // edge moved this far". At rot 0 — which is every symbol until someone
+      // turns one — this is the identity.
+      const th = (-drag.rot * Math.PI) / 180
+      const dxg = p.x - drag.px
+      const dyg = p.y - drag.py
+      const dx = dxg * Math.cos(th) - dyg * Math.sin(th)
+      const dy = dxg * Math.sin(th) + dyg * Math.cos(th)
+      onResizeNode(drag.id, resizeBox(drag, dx, dy, evt.shiftKey))
+      return
+    }
+
     if (drag.kind === 'bubble') {
       // Stored as an offset from the anchor, so the balloon keeps its relative
       // placement when the symbol itself is moved afterwards.
@@ -203,7 +311,7 @@ export default function MimicCanvas({
       x: clamp(snap(p.x - drag.ox), 0, VIEW_W - node.w),
       y: clamp(snap(p.y - drag.oy), 0, VIEW_H - node.h),
     })
-  }, [findPort, nodeById, onMoveBubble, onMoveNode, toLogical])
+  }, [findPort, nodeById, onMoveBubble, onMoveNode, onResizeNode, toLogical])
 
   const endDrag = useCallback((evt) => {
     const drag = dragRef.current
@@ -214,6 +322,7 @@ export default function MimicCanvas({
       setWire(null)
     } else {
       setDraggingId(null)
+      setResizingId(null)
     }
     if (svgRef.current?.hasPointerCapture(evt.pointerId)) {
       svgRef.current.releasePointerCapture(evt.pointerId)
@@ -255,6 +364,17 @@ export default function MimicCanvas({
     ? portPoint(nodeById(wire.target.node), wire.target.port)
     : wire
 
+  // The legend lists what this drawing uses, not what the catalogue offers.
+  // Nineteen rows against a three-line mimic is decoration; three is the key.
+  const legend = useMemo(() => {
+    const seen = []
+    layout.edges.forEach((e) => {
+      const id = e.service ?? NORMAL_WIRE
+      if (!seen.includes(id)) seen.push(id)
+    })
+    return seen.map((id) => ({ id, ...wireType(id) }))
+  }, [layout.edges])
+
   return (
     <svg
       ref={svgRef}
@@ -268,7 +388,10 @@ export default function MimicCanvas({
       onPointerMove={handlePointerMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
-      onPointerDown={(e) => { if (e.target === svgRef.current) onSelect(null) }}
+      onPointerDown={(e) => {
+        focusStage()
+        if (e.target === svgRef.current) onSelect(null)
+      }}
     >
       <defs>
         <pattern id="mimic-grid" width={GRID * 5} height={GRID * 5} patternUnits="userSpaceOnUse">
@@ -290,17 +413,14 @@ export default function MimicCanvas({
           // to two symbols, and dragging one would leave the other's line
           // marching to a pump that isn't there.
           const flowing = isFlowing(edge.flowNode ? tags[edge.flowNode] : null)
-          const flowTint = {
-            steam: styles.flowSteam, fuelgas: styles.flowFuelgas, fluegas: styles.flowFluegas,
-          }[edge.service]
           return (
             <g key={edge.id}>
               {selectedEdgeId === edge.id && <path className={styles.edgeSelected} d={d} />}
-              <path className={`${styles.line} ${styles[edge.service]}`} d={d} />
-              {edge.service === 'steam' && <path className={styles.steamInner} d={d} />}
-              <path
-                className={`${styles.flow} ${flowTint || ''} ${flowing ? '' : styles.flowStopped}`}
+              <WirePath
                 d={d}
+                wire={wireType(edge.service)}
+                flowClass={`${styles.flow} ${flowing ? '' : styles.flowStopped}`}
+                flowStopped={!flowing}
               />
               {/* A 2px line is not a click target. The fat invisible twin is,
                   and only while the drawing is being edited. */}
@@ -308,7 +428,7 @@ export default function MimicCanvas({
                 <path
                   className={styles.edgeHit}
                   d={d}
-                  onPointerDown={(e) => { e.stopPropagation(); onSelectEdge(edge.id) }}
+                  onPointerDown={(e) => { e.stopPropagation(); focusStage(); onSelectEdge(edge.id) }}
                 />
               )}
             </g>
@@ -367,6 +487,31 @@ export default function MimicCanvas({
                   rx={4}
                 />
               )}
+
+              {/* Resize grips sit on the symbol's own box rather than on the
+                  dashed selection halo: you are sizing the equipment, so the
+                  edge you grab should be the edge that ends up there. They
+                  live inside the node group so a rotated symbol keeps its
+                  grips on its own corners. */}
+              {selected && editMode && HANDLES.map((h) => (
+                <rect
+                  key={h.id}
+                  className={styles.grip}
+                  style={{ cursor: h.cursor }}
+                  x={h.fx * node.w - 5}
+                  y={h.fy * node.h - 5}
+                  width={10}
+                  height={10}
+                  rx={1.5}
+                  onPointerDown={(e) => handleResizePointerDown(e, node, h)}
+                />
+              ))}
+
+              {resizingId === node.id && (
+                <text className={styles.dimension} x={node.w / 2} y={-18}>
+                  {Math.round(node.w)} × {Math.round(node.h)}
+                </text>
+              )}
             </g>
           )
         })}
@@ -398,12 +543,29 @@ export default function MimicCanvas({
         </g>
       )}
 
-      {/* the pipe being drawn, following the cursor until it finds a port */}
+      {/* The line being drawn, following the cursor until it finds a port.
+        * It is drawn in the selected wire type from the first pixel — you are
+        * pulling that actual cable, not a generic ghost that turns into one
+        * after you let go. Until it has somewhere to land it stays faint and
+        * carries a dashed lead, so it only reads as a real line once releasing
+        * would make one. */}
       {wire && wireFrom && (
-        <path
-          className={`${styles.wire} ${wire.target ? styles.wireLocked : ''}`}
-          d={`M ${wireFrom.x} ${wireFrom.y} L ${wireTo.x} ${wireTo.y}`}
-        />
+        <g className={styles.wire}>
+          {wire.target
+            ? (
+              <WirePath
+                d={`M ${wireFrom.x} ${wireFrom.y} L ${wireTo.x} ${wireTo.y}`}
+                wire={penWire}
+              />
+            )
+            : (
+              <path
+                className={styles.wireLead}
+                d={`M ${wireFrom.x} ${wireFrom.y} L ${wireTo.x} ${wireTo.y}`}
+                style={{ stroke: penWire.stroke }}
+              />
+            )}
+        </g>
       )}
 
       {/* --- instrument balloons: last, so a pipe never crosses a reading -- */}
@@ -449,15 +611,20 @@ export default function MimicCanvas({
         })}
       </g>
 
-      {/* --- service legend: style is the key, so show the styles ---------- */}
-      <g transform={`translate(40 ${VIEW_H - 34})`}>
-        {SERVICES.map((svc, i) => (
-          <g key={svc.id} transform={`translate(${i * 160} 0)`}>
-            <path className={`${styles.line} ${styles[svc.id]}`} d="M 0 0 H 34" />
-            <text className={styles.legendText} x={44} y={4}>{svc.label}</text>
-          </g>
-        ))}
-      </g>
+      {/* --- legend: style is the key, so show the styles.
+        * Only the types this drawing actually uses — the catalogue is the
+        * picker's job, and a key listing lines that are not on the sheet is
+        * decoration rather than information. */}
+      {legend.length > 0 && (
+        <g transform={`translate(40 ${VIEW_H - 34})`}>
+          {legend.map((entry, i) => (
+            <g key={entry.id} transform={`translate(${i * 170} 0)`}>
+              <WirePath d="M 0 0 H 34" wire={entry} />
+              <text className={styles.legendText} x={44} y={4}>{entry.label}</text>
+            </g>
+          ))}
+        </g>
+      )}
     </svg>
   )
 }

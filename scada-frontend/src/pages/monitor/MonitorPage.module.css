@@ -104,6 +104,15 @@
   align-items: start;
 }
 
+/* The second column is a stack, not a single panel: the pen sits above the
+ * contextual inspector and stays there for the whole edit session. */
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
 /* The rail drops below the drawing well before the viewport gets narrow. A
  * 320px rail costs the canvas a fifth of its width, and because the mimic
  * scales as one fixed 1600x900 unit, that lands the smallest callout text

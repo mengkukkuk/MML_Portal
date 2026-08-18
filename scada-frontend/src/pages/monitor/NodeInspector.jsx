@@ -14,11 +14,12 @@ import styles from './NodeInspector.module.css'
  * now shows the palette when nothing is selected and this when something is.
  */
 export default function NodeInspector({
-  node, datasources = [], onConnect, onDelete, onResetBubble, onBack,
+  node, datasources = [], onConnect, onDelete, onResetBubble, onResetSize, onBack,
 }) {
   const def = SYMBOLS[node.type]
   const b = node.binding
   const bubble = bubbleSpec(node)
+  const resized = node.w !== def?.defaultSize.w || node.h !== def?.defaultSize.h
   const connection = b?.datasource_id == null
     ? 'Default (app database)'
     : datasources.find((d) => d.id === b.datasource_id)?.name
@@ -100,10 +101,32 @@ export default function NodeInspector({
       )}
 
       <div className={styles.section}>
+        <div className={styles.sectionTitle}>Size</div>
+        <p className={styles.hint}>
+          Drag any grip on the symbol&rsquo;s edge to resize it. Hold Shift on a
+          corner to keep its proportions. Ports move with the box, so its wires
+          re-route themselves.
+        </p>
+        <dl className={styles.summary}>
+          <dt>Width × height</dt>
+          <dd className={styles.mono}>{Math.round(node.w)} × {Math.round(node.h)}</dd>
+        </dl>
+        <Button
+          fullWidth
+          color="inherit"
+          startIcon={<RestartAltOutlined />}
+          disabled={!resized}
+          onClick={() => onResetSize(node.id)}
+        >
+          Reset to drawn size
+        </Button>
+      </div>
+
+      <div className={styles.section}>
         <div className={styles.sectionTitle}>Placement</div>
         <p className={styles.hint}>
           Drag to move. Arrow keys nudge by one grid step, Shift for one unit.
-          Drag from any port dot to run a pipe to another symbol.
+          Drag from any port dot to run a wire to another symbol.
         </p>
         <Button
           fullWidth

@@ -85,64 +85,69 @@
   color: var(--fg-dim);
 }
 
-/* The picker shows each service drawn the way the canvas draws it — the line
-   style is the legend, so choosing one should look like choosing a line. */
-.services {
+/* The picker shows each type drawn the way the canvas draws it — the line
+   style is the legend, so choosing one should look like choosing a line.
+   The swatch is rendered by <WireSample>, the same component the canvas
+   uses, so nothing here describes a stroke; it only makes room for one. */
+
+.typeGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.groupName {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.types {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--space-2);
 }
 
-.service {
+.type {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 8px 10px;
+  padding: 7px 8px;
   background: var(--bg-app);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: left;
   color: var(--fg-muted);
 }
 
-.service:hover {
-  border-color: var(--accent);
-}
-
-.serviceOn {
+.type:hover {
   border-color: var(--accent);
   color: var(--fg);
 }
 
+.type:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.typeOn {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
 .swatch {
-  width: 22px;
-  height: 0;
-  flex: 0 0 22px;
-  border-top-style: solid;
-}
-
-.feedwater {
-  border-top-width: 2px;
-  border-top-color: var(--accent);
-}
-
-.steam {
-  border-top-width: 3px;
-  border-top-color: var(--fg);
-}
-
-.fuelgas {
-  border-top-width: 2px;
-  border-top-style: dashed;
-  border-top-color: var(--warn);
-}
-
-.fluegas {
-  border-top-width: 4px;
-  border-top-color: var(--fg-dim);
-  opacity: 0.5;
+  display: flex;
+  align-items: center;
+  flex: 0 0 30px;
+  height: 12px;
 }
 
 .field {

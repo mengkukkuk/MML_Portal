@@ -13,6 +13,7 @@ import RestartAltOutlined from '@mui/icons-material/RestartAltOutlined'
 import { useAuthStore } from '@/stores/auth'
 import usePlantData from '@/components/mimic/usePlantData'
 import { SYMBOLS } from '@/components/mimic/symbols'
+import { NORMAL_WIRE } from '@/components/mimic/wireTypes'
 import { formatValue, worseStatus } from '@/components/mimic/tagStatus'
 import { fetchMimicLayout, fetchMimicLayouts, saveMimicLayout } from '@/api/mimic'
 import { fetchDatasources } from '@/api/datasources'
@@ -21,6 +22,7 @@ import DetailRail from './DetailRail'
 import SymbolPalette from './SymbolPalette'
 import NodeInspector from './NodeInspector'
 import EdgeInspector from './EdgeInspector'
+import WirePicker from './WirePicker'
 import SymbolBindingDialog from './SymbolBindingDialog'
 import MimicSwitcher from './MimicSwitcher'
 import {
@@ -262,7 +264,28 @@ export default function MonitorPage() {
     }))
   }, [])
 
-  // Deleting a node takes its pipes with it — an edge whose endpoint is gone
+  // Ports are fractions of the node box and edge geometry is never stored, so
+  // a resize re-routes every wire on the symbol for free. The canvas has
+  // already snapped and clamped the box.
+  const resizeNode = useCallback((id, box) => {
+    setLayout((prev) => ({
+      ...prev,
+      nodes: prev.nodes.map((n) => (n.id === id ? { ...n, ...box } : n)),
+    }))
+  }, [])
+
+  // Back to the size the symbol was drawn at. Position is left alone: the
+  // symbol is where the engineer put it, and only its size was in question.
+  const resetNodeSize = useCallback((id) => {
+    setLayout((prev) => ({
+      ...prev,
+      nodes: prev.nodes.map((n) => (n.id === id
+        ? { ...n, ...SYMBOLS[n.type].defaultSize }
+        : n)),
+    }))
+  }, [])
+
+  // Deleting a node takes its wires with it — an edge whose endpoint is gone
   // has no geometry to derive.
   const deleteNode = useCallback((id) => {
     setLayout((prev) => ({
@@ -293,18 +316,20 @@ export default function MonitorPage() {
   }, [])
 
   // --- wiring --------------------------------------------------------------
-  // Carried between draws so running a fuel branch doesn't mean re-picking the
-  // service for every segment of it.
-  const lastServiceRef = useRef('feedwater')
+  // The pen: which line the next wire is drawn in. Held here rather than
+  // inside the picker so the canvas can preview the real line as it is being
+  // dragged, and so it survives selecting a symbol — running a fuel branch
+  // should not mean re-picking the type for every segment of it.
+  const [wirePen, setWirePen] = useState(NORMAL_WIRE)
 
   const addEdge = useCallback((from, to) => {
     if (from.node === to.node) {
-      notify('A pipe runs between two different symbols.', 'warning')
+      notify('A wire runs between two different symbols.', 'warning')
       return
     }
     const ends = { from, to: { node: to.node, port: to.port } }
-    // Direction is a drawing choice, not a fact about the plant, so a pipe
-    // drawn back the other way is the same pipe — select it rather than
+    // Direction is a drawing choice, not a fact about the plant, so a wire
+    // drawn back the other way is the same wire — select it rather than
     // stacking a second line on the identical route.
     const existing = layout.edges.find((e) => (
       (e.from.node === from.node && e.from.port === from.port
@@ -322,14 +347,17 @@ export default function MonitorPage() {
     setLayout((prev) => ({
       ...prev,
       edges: [...prev.edges, {
-        id, ...ends, service: lastServiceRef.current, flowNode: null,
+        id, ...ends, service: wirePen, flowNode: null,
       }],
     }))
     selectEdge(id)
-  }, [layout, notify, selectEdge])
+  }, [layout, notify, selectEdge, wirePen])
 
+  // Correcting one wire's type in the inspector also picks up the pen: you
+  // reached for that line because it was the one you meant, and the next
+  // segment of the same run almost always wants it too.
   const updateEdge = useCallback((id, patch) => {
-    if (patch.service) lastServiceRef.current = patch.service
+    if (patch.service) setWirePen(patch.service)
     setLayout((prev) => ({
       ...prev,
       edges: prev.edges.map((e) => (e.id === id ? { ...e, ...patch } : e)),
@@ -384,6 +412,31 @@ export default function MonitorPage() {
       setSaving(false)
     }
   }, [activeName, activeSlug, notify, queryClient])
+
+  // The rail's Remove buttons defer to Done like any other edit (drag,
+  // resize, wiring) — geometry is provisional until you let go of the whole
+  // session. The keyboard shortcut has no such session to leave: Delete is a
+  // one-shot action with nothing else on screen to say "not saved yet", so it
+  // writes through immediately or a refresh (or switching drawings) silently
+  // brings the symbol back.
+  const deleteNodeKey = useCallback((id) => {
+    const next = {
+      ...layout,
+      nodes: layout.nodes.filter((n) => n.id !== id),
+      edges: layout.edges.filter((e) => e.from.node !== id && e.to.node !== id),
+    }
+    setLayout(next)
+    setSelectedId(null)
+    setSelectedEdgeId(null)
+    persist(next)
+  }, [layout, persist])
+
+  const deleteEdgeKey = useCallback((id) => {
+    const next = { ...layout, edges: layout.edges.filter((e) => e.id !== id) }
+    setLayout(next)
+    setSelectedEdgeId(null)
+    persist(next)
+  }, [layout, persist])
 
   // --- binding dialog ------------------------------------------------------
   const openBinding = useCallback((node) => setBindingNode(node), [])
@@ -549,48 +602,58 @@ export default function MonitorPage() {
           selectedEdgeId={selectedEdgeId}
           onSelectEdge={selectEdge}
           editMode={editMode && canEdit}
+          wirePen={wirePen}
           onMoveNode={moveNode}
           onNudgeNode={nudgeNode}
-          onDeleteNode={deleteNode}
+          onResizeNode={resizeNode}
+          onDeleteNode={deleteNodeKey}
           onAddEdge={addEdge}
-          onDeleteEdge={deleteEdge}
+          onDeleteEdge={deleteEdgeKey}
           onMoveBubble={moveBubble}
           onOpenBinding={canEdit ? openBinding : undefined}
         />
 
-        {editMode && canEdit
-          ? (selectedEdge
-            ? (
-              <EdgeInspector
-                edge={selectedEdge}
-                nodes={nodes}
-                onChange={(patch) => updateEdge(selectedEdge.id, patch)}
-                onDelete={deleteEdge}
-                onBack={() => setSelectedEdgeId(null)}
-              />
-            )
-            : selectedNode
+        {/* The rail stacks the pen above whatever the selection calls for.
+          * The pen stays put for the whole edit session because it is state
+          * you draw *in*, not a property of the thing you have selected. */}
+        <div className={styles.rail}>
+          {editMode && canEdit && <WirePicker value={wirePen} onChange={setWirePen} />}
+
+          {editMode && canEdit
+            ? (selectedEdge
               ? (
-                <NodeInspector
-                  node={selectedNode}
-                  datasources={datasourcesQuery.data || []}
-                  onConnect={() => openBinding(selectedNode)}
-                  onDelete={deleteNode}
-                  onResetBubble={resetBubble}
-                  onBack={() => setSelectedId(null)}
+                <EdgeInspector
+                  edge={selectedEdge}
+                  nodes={nodes}
+                  onChange={(patch) => updateEdge(selectedEdge.id, patch)}
+                  onDelete={deleteEdge}
+                  onBack={() => setSelectedEdgeId(null)}
                 />
               )
-              : <SymbolPalette onAdd={addSymbol} />)
-          : (
-            <DetailRail
-              tag={selectedTag}
-              node={selectedNode}
-              history={selectedId ? history[selectedId] : null}
-              events={events}
-              canBind={canEdit}
-              onConnect={openBinding}
-            />
-          )}
+              : selectedNode
+                ? (
+                  <NodeInspector
+                    node={selectedNode}
+                    datasources={datasourcesQuery.data || []}
+                    onConnect={() => openBinding(selectedNode)}
+                    onDelete={deleteNode}
+                    onResetBubble={resetBubble}
+                    onResetSize={resetNodeSize}
+                    onBack={() => setSelectedId(null)}
+                  />
+                )
+                : <SymbolPalette onAdd={addSymbol} />)
+            : (
+              <DetailRail
+                tag={selectedTag}
+                node={selectedNode}
+                history={selectedId ? history[selectedId] : null}
+                events={events}
+                canBind={canEdit}
+                onConnect={openBinding}
+              />
+            )}
+        </div>
       </div>
       )}
 

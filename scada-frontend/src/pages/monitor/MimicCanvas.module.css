@@ -34,60 +34,25 @@
   touch-action: none;
 }
 
-/* --- service-coded process lines --------------------------------------
+/* --- wire-coded lines --------------------------------------------------
  * Style is the legend: an operator reads what a line carries from how it is
  * drawn, not from a colour key sitting off to one side.
+ *
+ * Every line's own geometry — weight, dash rhythm, double stroke, screen —
+ * lives in src/components/mimic/wireTypes.jsx and is applied inline, so the
+ * canvas, the pen picker, the edge inspector and the legend cannot disagree
+ * about what a wire type looks like. What stays here is only the part CSS
+ * does better: the marching-dash animation and its stopped state.
  */
 
-.line {
-  fill: none;
-  stroke-linejoin: round;
-  stroke-linecap: butt;
-}
-
-.feedwater {
-  stroke: var(--accent);
-  stroke-width: 2;
-}
-
-.steam {
-  stroke: var(--fg);
-  stroke-width: 2.5;
-}
-
-/* the second hairline that makes steam read as steam */
-.steamInner {
-  fill: none;
-  stroke: var(--bg-panel);
-  stroke-width: 0.75;
-}
-
-.fuelgas {
-  stroke: var(--warn);
-  stroke-width: 2;
-  stroke-dasharray: 12 5;
-}
-
-.fluegas {
-  stroke: var(--fg-dim);
-  stroke-width: 3.5;
-  opacity: 0.45;
-}
-
-/* Marching dashes ride *above* the service line so the fuel line's own
- * dash pattern is not disturbed. */
+/* Marching dashes ride *above* the line so a dashed service keeps its own
+ * pattern underneath. Colour comes from the wire type, inline. */
 .flow {
-  fill: none;
-  stroke: var(--accent);
   stroke-width: 2;
   stroke-dasharray: 7 13;
   animation: mimic-flow 1.2s linear infinite;
   opacity: 0.85;
 }
-
-.flowSteam { stroke: var(--fg); }
-.flowFuelgas { stroke: var(--warn); }
-.flowFluegas { stroke: var(--fg-muted); opacity: 0.5; }
 
 .flowStopped {
   animation-play-state: paused;
@@ -152,21 +117,18 @@
   stroke: var(--accent);
 }
 
-/* Dashed until it has somewhere to land — the line only reads as a real pipe
-   once releasing would actually make one. */
 .wire {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 2;
-  stroke-dasharray: 6 5;
-  opacity: 0.7;
   pointer-events: none;
 }
 
-.wireLocked {
-  stroke-dasharray: none;
-  stroke-width: 2.5;
-  opacity: 1;
+/* The lead, shown while the line has nowhere to land yet. It borrows the
+   selected wire type's colour but not its weight — a full-weight HV line
+   chasing the cursor across the sheet reads as a line that already exists. */
+.wireLead {
+  fill: none;
+  stroke-width: 2;
+  stroke-dasharray: 6 5;
+  opacity: 0.55;
 }
 
 /* --- nodes ------------------------------------------------------------- */
@@ -218,6 +180,37 @@
 .node:focus-visible .hitbox {
   stroke: var(--accent);
   stroke-width: 2;
+}
+
+/* --- resize grips ------------------------------------------------------
+ * Solid, filled and small: a grip has to read as something you can pinch,
+ * against a dashed selection halo that reads as something you cannot.
+ */
+
+.grip {
+  fill: var(--bg-panel);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+
+.grip:hover {
+  fill: var(--accent);
+}
+
+/* The live size, on the symbol being resized and nowhere else. Mono and
+   tabular because a dimension is a number you compare, not prose. */
+.dimension {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-anchor: middle;
+  fill: var(--accent);
+  pointer-events: none;
+  user-select: none;
+  paint-order: stroke;
+  stroke: var(--bg-panel);
+  stroke-width: 4;
+  stroke-linejoin: round;
 }
 
 /* --- edit-mode chrome -------------------------------------------------- */

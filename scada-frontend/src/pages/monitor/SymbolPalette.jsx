@@ -74,7 +74,7 @@ export default function SymbolPalette({ onAdd }) {
       <span className={styles.paletteHead}>Symbols</span>
       <p className={styles.paletteHint}>
         Click a symbol to drop it at the centre of the mimic. Drag to place it, arrow keys to
-        nudge, Delete to remove it and its pipes.
+        nudge, edge grips to resize, Delete to remove it and its wires.
       </p>
 
       <input

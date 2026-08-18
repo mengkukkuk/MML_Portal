@@ -1,0 +1,172 @@
+/* WirePicker — the pen, above the rail. Matched to the palette and the two
+ * inspectors so opening it doesn't move the canvas beside it. Tokens only. */
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+}
+
+/* One row: what the pen is, and a way to change it. The sample is the object
+   here — the label is the caption to it, not the other way round. */
+.current {
+  appearance: none;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    'eyebrow eyebrow chevron'
+    'sample  label   chevron';
+  align-items: center;
+  gap: 2px var(--space-3);
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.current:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+
+.eyebrow {
+  grid-area: eyebrow;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.currentSample {
+  grid-area: sample;
+  display: flex;
+  align-items: center;
+  height: 16px;
+}
+
+.currentLabel {
+  grid-area: label;
+  min-width: 0;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg);
+}
+
+.chevron {
+  grid-area: chevron;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--fg-dim);
+  transition: transform 140ms ease-out;
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.current:hover .chevron,
+.current:hover .currentLabel {
+  color: var(--accent);
+}
+
+/* The rack. Capped so a long catalogue scrolls inside the picker instead of
+   pushing the palette off the bottom of the page. */
+.rack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-height: 46vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-soft);
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.groupName {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+/* Sample above label, both centred: the line is what you are choosing, so it
+   gets the width and the eye, and the name confirms the choice underneath. */
+.option {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: var(--space-2) 4px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--fg-muted);
+}
+
+.option:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+.option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.optionOn {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+/* Fixed height so a 7-unit HV line and a 1.4-unit data link sit on the same
+   baseline — the weights have to be comparable at a glance. */
+.optionSample {
+  display: flex;
+  align-items: center;
+  height: 14px;
+}
+
+.optionLabel {
+  font-family: var(--font-display);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
