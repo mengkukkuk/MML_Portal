@@ -8,7 +8,7 @@ import Button from '@mui/material/Button'
 import Alert from '@mui/material/Alert'
 import { fetchDatasources } from '@/api/datasources'
 import { fetchSchemaTables, fetchSchemaColumns, fetchSchemaValues, fetchSchemaLatest } from '@/api/schema'
-import { SYMBOLS } from '@/components/mimic/symbols'
+import { symbolDef } from '@/components/mimic/symbols'
 import InstrumentBubble from '@/components/mimic/InstrumentBubble'
 import { deriveTag } from '@/components/mimic/deriveTag'
 import { compileExpr } from '@/utils/mathExpr'
@@ -127,7 +127,7 @@ export default function SymbolBindingDialog({ open, node, onClose, onSave }) {
     if (open) setForm(formFromNode(node))
   }, [open, node])
 
-  const def = node ? SYMBOLS[node.type] : null
+  const def = node ? symbolDef(node) : null
   const supportsState = def?.binding === 'both' || def?.binding === 'discrete'
 
   const dsId = form.datasourceId === '' ? undefined : Number(form.datasourceId)

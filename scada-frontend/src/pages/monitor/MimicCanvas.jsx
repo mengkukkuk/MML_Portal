@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import {
-  SYMBOLS, portPoint, bubbleSpec,
+  symbolDef, portPoint, bubbleSpec,
 } from '@/components/mimic/symbols'
 import InstrumentBubble from '@/components/mimic/InstrumentBubble'
 import { isFlowing } from '@/components/mimic/tagStatus'
@@ -38,7 +38,7 @@ const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v)
 
 /** Ports anchored on a left/right edge route horizontally; top/bottom vertically. */
 function portAxis(node, portName) {
-  const frac = SYMBOLS[node.type]?.ports?.[portName]
+  const frac = symbolDef(node)?.ports?.[portName]
   if (!frac) return 'h'
   return frac[0] === 0 || frac[0] === 1 ? 'h' : 'v'
 }
@@ -111,6 +111,33 @@ function resizeBox(drag, dx, dy, lockAspect) {
 }
 
 /**
+ * A node whose symbol type this bundle has no renderer for — a drawing saved by
+ * a newer frontend, or one hand-edited in the database.
+ *
+ * It is drawn at the node's own box rather than skipped. `portPoint` falls back
+ * to the box centre for a type it does not know, so every wire on this symbol
+ * still lands on the placeholder instead of trailing off to the origin, and the
+ * rest of the sheet keeps its geometry. It is inert: not selectable, not
+ * draggable, with no ports to wire — there is nothing here to edit, and
+ * MonitorPage has already locked the drawing read-only.
+ */
+function UnknownNode({ node }) {
+  const { w, h } = node
+  return (
+    <g transform={`translate(${node.x} ${node.y})`} style={{ pointerEvents: 'none' }}>
+      <rect className={styles.placeholder} x={0} y={0} width={w} height={h} rx={3} />
+      <path className={styles.placeholderMark} d={`M 0 0 L ${w} ${h} M ${w} 0 L 0 ${h}`} />
+      <text className={styles.placeholderLabel} x={w / 2} y={h / 2 + 4}>
+        {node.type}
+      </text>
+      <text className={styles.placeholderLabel} x={w / 2} y={h + 16}>
+        {node.label || node.tagId || ''}
+      </text>
+    </g>
+  )
+}
+
+/**
  * MimicCanvas — the P&ID stage.
  *
  * Free-position SVG rather than react-grid-layout: a mimic needs arbitrary
@@ -179,7 +206,7 @@ export default function MimicCanvas({
     let best = null
     layout.nodes.forEach((n) => {
       if (n.id === excludeNodeId) return
-      Object.keys(SYMBOLS[n.type]?.ports ?? {}).forEach((port) => {
+      Object.keys(symbolDef(n)?.ports ?? {}).forEach((port) => {
         const pt = portPoint(n, port)
         const d = Math.hypot(pt.x - p.x, pt.y - p.y)
         if (d <= PORT_SNAP && (!best || d < best.d)) best = { node: n.id, port, d }
@@ -439,8 +466,11 @@ export default function MimicCanvas({
       {/* --- equipment ---------------------------------------------------- */}
       <g>
         {layout.nodes.map((node) => {
-          const def = SYMBOLS[node.type]
-          if (!def) return null
+          const def = symbolDef(node)
+          // A symbol this bundle has no renderer for. Drawing nothing used to
+          // leave a hole whose wires ran to empty space; drawing the box keeps
+          // the sheet readable and says plainly what is missing.
+          if (!def) return <UnknownNode key={node.id} node={node} />
           const { Component } = def
           // Keyed by node id, not loop id: two symbols may legitimately watch
           // the same loop, and each still needs its own reading and its own
@@ -466,7 +496,7 @@ export default function MimicCanvas({
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(node.id) } }}
             >
               <rect className={styles.hitbox} x={-6} y={-6} width={node.w + 12} height={node.h + 12} />
-              <Component node={node} tag={tag} selected={selected} />
+              <Component node={node} def={def} tag={tag} selected={selected} />
               {unbound && (
                 <rect
                   className={styles.unboundOutline}
@@ -520,7 +550,7 @@ export default function MimicCanvas({
       {/* --- wiring handles: above equipment, so a port is always grabbable */}
       {editMode && (
         <g>
-          {layout.nodes.map((node) => Object.keys(SYMBOLS[node.type]?.ports ?? {}).map((port) => {
+          {layout.nodes.map((node) => Object.keys(symbolDef(node)?.ports ?? {}).map((port) => {
             const p = portPoint(node, port)
             const origin = wire?.node === node.id && wire?.port === port
             const hot = wire?.target?.node === node.id && wire?.target?.port === port

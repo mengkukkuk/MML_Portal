@@ -12,11 +12,13 @@ import BoltOutlined from '@mui/icons-material/BoltOutlined'
 import RestartAltOutlined from '@mui/icons-material/RestartAltOutlined'
 import { useAuthStore } from '@/stores/auth'
 import usePlantData from '@/components/mimic/usePlantData'
-import { SYMBOLS } from '@/components/mimic/symbols'
+import { SYMBOLS, symbolDef, setCustomDefs } from '@/components/mimic/symbols'
 import { NORMAL_WIRE } from '@/components/mimic/wireTypes'
 import { formatValue, worseStatus } from '@/components/mimic/tagStatus'
 import { fetchMimicLayout, fetchMimicLayouts, saveMimicLayout } from '@/api/mimic'
 import { fetchDatasources } from '@/api/datasources'
+import { fetchMimicSymbols } from '@/api/mimicAssets'
+import { apiErrorMessage } from '@/api/client'
 import MimicCanvas, { VIEW_W, VIEW_H } from './MimicCanvas'
 import DetailRail from './DetailRail'
 import SymbolPalette from './SymbolPalette'
@@ -25,8 +27,9 @@ import EdgeInspector from './EdgeInspector'
 import WirePicker from './WirePicker'
 import SymbolBindingDialog from './SymbolBindingDialog'
 import MimicSwitcher from './MimicSwitcher'
+import CustomSymbolDialog from './CustomSymbolDialog'
 import {
-  migrateLayout, readLegacyLayout, clearLegacyLayout, seedLayout, emptyLayout,
+  migrateLayout, readLegacyLayout, clearLegacyLayout, seedLayout, emptyLayout, editLock,
 } from './layoutDoc'
 import styles from './MonitorPage.module.css'
 
@@ -171,6 +174,16 @@ export default function MonitorPage() {
 
   const nodes = useMemo(() => layout?.nodes ?? [], [layout])
 
+  /**
+   * Why this drawing cannot be edited here, or null.
+   *
+   * A save replaces the whole document, so a bundle that can only partly draw
+   * one must not offer to write it back — that is how a stale client turns
+   * "some symbols are missing" into "the real drawing is gone". One value gates
+   * the banner, the Edit button and the canvas, so they cannot disagree.
+   */
+  const lock = useMemo(() => editLock(layout), [layout])
+
   // --- data ----------------------------------------------------------------
   const [demo, setDemo] = useState(false)
   const [tickMs, setTickMs] = useState(1000)
@@ -183,6 +196,35 @@ export default function MonitorPage() {
   })
 
   const datasourcesQuery = useQuery({ queryKey: ['datasources'], queryFn: fetchDatasources })
+
+  /**
+   * The custom symbol library.
+   *
+   * Published into the symbol registry (setCustomDefs) rather than passed down as
+   * a prop, because the consumers are synchronous module functions — portPoint
+   * routes every wire, resizeBox sizes a drag — and threading an async value
+   * through all of them would turn each into a hook. See the note on CUSTOM_DEFS.
+   *
+   * A drawing renders before this lands. That is fine and expected: a custom node
+   * falls back to a frame with no picture until its definition arrives, then fills
+   * in. It is the reason the unknown-type path had to be made safe first.
+   */
+  const customSymbolsQuery = useQuery({
+    queryKey: ['mimic-symbols'],
+    queryFn: fetchMimicSymbols,
+  })
+  const customSymbols = useMemo(() => customSymbolsQuery.data || [], [customSymbolsQuery.data])
+
+  // Published during render, not in an effect. The canvas reads the registry
+  // synchronously while rendering, so an effect would fire *after* the first
+  // paint that needed the new definitions — every custom symbol would draw
+  // frameless for one frame, then pop in. Guarded by identity so it runs once
+  // per fetch, and idempotent either way.
+  const publishedRef = useRef(null)
+  if (publishedRef.current !== customSymbols) {
+    publishedRef.current = customSymbols
+    setCustomDefs(customSymbols)
+  }
 
   const connected = useMemo(
     () => nodes.filter((n) => n.binding?.table && n.binding?.value_col).length,
@@ -207,7 +249,16 @@ export default function MonitorPage() {
   const [selectedId, setSelectedId] = useState(null)
   const [selectedEdgeId, setSelectedEdgeId] = useState(null)
   const [editMode, setEditMode] = useState(false)
+  /**
+   * Edit mode is only real when this admin is allowed to write this drawing.
+   * Derived here rather than beside `lock` because it reads `editMode`, which is
+   * declared with the rest of the selection state below it.
+   */
+  const editing = editMode && canEdit && !lock
   const [bindingNode, setBindingNode] = useState(null)
+  // The upload/author flow. Not per-node: a library symbol is authored once
+  // and then placed, so this is a property of the session, not of a selection.
+  const [authoring, setAuthoring] = useState(false)
 
   // Switching drawings: nothing from the old one survives. Every id here names
   // a node or pipe that is about to stop existing, and the binding dialog in
@@ -274,13 +325,25 @@ export default function MonitorPage() {
     }))
   }, [])
 
+  // Rotation was already wired end to end on the canvas — the transform is
+  // applied and resizeBox un-rotates pointer deltas — with nothing to set it.
+  // Stored in degrees, normalised so a rotated symbol reports 15° rather than 375°.
+  const rotateNode = useCallback((id, deg) => {
+    setLayout((prev) => ({
+      ...prev,
+      nodes: prev.nodes.map((n) => (n.id === id
+        ? { ...n, rot: ((Math.round(deg) % 360) + 360) % 360 }
+        : n)),
+    }))
+  }, [])
+
   // Back to the size the symbol was drawn at. Position is left alone: the
   // symbol is where the engineer put it, and only its size was in question.
   const resetNodeSize = useCallback((id) => {
     setLayout((prev) => ({
       ...prev,
       nodes: prev.nodes.map((n) => (n.id === id
-        ? { ...n, ...SYMBOLS[n.type].defaultSize }
+        ? { ...n, ...(symbolDef(n)?.defaultSize ?? { w: n.w, h: n.h }) }
         : n)),
     }))
   }, [])
@@ -369,13 +432,22 @@ export default function MonitorPage() {
     setSelectedEdgeId(null)
   }, [])
 
-  const addSymbol = useCallback((type) => {
-    const def = SYMBOLS[type]
+  /**
+   * Drop a new symbol at the centre of the sheet.
+   *
+   * `symbolId` names a library entry and is only meaningful for `custom`. It has
+   * to be on the node from the moment it is created — the size and ports come off
+   * that entry, so a custom node without one would be placed at the generic
+   * fallback size and then jump when it resolved.
+   */
+  const addSymbol = useCallback((type, symbolId = null) => {
+    const def = symbolDef({ type, symbolId }) ?? SYMBOLS[type]
     addCounter += 1
     const id = `n-new-${Date.now().toString(36)}-${addCounter}`
     const node = {
       id,
       type,
+      ...(symbolId == null ? {} : { symbolId }),
       tagId: null,
       binding: null,
       label: def.label,
@@ -406,7 +478,7 @@ export default function MonitorPage() {
       notify('Layout saved.')
       return true
     } catch (e) {
-      notify(e?.response?.data?.detail || 'Failed to save the layout.', 'error')
+      notify(apiErrorMessage(e, 'Failed to save the layout.'), 'error')
       return false
     } finally {
       setSaving(false)
@@ -566,7 +638,7 @@ export default function MonitorPage() {
             </Button>
           )}
 
-          {canEdit && !!layout && (
+          {canEdit && !!layout && !lock && (
             <>
               {editMode && (
                 <Button startIcon={<RestartAltOutlined />} color="inherit" onClick={handleReset}>
@@ -586,6 +658,10 @@ export default function MonitorPage() {
         </div>
       </header>
 
+      {/* Read-only, and why. Sits above the data error because it describes
+        * the drawing itself rather than this tick's poll. */}
+      {lock && <Alert severity="warning">{lock}</Alert>}
+
       {dataError && <Alert severity="warning">{dataError}</Alert>}
 
       {/* Only the drawing waits on the switch — the switcher itself stays put,
@@ -601,7 +677,7 @@ export default function MonitorPage() {
           onSelect={selectNode}
           selectedEdgeId={selectedEdgeId}
           onSelectEdge={selectEdge}
-          editMode={editMode && canEdit}
+          editMode={editing}
           wirePen={wirePen}
           onMoveNode={moveNode}
           onNudgeNode={nudgeNode}
@@ -610,16 +686,16 @@ export default function MonitorPage() {
           onAddEdge={addEdge}
           onDeleteEdge={deleteEdgeKey}
           onMoveBubble={moveBubble}
-          onOpenBinding={canEdit ? openBinding : undefined}
+          onOpenBinding={canEdit && !lock ? openBinding : undefined}
         />
 
         {/* The rail stacks the pen above whatever the selection calls for.
           * The pen stays put for the whole edit session because it is state
           * you draw *in*, not a property of the thing you have selected. */}
         <div className={styles.rail}>
-          {editMode && canEdit && <WirePicker value={wirePen} onChange={setWirePen} />}
+          {editing && <WirePicker value={wirePen} onChange={setWirePen} />}
 
-          {editMode && canEdit
+          {editing
             ? (selectedEdge
               ? (
                 <EdgeInspector
@@ -639,17 +715,24 @@ export default function MonitorPage() {
                     onDelete={deleteNode}
                     onResetBubble={resetBubble}
                     onResetSize={resetNodeSize}
+                    onRotate={rotateNode}
                     onBack={() => setSelectedId(null)}
                   />
                 )
-                : <SymbolPalette onAdd={addSymbol} />)
+                : (
+                  <SymbolPalette
+                    onAdd={addSymbol}
+                    customSymbols={customSymbols}
+                    onAuthorSymbol={() => setAuthoring(true)}
+                  />
+                ))
             : (
               <DetailRail
                 tag={selectedTag}
                 node={selectedNode}
                 history={selectedId ? history[selectedId] : null}
                 events={events}
-                canBind={canEdit}
+                canBind={canEdit && !lock}
                 onConnect={openBinding}
               />
             )}
@@ -688,6 +771,16 @@ export default function MonitorPage() {
         node={bindingNode}
         onClose={() => setBindingNode(null)}
         onSave={applyBinding}
+      />
+
+      <CustomSymbolDialog
+        open={authoring}
+        onClose={() => setAuthoring(false)}
+        onSaved={(row) => {
+          queryClient.invalidateQueries({ queryKey: ['mimic-symbols'] })
+          setAuthoring(false)
+          notify(`“${row.name}” added to the symbol library.`)
+        }}
       />
 
       <Snackbar

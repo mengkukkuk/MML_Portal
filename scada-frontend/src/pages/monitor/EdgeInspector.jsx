@@ -1,6 +1,6 @@
 import Button from '@mui/material/Button'
 import DeleteOutlineOutlined from '@mui/icons-material/DeleteOutlineOutlined'
-import { SYMBOLS } from '@/components/mimic/symbols'
+import { symbolDef } from '@/components/mimic/symbols'
 import {
   NORMAL_WIRE, WIRE_GROUPED, WireSample, wireType,
 } from '@/components/mimic/wireTypes'
@@ -22,7 +22,7 @@ export default function EdgeInspector({
   const endpoint = (end) => {
     const node = nodes.find((n) => n.id === end.node)
     if (!node) return { name: 'missing symbol', detail: end.node }
-    return { name: node.label || node.id, detail: `${SYMBOLS[node.type]?.label ?? node.type} · ${end.port}` }
+    return { name: node.label || node.id, detail: `${symbolDef(node)?.label ?? node.type} · ${end.port}` }
   }
 
   const from = endpoint(edge.from)

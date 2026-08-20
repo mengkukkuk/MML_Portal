@@ -1,4 +1,4 @@
-import { SYMBOLS } from './symbols'
+import { symbolDef } from './symbols'
 import { analogStatus } from './tagStatus'
 
 /**
@@ -64,7 +64,7 @@ export function deriveTag({
   const limits = b.limits || {
     warnLo: null, warnHi: null, critLo: null, critHi: null,
   }
-  const kind = KIND_BY_BINDING[SYMBOLS[node.type]?.binding] ?? 'analog'
+  const kind = KIND_BY_BINDING[symbolDef(node)?.binding] ?? 'analog'
 
   const value = reading?.value ?? prev?.value ?? null
   const ts = reading?.ts ?? prev?.ts ?? now

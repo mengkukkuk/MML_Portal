@@ -70,6 +70,71 @@
   fill: var(--warn);
 }
 
+/* --- authored symbols -------------------------------------------------
+ * An uploaded picture is opaque to CSS: it cannot pick up var(--accent), and it
+ * will not re-colour when the faceplate changes the way the drawn symbols do. So
+ * the frame around it is the only part that can carry status, which makes it
+ * load-bearing rather than trim — without it an authored symbol in alarm would
+ * look exactly like one running normally, and the ISA balloon would be the sole
+ * signal.
+ */
+.customFrame {
+  fill: none;
+  stroke: var(--fg-dim);
+  stroke-width: 1;
+  opacity: 0.45;
+}
+
+.customFrameStale {
+  stroke: var(--fg-dim);
+  stroke-dasharray: 3 4;
+  opacity: 0.8;
+}
+
+.customFrameWarn {
+  stroke: var(--warn);
+  stroke-width: 1.5;
+  opacity: 1;
+}
+
+.customFrameCrit {
+  stroke: var(--crit);
+  stroke-width: 2;
+  opacity: 1;
+}
+
+/* A `fill` dynamic's reading, drawn as a gauge bar beside the picture rather
+ * than as a wash over it. An uploaded image is very often a photograph, and a
+ * translucent rect drawn across part of one reads as a rendering glitch, not
+ * as "60% full" — a dedicated bar, in the same sight-glass language Tank.jsx
+ * already uses for its own level fill, reads as a level at any zoom and never
+ * obscures the artwork it sits next to.
+ */
+.levelTrack {
+  fill: var(--bg-elev);
+  stroke: var(--fg-dim);
+  stroke-width: 1.5;
+}
+
+.levelFill {
+  fill: var(--accent);
+  opacity: 0.85;
+  /* Rect edges tween on change, same easing as Tank.jsx's own .liquid — a
+     level that jumps reads as a fault, not a reading. y/height carry a
+     vertical bar (rises from the bottom); width carries a horizontal one
+     (grows from the left). Both are listed because one symbol only ever uses
+     one axis, but the rule is shared by both orientations. */
+  transition: y 0.6s cubic-bezier(0.22, 0.61, 0.36, 1),
+              height 0.6s cubic-bezier(0.22, 0.61, 0.36, 1),
+              width 0.6s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.levelTick {
+  stroke: var(--fg-dim);
+  stroke-width: 1;
+  opacity: 0.6;
+}
+
 /* --- text ------------------------------------------------------------- */
 
 .label {
@@ -102,6 +167,17 @@
   fill: var(--fg);
   pointer-events: none;
   user-select: none;
+}
+
+/* An enclosed area rather than a conducted line — aisle containment, a fire
+   zone, a room. Dashed and unfilled so it reads as a boundary drawn *around*
+   equipment, never as a vessel or a duct carrying something. */
+.aisle {
+  fill: var(--bg-panel);
+  stroke: var(--fg-dim);
+  stroke-width: 1.5;
+  stroke-dasharray: 10 5;
+  opacity: 0.9;
 }
 
 /* --- level fill (tanks, drums) ---------------------------------------- */
@@ -232,6 +308,25 @@
   transition: transform 0.55s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
+/* --- on-change: value-driven position (authored symbols) --------------
+ * A picture turned to an angle its reading sets: a damper blade at 40%, a valve
+ * stem part-open. A transition rather than an animation, so it is unaffected by
+ * the freeze group — a stopped fan's damper still sits where it sits — and so
+ * travel between two positions stays readable instead of teleporting.
+ */
+.turn {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 0.55s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* Show/hide by state, for a flame or a spray that is either there or not.
+   Tweened, because a picture that pops in and out reads as a rendering glitch
+   rather than as something starting. */
+.faded {
+  transition: opacity 0.4s ease-out;
+}
+
 /* --- on-change: the readout digit roll -------------------------------- */
 
 .roll {
@@ -358,7 +453,10 @@
   .liquid,
   .liquidLine,
   .needle,
-  .slide {
+  .slide,
+  .turn,
+  .faded,
+  .levelFill {
     transition: none;
   }
 }

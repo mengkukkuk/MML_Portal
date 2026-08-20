@@ -23,9 +23,36 @@ export function clearAccessToken() {
   _accessToken = null
 }
 
+/**
+ * Drop the instance's default JSON Content-Type when the body is multipart.
+ *
+ * This client sets `Content-Type: application/json` for every request, which is
+ * right for the JSON API but wrong for a file upload: only the browser can write
+ * the `boundary=...` parameter, and it declines to do so when the header is
+ * already set explicitly. The request then goes out labelled JSON with a
+ * multipart body, and the server sees a form with no fields in it — surfacing as
+ * a 422 naming the file field as missing, which points nowhere near the cause.
+ *
+ * Removing the header lets the browser set one with a matching boundary. This
+ * runs on retries too, which is what makes an upload survive a 401 refresh: by
+ * then the header holds the *previous* attempt's boundary, which no longer
+ * matches the re-serialised body.
+ */
+function stripMultipartContentType(config) {
+  if (typeof FormData === 'undefined' || !(config.data instanceof FormData)) return
+  const h = config.headers
+  if (!h) return
+  if (typeof h.delete === 'function') h.delete('Content-Type')
+  else {
+    delete h['Content-Type']
+    delete h['content-type']
+  }
+}
+
 // Attach an access token to every request as a Bearer header
 apiClient.interceptors.request.use((config) => {
   if (_accessToken) config.headers.Authorization = `Bearer ${_accessToken}`
+  stripMultipartContentType(config)
   return config
 })
 
@@ -53,6 +80,31 @@ function isRetryableFailure(error) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * A message worth showing a user, from any axios rejection.
+ *
+ * FastAPI answers a handler's own `HTTPException` with a string `detail` but a
+ * request-validation failure with a *list* of error objects. Rendering that list
+ * straight into a component throws ("Objects are not valid as a React child")
+ * and replaces the page with an error boundary — so the display of a 422 becomes
+ * a worse bug than the 422. This flattens both shapes to a string.
+ */
+export function apiErrorMessage(error, fallback = 'Something went wrong.') {
+  const detail = error?.response?.data?.detail
+  if (typeof detail === 'string' && detail) return detail
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((d) => {
+        // `loc` is ['body', 'field', ...]; the field is the part a user can act on.
+        const field = Array.isArray(d?.loc) ? d.loc[d.loc.length - 1] : null
+        return field ? `${field}: ${d?.msg ?? 'is not valid'}` : d?.msg
+      })
+      .filter(Boolean)
+    if (parts.length) return parts.join('; ')
+  }
+  return fallback
 }
 
 apiClient.interceptors.response.use(

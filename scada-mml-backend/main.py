@@ -56,14 +56,18 @@ app.include_router(alarms.router)
 
 @app.on_event("startup")
 def _ensure_tables() -> None:
-    """Create the dashboard_panels + dashboards + datasources + mimic_layouts
-    tables on boot so the Live grid, saved connections and the /monitor drawing
-    can persist. Dashboards must run after panels (it alters dashboard_panels);
-    mimic_layouts stands alone, so its position here doesn't matter."""
+    """Create the dashboard_panels + dashboards + datasources + mimic tables on
+    boot so the Live grid, saved connections and the /monitor drawing can persist.
+
+    Order is load-bearing in two places: dashboards must run after panels (it
+    alters dashboard_panels), and mimic_symbols must run after mimic_assets
+    (it carries a foreign key to it). mimic_layouts stands alone."""
     db.init_panels_table()
     db.init_dashboards_table()
     db.init_datasources_table()
     db.init_mimic_table()
+    db.init_mimic_assets_table()
+    db.init_mimic_symbols_table()
 
 
 _tag_buffer_task: asyncio.Task | None = None

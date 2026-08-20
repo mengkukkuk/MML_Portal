@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import Button from '@mui/material/Button'
 import LinkOutlined from '@mui/icons-material/LinkOutlined'
 import EChart from '@/components/charts/EChart'
-import { SYMBOLS } from '@/components/mimic/symbols'
+import { symbolDef } from '@/components/mimic/symbols'
 import { formatValue } from '@/components/mimic/tagStatus'
 import { useSettingsStore } from '@/stores/settings'
 import styles from './DetailRail.module.css'
@@ -69,7 +69,7 @@ export default function DetailRail({
     return (
       <aside className={styles.rail}>
         <div className={styles.head}>
-          <span className={styles.eyebrow}>{SYMBOLS[node.type]?.label}</span>
+          <span className={styles.eyebrow}>{symbolDef(node)?.label}</span>
           <span className={styles.tagId}>{node.tagId || 'No loop id'}</span>
           <span className={styles.tagLabel}>{node.label}</span>
         </div>
@@ -106,7 +106,7 @@ export default function DetailRail({
     )
   }
 
-  const symbolLabel = node ? SYMBOLS[node.type]?.label : 'Unplaced tag'
+  const symbolLabel = node ? symbolDef(node)?.label : 'Unplaced tag'
   const statusClass = tag.status === 'crit' ? styles.valueCrit
     : tag.status === 'warn' ? styles.valueWarn : ''
 

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **MMLPortal** — a SCADA monitoring system. Monorepo with two independent applications:
 - `scada-mml-backend/` — FastAPI (Python 3.14) REST API
-- `scada-frontend/` — Vue 3 + Vite SPA
+- `scada-frontend/` — React 19 + Vite SPA (converted from Vue on the `react_cvt` branch)
 
 A handful of helper utilities sit alongside them:
 - `scada-mml-backend/simulate_data.py` — writes fake `public.sensor_readings`
@@ -89,7 +89,7 @@ Password hash format: `scrypt$<salt_hex>$<digest_hex>` (no third-party wheel nee
 - `src/pages/` — one component per route (`OverviewPage`, `DevicesPage`, `AlarmsPage`, `TrendsPage`,
   **`LivePage`** admin-managed live grid, `SettingsPage`, `AccountsPage` admin-only, `LoginPage`,
   `ResetPasswordPage`, `NotFoundPage`); guarded by `requiresAuth` / `requiresRole` in `src/router/index.js`
-- `src/stores/` — Pinia stores: `auth`, `users`, `devices`, `alarms`, `connection`
+- `src/stores/` — Zustand stores: `auth`, `users`, `devices`, `alarms`, `connection`
 - `src/api/` — thin Axios wrappers per domain (`auth`, `users`, `devices`, `alarms`,
   `readings`, `tags`, `panels`)
 - `src/components/` — shared UI: `AppHeader`, `AppSidebar`, `GaugeTile`, `StatCard`,

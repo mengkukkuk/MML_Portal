@@ -41,6 +41,7 @@ export const WIRE_GROUPS = [
   { id: 'general', label: 'General' },
   { id: 'electrical', label: 'Electrical' },
   { id: 'process', label: 'Process' },
+  { id: 'cooling', label: 'Cooling' },
   { id: 'signal', label: 'Signal & data' },
 ]
 
@@ -186,6 +187,42 @@ export const WIRE_TYPES = {
     width: 2,
     dash: '10 4 2 4',
     flow: 'var(--crit)',
+  },
+
+  // --- cooling ------------------------------------------------------------
+  // Supply and return have to be told apart at a glance, because a chilled-water
+  // loop is the one place on a sheet where the *same* fluid runs both ways and
+  // getting them backwards inverts the whole diagram. Weight does it: the supply
+  // is the heavier line, as the one doing the work.
+  chw_supply: {
+    label: 'Chilled water supply',
+    group: 'cooling',
+    stroke: 'var(--accent)',
+    width: 2.6,
+    dash: null,
+    flow: 'var(--accent)',
+  },
+  chw_return: {
+    label: 'Chilled water return',
+    group: 'cooling',
+    stroke: 'var(--accent)',
+    width: 1.6,
+    dash: '14 5',
+    opacity: 0.75,
+    flow: 'var(--accent)',
+    flowOpacity: 0.6,
+  },
+  // Modelled on `fluegas`: air is a volume rather than a line, so it is drawn
+  // wide and faint and sits behind the equipment instead of competing with it.
+  air_supply: {
+    label: 'Conditioned air',
+    group: 'cooling',
+    stroke: 'var(--fg-dim)',
+    width: 4,
+    dash: null,
+    opacity: 0.4,
+    flow: 'var(--fg-muted)',
+    flowOpacity: 0.5,
   },
 
   // --- signal & data (ISA-5.1) --------------------------------------------

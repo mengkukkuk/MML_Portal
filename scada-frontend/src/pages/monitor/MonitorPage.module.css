@@ -392,3 +392,41 @@
   opacity: 0.5;
   border-style: dashed;
 }
+
+/* --- authored symbols -------------------------------------------------
+ * The way into the upload flow, living inside the Custom group rather than in
+ * the palette header: it is an action on that group, and a button at the top
+ * would offer to author a symbol before an admin has seen that a library exists.
+ * Dashed because it adds something that is not there yet — the same convention
+ * the drawing itself uses for equipment shown but not commissioned.
+ */
+.paletteUpload {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+  margin-top: var(--space-1);
+  padding: var(--space-2);
+  background: transparent;
+  color: var(--fg-muted);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.paletteUpload:hover {
+  color: var(--fg);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.paletteUpload:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

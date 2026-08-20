@@ -2,7 +2,8 @@ import Button from '@mui/material/Button'
 import LinkOutlined from '@mui/icons-material/LinkOutlined'
 import DeleteOutlineOutlined from '@mui/icons-material/DeleteOutlineOutlined'
 import RestartAltOutlined from '@mui/icons-material/RestartAltOutlined'
-import { SYMBOLS, bubbleSpec, bubbleMoved } from '@/components/mimic/symbols'
+import Rotate90DegreesCwOutlined from '@mui/icons-material/Rotate90DegreesCwOutlined'
+import { symbolDef, bubbleSpec, bubbleMoved } from '@/components/mimic/symbols'
 import styles from './NodeInspector.module.css'
 
 /**
@@ -14,12 +15,13 @@ import styles from './NodeInspector.module.css'
  * now shows the palette when nothing is selected and this when something is.
  */
 export default function NodeInspector({
-  node, datasources = [], onConnect, onDelete, onResetBubble, onResetSize, onBack,
+  node, datasources = [], onConnect, onDelete, onResetBubble, onResetSize, onRotate, onBack,
 }) {
-  const def = SYMBOLS[node.type]
+  const def = symbolDef(node)
   const b = node.binding
   const bubble = bubbleSpec(node)
   const resized = node.w !== def?.defaultSize.w || node.h !== def?.defaultSize.h
+  const rot = ((Math.round(node.rot || 0) % 360) + 360) % 360
   const connection = b?.datasource_id == null
     ? 'Default (app database)'
     : datasources.find((d) => d.id === b.datasource_id)?.name
@@ -119,6 +121,56 @@ export default function NodeInspector({
           onClick={() => onResetSize(node.id)}
         >
           Reset to drawn size
+        </Button>
+      </div>
+
+      <div className={styles.section}>
+        <div className={styles.sectionTitle}>Rotation</div>
+        <p className={styles.hint}>
+          Quarter turns cover most of it — a duct, an arrow, a conveyor running the
+          other way. Ports rotate with the symbol, so its wires follow.
+        </p>
+        <div className={styles.rotRow} role="group" aria-label="Rotate symbol">
+          {[0, 90, 180, 270].map((deg) => (
+            <button
+              key={deg}
+              type="button"
+              className={`${styles.rotBtn} ${rot === deg ? styles.rotOn : ''}`}
+              aria-pressed={rot === deg}
+              onClick={() => onRotate(node.id, deg)}
+            >
+              {deg}°
+            </button>
+          ))}
+        </div>
+        <div className={styles.rotRow}>
+          {/* Fine adjustment, for a symbol that has to line up with something
+              drawn at an angle. Wrapped into 0–359 so the readout never creeps
+              off to 720°. */}
+          <button
+            type="button"
+            className={styles.rotBtn}
+            onClick={() => onRotate(node.id, (rot + 345) % 360)}
+          >
+            −15°
+          </button>
+          <span className={styles.rotValue}>{rot}°</span>
+          <button
+            type="button"
+            className={styles.rotBtn}
+            onClick={() => onRotate(node.id, (rot + 15) % 360)}
+          >
+            +15°
+          </button>
+        </div>
+        <Button
+          fullWidth
+          color="inherit"
+          startIcon={<Rotate90DegreesCwOutlined />}
+          disabled={rot === 0}
+          onClick={() => onRotate(node.id, 0)}
+        >
+          Reset to upright
         </Button>
       </div>
 

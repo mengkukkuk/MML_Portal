@@ -250,3 +250,32 @@
     animation: none;
   }
 }
+
+/* --- a symbol this bundle cannot draw --------------------------------
+ * Not omitted, and not a hole. The node keeps its own box so the rest of the
+ * drawing keeps its shape and its wires still land somewhere, and it is
+ * hatched rather than dashed so it never reads as the "shown for reference"
+ * convention that .unboundOutline already owns.
+ */
+.placeholder {
+  fill: var(--bg-elev);
+  stroke: var(--warn);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+  opacity: 0.75;
+}
+
+.placeholderMark {
+  stroke: var(--warn);
+  stroke-width: 1;
+  opacity: 0.4;
+}
+
+.placeholderLabel {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-anchor: middle;
+  fill: var(--warn);
+  pointer-events: none;
+  user-select: none;
+}

@@ -43,6 +43,16 @@ import Cellophaner from './Cellophaner'
 import Cartoner from './Cartoner'
 import RejectStation from './RejectStation'
 
+import Ats from './Ats'
+import Generator from './Generator'
+import Ups from './Ups'
+import Pdu from './Pdu'
+import Rack from './Rack'
+import Crah from './Crah'
+import ColdAisle from './ColdAisle'
+
+import CustomSymbol from './CustomSymbol'
+
 /**
  * Symbol registry — `type -> descriptor`. Mirrors the barrel pattern in
  * src/components/live/options/index.js so the two "pluggable renderer" sets
@@ -453,6 +463,109 @@ export const SYMBOLS = {
     binding: 'both',
     bubble: { anchor: [0.5, 0.18], offset: [0, -62] },
   },
+
+  // --- data centre infrastructure ----------------------------------------
+  // The power chain runs top-to-bottom like the rest of the switchgear above;
+  // the cooling chain runs left-to-right. Keeping the two at right angles is
+  // what lets an operator trace either one across a crowded sheet.
+  ats: {
+    label: 'Transfer switch',
+    category: 'dcim',
+    Component: Ats,
+    defaultSize: { w: 130, h: 130 },
+    // Two incomers, not one: an ATS drawn with a single input is just a
+    // breaker, and the whole point of the device is which source it is on.
+    ports: { in: [0.2, 0], alt: [0.8, 0], out: [0.5, 1] },
+    binding: 'discrete',
+    bubble: null,
+  },
+  generator: {
+    label: 'Standby generator',
+    category: 'dcim',
+    Component: Generator,
+    defaultSize: { w: 130, h: 140 },
+    ports: { out: [0.5, 1], fuel: [0, 0.82] },
+    binding: 'both',
+    bubble: { anchor: [0.86, 0.36], offset: [86, -20] },
+  },
+  ups: {
+    label: 'UPS',
+    category: 'dcim',
+    Component: Ups,
+    defaultSize: { w: 170, h: 130 },
+    // `bypass` leaves the top edge: the static bypass is drawn over the
+    // conversion path, so routing it upward matches the symbol's own geometry.
+    ports: {
+      in: [0.14, 0], out: [0.86, 1], bypass: [0.5, 0], battery: [0.5, 1],
+    },
+    binding: 'both',
+    bubble: { anchor: [0.86, 0.2], offset: [84, -46] },
+  },
+  pdu: {
+    label: 'Rack PDU',
+    category: 'dcim',
+    Component: Pdu,
+    defaultSize: { w: 90, h: 150 },
+    ports: { in: [0.5, 0], out: [0.5, 1] },
+    binding: 'both',
+    bubble: { anchor: [0.86, 0.2], offset: [80, -40] },
+  },
+  rack: {
+    label: 'Server rack',
+    category: 'dcim',
+    Component: Rack,
+    defaultSize: { w: 110, h: 180 },
+    // A rack is a terminus on the power chain — nothing is fed from it — so it
+    // carries an inlet and a network drop and no outlet.
+    ports: { in: [0.5, 0], net: [0, 0.18] },
+    binding: 'analog',
+    bubble: { anchor: [0.9, 0.16], offset: [82, -38] },
+  },
+  crah: {
+    label: 'CRAH unit',
+    category: 'dcim',
+    Component: Crah,
+    defaultSize: { w: 170, h: 110 },
+    ports: {
+      in: [0, 0.45], out: [1, 0.45], chw: [0.25, 0.9], chwr: [0.6, 0.9],
+    },
+    binding: 'both',
+    bubble: { anchor: [0.5, 0.1], offset: [0, -64] },
+  },
+  coldaisle: {
+    label: 'Cold aisle',
+    category: 'dcim',
+    Component: ColdAisle,
+    defaultSize: { w: 300, h: 130 },
+    ports: { in: [0, 0.5], out: [1, 0.5] },
+    binding: 'analog',
+    bubble: { anchor: [0.5, 0], offset: [0, -60] },
+  },
+
+  // --- admin-authored ----------------------------------------------------
+  /**
+   * The one type that is not a drawing in this folder.
+   *
+   * A `custom` node's picture, size, ports and motion come from a row in
+   * `mimic_symbols` that an admin authored from an uploaded image, resolved by
+   * `symbolDef()` below. One registry entry covers the whole library, which is
+   * what keeps this catalogue — and the backend's VALID_NODE_TYPES allowlist —
+   * finite no matter how many symbols get uploaded.
+   *
+   * The fields here are only the fallbacks used before the library resolves, or
+   * if a node points at an entry that has been deleted.
+   */
+  custom: {
+    label: 'Custom symbol',
+    category: 'custom',
+    Component: CustomSymbol,
+    defaultSize: { w: 120, h: 120 },
+    ports: {
+      in: [0, 0.5], out: [1, 0.5], top: [0.5, 0], bottom: [0.5, 1],
+    },
+    binding: 'both',
+    bubble: { anchor: [0.5, 0], offset: [0, -66] },
+  },
 }
 
 export const SYMBOL_TYPES = Object.keys(SYMBOLS)
@@ -468,6 +581,10 @@ export const SYMBOL_CATEGORIES = [
   { id: 'automation', label: 'Automation' },
   { id: 'water', label: 'Water treatment' },
   { id: 'tobacco', label: 'Cigarette line' },
+  { id: 'dcim', label: 'Data centre' },
+  // Last on purpose: the uploaded library grows without bound, and it should
+  // never push the drawn catalogue off the bottom of the palette.
+  { id: 'custom', label: 'Custom' },
 ]
 
 /**
@@ -489,9 +606,92 @@ export const SYMBOL_GROUPS = (() => {
   return [...groups, other].filter((g) => g.types.length > 0)
 })()
 
+/**
+ * The custom library, keyed by symbol id, as descriptors.
+ *
+ * Module-level mutable state, which needs justifying. Every consumer of a symbol
+ * definition here is synchronous and hot: `portPoint` runs for every port of
+ * every node on every render, the edge router calls it twice per wire, and
+ * `resizeBox` needs a size mid-drag. The library, by contrast, arrives over the
+ * network. Threading an async value through all of that would mean either
+ * turning those pure functions into hooks or passing the library down through
+ * every layer of the canvas — and the canvas would still have to render before
+ * it landed.
+ *
+ * So the query populates this once on load (see setCustomDefs) and every call
+ * site stays a plain function call. The cost is that a definition can be absent,
+ * which is why `symbolDef` is documented to return the fallback rather than
+ * throwing, and why nothing here assumes the map is populated.
+ */
+const CUSTOM_DEFS = new Map()
+
+/**
+ * Publish the custom library. Called once per fetch by MonitorPage.
+ *
+ * Each row is turned into the same descriptor shape as a native entry, so
+ * everything downstream — the canvas, the palette, the port router, the balloon
+ * placement — reads one shape and never branches on where the symbol came from.
+ */
+export function setCustomDefs(rows) {
+  CUSTOM_DEFS.clear()
+  ;(rows ?? []).forEach((row) => CUSTOM_DEFS.set(row.id, customDescriptor(row)))
+}
+
+/**
+ * One library row as a registry descriptor.
+ *
+ * Exported because the palette has to preview an authored symbol before it is on
+ * any drawing — and a preview built from different fields than the canvas uses
+ * would be a preview of something else.
+ */
+export function customDescriptor(row) {
+  return {
+    ...SYMBOLS.custom,
+    label: row.name,
+    defaultSize: { w: row.w, h: row.h },
+    // An authored symbol with no ports set still has to be wireable, so it
+    // inherits the four compass points rather than becoming un-connectable.
+    ports: row.ports && Object.keys(row.ports).length > 0
+      ? row.ports
+      : SYMBOLS.custom.ports,
+    binding: row.binding || SYMBOLS.custom.binding,
+    bubble: row.bubble ?? SYMBOLS.custom.bubble,
+    asset_id: row.asset_id,
+    dynamics: row.dynamics ?? [],
+    symbolId: row.id,
+  }
+}
+
+/** How many authored symbols this bundle currently knows about. */
+export const customDefCount = () => CUSTOM_DEFS.size
+
+/**
+ * The descriptor for one node, whether it is drawn in this folder or authored by
+ * an admin. **The single resolver — prefer this to indexing SYMBOLS directly.**
+ *
+ * May return undefined, for a node whose *type* this bundle has no renderer for
+ * at all (a drawing saved by a newer build). Every caller has to tolerate that;
+ * MimicCanvas turns it into a visible placeholder and MonitorPage locks the
+ * drawing read-only.
+ *
+ * A custom node whose library entry is missing is a different case and is *not*
+ * undefined: it falls back to the base `custom` descriptor, which draws the frame
+ * and label with no picture. That is the right answer both while the library is
+ * still in flight — the common case, on every page load — and if the entry was
+ * deleted. Treating it as an unknown type would flash a placeholder on every
+ * load and lock a perfectly good drawing.
+ */
+export function symbolDef(node) {
+  if (!node) return undefined
+  if (node.type === 'custom') {
+    return CUSTOM_DEFS.get(node.symbolId) ?? SYMBOLS.custom
+  }
+  return SYMBOLS[node.type]
+}
+
 /** Absolute logical coordinates of one port on one node. */
 export function portPoint(node, portName) {
-  const def = SYMBOLS[node.type]
+  const def = symbolDef(node)
   const frac = def?.ports?.[portName] ?? def?.ports?.out ?? [0.5, 0.5]
   return { x: node.x + frac[0] * node.w, y: node.y + frac[1] * node.h }
 }
@@ -506,7 +706,7 @@ export function portPoint(node, portName) {
  * Returns null for symbols that carry no instrument at all.
  */
 export function bubbleSpec(node) {
-  const def = SYMBOLS[node.type]?.bubble
+  const def = symbolDef(node)?.bubble
   if (!def) return null
   const own = node.bubble
   return {
@@ -517,7 +717,7 @@ export function bubbleSpec(node) {
 
 /** True when the node's balloon has been moved off its symbol default. */
 export function bubbleMoved(node) {
-  const def = SYMBOLS[node.type]?.bubble
+  const def = symbolDef(node)?.bubble
   if (!def || !Array.isArray(node.bubble?.offset)) return false
   return node.bubble.offset[0] !== def.offset[0] || node.bubble.offset[1] !== def.offset[1]
 }

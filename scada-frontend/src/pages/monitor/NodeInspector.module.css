@@ -118,3 +118,52 @@
   line-height: 1.55;
   color: var(--fg-dim);
 }
+
+/* --- rotation ---------------------------------------------------------
+ * A row of absolute angles rather than a slider: the answer is one of four
+ * quarter turns almost every time, and a slider makes the common case a
+ * drag-and-squint instead of a click.
+ */
+.rotRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.rotBtn {
+  flex: 1;
+  padding: 5px 0;
+  background: var(--bg-elev);
+  color: var(--fg-muted);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.rotBtn:hover {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+
+.rotBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.rotOn {
+  color: var(--bg-app);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.rotValue {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  text-align: center;
+}

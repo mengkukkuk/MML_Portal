@@ -11,12 +11,14 @@ datasource that does not exist, or at a column that is not on the table. That
 check is what keeps a saved layout from silently rendering "no data" for every
 operator afterwards.
 """
+import hashlib
 import re
 from datetime import datetime
 from typing import Any
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 import db
@@ -87,6 +89,20 @@ VALID_NODE_TYPES = {
     "cellophaner",
     "cartoner",
     "rejectstation",
+    # data centre infrastructure (power chain, then cooling)
+    "ats",
+    "generator",
+    "ups",
+    "pdu",
+    "rack",
+    "crah",
+    "coldaisle",
+    # An admin-authored symbol from an uploaded image. One type covers the whole
+    # custom library: which picture it draws and how it moves live in
+    # `mimic_symbols`, referenced by the node's `symbolId`. That is what keeps
+    # this allowlist finite — without it, every upload would need a redeploy
+    # before a drawing could use it.
+    "custom",
 }
 
 # How a binding turns a number into a run/stop state.
@@ -213,6 +229,15 @@ def _validate(doc: dict) -> None:
 
     cache: dict[tuple[int | None, str], dict[str, list[str]]] = {}
     seen_ids: set[str] = set()
+    # Read once for the whole document rather than per node: a drawing built from
+    # a custom palette is mostly custom nodes, and each would otherwise be its
+    # own round trip. Empty until the first symbol is authored, which is why it
+    # is only touched by the branch that needs it.
+    symbol_ids: set[int] = (
+        {r["id"] for r in db.list_mimic_symbols()}
+        if any(isinstance(n, dict) and n.get("type") == "custom" for n in nodes)
+        else set()
+    )
 
     for i, node in enumerate(nodes):
         where = f"doc.nodes[{i}]"
@@ -229,6 +254,16 @@ def _validate(doc: dict) -> None:
             # picked this type from a palette, so the useful fact is which one
             # this server build cannot draw.
             raise _bad(f"{where}: unknown symbol type {node.get('type')!r}")
+        if node.get("type") == "custom":
+            # A custom node is only as good as the library entry behind it. Let a
+            # dangling symbolId through and the drawing saves clean, then renders
+            # a placeholder for every operator with nothing to say why — so this
+            # is checked here for the same reason a binding's datasource is.
+            symbol_id = node.get("symbolId")
+            if not isinstance(symbol_id, int) or isinstance(symbol_id, bool):
+                raise _bad(f"{where}: a custom symbol requires an integer symbolId")
+            if symbol_id not in symbol_ids:
+                raise _bad(f"{where}: symbolId {symbol_id} is not in the symbol library")
         binding = node.get("binding")
         if binding is None:
             continue
@@ -290,4 +325,304 @@ def delete_layout(slug: str, _admin: dict = Depends(require_admin)):
     if not db.delete_mimic_layout(slug):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Layout not found"
+        )
+
+
+# --- assets ----------------------------------------------------------------
+# An asset is one uploaded picture. It is served back through this API rather
+# than from a static directory so the file never becomes a URL the app cannot
+# revoke, and so the hardening headers below travel with every response.
+MAX_ASSET_BYTES = 512 * 1024
+
+# Declared content types an admin may upload. The declaration is not trusted —
+# _sniff_mime below has to agree with it.
+ALLOWED_ASSET_MIMES = {
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/svg+xml",
+}
+
+# Leading bytes that identify each format. A browser will happily render a file
+# by its sniffed type, so a PNG-labelled SVG would otherwise be a way to smuggle
+# markup past the allowlist.
+_MAGIC = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+)
+
+
+def _sniff_mime(data: bytes) -> str | None:
+    """The format these bytes actually are, or None if it is not one we take."""
+    for prefix, mime in _MAGIC:
+        if data.startswith(prefix):
+            return mime
+    # RIFF....WEBP — the size field sits between the two markers.
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    # SVG is text and may open with a comment, a BOM, or an XML declaration
+    # before the root element, so look for the tag in the opening bytes rather
+    # than requiring it first.
+    #
+    # The BOM has to come off explicitly: `lstrip()` removes whitespace, and a
+    # UTF-8 BOM is not whitespace. Plenty of Windows editors write one, so
+    # without this a perfectly good SVG is rejected as an unsupported format.
+    head = data[:1024].lstrip(b"\xef\xbb\xbf").lstrip()
+    if head[:1] == b"<" and b"<svg" in data[:1024].lower():
+        return "image/svg+xml"
+    return None
+
+
+# Headers every asset response carries.
+#
+# The frontend only ever draws an asset through <image href>, where a browser
+# treats the file as an image and never runs script in it. But an uploaded SVG is
+# also reachable by *navigating* to this URL, and an SVG document served from our
+# own origin can script that origin — the classic stored-XSS on user content.
+# `sandbox` drops the response into an opaque origin, which closes that path
+# without a sanitizer; `nosniff` stops a mislabelled file being re-interpreted.
+_ASSET_HEADERS = {
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+    "X-Content-Type-Options": "nosniff",
+    # Content is addressed by row id and rows are never rewritten in place — an
+    # edit uploads a new asset — so this is safe to cache hard.
+    "Cache-Control": "public, max-age=31536000, immutable",
+}
+
+
+class AssetOut(BaseModel):
+    id: int
+    name: str
+    mime: str
+    size_bytes: int
+    created_at: datetime
+
+
+class AssetSummary(AssetOut):
+    used_by: int
+
+
+@router.get("/assets", response_model=list[AssetSummary])
+def list_assets(_user: dict = Depends(get_current_user)):
+    return db.list_mimic_assets()
+
+
+@router.post("/assets", response_model=AssetOut, status_code=status.HTTP_201_CREATED)
+async def upload_asset(
+    file: UploadFile = File(...),
+    admin: dict = Depends(require_admin),
+):
+    """Store one image for use as a custom symbol's picture.
+
+    Re-uploading a file that is already stored returns the existing row instead
+    of a duplicate: an admin who drags the same icon in twice means the same
+    symbol both times, and a library full of near-identical entries is worse than
+    a no-op.
+    """
+    data = await file.read()
+    if not data:
+        raise _bad("the uploaded file is empty")
+    if len(data) > MAX_ASSET_BYTES:
+        raise _bad(
+            f"image is {len(data) // 1024} KB; the limit is {MAX_ASSET_BYTES // 1024} KB"
+        )
+
+    sniffed = _sniff_mime(data)
+    if sniffed is None or sniffed not in ALLOWED_ASSET_MIMES:
+        raise _bad(
+            "unsupported image format — use PNG, JPEG, WebP or SVG "
+            f"(this file's contents read as {sniffed or 'something else'})"
+        )
+    # The declared type is only ever allowed to *agree*. A mismatch means the
+    # name and the bytes disagree about what this is, which is never innocent.
+    declared = (file.content_type or "").split(";")[0].strip().lower()
+    if declared and declared in ALLOWED_ASSET_MIMES and declared != sniffed:
+        raise _bad(f"file claims to be {declared} but its contents are {sniffed}")
+
+    digest = hashlib.sha256(data).hexdigest()
+    existing = db.find_mimic_asset_by_hash(digest)
+    if existing is not None:
+        return existing
+
+    name = (file.filename or "image").strip()[:120] or "image"
+    return db.insert_mimic_asset(name, sniffed, data, digest, admin.get("id"))
+
+
+@router.get("/assets/{asset_id}")
+def get_asset(asset_id: int, _user: dict = Depends(get_current_user)):
+    """The image bytes.
+
+    Authenticated like every other read here, which means the browser cannot
+    fetch it as a bare <image href> — no Authorization header would be attached.
+    The frontend pulls it through the API client and hands the symbol a blob URL
+    instead (see components/mimic/useAssetUrl.js).
+    """
+    row = db.get_mimic_asset(asset_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found"
+        )
+    return Response(
+        content=bytes(row["bytes"]),
+        media_type=row["mime"],
+        headers=_ASSET_HEADERS,
+    )
+
+
+@router.delete("/assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_asset(asset_id: int, _admin: dict = Depends(require_admin)):
+    """Remove an upload. Refused while a library symbol still draws with it —
+    deleting it anyway would turn every drawing using that symbol into a
+    placeholder, with nothing on screen to explain why."""
+    users = db.mimic_asset_users(asset_id)
+    if users:
+        raise _bad(
+            "this image is still used by: " + ", ".join(users)
+            + ". Delete or repoint those symbols first."
+        )
+    if not db.delete_mimic_asset(asset_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found"
+        )
+
+
+# --- custom symbol library -------------------------------------------------
+# A library entry is a symbol definition an admin authored from an uploaded
+# picture: its size, its ports, and the dynamics that make it move. Nodes in a
+# layout reference one by id (`{type: "custom", symbolId: n}`), so the same
+# authored symbol can be dropped onto any number of drawings.
+#
+# Dynamics kinds are not validated against a list here. The renderer skips a kind
+# it does not recognise, and pinning the vocabulary in two places would mean a
+# frontend that grows a new dynamic cannot use it until the backend is redeployed
+# — the exact coupling VALID_NODE_TYPES already imposes on symbol types, and the
+# reason authoring a symbol has to stay a pure frontend concern.
+#
+# Their *pointers* are another matter: a dynamic that names an asset id gets the
+# same treatment as any other reference in this file, because a dangling one
+# renders as a symbol with no picture for every operator.
+MAX_SYMBOL_PORTS = 12
+
+VALID_SYMBOL_BINDINGS = {"analog", "discrete", "both", "none"}
+
+# Matches SYMBOLS[*].defaultSize in the frontend registry: big enough to draw,
+# small enough to stay inside the 1600x900 sheet.
+MIN_SYMBOL_SIZE = 16
+MAX_SYMBOL_SIZE = 900
+
+
+class SymbolIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    asset_id: int
+    w: int = Field(..., ge=MIN_SYMBOL_SIZE, le=MAX_SYMBOL_SIZE)
+    h: int = Field(..., ge=MIN_SYMBOL_SIZE, le=MAX_SYMBOL_SIZE)
+    ports: dict = {}
+    dynamics: list = []
+    binding: str = "analog"
+    bubble: dict | None = None
+
+
+class SymbolOut(BaseModel):
+    id: int
+    name: str
+    asset_id: int
+    w: int
+    h: int
+    ports: dict = {}
+    dynamics: list = []
+    binding: str
+    bubble: dict | None = None
+    updated_at: datetime
+
+
+def _validate_symbol(body: SymbolIn) -> dict[str, Any]:
+    """Check a definition can actually be drawn, and hand back the row fields."""
+    if db.get_mimic_asset(body.asset_id) is None:
+        raise _bad(f"asset_id {body.asset_id} does not exist")
+
+    if body.binding not in VALID_SYMBOL_BINDINGS:
+        raise _bad(
+            "binding must be one of: " + ", ".join(sorted(VALID_SYMBOL_BINDINGS))
+        )
+
+    if len(body.ports) > MAX_SYMBOL_PORTS:
+        raise _bad(f"a symbol may not have more than {MAX_SYMBOL_PORTS} ports")
+
+    # Ports are fractions of the symbol's own box — that is what lets the edge
+    # router re-derive every wire from the node's current geometry instead of
+    # storing line coordinates. A port outside 0..1 would place a pipe end off
+    # the symbol it belongs to.
+    for name, frac in body.ports.items():
+        where = f"ports[{name!r}]"
+        if not isinstance(frac, (list, tuple)) or len(frac) != 2:
+            raise _bad(f"{where} must be a [x, y] pair")
+        for v in frac:
+            if not isinstance(v, (int, float)) or isinstance(v, bool):
+                raise _bad(f"{where} must be two numbers")
+            if not 0 <= v <= 1:
+                raise _bad(f"{where} must be fractions of the symbol box, 0 to 1")
+
+    for i, dyn in enumerate(body.dynamics):
+        if not isinstance(dyn, dict):
+            raise _bad(f"dynamics[{i}] must be an object")
+        if not isinstance(dyn.get("kind"), str) or not dyn["kind"]:
+            raise _bad(f"dynamics[{i}] requires a kind")
+
+        # A `map` on any dynamic points state names at asset ids — that is how a
+        # multi-state symbol picks its picture. Validated by *shape* rather than
+        # by kind, so this stays kind-agnostic (see the note above) while still
+        # refusing a dangling pointer: an unresolvable id renders as a symbol with
+        # no picture and nothing on screen to say why, which is the same failure
+        # `_validate_binding` exists to prevent for a datasource.
+        mapping = dyn.get("map")
+        if mapping is None:
+            continue
+        if not isinstance(mapping, dict):
+            raise _bad(f"dynamics[{i}].map must be an object")
+        for state, ref in mapping.items():
+            where = f"dynamics[{i}].map[{state!r}]"
+            if not isinstance(ref, int) or isinstance(ref, bool):
+                raise _bad(f"{where} must be an asset id")
+            if db.get_mimic_asset(ref) is None:
+                raise _bad(f"{where}: asset {ref} does not exist")
+
+    return {
+        "name": body.name.strip(),
+        "asset_id": body.asset_id,
+        "w": body.w,
+        "h": body.h,
+        "ports": body.ports,
+        "dynamics": body.dynamics,
+        "binding": body.binding,
+        "bubble": body.bubble,
+    }
+
+
+@router.get("/symbols", response_model=list[SymbolOut])
+def list_symbols(_user: dict = Depends(get_current_user)):
+    """The whole library. Every operator needs it to render a drawing that uses
+    custom symbols, so this is a plain authenticated read."""
+    return db.list_mimic_symbols()
+
+
+@router.post("/symbols", response_model=SymbolOut, status_code=status.HTTP_201_CREATED)
+def create_symbol(body: SymbolIn, _admin: dict = Depends(require_admin)):
+    return db.insert_mimic_symbol(_validate_symbol(body))
+
+
+@router.put("/symbols/{symbol_id}", response_model=SymbolOut)
+def update_symbol(symbol_id: int, body: SymbolIn, _admin: dict = Depends(require_admin)):
+    row = db.update_mimic_symbol(symbol_id, _validate_symbol(body))
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Symbol not found"
+        )
+    return row
+
+
+@router.delete("/symbols/{symbol_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_symbol(symbol_id: int, _admin: dict = Depends(require_admin)):
+    if not db.delete_mimic_symbol(symbol_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Symbol not found"
         )

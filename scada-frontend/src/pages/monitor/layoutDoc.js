@@ -15,18 +15,75 @@ import { cloneDefaultLayout, LAYOUT_VERSION } from './defaultLayout'
  * printed part as `tagId` and adds `binding`, the real datasource pointer.
  * v1 edges named their flow tag the same way, so `flowTag` becomes
  * `flowNode`, a node id, matching the snapshot's new node-keyed shape.
+ *
+ * A document this build cannot *fully* draw is still returned. Discarding one
+ * used to mean the caller fell back to its seed, which showed the operator a
+ * different plant under the right name and let the next save overwrite the real
+ * drawing with that seed. So the rule here is: keep whatever can be rendered,
+ * and report what is wrong with it through `editLock` so the caller can go
+ * read-only instead of silently substituting.
  */
 
 const LEGACY_KEY = 'mml.mimic.boiler-1'
 
-/** Structural check only — enough to know the renderer won't throw. */
+/**
+ * Structural check only — enough to know the renderer won't throw.
+ *
+ * Deliberately *not* a check that every symbol type is drawable: that is a fact
+ * about this bundle's age, not about the document, and it is reported by
+ * `unknownTypes` rather than used to reject the whole drawing.
+ */
 export function isRenderable(doc) {
   if (!doc || !Array.isArray(doc.nodes) || !Array.isArray(doc.edges)) return false
   return doc.nodes.every((n) => (
-    n && typeof n.id === 'string' && SYMBOLS[n.type]
+    n && typeof n.id === 'string'
       && Number.isFinite(n.x) && Number.isFinite(n.y)
       && Number.isFinite(n.w) && Number.isFinite(n.h)
   ))
+}
+
+/**
+ * Symbol types in this document that this bundle has no renderer for, once.
+ *
+ * A `custom` node counts as known: the *type* is registered, and a library
+ * entry that has not arrived yet is a loading state the canvas draws as a
+ * placeholder — not a reason to lock the drawing.
+ */
+export function unknownTypes(doc) {
+  const seen = []
+  ;(doc?.nodes ?? []).forEach((n) => {
+    if (!SYMBOLS[n.type] && !seen.includes(n.type)) seen.push(n.type)
+  })
+  return seen
+}
+
+/** True when the document was written by a build newer than this one. */
+export function isFutureVersion(doc) {
+  return (doc?.version ?? 1) > LAYOUT_VERSION
+}
+
+/**
+ * Why this drawing may not be edited, or null when it may.
+ *
+ * Editing is all-or-nothing: the PUT replaces the whole document, so an admin
+ * who saves a drawing this bundle only partly understands writes their partial
+ * understanding over everyone else's plant. One call answers both questions the
+ * page has — whether to warn, and whether to offer the Edit button — so the two
+ * can never disagree.
+ */
+export function editLock(doc) {
+  if (!doc) return null
+  if (isFutureVersion(doc)) {
+    return 'This drawing was saved by a newer version of the app. It is shown '
+      + 'read-only so an edit here cannot overwrite what that version stored.'
+  }
+  const unknown = unknownTypes(doc)
+  if (unknown.length > 0) {
+    return `This build has no symbol for ${unknown.join(', ')}. The drawing is `
+      + 'shown read-only — those symbols appear as placeholders, and saving would '
+      + 'discard them. Update the frontend to edit it.'
+  }
+  return null
 }
 
 /**
@@ -35,17 +92,16 @@ export function isRenderable(doc) {
  * every migrated node comes back unbound, because a v1 doc never had a real
  * datasource to point at in the first place.
  *
- * Returns null when the document is too broken to render, so the caller can
- * fall back to the seed rather than draw a hole.
+ * Returns null only when the document is too broken to render at all. A doc
+ * from a newer build comes back untouched: it may carry fields this bundle
+ * ignores, but showing the plant and refusing to save it beats showing a
+ * different plant.
  */
 export function migrateLayout(doc) {
   if (!doc || !Array.isArray(doc.nodes)) return null
 
-  const version = doc.version ?? 1
-  if (version > LAYOUT_VERSION) return null // written by a newer build
-
   let out = doc
-  if (version < 2) {
+  if ((doc.version ?? 1) < 2) {
     out = {
       ...doc,
       version: 2,
