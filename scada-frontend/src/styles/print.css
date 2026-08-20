@@ -1,0 +1,102 @@
+/* Print styles — only ever active under @media print, so nothing here can
+   affect the on-screen app.
+ *
+ * Two jobs:
+ *   1. Strip the application chrome (sidebar, header, filter controls) so the
+ *      page prints as a document rather than a screenshot of an app.
+ *   2. Force a light-on-white palette. The SCADA UI is dark by design, which on
+ *      paper means either a solid black page or — with most browsers' default
+ *      "don't print backgrounds" setting — light grey text on white.
+ *
+ * The report's ordered block stack paginates cleanly by construction; all this
+ * needs to add is `break-inside: avoid` so a chart never splits across a page.
+ */
+
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 12mm;
+  }
+
+  /* --- palette --------------------------------------------------------- */
+  :root,
+  :root[data-theme='cobalt'],
+  :root[data-theme='graphite'],
+  :root[data-theme='carbon'] {
+    --bg-app: #ffffff;
+    --bg-panel: #ffffff;
+    --bg-elev: #ffffff;
+    --border: #c9d1dc;
+    --border-soft: #e2e7ee;
+    --fg: #10151f;
+    --fg-muted: #444d5c;
+    --fg-dim: #6b7484;
+    --accent: #0b62b8;
+    --accent-soft: #eaf2fb;
+    --ok: #157347;
+    --warn: #a05a00;
+    --crit: #b3261e;
+    --info: #0b62b8;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #10151f !important;
+    height: auto !important;
+  }
+
+  /* --- strip the app chrome -------------------------------------------- */
+  .app-shell__aside,
+  .app-shell__header,
+  .report-controls,
+  .report-filters {
+    display: none !important;
+  }
+
+  .app-shell,
+  .app-shell__content {
+    display: block !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  /* --- blocks ----------------------------------------------------------- */
+  .report-block {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border: 1px solid #c9d1dc !important;
+    background: #fff !important;
+    box-shadow: none !important;
+  }
+
+  /* The 12-column grid survives print; only the gap needs tightening so a
+     half-width pair still fits side by side on A4 landscape. */
+  .report-root [class*='grid'] {
+    gap: 8mm !important;
+  }
+
+  /* Charts render to canvas — without this the browser drops the raster. */
+  canvas {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* Pills and swatches carry meaning, not decoration. */
+  [class*='legend__swatch'],
+  [class*='pill'] {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* A scrollable table prints only its visible slice otherwise. */
+  [class*='table__scroll'] {
+    overflow: visible !important;
+  }
+
+  /* Interactive-only affordances that mean nothing on paper. */
+  button {
+    display: none !important;
+  }
+}

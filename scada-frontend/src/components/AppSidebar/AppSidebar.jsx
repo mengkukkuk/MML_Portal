@@ -11,6 +11,7 @@ import ListAltOutlined from '@mui/icons-material/ListAltOutlined'
 import SettingsOutlined from '@mui/icons-material/SettingsOutlined'
 import PersonOutlined from '@mui/icons-material/PersonOutlined'
 import AccountTreeOutlined from '@mui/icons-material/AccountTreeOutlined'
+import AssessmentOutlined from '@mui/icons-material/AssessmentOutlined'
 import { useAuthStore } from '@/stores/auth'
 import styles from './AppSidebar.module.css'
 
@@ -22,6 +23,7 @@ const BASE_ITEMS = [
   { path: '/live', title: 'Live', Icon: PlayCircleOutlined },
   { path: '/monitor', title: 'Monitor', Icon: AccountTreeOutlined },
   { path: '/events', title: 'Events', Icon: ListAltOutlined },
+  { path: '/reports', title: 'Reports', Icon: AssessmentOutlined },
   { path: '/alarms', title: 'Alarms', Icon: WarningRounded },
   { path: '/devices', title: 'Devices', Icon: MemoryOutlined },
   { path: '/settings', title: 'Settings', Icon: SettingsOutlined },

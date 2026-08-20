@@ -19,18 +19,21 @@ export default function AppShell() {
   }
 
   return (
-    <div className={styles.shell}>
+    // The unhashed `app-shell__*` classes exist so global stylesheets can reach
+    // these elements — styles/print.css hides the chrome and un-scrolls the
+    // content area, and CSS Module class names are hashed at build time.
+    <div className={`${styles.shell} app-shell`}>
       <aside
-        className={styles.aside}
+        className={`${styles.aside} app-shell__aside`}
         style={{ width: collapsed ? 'var(--sidebar-w-collapsed)' : 'var(--sidebar-w)' }}
       >
         <AppSidebar collapsed={collapsed} />
       </aside>
       <div className={styles.main}>
-        <header className={styles.header}>
+        <header className={`${styles.header} app-shell__header`}>
           <AppHeader collapsed={collapsed} onToggle={toggleSidebar} />
         </header>
-        <main className={styles.content}>
+        <main className={`${styles.content} app-shell__content`}>
           <div key={location.pathname} className={styles.fade}>
             <Outlet />
           </div>

@@ -1,0 +1,40 @@
+.bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+}
+
+.preset {
+  min-width: 140px;
+}
+
+.select {
+  min-width: 170px;
+  max-width: 260px;
+}
+
+.picker {
+  width: 190px;
+}
+
+.sep {
+  color: var(--fg-dim);
+}

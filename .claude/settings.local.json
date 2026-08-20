@@ -56,7 +56,19 @@
       "Bash(python -c \":*)",
       "Bash(grep -rn \"data-theme\" src --include=*.js --include=*.jsx)",
       "Bash(node --input-type=module -e \":*)",
-      "Bash(python -:*)"
+      "Bash(python -:*)",
+      "Bash(python3 -:*)",
+      "Bash(./venv/Scripts/python.exe -m pytest tests/test_report_engine.py -q)",
+      "Bash(./venv/Scripts/python.exe -c \"import ast; ast.parse\\(open\\(''db.py'',encoding=''utf-8''\\).read\\(\\)\\); print\\(''db.py parses OK''\\)\")",
+      "Bash(./venv/Scripts/python.exe -c \"import reports; print\\(''reports OK'', len\\(reports.router.routes\\), ''routes''\\)\")",
+      "Bash(./venv/Scripts/python.exe -c \":*)",
+      "Bash(./venv/Scripts/python.exe -m pip install python-multipart==0.0.20)",
+      "Bash(grep -E \"\\\\.js$\")",
+      "Bash(sc query:*)",
+      "Bash(sc qc:*)",
+      "Bash(reg query:*)",
+      "Bash(nssm restart:*)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:8088/health)"
     ]
   }
 }

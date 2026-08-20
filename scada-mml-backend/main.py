@@ -15,6 +15,7 @@ import events
 import mimic
 import panels
 import readings
+import reports
 import schema
 import tags
 import users
@@ -52,6 +53,7 @@ app.include_router(datasources.router)
 app.include_router(mimic.router)
 app.include_router(events.router)
 app.include_router(alarms.router)
+app.include_router(reports.router)
 
 
 @app.on_event("startup")
@@ -68,6 +70,7 @@ def _ensure_tables() -> None:
     db.init_mimic_table()
     db.init_mimic_assets_table()
     db.init_mimic_symbols_table()
+    db.init_report_tables()
 
 
 _tag_buffer_task: asyncio.Task | None = None

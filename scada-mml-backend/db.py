@@ -1334,3 +1334,330 @@ def delete_mimic_symbol(symbol_id: int) -> bool:
         cur = conn.execute("DELETE FROM mimic_symbols WHERE id = %s", (symbol_id,))
         conn.commit()
     return cur.rowcount > 0
+
+
+# ============================================================================
+# Reports — OEE / production status reporting
+# ============================================================================
+# Two app-owned tables (report_templates, report_settings) plus read-only
+# queries against the SCADA-owned public.event_logs / public.alarm_logs.
+# All timestamps here are naive/server-local: the plant, the database and the
+# API share a clock, so no timezone conversion happens (documented constraint —
+# a remote viewer sees plant time, not their own).
+
+_DEFAULT_STATE_RULES = {
+    "PLANNED_DOWN": ["changeover", "maintenance", "cleaning", "setup", "break"],
+    "IDLE": ["idle", "standby", "wait"],
+    "STOP": ["stop", "fault", "trip", "fail", "emergency", "alarm"],
+    "RUN": ["start", "running", "run", "auto"],
+}
+
+#: The seeded "Production Status Report". Only inserted when the table is empty,
+#: so an admin's edits are never clobbered by a service restart.
+_DEFAULT_TEMPLATE_BLOCKS = [
+    {"id": "b1", "type": "kpi", "title": "Overview", "width": "full",
+     "options": {"metrics": ["oee", "availability", "runtime", "downtime", "stops", "mttr"],
+                 "targets": {"oee": 85, "availability": 90}}},
+    {"id": "b2", "type": "timeline", "title": "Machine State Timeline", "width": "full",
+     "options": {"groupBy": "machine", "showUnknown": True}},
+    {"id": "b3", "type": "pareto", "title": "Downtime Pareto", "width": "half",
+     "options": {"topN": 10, "rankBy": "duration"}},
+    {"id": "b4", "type": "alarms", "title": "Alarm Summary", "width": "half",
+     "options": {"topN": 10}},
+    {"id": "b5", "type": "summary_table", "title": "Machine Summary", "width": "full",
+     "options": {"columns": ["machine", "runtime", "downtime", "availability",
+                             "stops", "mtbf", "mttr", "alarms"]}},
+    {"id": "b6", "type": "raw_log", "title": "Event Log", "width": "full",
+     "options": {"pageSize": 50}},
+]
+
+
+def init_report_tables() -> None:
+    """Create the report tables and the event_logs index. Idempotent.
+
+    The CREATE INDEX targets a table the SCADA system owns, not the app. That is
+    deliberate and has precedent (_probe_alarms.py does the same on alarm_logs):
+    without it every report does a full scan, and the index is additive so the
+    external writer is unaffected.
+    """
+    with get_connection() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS report_templates (
+                id              SERIAL PRIMARY KEY,
+                name            TEXT NOT NULL,
+                description     TEXT NOT NULL DEFAULT '',
+                blocks          JSONB NOT NULL DEFAULT '[]'::jsonb,
+                default_filters JSONB NOT NULL DEFAULT '{}'::jsonb,
+                is_default      BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS report_settings (
+                id                 INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+                state_rules        JSONB   NOT NULL DEFAULT '{}'::jsonb,
+                alarm_lead_seconds INTEGER NOT NULL DEFAULT 60,
+                updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+            )"""
+        )
+        conn.execute(
+            """INSERT INTO report_settings (id, state_rules)
+               VALUES (1, %s) ON CONFLICT (id) DO NOTHING""",
+            (Json(_DEFAULT_STATE_RULES),),
+        )
+        # Seed the default template only into an empty table.
+        empty = conn.execute("SELECT COUNT(*) AS n FROM report_templates").fetchone()
+        if not empty["n"]:
+            conn.execute(
+                """INSERT INTO report_templates
+                       (name, description, blocks, default_filters, is_default)
+                   VALUES (%s, %s, %s, %s, TRUE)""",
+                ("Production Status Report",
+                 "Machine availability, downtime causes and OEE across a production line.",
+                 Json(_DEFAULT_TEMPLATE_BLOCKS),
+                 Json({"preset": "last7d"})),
+            )
+        conn.commit()
+
+    # Separate connection: on a fresh install event_logs may not exist yet, or the
+    # app role may lack DDL rights on a SCADA-owned table. Neither should stop the
+    # API booting — reports just run unindexed until the table is created.
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS event_logs_loc_tag_time_idx "
+                "ON public.event_logs (location, tag_name, at_date_time DESC)"
+            )
+            conn.commit()
+    except psycopg.Error:
+        pass
+
+
+# --- Template CRUD ----------------------------------------------------------
+_TEMPLATE_COLS = ("id, name, description, blocks, default_filters, is_default, "
+                  "created_at, updated_at")
+
+
+def list_report_templates() -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        return conn.execute(
+            f"SELECT {_TEMPLATE_COLS} FROM report_templates "
+            "ORDER BY is_default DESC, name"
+        ).fetchall()
+
+
+def get_report_template(template_id: int) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        return conn.execute(
+            f"SELECT {_TEMPLATE_COLS} FROM report_templates WHERE id = %s",
+            (template_id,),
+        ).fetchone()
+
+
+def get_default_report_template() -> dict[str, Any] | None:
+    """The template /reports lands on. Falls back to the first by name so the
+    page still works if someone clears every is_default flag."""
+    with get_connection() as conn:
+        return conn.execute(
+            f"SELECT {_TEMPLATE_COLS} FROM report_templates "
+            "ORDER BY is_default DESC, name LIMIT 1"
+        ).fetchone()
+
+
+def create_report_template(name, description, blocks, default_filters, is_default):
+    with get_connection() as conn:
+        if is_default:
+            conn.execute("UPDATE report_templates SET is_default = FALSE")
+        row = conn.execute(
+            f"""INSERT INTO report_templates
+                    (name, description, blocks, default_filters, is_default)
+                VALUES (%s, %s, %s, %s, %s) RETURNING {_TEMPLATE_COLS}""",
+            (name, description, Json(blocks), Json(default_filters), is_default),
+        ).fetchone()
+        conn.commit()
+    return row
+
+
+def update_report_template(template_id, name, description, blocks,
+                           default_filters, is_default):
+    with get_connection() as conn:
+        if is_default:
+            # Exactly one default — clear the others first so /reports never has
+            # to arbitrate between two.
+            conn.execute(
+                "UPDATE report_templates SET is_default = FALSE WHERE id <> %s",
+                (template_id,),
+            )
+        row = conn.execute(
+            f"""UPDATE report_templates
+                   SET name = %s, description = %s, blocks = %s,
+                       default_filters = %s, is_default = %s, updated_at = now()
+                 WHERE id = %s RETURNING {_TEMPLATE_COLS}""",
+            (name, description, Json(blocks), Json(default_filters),
+             is_default, template_id),
+        ).fetchone()
+        conn.commit()
+    return row
+
+
+def delete_report_template(template_id: int) -> bool:
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM report_templates WHERE id = %s", (template_id,))
+        conn.commit()
+    return cur.rowcount > 0
+
+
+# --- Settings ---------------------------------------------------------------
+def get_report_settings() -> dict[str, Any]:
+    """Plant-wide event vocabulary. Falls back to the built-in defaults when the
+    stored rules are empty, so a wiped row degrades to sane behaviour rather
+    than classifying every event as UNKNOWN."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT state_rules, alarm_lead_seconds, updated_at "
+            "FROM report_settings WHERE id = 1"
+        ).fetchone()
+    if not row:
+        return {"state_rules": _DEFAULT_STATE_RULES, "alarm_lead_seconds": 60,
+                "updated_at": None}
+    if not row.get("state_rules"):
+        row["state_rules"] = _DEFAULT_STATE_RULES
+    return row
+
+
+def update_report_settings(state_rules: dict, alarm_lead_seconds: int) -> dict[str, Any]:
+    with get_connection() as conn:
+        row = conn.execute(
+            """INSERT INTO report_settings (id, state_rules, alarm_lead_seconds)
+               VALUES (1, %s, %s)
+               ON CONFLICT (id) DO UPDATE
+                 SET state_rules = EXCLUDED.state_rules,
+                     alarm_lead_seconds = EXCLUDED.alarm_lead_seconds,
+                     updated_at = now()
+               RETURNING state_rules, alarm_lead_seconds, updated_at""",
+            (Json(state_rules), alarm_lead_seconds),
+        ).fetchone()
+        conn.commit()
+    return row
+
+
+# --- Machine catalog --------------------------------------------------------
+# variables_tag is the live tag registry (tiny, one row per tag) and event_logs
+# covers decommissioned machines that still have history. The union is cached
+# because the event_logs DISTINCT is the expensive half and the answer changes
+# only when the plant is re-tagged.
+_catalog_cache: tuple[float, list[dict[str, Any]]] | None = None
+_CATALOG_TTL_SECONDS = 300
+
+
+def report_catalog(force: bool = False) -> list[dict[str, Any]]:
+    """Distinct (location, tag_name) pairs — feeds the Line/Machine pickers."""
+    global _catalog_cache
+    now = datetime.now().timestamp()
+    if not force and _catalog_cache and now - _catalog_cache[0] < _CATALOG_TTL_SECONDS:
+        return _catalog_cache[1]
+
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT location, tag_name FROM (
+                   SELECT location, tag_name FROM public.variables_tag
+                   UNION
+                   SELECT location, tag_name FROM public.event_logs
+               ) c
+               WHERE tag_name IS NOT NULL
+               ORDER BY location NULLS LAST, tag_name"""
+        ).fetchall()
+    _catalog_cache = (now, rows)
+    return rows
+
+
+# --- Log queries ------------------------------------------------------------
+def _machine_filter(locations, tag_names):
+    """Build the shared WHERE fragment. Empty lists mean 'no filter' rather than
+    'match nothing', which is what the UI's empty multi-selects imply."""
+    clauses, params = [], []
+    if locations:
+        clauses.append("location = ANY(%s)")
+        params.append(list(locations))
+    if tag_names:
+        clauses.append("tag_name = ANY(%s)")
+        params.append(list(tag_names))
+    return ("".join(f" AND {c}" for c in clauses), params)
+
+
+def fetch_state_events(start: datetime, end: datetime, locations=None,
+                       tag_names=None) -> list[dict[str, Any]]:
+    """Window events plus one carry-in row per machine, in a single round trip.
+
+    The carry-in half (DISTINCT ON … at_date_time < start) is what lets a machine
+    that ran all week with no events inside a one-day window still report
+    runtime. Both halves ride the (location, tag_name, at_date_time) index.
+    """
+    where, params = _machine_filter(locations, tag_names)
+    with get_connection() as conn:
+        return conn.execute(
+            f"""(SELECT DISTINCT ON (location, tag_name)
+                        location, tag_name, event, at_date_time
+                   FROM public.event_logs
+                  WHERE at_date_time < %s{where}
+                  ORDER BY location, tag_name, at_date_time DESC)
+                UNION ALL
+                (SELECT location, tag_name, event, at_date_time
+                   FROM public.event_logs
+                  WHERE at_date_time >= %s AND at_date_time < %s{where})
+                ORDER BY 1, 2, 4""",
+            (start, *params, start, end, *params),
+        ).fetchall()
+
+
+def fetch_alarms_for_window(start: datetime, end: datetime, locations=None,
+                            tag_names=None) -> list[dict[str, Any]]:
+    """Alarms overlapping the window, used to name downtime causes.
+
+    `start` is expected to be already widened by the lead window so an alarm that
+    fired just before the machine halted still matches.
+    """
+    where, params = _machine_filter(locations, tag_names)
+    with get_connection() as conn:
+        return conn.execute(
+            f"""SELECT id, location, tag_name, alarm_events AS text,
+                       severity, created_at AS at
+                  FROM public.alarm_logs
+                 WHERE created_at >= %s AND created_at < %s{where}
+                 ORDER BY created_at""",
+            (start, end, *params),
+        ).fetchall()
+
+
+def count_event_log(start, end, locations=None, tag_names=None, search=None) -> int:
+    where, params = _machine_filter(locations, tag_names)
+    if search:
+        where += " AND event ILIKE %s"
+        params.append(f"%{search}%")
+    with get_connection() as conn:
+        row = conn.execute(
+            f"""SELECT COUNT(*) AS n FROM public.event_logs
+                 WHERE at_date_time >= %s AND at_date_time < %s{where}""",
+            (start, end, *params),
+        ).fetchone()
+    return row["n"]
+
+
+def fetch_event_log_page(start, end, locations=None, tag_names=None, search=None,
+                         limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+    """One page of the raw log, newest first — backs the on-screen table and,
+    with a large limit, the spreadsheet export."""
+    where, params = _machine_filter(locations, tag_names)
+    if search:
+        where += " AND event ILIKE %s"
+        params.append(f"%{search}%")
+    with get_connection() as conn:
+        return conn.execute(
+            f"""SELECT location, tag_name, event, at_date_time
+                  FROM public.event_logs
+                 WHERE at_date_time >= %s AND at_date_time < %s{where}
+                 ORDER BY at_date_time DESC
+                 LIMIT %s OFFSET %s""",
+            (start, end, *params, limit, offset),
+        ).fetchall()

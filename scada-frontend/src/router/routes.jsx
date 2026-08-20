@@ -17,6 +17,7 @@ import ListAltOutlined from '@mui/icons-material/ListAltOutlined'
 import SettingsOutlined from '@mui/icons-material/SettingsOutlined'
 import PersonOutlined from '@mui/icons-material/PersonOutlined'
 import AccountTreeOutlined from '@mui/icons-material/AccountTreeOutlined'
+import AssessmentOutlined from '@mui/icons-material/AssessmentOutlined'
 
 const LoginPage = lazy(() => import('../pages/LoginPage.jsx'))
 const ResetPasswordPage = lazy(() => import('../pages/ResetPasswordPage.jsx'))
@@ -26,6 +27,8 @@ const AlarmsPage = lazy(() => import('../pages/AlarmsPage.jsx'))
 const LivePage = lazy(() => import('../pages/live/LivePage.jsx'))
 const MonitorPage = lazy(() => import('../pages/monitor/MonitorPage.jsx'))
 const EventPage = lazy(() => import('../pages/EventPage.jsx'))
+const ReportPage = lazy(() => import('../pages/reports/ReportPage.jsx'))
+const ReportBuilderPage = lazy(() => import('../pages/reports/ReportBuilderPage.jsx'))
 const SettingsPage = lazy(() => import('../pages/SettingsPage.jsx'))
 const AccountsPage = lazy(() => import('../pages/AccountsPage.jsx'))
 const NotFoundPage = lazy(() => import('../pages/NotFoundPage.jsx'))
@@ -84,6 +87,23 @@ export const router = createBrowserRouter(
               path: 'events',
               element: page(EventPage),
               handle: { title: 'Events', icon: ListAltOutlined },
+            },
+            // Bare /reports redirects to whichever template is flagged default;
+            // the :templateId form is the canonical, shareable URL.
+            {
+              path: 'reports',
+              element: page(ReportPage),
+              handle: { title: 'Reports', icon: AssessmentOutlined },
+            },
+            {
+              path: 'reports/:templateId',
+              element: page(ReportPage),
+              handle: { title: 'Reports', icon: AssessmentOutlined },
+            },
+            {
+              path: 'reports/:templateId/edit',
+              element: page(ReportBuilderPage),
+              handle: { title: 'Edit Report', requiresRole: 'admin' },
             },
             {
               path: 'settings',

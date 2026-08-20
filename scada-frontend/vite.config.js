@@ -2,6 +2,12 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { fileURLToPath, URL } from 'node:url'
 
+// Backend origin for the dev/preview proxies. Overridable so the app can be
+// pointed at a locally-run `python main.py` on an alternate port when the
+// installed NSSM `mml-api` service is holding 8088.
+const API_TARGET = process.env.VITE_API_TARGET || 'http://127.0.0.1:8088'
+const WS_TARGET = API_TARGET.replace(/^http/, 'ws')
+
 export default defineConfig({
   // App is deployed at the root of a dedicated IIS site, so assets live at /assets/...
   // (no sub-path prefix). `import.meta.env.BASE_URL` will be '/', which is what
@@ -31,8 +37,8 @@ export default defineConfig({
     port: Number(process.env.PORT) || 5173,
     strictPort: false,
     proxy: {
-      '/api': 'http://127.0.0.1:8088',
-      '/ws': { target: 'ws://127.0.0.1:8088', ws: true },
+      '/api': API_TARGET,
+      '/ws': { target: WS_TARGET, ws: true },
     },
   },
   // TEMP: mirrors server.proxy so `vite preview` (serving the production dist/
@@ -41,8 +47,8 @@ export default defineConfig({
   preview: {
     port: 4173,
     proxy: {
-      '/api': 'http://127.0.0.1:8088',
-      '/ws': { target: 'ws://127.0.0.1:8088', ws: true },
+      '/api': API_TARGET,
+      '/ws': { target: WS_TARGET, ws: true },
     },
   },
 })

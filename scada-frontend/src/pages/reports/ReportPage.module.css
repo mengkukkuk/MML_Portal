@@ -1,0 +1,93 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.head__left,
+.head__right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.templateSelect {
+  min-width: 190px;
+}
+
+.range {
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rangeNote {
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.desc {
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.error {
+  margin: 0;
+  color: var(--crit);
+  font-size: 13px;
+}
+
+.empty {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 14px;
+  padding: var(--space-6) 0;
+  text-align: center;
+}
+
+/* Ordered block stack. A 12-column grid so half and third widths line up,
+   collapsing to one column on narrow screens and in print. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.w-full {
+  grid-column: span 12;
+  min-width: 0;
+}
+
+.w-half {
+  grid-column: span 6;
+  min-width: 0;
+}
+
+.w-third {
+  grid-column: span 4;
+  min-width: 0;
+}
+
+@media (max-width: 1100px) {
+  .w-half,
+  .w-third {
+    grid-column: span 12;
+  }
+}
