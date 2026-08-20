@@ -119,9 +119,15 @@ export default function MonitorPage() {
 
   // The open drawing was deleted — here or in another admin's tab. Fall back to
   // whatever is left rather than polling a slug the server no longer knows.
+  //
+  // Guards on `activeSlug` being set rather than just `initializedRef`: the
+  // effect above sets `initializedRef.current = true` synchronously but its
+  // `setActiveSlug` call doesn't land until the next render, so on the very
+  // first run after `layouts` loads this effect would otherwise still see the
+  // pre-init `null` and stomp the URL's requested slug with `layouts[0]`.
   useEffect(() => {
-    if (!initializedRef.current || !layouts.length) return
-    if (activeSlug && layouts.some((l) => l.slug === activeSlug)) return
+    if (!initializedRef.current || !layouts.length || !activeSlug) return
+    if (layouts.some((l) => l.slug === activeSlug)) return
     setActiveSlug(layouts[0].slug)
     putSlugInUrl(layouts[0].slug)
     // eslint-disable-next-line react-hooks/exhaustive-deps
