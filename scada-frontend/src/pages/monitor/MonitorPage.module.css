@@ -99,12 +99,42 @@
 
 .body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--space-4);
   align-items: start;
 }
 
-/* The second column is a stack, not a single panel: the pen sits above the
+/* The rail's own column: its width drives the grid track (auto), so
+ * collapsing it hands that space straight back to the mimic — a 320px rail
+ * costs the canvas a fifth of its width, and this is the fastest way to get
+ * it back without leaving the drawing. */
+.railCol {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 320px;
+  min-width: 0;
+  overflow: hidden;
+  transition: width 0.18s ease;
+}
+
+.railColCollapsed {
+  width: 40px;
+}
+
+/* Same control in both states, at the same corner, so collapsing and
+ * re-opening the rail is always the same click. */
+.railToggle {
+  align-self: flex-end;
+  flex-shrink: 0;
+  color: var(--fg-muted);
+}
+
+.railToggle:hover {
+  color: var(--fg);
+}
+
+/* The rail is a stack, not a single panel: the pen sits above the
  * contextual inspector and stays there for the whole edit session. */
 .rail {
   display: flex;
@@ -113,13 +143,21 @@
   min-width: 0;
 }
 
-/* The rail drops below the drawing well before the viewport gets narrow. A
- * 320px rail costs the canvas a fifth of its width, and because the mimic
- * scales as one fixed 1600x900 unit, that lands the smallest callout text
- * under 5px — a P&ID you cannot read is worse than one you have to scroll to. */
+/* The rail drops below the drawing well before the viewport gets narrow, and
+ * because the mimic scales as one fixed 1600x900 unit that lands the
+ * smallest callout text under 5px — a P&ID you cannot read is worse than one
+ * you have to scroll to. */
 @media (max-width: 1400px) {
   .body {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .railCol {
+    width: auto;
+  }
+
+  .railColCollapsed {
+    width: auto;
   }
 }
 

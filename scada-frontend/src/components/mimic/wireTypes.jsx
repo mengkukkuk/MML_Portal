@@ -260,6 +260,17 @@ export const WIRE_TYPES = {
     inner: { stroke: 'var(--bg-panel)', width: 0.8 },
     flow: 'var(--accent)',
   },
+  // A physical run, not a protocol — the tight, fast dash reads as a
+  // packetized link rather than a hard-wired loop, which is what actually
+  // sits behind an IP camera or a switch uplink on a vision-inspection sheet.
+  gige: {
+    label: 'GigE cable',
+    group: 'signal',
+    stroke: 'var(--accent)',
+    width: 1.6,
+    dash: '3 2',
+    flow: 'var(--accent)',
+  },
 }
 
 export const WIRE_TYPE_IDS = Object.keys(WIRE_TYPES)

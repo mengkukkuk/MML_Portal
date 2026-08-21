@@ -73,6 +73,10 @@ VALID_NODE_TYPES = {
     "controlloop",
     "safetyrelay",
     "edgegateway",
+    # vision inspection
+    "ipcamera",
+    "lighting",
+    "pcbased",
     # water treatment
     "clarifier",
     "sandfilter",

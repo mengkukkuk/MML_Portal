@@ -51,6 +51,10 @@ import Rack from './Rack'
 import Crah from './Crah'
 import ColdAisle from './ColdAisle'
 
+import IpCamera from './IpCamera'
+import Lighting from './Lighting'
+import PcBased from './PcBased'
+
 import CustomSymbol from './CustomSymbol'
 
 /**
@@ -542,6 +546,38 @@ export const SYMBOLS = {
     bubble: { anchor: [0.5, 0], offset: [0, -60] },
   },
 
+  // --- vision inspection ---------------------------------------------------
+  // Leaf devices, not process equipment: nothing flows through a camera or a
+  // light the way it flows through a valve, so each carries only the wire it
+  // actually has rather than a borrowed in/out pair.
+  ipcamera: {
+    label: 'IP camera',
+    category: 'vision',
+    Component: IpCamera,
+    defaultSize: { w: 110, h: 80 },
+    ports: { net: [0, 0.5] },
+    binding: 'discrete',
+    bubble: null,
+  },
+  lighting: {
+    label: 'Lighting',
+    category: 'vision',
+    Component: Lighting,
+    defaultSize: { w: 90, h: 90 },
+    ports: { in: [0.5, 0] },
+    binding: 'discrete',
+    bubble: null,
+  },
+  pcbased: {
+    label: 'PC-based',
+    category: 'vision',
+    Component: PcBased,
+    defaultSize: { w: 140, h: 100 },
+    ports: { in: [0.5, 1], net: [0.5, 0] },
+    binding: 'both',
+    bubble: { anchor: [0.5, 0], offset: [0, -70] },
+  },
+
   // --- admin-authored ----------------------------------------------------
   /**
    * The one type that is not a drawing in this folder.
@@ -579,6 +615,7 @@ export const SYMBOL_CATEGORIES = [
   { id: 'process', label: 'Process' },
   { id: 'electrical', label: 'Electrical' },
   { id: 'automation', label: 'Automation' },
+  { id: 'vision', label: 'Vision inspection' },
   { id: 'water', label: 'Water treatment' },
   { id: 'tobacco', label: 'Cigarette line' },
   { id: 'dcim', label: 'Data centre' },

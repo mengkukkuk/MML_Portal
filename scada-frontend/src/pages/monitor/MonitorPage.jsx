@@ -4,12 +4,15 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import Button from '@mui/material/Button'
+import IconButton from '@mui/material/IconButton'
 import Alert from '@mui/material/Alert'
 import Snackbar from '@mui/material/Snackbar'
 import FormControlLabel from '@mui/material/FormControlLabel'
 import Switch from '@mui/material/Switch'
 import BoltOutlined from '@mui/icons-material/BoltOutlined'
 import RestartAltOutlined from '@mui/icons-material/RestartAltOutlined'
+import ChevronLeft from '@mui/icons-material/ChevronLeft'
+import ChevronRight from '@mui/icons-material/ChevronRight'
 import { useAuthStore } from '@/stores/auth'
 import usePlantData from '@/components/mimic/usePlantData'
 import { SYMBOLS, symbolDef, setCustomDefs } from '@/components/mimic/symbols'
@@ -255,6 +258,9 @@ export default function MonitorPage() {
   const [selectedId, setSelectedId] = useState(null)
   const [selectedEdgeId, setSelectedEdgeId] = useState(null)
   const [editMode, setEditMode] = useState(false)
+  // Local to this page, like AppShell's sidebar collapse — the rail is a
+  // viewing preference for this drawing, not something worth persisting.
+  const [railCollapsed, setRailCollapsed] = useState(false)
   /**
    * Edit mode is only real when this admin is allowed to write this drawing.
    * Derived here rather than beside `lock` because it reads `editMode`, which is
@@ -695,53 +701,73 @@ export default function MonitorPage() {
           onOpenBinding={canEdit && !lock ? openBinding : undefined}
         />
 
-        {/* The rail stacks the pen above whatever the selection calls for.
-          * The pen stays put for the whole edit session because it is state
-          * you draw *in*, not a property of the thing you have selected. */}
-        <div className={styles.rail}>
-          {editing && <WirePicker value={wirePen} onChange={setWirePen} />}
+        {/* Collapsible so the mimic can claim the rail's width back — a wide
+          * P&ID benefits more from that space than from a rail sitting idle
+          * behind a closed inspector. The toggle stays put in both states so
+          * it is always the same click to get the rail back. */}
+        <div
+          className={`${styles.railCol} ${railCollapsed ? styles.railColCollapsed : ''}`}
+        >
+          <IconButton
+            className={styles.railToggle}
+            size="small"
+            aria-label={railCollapsed ? 'Expand details panel' : 'Collapse details panel'}
+            title={railCollapsed ? 'Expand details panel' : 'Collapse details panel'}
+            onClick={() => setRailCollapsed((c) => !c)}
+          >
+            {railCollapsed ? <ChevronLeft fontSize="small" /> : <ChevronRight fontSize="small" />}
+          </IconButton>
 
-          {editing
-            ? (selectedEdge
-              ? (
-                <EdgeInspector
-                  edge={selectedEdge}
-                  nodes={nodes}
-                  onChange={(patch) => updateEdge(selectedEdge.id, patch)}
-                  onDelete={deleteEdge}
-                  onBack={() => setSelectedEdgeId(null)}
-                />
-              )
-              : selectedNode
-                ? (
-                  <NodeInspector
-                    node={selectedNode}
-                    datasources={datasourcesQuery.data || []}
-                    onConnect={() => openBinding(selectedNode)}
-                    onDelete={deleteNode}
-                    onResetBubble={resetBubble}
-                    onResetSize={resetNodeSize}
-                    onRotate={rotateNode}
-                    onBack={() => setSelectedId(null)}
-                  />
-                )
+          {/* The rail stacks the pen above whatever the selection calls for.
+            * The pen stays put for the whole edit session because it is state
+            * you draw *in*, not a property of the thing you have selected. */}
+          {!railCollapsed && (
+            <div className={styles.rail}>
+              {editing && <WirePicker value={wirePen} onChange={setWirePen} />}
+
+              {editing
+                ? (selectedEdge
+                  ? (
+                    <EdgeInspector
+                      edge={selectedEdge}
+                      nodes={nodes}
+                      onChange={(patch) => updateEdge(selectedEdge.id, patch)}
+                      onDelete={deleteEdge}
+                      onBack={() => setSelectedEdgeId(null)}
+                    />
+                  )
+                  : selectedNode
+                    ? (
+                      <NodeInspector
+                        node={selectedNode}
+                        datasources={datasourcesQuery.data || []}
+                        onConnect={() => openBinding(selectedNode)}
+                        onDelete={deleteNode}
+                        onResetBubble={resetBubble}
+                        onResetSize={resetNodeSize}
+                        onRotate={rotateNode}
+                        onBack={() => setSelectedId(null)}
+                      />
+                    )
+                    : (
+                      <SymbolPalette
+                        onAdd={addSymbol}
+                        customSymbols={customSymbols}
+                        onAuthorSymbol={() => setAuthoring(true)}
+                      />
+                    ))
                 : (
-                  <SymbolPalette
-                    onAdd={addSymbol}
-                    customSymbols={customSymbols}
-                    onAuthorSymbol={() => setAuthoring(true)}
+                  <DetailRail
+                    tag={selectedTag}
+                    node={selectedNode}
+                    history={selectedId ? history[selectedId] : null}
+                    events={events}
+                    canBind={canEdit && !lock}
+                    onConnect={openBinding}
                   />
-                ))
-            : (
-              <DetailRail
-                tag={selectedTag}
-                node={selectedNode}
-                history={selectedId ? history[selectedId] : null}
-                events={events}
-                canBind={canEdit && !lock}
-                onConnect={openBinding}
-              />
-            )}
+                )}
+            </div>
+          )}
         </div>
       </div>
       )}
