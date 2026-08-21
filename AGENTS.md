@@ -11,6 +11,8 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 A handful of helper utilities sit alongside them:
 - `scada-mml-backend/simulate_data.py` — writes fake `public.sensor_readings`
   rows every 5s so the Live/Trends pages have data without a real PLC.
+- `scada-mml-backend/simulate_events.py` — writes synthetic machine state transitions
+  (RUN/STOP/IDLE/PLANNED_DOWN) into `public.event_logs` and alarms for report testing.
 - `scada-mml-backend/install.ps1` / `uninstall.ps1` (with matching `.bat` shims)
   — one-shot interactive installers that build the venv, patch `.env`,
   optionally seed the DB, and register the `mml-api` NSSM service.
@@ -32,7 +34,7 @@ py -3.14 -m venv venv
 # Tests
 .\venv\Scripts\python.exe -m pytest tests/
 # Single test
-.\venv\Scripts\python.exe -m pytest tests/test_db_ops.py::test_name
+.\venv\Scripts\python.exe -m pytest tests/test_report_engine.py::test_name
 
 # Optional — populate live demo data for /live and /trends
 .\venv\Scripts\python.exe simulate_data.py            # forever, 5s tick
@@ -62,7 +64,7 @@ cd C:\dev\scada-mml-backend
 ## Architecture
 
 ### Auth Token Strategy
-- **Access token**: short-lived JWT (default 30 min), kept in Pinia memory only — never persisted to localStorage
+- **Access token**: short-lived JWT (default 30 min), kept in module memory (`src/api/client.js`) only — never persisted to localStorage
 - **Refresh token**: long-lived JWT (default 7 days), set as HttpOnly cookie at path `/api/auth`
 - **Reset token**: single-use JWT (30 min) for password reset flow
 - Axios interceptor in `scada-frontend/src/api/client.js` handles token refresh transparently
@@ -70,33 +72,48 @@ cd C:\dev\scada-mml-backend
 ### Backend Layout
 | File | Role |
 |------|------|
-| `main.py` | FastAPI app factory, CORS middleware, router mounts, `init_panels_table()` on startup |
+| `main.py` | FastAPI app factory, CORS middleware, 12 router mounts, `init_*` table-creation calls on startup |
 | `auth.py` | 8 auth endpoints (login, register, me, refresh, logout, change-password, forgot-password, reset-password) |
 | `users.py` | Admin CRUD at `/api/users` |
 | `readings.py` | `/api/readings/*` — devices, metrics, latest reading, sliding-window series (reads `public.sensor_readings`) |
 | `tags.py` | `/api/tags/*` — distinct tag names, dynamic numeric fields, latest row from `public.variables_tag` |
 | `panels.py` | `/api/panels/*` — CRUD for the admin-managed Live dashboard (`dashboard_panels` table); admin token gates writes |
+| `schema.py` | `/api/schema/*` — table/column introspection for generic data source bindings in Live panels |
+| `dashboards.py` | `/api/dashboards/*` — multi-board grouping for Live panels (admin token gates writes) |
+| `datasources.py` | `/api/datasources/*` — named PostgreSQL connection management (admin token gates writes; test endpoint probes real connections) |
+| `mimic.py` | `/api/mimic/*` — layout CRUD for `/monitor` drawings, asset uploads, symbol/wire binding validation (admin token gates writes) |
+| `events.py` | `/api/events/*` — read-only event-log endpoints backing the Events page |
+| `alarms.py` | `/api/alarms/*` — read-only alarm-log endpoints with Acknowledge action for the Alarms page |
+| `reports.py` | `/api/reports/*` — OEE/MES reporting: template CRUD (admin token gates template writes), report runs, CSV/Excel export |
+| `report_engine.py` | Pure state-interval arithmetic — turns `public.event_logs` transitions into machine runtime/downtime/OEE metrics |
 | `security.py` | Password hashing via stdlib `hashlib.scrypt`, JWT sign/verify |
-| `db.py` | Psycopg 3 access layer — all SQL lives here, including dynamic `variables_tag` column discovery |
+| `db.py` | Psycopg 3 access layer — all SQL lives here, including dynamic `variables_tag` column discovery and table init helpers |
 | `mailer.py` | Password-reset delivery: **Brevo HTTP API** (preferred) → SMTP fallback → log-only dev mode |
 | `config.py` | All env vars with fallback defaults |
 | `simulate_data.py` | Standalone CLI that writes synthetic time-series into `sensor_readings` |
+| `simulate_events.py` | Standalone CLI that writes machine state transitions and alarms into `event_logs`/`alarm_logs` for report demos |
 | `init_db.sql` | Aspirational multi-schema reference design (core/asset/historian/alarm/…); not consumed by the running app today |
 
 Password hash format: `scrypt$<salt_hex>$<digest_hex>` (no third-party wheel needed for Python 3.14).
 
 ### Frontend Layout
-- `src/pages/` — one component per route (`OverviewPage`, `DevicesPage`, `AlarmsPage`, `TrendsPage`,
-  **`LivePage`** admin-managed live grid, `SettingsPage`, `AccountsPage` admin-only, `LoginPage`,
-  `ResetPasswordPage`, `NotFoundPage`); guarded by `requiresAuth` / `requiresRole` in `src/router/index.js`
+- `src/pages/` — root pages: `OverviewPage`, `DevicesPage`, `AlarmsPage`, `EventPage`, `LoginPage`,
+  `ResetPasswordPage`, `SettingsPage`, `AccountsPage` (admin-only), `NotFoundPage`; plus subdirs:
+  - `pages/live/` — **`LivePage`** (admin-managed live grid), `DashboardSwitcher`, `PanelEditorDialog`, `ParamFields`, `panelPayload.js`
+  - `pages/monitor/` — **`MonitorPage`** (interactive SCADA mimic), `MimicCanvas`, `MimicSwitcher`, `DetailRail`, `NodeInspector`, `EdgeInspector`, `SymbolPalette`, `SymbolBindingDialog`, `CustomSymbolDialog`, `WirePicker`, `defaultLayout.js`, `layoutDoc.js`
+  - `pages/reports/` — **`ReportPage`** (viewer), `ReportBuilderPage` (admin-only template editor)
+  - All guarded by `RequireAuth` element wrapper in `src/router/routes.jsx` (react-router-dom v7 `createBrowserRouter`)
 - `src/stores/` — Zustand stores: `auth`, `users`, `devices`, `alarms`, `connection`
-- `src/api/` — thin Axios wrappers per domain (`auth`, `users`, `devices`, `alarms`,
-  `readings`, `tags`, `panels`)
-- `src/components/` — shared UI: `AppHeader`, `AppSidebar`, `GaugeTile`, `StatCard`,
-  `TrendChart`, `GrafanaPanel`, `ConnectionPill`, **`LivePanel`** (Grafana-style single-tile
-  renderer used by `LivePage`)
+- `src/api/` — thin Axios wrappers per domain (`auth`, `users`, `devices`, `alarms`, `readings`, `tags`,
+  `panels`, `dashboards`, `datasources`, `schema`, `events`, `mimic`, `mimicAssets`, `reports`)
+- `src/components/` — shared UI: `AppHeader`, `AppSidebar`, `GaugeTile`, `StatCard`, `TrendChart`,
+  `ConnectionPill`, plus subdirs:
+  - `components/live/` — **`LivePanel`** (Grafana-style single-tile renderer), `usePanelPolling.js`, `usePanelSeries.js`
+  - `components/charts/` — `EChart.jsx` (echarts wrapper)
+  - `components/mimic/` — symbol rendering: `symbols/` with per-device-type React components (Ats.jsx, Crah.jsx, Generator.jsx, Ups.jsx, Pdu.jsx, Rack.jsx, IpCamera.jsx, Lighting.jsx, ColdAisle.jsx, PcBased.jsx, CustomSymbol.jsx); plus `dynamics.js`, `wireTypes.jsx`, helpers (`deriveTag.js`, `useAssetUrl.js`, `useMimicPlant.js`, `useMockPlant.js`, `usePlantData.js`, `useValueTransition.js`, `tagStatus.js`, `mockPlant.js`), `InstrumentBubble.jsx`
+  - `components/report/` — `ReportFilterBar.jsx`, `reportFormat.js`, `reportRange.js`, plus `blocks/` with KpiStrip, SummaryTable, AlarmSummary, DowntimePareto, StateTimeline, RawLogTable, ReportBlock
 - `src/utils/` — `mathExpr.js` (safe per-panel value-transform evaluator, no `eval`/`Function`),
-  `seriesPalette.js` (deterministic per-series colour assignment)
+  `seriesPalette.js` (deterministic per-series colour assignment), `reportExport.js` (CSV/Excel export)
 
 ### Live dashboard
 `/live` is admin-curated: panels are persisted in Postgres (`dashboard_panels` table)
@@ -113,6 +130,26 @@ and each tile self-polls at one of the whitelisted intervals (5s, 30s, 1m, 10m,
 Per-panel `options.transform` accepts a tiny expression (`value`, `+ - * / ^`,
 `abs/sqrt/pow/min/max/floor/ceil/round`) so a raw count can be displayed as
 e.g. `value/10`.
+
+### Monitor / mimic page
+`/monitor` is the interactive SCADA mimic diagram: `MimicCanvas.jsx` renders draggable/resizable
+symbols and wires bound to live tags. The full layout (`mimic_layouts` table) persists server-side
+via `mimic.py` endpoints, fetched at page load. Each symbol node binds to a tag via `NodeInspector.jsx`
+and `SymbolBindingDialog.jsx` (resolved to column paths by `deriveTag.js`). Edges (wires) connect
+nodes and are inspected/bound via `EdgeInspector.jsx` and `WirePicker.jsx` — wire styling is defined
+in `wireTypes.jsx`. Custom symbols can be uploaded as SVG/PNG via `CustomSymbolDialog.jsx` —
+assets are stored server-side and retrieved via `mimicAssets.js` API and `useAssetUrl.js` hook.
+
+### Reports
+The reporting feature generates OEE and production dashboards from machine state transitions
+in `public.event_logs` and alarm records. The backend (`reports.py` + `report_engine.py`) converts
+discrete state-change events into time-interval durations (RUN/STOP/IDLE/PLANNED_DOWN) and computes
+KPIs (overall equipment effectiveness, downtime, runtime). The frontend splits report access into
+two flows: `ReportPage.jsx` (any authenticated user) views pre-built reports; `ReportBuilderPage.jsx`
+(admin-only) edits report templates. Both pull data via a single `/api/reports/run` endpoint that
+ensures all blocks (KPI strip, Gantt, Pareto, summary table) see the same state intervals.
+Reports render via modular blocks in `components/report/blocks/` (KpiStrip, SummaryTable, AlarmSummary,
+DowntimePareto, StateTimeline, RawLogTable) and export via CSV or Excel (`reportExport.js`).
 
 ### Request Flow (Production)
 ```
@@ -132,7 +169,7 @@ back to `SMTP_HOST=…`. Leave both empty in dev to log reset links to the
 service log instead.
 
 ## Key Docs
-- `DEVELOPMENT.md` — full architecture reference, every API endpoint, schemas, local dev walkthrough
+- `MML_DEVELOPMENT.md` — full architecture reference, every API endpoint, schemas, local dev walkthrough
 - `README.md` — production deployment on Windows (NSSM + IIS + PostgreSQL 18) and the one-shot installer
 - `workflow.html` — interactive end-to-end system workflow (open in a browser)
 - `scada-mml-backend/python-backend-flow.html` — animated per-step backend request flow

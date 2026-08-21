@@ -1,8 +1,8 @@
 ﻿# MMLPortal — SCADA Stack Deployment Guide
 
-FastAPI backend + Vue 3 SPA, JWT auth backed by PostgreSQL, deployed on Windows behind IIS.
+FastAPI backend + React 19 SPA, JWT auth backed by PostgreSQL, deployed on Windows behind IIS.
 This file is the **deployment-focused** guide; deeper internals live in
-[`DEVELOPMENT.md`](DEVELOPMENT.md). An interactive system workflow ships at
+[`MML_DEVELOPMENT.md`](MML_DEVELOPMENT.md). An interactive system workflow ships at
 [`workflow.html`](workflow.html) — open it in any browser.
 
 ---
@@ -12,15 +12,16 @@ This file is the **deployment-focused** guide; deeper internals live in
 ```
 C:\dev\
 ├── README.md                       ← this file
-├── DEVELOPMENT.md                  ← architecture & developer reference
+├── MML_DEVELOPMENT.md              ← architecture & developer reference
 ├── workflow.html                   ← interactive end-to-end system workflow
 ├── verify_prod.ps1                 ← admin script: verifies service + IIS proxy
 │
 ├── scada-mml-backend\              ← FastAPI service (Python 3.14)
 │   ├── main.py                     ← app factory: CORS, /health, mounts routers,
-│   │                                 init_panels_table() on startup, runs on :8088
+│   │                                 init_*_table() on startup, runs on :8088
 │   ├── config.py                   ← reads .env (DB, JWT, account, Brevo, SMTP, cookie)
-│   ├── db.py                       ← psycopg 3 access layer (users + readings + tags + panels)
+│   ├── db.py                       ← psycopg 3 access layer (users + readings + tags + panels +
+│   │                                 dashboards + datasources + mimic + reports)
 │   ├── security.py                 ← scrypt hashing + JWT (access/refresh/reset)
 │   ├── auth.py                     ← /api/auth router (login, register, me, refresh,
 │   │                                 logout, change-password, forgot-password, reset-password)
@@ -29,10 +30,19 @@ C:\dev\
 │   │                                 latest, sliding-window series)
 │   ├── tags.py                     ← /api/tags router (public.variables_tag: names, dynamic numeric
 │   │                                 fields, latest row)
+│   ├── schema.py                   ← /api/schema router (generic table/column introspection)
 │   ├── panels.py                   ← /api/panels router (Live dashboard CRUD; writes need admin)
+│   ├── dashboards.py               ← /api/dashboards router (multi-board Live grid metadata)
+│   ├── datasources.py              ← /api/datasources router (saved PostgreSQL connections)
+│   ├── mimic.py                    ← /api/mimic router (SCADA mimic layout + symbols)
+│   ├── events.py                   ← /api/events router (read-only event log aggregation)
+│   ├── alarms.py                   ← /api/alarms router (read-only alarm logs + acknowledgement)
+│   ├── reports.py                  ← /api/reports router (OEE / production reporting)
+│   ├── report_engine.py            ← report generation state-machine + interval logic
 │   ├── mailer.py                   ← Brevo HTTP API → SMTP fallback → log-only delivery
 │   ├── seed_users.py               ← idempotent migration + mock-user seed
 │   ├── simulate_data.py            ← writes synthetic sensor_readings (5s tick, optional 2h seed)
+│   ├── simulate_events.py          ← writes synthetic event_logs for testing
 │   ├── install.ps1 / install.bat   ← one-shot interactive installer (self-elevates)
 │   ├── uninstall.ps1 / .bat        ← stop + remove the NSSM service
 │   ├── nssm.exe                    ← vendored NSSM binary
@@ -44,25 +54,37 @@ C:\dev\
 │   ├── logs\                       ← NSSM stdout/stderr (installer creates this)
 │   └── venv\                       ← Python 3.14 virtual environment (created by installer)
 │
-└── scada-frontend\                 ← Vue 3 + Vite SPA
-    ├── package.json                ← vue 3.5, vue-router 5, pinia 3, axios, element-plus, echarts
+└── scada-frontend\                 ← React 19 + Vite SPA
+    ├── package.json                ← react 19, react-router-dom 7, zustand, axios, @mui/material,
+    │                                 echarts, echarts-for-react
     ├── vite.config.js              ← dev proxy /api,/ws → 127.0.0.1:8088
     ├── public\
     │   └── web.config              ← IIS rewrite rules (copied into dist on build)
     ├── src\
     │   ├── api\                    ← client.js (axios + auth interceptor), auth.js, users.js,
-    │   │                             devices.js, alarms.js, readings.js, tags.js, panels.js
-    │   ├── stores\                 ← Pinia: auth, users, devices, alarms, connection
-    │   ├── pages\                  ← LoginPage, ResetPasswordPage (public),
-    │   │                             OverviewPage, DevicesPage, AlarmsPage, TrendsPage,
-    │   │                             LivePage, SettingsPage, AccountsPage (admin-only),
-    │   │                             NotFoundPage
-    │   ├── components\             ← AppHeader, AppSidebar, ConnectionPill, GaugeTile,
-    │   │                             StatCard, TrendChart, GrafanaPanel, LivePanel
+    │   │                             devices.js, alarms.js, readings.js, tags.js, panels.js,
+    │   │                             dashboards.js, datasources.js, mimic.js, events.js, reports.js
+    │   ├── stores\                 ← Zustand: auth, users, devices, alarms, connection
+    │   ├── pages\                  ← page components:
+    │   │  ├── LoginPage, ResetPasswordPage (public)
+    │   │  ├── OverviewPage, DevicesPage, AlarmsPage, EventPage, SettingsPage (authenticated)
+    │   │  ├── AccountsPage (admin-only)
+    │   │  ├── live/LivePage + supporting files
+    │   │  ├── monitor/MonitorPage + mimic editor components
+    │   │  ├── reports/ReportPage, ReportBuilderPage
+    │   │  └── NotFoundPage
+    │   ├── components\             ← shared UI:
+    │   │  ├── AppHeader, AppSidebar, ConnectionPill, GaugeTile, StatCard, TrendChart
+    │   │  ├── charts/EChart (generic ECharts wrapper)
+    │   │  ├── live/LivePanel + options/ (9 viz-type builders) + polling hooks
+    │   │  ├── mimic/symbol library + hooks
+    │   │  └── report/report block components
     │   ├── utils\                  ← mathExpr.js (safe transform evaluator),
-    │   │                             seriesPalette.js (deterministic colour pick)
-    │   ├── layouts\AppShell.vue
-    │   └── router\index.js         ← routes + requiresAuth / requiresRole guards
+    │   │                             seriesPalette.js (deterministic colour pick),
+    │   │                             alertConditions.js
+    │   ├── lib\, layouts\          ← utilities, layout wrappers
+    │   ├── theme\, styles\         ← MUI theme + global styles
+    │   └── router\routes.jsx       ← React Router v7 routes + RequireAuth guard
     └── dist\                       ← PRODUCTION BUILD OUTPUT (deploy this to IIS)
 ```
 
@@ -75,7 +97,7 @@ C:\dev\
 | Component | Version / Edition | Why it's needed |
 |---|---|---|
 | **Python** | 3.14.x | Runs the FastAPI backend |
-| **Node.js + npm** | Node 20+ / npm 10+ | Builds the Vue SPA |
+| **Node.js + npm** | Node 20+ / npm 10+ | Builds the React SPA |
 | **PostgreSQL** | 18 (`postgresql-x64-18` Windows service) | Stores users, dashboard panels, `sensor_readings`, `variables_tag` |
 | **NSSM** | any recent build (`nssm.exe` is vendored at `scada-mml-backend\nssm.exe`) | Runs uvicorn as a Windows service `mml-api` |
 | **IIS** | 10+ on Windows Server / Windows 11 Pro | Serves the SPA and reverse-proxies `/api` and `/ws` |
@@ -213,7 +235,7 @@ The deployed `web.config` (already in `dist\`) does the rewriting:
 |---|---|---|
 | Proxy `/ws` | `^ws(/.*)?$` | `http://127.0.0.1:8088/ws{R:1}` (ARR auto-detects upgrade) |
 | Proxy `/api` | `^api/(.*)$` | `http://127.0.0.1:8088/api/{R:1}` |
-| SPA fallback | non-file, non-`/api`, non-`/ws` | rewrite to `index.html` (vue-router history mode) |
+| SPA fallback | non-file, non-`/api`, non-`/ws` | rewrite to `index.html` (React Router v7 history) |
 
 It also passes through backend errors (`httpErrors errorMode="PassThrough"`) so the SPA sees real
 `401` / `400` bodies, and disables caching on `index.html`.
@@ -387,9 +409,9 @@ step 3.7 above.
 | **CORS error in the browser console (prod)** | Add your prod origin to `CORS_ORIGINS` in `.env` and restart. Wildcards aren't allowed because `allow_credentials=True`. |
 | **`/accounts` page redirects to `/`** | The current user isn't `role='admin'`. Sign in as `admin`, or promote a user via `UPDATE users SET role='admin' WHERE username='you'`. |
 | **New numeric column on `public.variables_tag` doesn't show up in the panel editor** | Fields are introspected once per process and cached. `Restart-Service mml-api` to re-discover. |
-| **`Failed to fetch dynamically imported module …Page.vue` in dev** | Two Vite servers are fighting over port 5173. Kill stray `node` processes (`Get-CimInstance Win32_Process -Filter "Name='node.exe'" \| Where CommandLine -like '*vite*' \| Stop-Process -Force`). |
+| **`Failed to fetch dynamically imported module …Page.jsx` in dev** | Two Vite servers are fighting over port 5173. Kill stray `node` processes (`Get-CimInstance Win32_Process -Filter "Name='node.exe'" \| Where CommandLine -like '*vite*' \| Stop-Process -Force`). |
 | **`psql` not found** | Add `C:\Program Files\PostgreSQL\18\bin` to PATH, or call the full path. |
 
 For architecture, code internals, the full API reference, and the dynamic `variables_tag` introspection,
-see [`DEVELOPMENT.md`](DEVELOPMENT.md). For a click-through end-to-end visualization,
+see [`MML_DEVELOPMENT.md`](MML_DEVELOPMENT.md). For a click-through end-to-end visualization,
 open [`workflow.html`](workflow.html).
