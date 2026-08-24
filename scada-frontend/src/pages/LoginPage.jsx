@@ -4,6 +4,7 @@ import { useForm } from 'react-hook-form'
 import TextField from '@mui/material/TextField'
 import Button from '@mui/material/Button'
 import Alert from '@mui/material/Alert'
+import DbStatusBanner from '@/components/DbStatusBanner/DbStatusBanner.jsx'
 import Dialog from '@mui/material/Dialog'
 import DialogTitle from '@mui/material/DialogTitle'
 import DialogContent from '@mui/material/DialogContent'
@@ -388,6 +389,10 @@ export default function LoginPage() {
               margin="normal"
               {...registerSignIn('password')}
             />
+
+            {/* Says the database is down *before* a sign-in attempt, so the
+                failure does not look like a wrong password. */}
+            <DbStatusBanner />
 
             {authError && (
               <Alert severity="error" sx={{ mb: 2 }}>

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { login, logout, refreshToken, getProfile, register } from '@/api/auth'
-import { setAccessToken, clearAccessToken } from '@/api/client'
+import { setAccessToken, clearAccessToken, apiErrorMessage } from '@/api/client'
 
 /**
  * auth — ported 1:1 from the Pinia store (src/stores/auth.js).
@@ -38,7 +38,10 @@ export const useAuthStore = create((set, get) => ({
       setAccessToken(data.access_token)
       set({ hasToken: true, user: data.user })
     } catch (e) {
-      set({ error: e?.response?.data?.message || 'Login failed' })
+      // FastAPI answers with `detail`, not `message` — reading the wrong key
+      // discarded the real reason (e.g. the 503 raised when the database is
+      // unreachable) and showed a misleading generic failure instead.
+      set({ error: apiErrorMessage(e, 'Login failed') })
       throw e
     } finally {
       set({ loading: false })
@@ -52,7 +55,7 @@ export const useAuthStore = create((set, get) => ({
       setAccessToken(data.access_token)
       set({ hasToken: true, user: data.user })
     } catch (e) {
-      set({ error: e?.response?.data?.detail || 'Registration failed' })
+      set({ error: apiErrorMessage(e, 'Registration failed') })
       throw e
     } finally {
       set({ loading: false })

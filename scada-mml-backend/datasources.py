@@ -17,13 +17,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 import db
+import config
 from auth import get_current_user, require_admin
 
 router = APIRouter(prefix="/api/datasources", tags=["datasources"])
 
 VALID_TYPES = {"postgres", "timescaledb"}
 VALID_SSLMODES = {"disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
-CONNECT_TIMEOUT_S = 5
+CONNECT_TIMEOUT_S = config.DB_CONNECT_TIMEOUT
 
 
 # --- Schemas ---------------------------------------------------------------

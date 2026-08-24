@@ -1,5 +1,7 @@
-﻿"""Thin PostgreSQL access layer using psycopg 3."""
+"""Thin PostgreSQL access layer using psycopg 3."""
+import logging
 import threading
+import time
 from collections import deque
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -12,10 +14,226 @@ from psycopg.types.json import Json
 
 import config
 
+logger = logging.getLogger("mml-api.db")
+
+# Set by main._ensure_tables once the schema DDL has run against the active
+# database. False means the app is serving without a verified schema.
+SCHEMA_READY = False
+
+# --- Connection failover ---------------------------------------------------
+# Every query in the app funnels through get_connection(), so it is the single
+# place that decides *which* database is in use. It walks config.DB_CANDIDATES
+# (primary first) and adopts the first that answers.
+_conn_lock = threading.Lock()
+_active_index = 0
+_all_down_until = 0.0          # monotonic deadline for fail-fast during a full outage
+_last_errors: dict[str, str] = {}
+_ALL_DOWN = "\x00all"          # sentinel key; cannot collide with a candidate name
+# Names already reported as unreachable. Per candidate rather than one global
+# flag: with a fallback configured the probe loop keeps *succeeding* on the
+# fallback, which would clear a global flag every cycle and re-log the primary's
+# outage indefinitely -- the log flood this suppression exists to prevent.
+_outage_logged: set[str] = set()
+_db_state: dict[str, Any] = {
+    "ok": False,
+    "candidate": None,
+    "checked_at": None,
+}
+
+
+def _is_unreachable(exc: psycopg.OperationalError) -> bool:
+    """True when the error means "no server answered", not "the server said no".
+
+    psycopg maps several *server-originated* conditions onto OperationalError --
+    53300 too_many_connections, 57P01 admin_shutdown, 28P01 invalid_password --
+    so the exception class alone cannot justify a failover. Treating those as
+    "host is down" would migrate the whole app onto the fallback on a transient
+    connection spike and start splitting writes across two databases, which is
+    worse than the outage this failover exists to survive.
+
+    A connect that never reached a server carries no sqlstate; class 08 covers
+    the genuine connection exceptions a server does report.
+    """
+    state = getattr(exc, "sqlstate", None)
+    return state is None or state.startswith("08")
+
+
+def _first_line(exc: Exception) -> str | None:
+    text = str(exc).strip()
+    return text.splitlines()[0] if text else None
+
+
+def _record(ok: bool, name: str | None, error: str | None = None) -> None:
+    """Update the cached DB health served by /health.
+
+    Written on every connection attempt rather than from a background loop, so
+    it can never report a stale "ok" for a database that died after boot.
+    """
+    _db_state["ok"] = ok
+    _db_state["candidate"] = name
+    _db_state["checked_at"] = datetime.now(timezone.utc).isoformat()
+    if name is not None:
+        if error:
+            _last_errors[name] = error
+        else:
+            _last_errors.pop(name, None)
+
+
+def db_state() -> dict[str, Any]:
+    """Snapshot of connection health for /health and the admin status route."""
+    with _conn_lock:
+        active_index = _active_index
+    return {
+        "ok": _db_state["ok"],
+        "candidate": _db_state["candidate"],
+        "checked_at": _db_state["checked_at"],
+        "is_fallback": active_index != 0,
+        "active": config.DB_CANDIDATES[active_index]["name"],
+        "schema_ready": SCHEMA_READY,
+    }
+
+
+def candidate_report() -> list[dict[str, Any]]:
+    """Per-candidate detail for the admin-gated status route.
+
+    Never exposed on /health: the error text carries host and port.
+    """
+    with _conn_lock:
+        active = _active_index
+    return [
+        {
+            "name": c["name"],
+            "host": c["host"],
+            "port": c["port"],
+            "database": c["dbname"],
+            "active": i == active,
+            "last_error": _last_errors.get(c["name"]),
+        }
+        for i, c in enumerate(config.DB_CANDIDATES)
+    ]
+
+
+def _pinned_index() -> int:
+    """Index named by DB_TARGET. Raises if the name is unknown."""
+    for i, c in enumerate(config.DB_CANDIDATES):
+        if c["name"] == config.DB_TARGET:
+            return i
+    names = ", ".join(c["name"] for c in config.DB_CANDIDATES)
+    raise RuntimeError(
+        f"DB_TARGET={config.DB_TARGET!r} matches no candidate (have: {names})"
+    )
+
+
+def failback() -> str:
+    """Return to the primary. Deliberately manual -- see get_connection on write
+    divergence. Returns the candidate name now active."""
+    global _active_index, _all_down_until
+    with _conn_lock:
+        _active_index = 0
+        _all_down_until = 0.0
+    logger.warning("Database failback: switched to primary by request")
+    return config.DB_CANDIDATES[0]["name"]
+
 
 def get_connection() -> psycopg.Connection:
-    """Open a new connection. Rows are returned as dicts."""
-    return psycopg.connect(config.DATABASE_URL, row_factory=dict_row)
+    """Open a new connection to the active database. Rows are returned as dicts.
+
+    On an *unreachable* database the remaining candidates are tried in order and
+    the first that answers is adopted for subsequent calls. Switching back to the
+    primary is never automatic: once the app has written panels or layouts to a
+    fallback, silently returning would split those writes across two databases.
+    """
+    global _active_index, _all_down_until
+
+    # Pinned mode: one database, no walking. A walk here could seed or migrate
+    # the wrong host while the intended one is briefly unavailable.
+    if config.DB_TARGET:
+        cand = config.DB_CANDIDATES[_pinned_index()]
+        try:
+            conn = psycopg.connect(cand["dsn"], row_factory=dict_row)
+        except psycopg.OperationalError as e:
+            _record(False, cand["name"], _first_line(e))
+            raise
+        _record(True, cand["name"])
+        return conn
+
+    candidates = config.DB_CANDIDATES
+    with _conn_lock:
+        start = _active_index
+        cooling = time.monotonic() < _all_down_until
+
+    if cooling:
+        # Every candidate failed moments ago. Fail fast so callers get a prompt
+        # 503 instead of paying the full connect timeout for each host again.
+        raise psycopg.OperationalError("All configured databases are unreachable")
+
+    # Active candidate first, then the rest in declared order.
+    order = [start] + [i for i in range(len(candidates)) if i != start]
+    last_exc: psycopg.OperationalError | None = None
+
+    for idx in order:
+        cand = candidates[idx]
+        try:
+            # Connect outside the lock: holding it across a multi-second connect
+            # would serialise every request in the process behind one attempt.
+            conn = psycopg.connect(cand["dsn"], row_factory=dict_row)
+        except psycopg.OperationalError as e:
+            detail = _first_line(e) or repr(e)
+            _record(False, cand["name"], detail)
+            if not _is_unreachable(e):
+                # The server answered and refused. Surface it against this
+                # candidate rather than drifting onto another database.
+                if getattr(e, "sqlstate", None) == "28P01":
+                    logger.error(
+                        "Database %s rejected our credentials (28P01) -- check the "
+                        "password in .env. Not treating this as an outage.",
+                        cand["name"],
+                    )
+                raise
+            last_exc = e
+            if cand["name"] not in _outage_logged:
+                logger.warning("Database %s unreachable: %s", cand["name"], detail)
+                _outage_logged.add(cand["name"])
+            continue
+
+        if idx != start:
+            with _conn_lock:
+                _active_index = idx
+                _all_down_until = 0.0
+            logger.warning(
+                "Database failover: now using %s (%s:%s/%s)",
+                cand["name"], cand["host"], cand["port"], cand["dbname"],
+            )
+        elif cand["name"] in _outage_logged:
+            logger.info("Database %s reachable again", cand["name"])
+        _outage_logged.discard(cand["name"])
+        _outage_logged.discard(_ALL_DOWN)
+        _record(True, cand["name"])
+        return conn
+
+    with _conn_lock:
+        _all_down_until = time.monotonic() + config.DB_FAILOVER_COOLDOWN
+    _record(False, candidates[start]["name"])
+    if _ALL_DOWN not in _outage_logged:
+        logger.error("All %d database candidate(s) unreachable", len(candidates))
+        _outage_logged.add(_ALL_DOWN)
+    if last_exc is not None:
+        raise last_exc
+    raise psycopg.OperationalError("No database candidates configured")
+
+
+def probe() -> bool:
+    """Open and close one connection purely to refresh cached health.
+
+    Lets /health stay accurate on an idle service, where no request would
+    otherwise exercise get_connection().
+    """
+    try:
+        with get_connection() as conn:
+            conn.execute("SELECT 1")
+        return True
+    except psycopg.OperationalError:
+        return False
 
 
 def get_user_by_username(username: str) -> dict[str, Any] | None:
@@ -732,7 +950,7 @@ def _table_source_conn(datasource_id: int | None):
     with psycopg.connect(
         host=ds["host"], port=ds["port"], dbname=ds["database"],
         user=ds["username"], password=ds["password"], sslmode=ds["sslmode"],
-        connect_timeout=5, row_factory=dict_row,
+        connect_timeout=config.DB_CONNECT_TIMEOUT, row_factory=dict_row,
     ) as conn:
         yield conn, (ds.get("db_schema") or "public")
 

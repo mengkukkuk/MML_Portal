@@ -264,6 +264,40 @@ falls back to when a variable is unset; example values are illustrative.
 | `DB_NAME` | `postgres` | `postgres` | Database name |
 | `DB_USER` | `postgres` | `postgres` | Database user |
 | `DB_PASSWORD` | *(empty)* | `P@ssw0rd` | **Required** — Postgres password |
+| `DB_CONNECT_TIMEOUT` | `5` | `5` | Seconds to wait for a TCP connect. Keep it small — without it an unreachable host blocks on the OS timeout. |
+| `DB_FALLBACK_1_HOST` | *(unset)* | `192.168.1.50` | Enables failover to a second database (see 4.1.1). Repeat as `_2_`, `_3_`, … |
+| `DB_FALLBACK_1_PORT` / `_NAME` / `_USER` / `_PASSWORD` | *(inherits primary)* | | Only set what differs from the primary. |
+| `DB_FAILOVER_COOLDOWN` | `10` | `10` | Seconds to fail fast after every candidate failed, rather than retrying each host on every request. |
+| `DB_TARGET` | *(unset)* | `fallback1` | Pins one database and disables failover. Used when seeding a fallback. |
+
+#### 4.1.1 Database failover
+
+The API starts and keeps serving even when its database is unreachable: `/health` stays 200
+with `"db": "unreachable"`, data routes answer `503`, and the service picks the database back
+up on its own when it returns — no restart. (Before this, an unreachable `DB_HOST` aborted
+startup and NSSM restart-looped the service for the whole outage.)
+
+Setting `DB_FALLBACK_1_HOST` goes further and keeps **login working** during an outage by
+switching to a second database. Two requirements:
+
+1. **Seed the fallback before you need it.** Table creation happens automatically, but the
+   `users` table comes from `seed_users.py` — without it a failover succeeds and then nobody
+   can sign in.
+   ```powershell
+   cd C:\dev\scada-mml-backend
+   $env:DB_TARGET="fallback1"; .\venv\Scripts\python.exe seed_users.py
+   $env:DB_TARGET=""
+   ```
+2. **Know that the two databases diverge.** The app writes to whichever database it is using,
+   so anything saved during an outage (panels, dashboards, mimic layouts, report templates)
+   stays on the fallback and is *not* copied back. For that reason returning to the primary is
+   deliberate, not automatic: `POST /api/system/db/failback` as an admin, or restart the
+   service. Admins can check which database is live at `GET /api/system/db`; everyone sees a
+   banner in the UI while a fallback is in use.
+
+A switch only happens when a host does not answer. Errors from a *live* server — too many
+connections, an admin shutdown, a wrong password — are reported as-is and never trigger
+failover, so a brief connection spike cannot quietly move the app onto the fallback.
 
 ### 4.2 JWT
 
@@ -395,6 +429,9 @@ step 3.7 above.
 | Symptom | Cause / Fix |
 |---|---|
 | **`install.ps1` says NSSM not found** | The repo vendors `nssm.exe` next to `install.ps1` — make sure it wasn't deleted. Otherwise install NSSM and add to PATH, or drop `nssm.exe` into `scada-mml-backend\`. |
+| **Service dead / login unavailable when the DB host is off** | No longer the behaviour: the API boots and serves regardless. Check `GET /health` — `"db":"unreachable"` means the service is fine and the *database* is not. See §4.1.1 to keep login working through the outage. |
+| **`/health` says `"db_fallback": true`** | The primary was unreachable and the API switched to a fallback. Data saved now stays on the fallback. Return with `POST /api/system/db/failback` (admin) once the primary is back. |
+| **Signed in, but every page is empty and a red banner says the database is unreachable** | The API is up and its database is not. Check the DB host/VPN; the service recovers on its own, no restart needed. |
 | **`install.ps1` finishes but health check fails** | Service is registered but DB credentials in `.env` are wrong. Check `scada-mml-backend\logs\stderr.log`, fix `.env`, then `Restart-Service mml-api`. |
 | **NSSM "unexpected error" starting `mml-api`** | A bare `python` of `main.py` works because of the `__main__` block, but the canonical config uses `-m uvicorn main:app --host 127.0.0.1 --port 8088`. Check `logs\stderr.log` for the actual traceback. |
 | **`WinError 10013` binding 8088** | Another process holds 8088, or it's in a Windows reserved range. Check with `Get-NetTCPConnection -LocalPort 8088`. The Vite dev proxy and `web.config` both hard-code 8088. |

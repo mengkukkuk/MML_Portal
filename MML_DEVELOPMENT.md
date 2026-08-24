@@ -223,6 +223,44 @@ Optional sections covered in the README: token lifetimes (`ACCESS_EXPIRE_MIN`, `
 fallback (`SMTP_*`), CORS allow-list (`CORS_ORIGINS`), and the HTTPS-only cookie flag
 (`COOKIE_SECURE`).
 
+### Surviving a database outage
+
+The API no longer requires its database to start. Schema creation is attempted on boot and
+retried in the background, so an unreachable `DB_HOST` leaves the service **running and
+answering** instead of exiting — previously it aborted startup, and NSSM restart-looped it
+for the length of the outage while the frontend showed a blank page.
+
+While the database is down: `/health` stays **200** with `"db": "unreachable"`, data routes
+answer **503**, and the SPA shows a banner instead of failing silently. When the host comes
+back the service picks it up on its own — no restart.
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `DB_CONNECT_TIMEOUT` | `5` | Seconds to wait for a TCP connect. Without it a powered-off host blocks on the OS timeout. |
+| `DB_FALLBACK_<n>_HOST` | *(unset)* | Enables failover to a second database. Other `DB_FALLBACK_<n>_*` keys inherit from the primary. |
+| `DB_FAILOVER_COOLDOWN` | `10` | Seconds to fail fast after every candidate has failed, instead of retrying each host per request. |
+| `DB_TARGET` | *(unset)* | Pins one candidate by name and disables failover. Used for seeding. |
+
+**Failover.** With `DB_FALLBACK_1_HOST` set, an unreachable primary makes the API adopt the
+fallback automatically, so users can still sign in. Two things this depends on:
+
+1. **Seed the fallback first.** Schema DDL runs against whichever database is adopted, but
+   `users` is owned by `seed_users.py` — an unseeded fallback fails over successfully and
+   then nobody can log in. Run once, ahead of time:
+   ```powershell
+   $env:DB_TARGET="fallback1"; venv\Scripts\python.exe seed_users.py
+   ```
+2. **Failback is manual, on purpose.** The app *writes* to whichever database it is using, so
+   panels, dashboards, mimic layouts and report templates saved during an outage live on the
+   fallback and are **not** copied back. Returning automatically would split those writes
+   across two databases. Return explicitly with `POST /api/system/db/failback` (admin) or a
+   service restart.
+
+Failover triggers only on a database that does not answer. Errors returned *by* a live server
+— `53300 too_many_connections`, `57P01 admin_shutdown`, `28P01` bad password — are surfaced
+as-is and never cause a switch, so a transient connection spike cannot silently migrate the
+app onto the fallback.
+
 ---
 
 ## 6. Database
@@ -657,15 +695,28 @@ etc.). Changing this changes all historical reports — admin-only.
 The `/run` endpoint builds each machine's state intervals *once* and projects them into every
 requested block, so KPI cards, timeline, and Pareto never disagree with each other.
 
-### 7.13 Errors
+### 7.13 `/api/system` - database failover status (admin)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET  | `/api/system/db` | Candidate list, which database is active, last error per candidate. Admin only - the body carries hostnames. |
+| POST | `/api/system/db/failback` | Switch back to the primary. Deliberately manual; see the outage section above. |
+
+`GET /api/health` (no auth) mirrors `/health` for the browser, since IIS proxies only `/api/*`
+to the service. It answers 200 even when the database is down:
+`{"status":"ok","db":"unreachable","db_fallback":false,"checked_at":"..."}`. It stays coarse
+because it is unauthenticated - per-candidate detail is in `/api/system/db`.
+
+### 7.14 Errors
 
 - Bad credentials → `401 {"message": "Invalid username or password"}`.
 - Missing/expired/invalid access token → `401 {"detail": "..."}`.
 - Missing/invalid refresh cookie on `/refresh` → `401 {"detail": "..."}`.
 - Bad/expired/single-use-already-consumed reset token → `400 {"detail": "..."}`.
 - Admin-only route accessed by a non-admin → `403 {"detail": "Admin access required"}`.
+- Database unreachable → `503 {"detail": "Database unreachable - check the connection settings."}`.
 
-### 7.14 Tokens
+### 7.15 Tokens
 
 HS256 JWTs. Each carries `sub` (user id), `type` (`access` / `refresh` / `reset`), `iat`, `exp`,
 `jti`; access tokens additionally carry `role`. Lifetimes are governed by `ACCESS_EXPIRE_MIN` /
@@ -673,7 +724,7 @@ HS256 JWTs. Each carries `sub` (user id), `type` (`access` / `refresh` / `reset`
 denylist, reset `jti` used-set) — they reset on service restart, which is acceptable for the
 current single-process deployment.
 
-### 7.15 Smoke test
+### 7.16 Smoke test
 
 ```powershell
 curl -s -X POST http://localhost:8088/api/auth/login `

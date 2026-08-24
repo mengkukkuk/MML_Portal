@@ -20,11 +20,80 @@ DB_NAME = os.getenv("DB_NAME", "postgres")
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 
-# psycopg connection string (keyword/value format)
-DATABASE_URL = (
-    f"host={DB_HOST} port={DB_PORT} dbname={DB_NAME} "
-    f"user={DB_USER} password={DB_PASSWORD}"
-)
+# Seconds libpq waits for a TCP connect before giving up. Without this a host
+# that is powered off (rather than actively refusing) blocks on the OS-level
+# timeout — tens of seconds per attempt — which is what turned a downed DB into
+# a dead service. Matches the 5s already used for saved datasources.
+DB_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
+
+# After every candidate has failed, how long db.get_connection() fails fast
+# instead of re-walking the whole list on each request.
+DB_FAILOVER_COOLDOWN = int(os.getenv("DB_FAILOVER_COOLDOWN", "10"))
+
+# Pin one candidate by name and disable failover entirely. Used by seed_users.py
+# to seed a specific database ("DB_TARGET=fallback1 python seed_users.py") — a
+# walk there could silently seed the wrong host.
+DB_TARGET = os.getenv("DB_TARGET", "").strip()
+
+
+def _quote(value: str) -> str:
+    """Quote a libpq keyword/value component.
+
+    Unquoted, a password containing a space silently truncates the connection
+    string and the failure surfaces far from its cause.
+    """
+    escaped = value.replace("\\", "\\\\").replace("'", "\'")
+    return f"'{escaped}'"
+
+
+def _dsn(host: str, port: str, dbname: str, user: str, password: str) -> str:
+    """Build a psycopg keyword/value connection string."""
+    return (
+        f"host={_quote(host)} port={_quote(port)} dbname={_quote(dbname)} "
+        f"user={_quote(user)} password={_quote(password)} "
+        f"connect_timeout={DB_CONNECT_TIMEOUT}"
+    )
+
+
+def _discover_candidates() -> list[dict]:
+    """Ordered list of databases to try: the primary, then any fallbacks.
+
+    Fallbacks are declared as DB_FALLBACK_<n>_HOST (n = 1, 2, ...) and inherit
+    every unset key from the primary, so the common case is a single line in
+    .env. Scanning stops at the first gap in the numbering.
+    """
+    candidates = [{
+        "name": "primary",
+        "host": DB_HOST,
+        "port": DB_PORT,
+        "dbname": DB_NAME,
+        "dsn": _dsn(DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD),
+    }]
+    n = 1
+    while True:
+        host = os.getenv(f"DB_FALLBACK_{n}_HOST")
+        if not host:
+            break
+        port = os.getenv(f"DB_FALLBACK_{n}_PORT", DB_PORT)
+        dbname = os.getenv(f"DB_FALLBACK_{n}_NAME", DB_NAME)
+        user = os.getenv(f"DB_FALLBACK_{n}_USER", DB_USER)
+        password = os.getenv(f"DB_FALLBACK_{n}_PASSWORD", DB_PASSWORD)
+        candidates.append({
+            "name": f"fallback{n}",
+            "host": host,
+            "port": port,
+            "dbname": dbname,
+            "dsn": _dsn(host, port, dbname, user, password),
+        })
+        n += 1
+    return candidates
+
+
+DB_CANDIDATES = _discover_candidates()
+
+# Kept for backwards compatibility — the primary's DSN. Runtime code should go
+# through db.get_connection(), which honours failover.
+DATABASE_URL = DB_CANDIDATES[0]["dsn"]
 
 # --- JWT ---
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-insecure-change-me")
