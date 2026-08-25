@@ -18,6 +18,21 @@ export const EVENT_LOG_SIZE = 30
 /** Entry counts as stale after this many missed polls. */
 const STALE_POLLS = 3
 
+/**
+ * How old a row may be before the symbol calls it stale.
+ *
+ * Cadence tells you how often you *ask*; it does not make the answer older. A
+ * historian written once every five seconds is healthy whether it is read every
+ * five seconds or ten times a second — so the window never tightens below the
+ * slowest cadence the page used to offer, and every symbol on a 100ms poll
+ * would otherwise flip to stale within 300ms.
+ */
+const STALE_FLOOR_MS = 15_000
+
+export function staleAfterMs(pollSeconds) {
+  return Math.max(pollSeconds * 1000 * STALE_POLLS, STALE_FLOOR_MS)
+}
+
 const KIND_BY_BINDING = {
   analog: 'analog', both: 'both', discrete: 'discrete', none: 'analog',
 }
@@ -76,7 +91,7 @@ export function deriveTag({
   // historian that is up but no longer being written to — the failure mode a
   // "connection ok" check would call healthy.
   const missed = reading == null && prev != null
-  const aged = now - ts > pollSeconds * 1000 * STALE_POLLS
+  const aged = now - ts > staleAfterMs(pollSeconds)
   const stale = value == null || missed || aged
 
   const status = stale

@@ -7,6 +7,16 @@ import { mergeSources, sourcesFromError, connectionErrorMessage } from '@/utils/
 import { deriveTag, EVENT_LOG_SIZE } from './deriveTag'
 
 /**
+ * How long every binding must go unanswered before the page calls the plant
+ * unreachable. Three polls, but never less than three seconds: a sub-second
+ * cadence issues its next request before the previous round trip has landed,
+ * and a busy historian would otherwise be declared down on latency alone.
+ */
+function unreachableAfterMs(pollSeconds) {
+  return Math.max(pollSeconds * 1000 * 3, 3000)
+}
+
+/**
  * useMimicPlant — the real /monitor poller.
  *
  * Emits the same snapshot as the simulator (`{ tags, history, events, ts,
@@ -287,6 +297,7 @@ export default function useMimicPlant({
 
     const tags = {}
     const fresh = []
+    const unreachableMs = unreachableAfterMs(pollSeconds)
     let unreadable = 0
     boundRef.current.forEach((node) => {
       const reading = readings[node.id] ?? null
@@ -295,7 +306,7 @@ export default function useMimicPlant({
       // being written to three weeks ago answers every query perfectly. So
       // this counts fetch freshness (`okAt`), never the row's own timestamp.
       const okAt = reading?.okAt ?? 0
-      if (now - okAt > pollSeconds * 1000 * 3) unreadable += 1
+      if (now - okAt > unreachableMs) unreadable += 1
       const { entry, pulse, event } = deriveTag({
         node,
         reading,

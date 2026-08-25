@@ -31,7 +31,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mml-api")
 
-app = FastAPI(title="SCADA MML API")
+app = FastAPI(title="MML-Portal-API")
 
 # Allowed origins — must be explicit when allow_credentials=True (cannot use "*")
 _ORIGINS = [o.strip() for o in os.getenv(
@@ -120,9 +120,7 @@ def _create_tables() -> bool:
     db.SCHEMA_READY = True
     return True
 
-
 _schema_ready = False
-
 
 @app.on_event("startup")
 def _ensure_tables() -> None:
@@ -235,7 +233,6 @@ def _park(datasource_id: int | None, error: str) -> None:
         "failures (%s)", datasource_id, delay, fails, error,
     )
 
-
 async def _tag_buffer_loop() -> None:
     """Snapshot each selected source's variables_tag into db's in-memory history
     buffer on a timer, so Live panels bound to it can chart real
@@ -285,10 +282,8 @@ async def _tag_buffer_loop() -> None:
                         _park(report["datasource_id"], report["error"])
         await asyncio.sleep(config.TAG_BUFFER_POLL_SECONDS)
 
-
 async def _db_watch_loop() -> None:
     """Keep cached DB health fresh and finish schema init once the host returns.
-
     Recovery must not need a service restart, so the schema DDL is retried here
     on a backoff. The probe runs whether or not the schema is ready: a database
     that dies *after* a successful boot is the common case, and without an
@@ -308,7 +303,6 @@ async def _db_watch_loop() -> None:
         delay = _DB_RETRY_MIN_S if healthy else min(delay * 2, _DB_RETRY_MAX_S)
         await asyncio.sleep(_DB_POLL_S if healthy else delay)
 
-
 _DB_POLL_S = 15          # steady-state health refresh
 _DB_RETRY_MIN_S = 5      # first retry after a failure
 _DB_RETRY_MAX_S = 60     # backoff ceiling during a long outage
@@ -320,14 +314,12 @@ async def _start_background_tasks() -> None:
     _tag_buffer_task = asyncio.create_task(_tag_buffer_loop())
     _db_watch_task = asyncio.create_task(_db_watch_loop())
 
-
 @app.on_event("shutdown")
 async def _stop_background_tasks() -> None:
     for task in (_tag_buffer_task, _db_watch_task):
         if task:
             task.cancel()
     db.close_all_pools()
-
 
 @app.exception_handler(psycopg.OperationalError)
 @app.exception_handler(PoolTimeout)
@@ -352,7 +344,6 @@ async def _db_unavailable(request: Request, exc: Exception) -> JSONResponse:
         status_code=503,
         content={"detail": "Database unreachable - check the connection settings."},
     )
-
 
 @app.get("/api/health")
 @app.get("/health")
@@ -379,9 +370,8 @@ async def health() -> dict[str, object]:
         "checked_at": state["checked_at"],
     }
 
-
 if __name__ == "__main__":
     import uvicorn
 
-    logger.info("Starting SCADA MML API on 0.0.0.0:8088")
+    logger.info("Starting MML-Portal-API")
     uvicorn.run(app, host="0.0.0.0", port=8088)

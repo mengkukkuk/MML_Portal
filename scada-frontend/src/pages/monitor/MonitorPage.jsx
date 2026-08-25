@@ -58,20 +58,37 @@ const FALLBACK_SLUG = 'boiler-1'
 const FALLBACK_NAME = 'Boiler House 1'
 
 /**
- * Demo runs the simulator, so it can tick as fast as it likes. Live opens a
- * fresh libpq connection per reading (`_table_source_conn`, no pool) and Live
- * enforces a 5s floor server-side — so the live cadences start there.
+ * How often the drawing asks for new numbers. Demo and live offer the same
+ * rates so the control means one thing, but each mode remembers its own choice:
+ * a simulator left at 1m is useless, and a plant left at 100ms is expensive.
+ *
+ * Unlike /live panels — whose interval is stored per panel and checked against
+ * `VALID_POLL_INTERVALS` in panels.py — the mimic reads through /api/schema and
+ * nothing on the server bounds its rate. The floor below is ours to hold.
  */
-const DEMO_CADENCES = [
+const CADENCES = [
   { ms: 1000, label: '1s' },
   { ms: 2000, label: '2s' },
   { ms: 5000, label: '5s' },
+  { ms: 30_000, label: '30s' },
+  { ms: 60_000, label: '1m' },
 ]
-const LIVE_CADENCES = [
-  { s: 5, label: '5s' },
-  { s: 30, label: '30s' },
-  { s: 60, label: '1m' },
+
+/**
+ * Behind the guard. Every poll opens a fresh libpq connection per binding
+ * (`_table_source_conn`, no pool), so ten reads a second across a drawing of
+ * thirty symbols is three hundred connections a second at the historian. It is
+ * the right rate for commissioning one loop and the wrong one to leave running.
+ */
+const FAST_CADENCES = [
+  { ms: 500, label: '500ms' },
+  { ms: 100, label: '100ms' },
 ]
+
+/** Where closing the guard puts you back. */
+const GUARDED_FLOOR_MS = 1000
+
+const CADENCE_NOTE_ID = 'mimic-cadence-note'
 
 /** The tag "Simulate excursion" pushes over its high-high limit (demo only). */
 const EXCURSION_TAG = 'TT-202'
@@ -221,13 +238,19 @@ export default function MonitorPage() {
 
   // --- data ----------------------------------------------------------------
   const [demo, setDemo] = useState(false)
-  const [tickMs, setTickMs] = useState(1000)
-  const [pollSeconds, setPollSeconds] = useState(5)
+  const [demoMs, setDemoMs] = useState(1000)
+  const [liveMs, setLiveMs] = useState(5000)
+  // The cover over the sub-second rates. Closed on every page load: an elevated
+  // rate is something you choose for a job in hand, not something you inherit.
+  const [fastOpen, setFastOpen] = useState(false)
+
+  const intervalMs = demo ? demoMs : liveMs
+  const setIntervalMs = demo ? setDemoMs : setLiveMs
 
   const {
     tags, history, events, error: dataError, sources: connSources, simulateExcursion, excursionTag,
   } = usePlantData({
-    nodes, demo, tickMs, pollSeconds,
+    nodes, demo, tickMs: demoMs, pollSeconds: liveMs / 1000,
   })
   const anySourceFailed = connSources.some((s) => !s.ok)
 
@@ -864,33 +887,64 @@ export default function MonitorPage() {
   const viewZoom = Math.round(((layout?.viewBox?.w || VIEW_W) / viewport.w) * 100)
 
 
-  const cadence = demo ? (
-    <div className={styles.cadence} role="group" aria-label="Update interval">
-      {DEMO_CADENCES.map((c) => (
+  const fastActive = FAST_CADENCES.some((c) => c.ms === intervalMs)
+  // A rate in use is never hidden: closing the cover over the button you are
+  // standing on would leave the strip claiming a rate nothing on it shows.
+  const fastShown = fastOpen || fastActive
+
+  const cadenceBtn = (c, fast) => (
+    <button
+      key={c.ms}
+      type="button"
+      className={[
+        styles.cadenceBtn,
+        fast ? styles.cadenceFast : '',
+        intervalMs === c.ms ? styles.cadenceOn : '',
+      ].filter(Boolean).join(' ')}
+      aria-pressed={intervalMs === c.ms}
+      onClick={() => setIntervalMs(c.ms)}
+    >
+      {c.label}
+    </button>
+  )
+
+  const cadence = (
+    <div className={styles.cadenceWrap}>
+      <div
+        className={`${styles.cadence} ${fastActive ? styles.cadenceElevated : ''}`}
+        role="group"
+        aria-label={demo ? 'Update interval' : 'Poll interval'}
+      >
+        {CADENCES.map((c) => cadenceBtn(c, false))}
+        {fastShown && FAST_CADENCES.map((c) => cadenceBtn(c, true))}
         <button
-          key={c.ms}
           type="button"
-          className={`${styles.cadenceBtn} ${tickMs === c.ms ? styles.cadenceOn : ''}`}
-          aria-pressed={tickMs === c.ms}
-          onClick={() => setTickMs(c.ms)}
+          className={styles.cadenceGuard}
+          aria-expanded={fastShown}
+          aria-controls={CADENCE_NOTE_ID}
+          title={fastActive
+            ? `Return to ${GUARDED_FLOOR_MS / 1000}s and close`
+            : fastOpen ? 'Close sub-second rates' : 'Open sub-second rates'}
+          onClick={() => {
+            // Closing the cover puts the rate back, the way a guarded switch
+            // springs shut. Leaving a plant on 100ms because a panel was tidied
+            // away is exactly the outcome the guard exists to prevent.
+            if (fastActive) setIntervalMs(GUARDED_FLOOR_MS)
+            setFastOpen(!fastShown)
+          }}
         >
-          {c.label}
+          {fastShown ? '«' : '»'}
         </button>
-      ))}
-    </div>
-  ) : (
-    <div className={styles.cadence} role="group" aria-label="Poll interval">
-      {LIVE_CADENCES.map((c) => (
-        <button
-          key={c.s}
-          type="button"
-          className={`${styles.cadenceBtn} ${pollSeconds === c.s ? styles.cadenceOn : ''}`}
-          aria-pressed={pollSeconds === c.s}
-          onClick={() => setPollSeconds(c.s)}
-        >
-          {c.label}
-        </button>
-      ))}
+      </div>
+
+      {/* Anchored, so opening the guard cannot shove the page header taller. */}
+      {fastShown && (
+        <p className={styles.cadenceNote} id={CADENCE_NOTE_ID} role="note">
+          {demo
+            ? 'The simulator runs in this browser. Sub-second rates cost nothing but this tab.'
+            : 'Each poll opens one database connection per bound symbol. Use sub-second rates to commission a loop, then step back down.'}
+        </p>
+      )}
     </div>
   )
 
