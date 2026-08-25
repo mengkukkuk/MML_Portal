@@ -148,6 +148,17 @@ apiClient.interceptors.response.use(
       }
     }
 
+    // A gated route just reported the license is missing/blocked. Update the
+    // license store directly from the response we already have — no retry,
+    // no queueing, this is not a transient failure to recover from.
+    if (error.response?.status === 402) {
+      const detail = error.response?.data?.detail
+      const reason = typeof detail === 'object' ? detail?.reason : undefined
+      const { useLicenseStore } = await import('@/stores/license')
+      useLicenseStore.getState().markBlocked(reason)
+      return Promise.reject(error)
+    }
+
     console.error('[api]', original?.url, error.response?.status || error.code || error.message)
 
     if (!original._networkRetry && isRetryableFailure(error) && !isAuthCall) {

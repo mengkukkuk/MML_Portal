@@ -27,10 +27,12 @@ from datetime import datetime, timedelta, timezone
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 import config
+import db
+from auth import require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +45,7 @@ _SUPPORTED_FORMAT_VERSIONS = {1}
 # 32-byte Ed25519 public key, hex-encoded. The matching private key is never
 # committed to this repo — it lives only on the vendor's offline signing
 # machine (see the ad-hoc sign_license.py reference script kept outside the repo).
-_PUBLIC_KEY_HEX = "8aa9eef6babfca36b94a134e8e54b0170e54be38ebe9df9d2ef5fc5d6e2e4ba8"
+_PUBLIC_KEY_HEX = "325e83213c869c5ccac5bdf366e774b15e596479e2ef353bb0e60adc181df280"
 _PUBLIC_KEY = Ed25519PublicKey.from_public_bytes(bytes.fromhex(_PUBLIC_KEY_HEX))
 
 
@@ -203,6 +205,82 @@ def current_status() -> LicenseStatus:
     return _current
 
 
+# --- Dependency gate ----------------------------------------------------------
+# Applied per-router via Depends(), never as ASGI middleware — matches the
+# get_current_user / require_admin idiom in auth.py, and lets /health,
+# auth.router, licensing.router and system.router stay reachable even while
+# the app is otherwise blocked.
+_HUMAN_MESSAGES = {
+    "missing": "No valid license installed. Contact your administrator.",
+    "blocked": "This license has expired and its grace period has ended. Contact your administrator to renew.",
+}
+
+
+def _human_message(status: LicenseStatus) -> str:
+    return _HUMAN_MESSAGES.get(status.state, "This product is not licensed.")
+
+
+def require_valid_license(_status: LicenseStatus = Depends(current_status)) -> LicenseStatus:
+    """Blocks "missing" and "blocked" states; "valid" and "grace" pass through
+    untouched (grace period means full functionality, per the licensing plan).
+    Raises 402, not 403 — 403 stays reserved for role/feature-tier failures on
+    an otherwise-active license, so the frontend can tell "unlicensed" apart
+    from "unauthorized" without parsing the response body on every 403.
+    """
+    if _status.state in ("missing", "blocked"):
+        raise HTTPException(
+            status_code=402,
+            detail={"reason": f"license_{_status.state}", "message": _human_message(_status)},
+        )
+    return _status
+
+
+def require_entitlement(feature: str):
+    """Dependency factory — gate a router/endpoint behind a named Pro-tier feature
+    flag (e.g. "reports", "monitor_editor", "multi_datasource"). Deny-by-default:
+    a payload with no `features` list, or one missing this entry, is not entitled.
+    403, not 402 — the license itself is valid, just this feature isn't included.
+    """
+    def _dependency(_status: LicenseStatus = Depends(require_valid_license)) -> LicenseStatus:
+        features = (_status.payload or {}).get("entitlements", {}).get("features", [])
+        if feature not in features:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "reason": "feature_not_entitled",
+                    "feature": feature,
+                    "tier": (_status.payload or {}).get("tier"),
+                },
+            )
+        return _status
+
+    return _dependency
+
+
+def require_seat_available(_status: LicenseStatus = Depends(require_valid_license)) -> LicenseStatus:
+    """Gate user creation behind `entitlements.limits.max_users`. Absent limit means
+    unlimited. The seeded/initial admin counts toward this cap like any other user."""
+    max_users = (_status.payload or {}).get("entitlements", {}).get("limits", {}).get("max_users")
+    if max_users is not None and db.count_users() >= max_users:
+        raise HTTPException(
+            status_code=403,
+            detail={"reason": "seat_limit_reached", "limit": max_users},
+        )
+    return _status
+
+
+def require_datasource_slot(_status: LicenseStatus = Depends(require_valid_license)) -> LicenseStatus:
+    """Gate datasource creation behind `entitlements.limits.max_datasources`. Absent
+    limit means unlimited."""
+    max_datasources = (_status.payload or {}).get("entitlements", {}).get("limits", {}).get("max_datasources")
+    if max_datasources is not None and db.count_datasources() >= max_datasources:
+        raise HTTPException(
+            status_code=403,
+            detail={"reason": "datasource_limit_reached", "limit": max_datasources},
+        )
+    return _status
+
+
 # --- HTTP surface -------------------------------------------------------------
 router = APIRouter(prefix="/api/license", tags=["license"])
 
@@ -250,3 +328,54 @@ def get_status() -> LicenseStatusOut:
     notes stay server-side / for admin-only surfaces added later.
     """
     return _to_status_out(current_status())
+
+
+@router.post("/activate", response_model=LicenseStatusOut)
+async def activate(
+    text: str | None = Form(None),
+    file: UploadFile | None = File(None),
+    admin: dict = Depends(require_admin),
+) -> LicenseStatusOut:
+    """Admin-only. Verifies the submitted license BEFORE writing anything to disk —
+    a bad paste/upload must never clobber the last known-good license file. Accepts
+    either a pasted token (`text`, multipart form field) or a `.lic` file upload;
+    exactly one is expected.
+    """
+    if file is not None:
+        raw = (await file.read()).decode("utf-8", errors="replace")
+    elif text:
+        raw = text
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail={"reason": "NO_LICENSE_PROVIDED", "message": "Paste a license or choose a file."},
+        )
+
+    candidate = verify_license_string(raw)
+    if candidate.state == "missing":
+        db.insert_license_event(
+            event_type="activation_failed",
+            state=candidate.state,
+            actor_user_id=admin["id"],
+            detail=candidate.error,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={"reason": candidate.error or "INVALID_LICENSE", "message": "License could not be verified."},
+        )
+
+    os.makedirs(os.path.dirname(config.LICENSE_FILE_PATH), exist_ok=True)
+    with open(config.LICENSE_FILE_PATH, "w", encoding="utf-8") as f:
+        f.write(raw.strip() + "\n")
+
+    new_status = refresh()
+    payload = new_status.payload or {}
+    db.insert_license_event(
+        event_type="activated",
+        state=new_status.state,
+        license_id=payload.get("license_id"),
+        tier=payload.get("tier"),
+        expires_at=new_status.expires_at,
+        actor_user_id=admin["id"],
+    )
+    return _to_status_out(new_status)

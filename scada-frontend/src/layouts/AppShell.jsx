@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom'
 import AppSidebar from '@/components/AppSidebar/AppSidebar.jsx'
 import AppHeader from '@/components/AppHeader/AppHeader.jsx'
 import DbStatusBanner from '@/components/DbStatusBanner/DbStatusBanner.jsx'
+import LicenseStatusBanner from '@/components/LicenseStatusBanner/LicenseStatusBanner.jsx'
 import styles from './AppShell.module.css'
 
 /**
@@ -35,6 +36,7 @@ export default function AppShell() {
           <AppHeader collapsed={collapsed} onToggle={toggleSidebar} />
         </header>
         <DbStatusBanner />
+        <LicenseStatusBanner />
         <main className={`${styles.content} app-shell__content`}>
           <div key={location.pathname} className={styles.fade}>
             <Outlet />

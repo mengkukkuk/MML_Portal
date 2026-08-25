@@ -13,6 +13,7 @@ import PersonOutlined from '@mui/icons-material/PersonOutlined'
 import AccountTreeOutlined from '@mui/icons-material/AccountTreeOutlined'
 import AssessmentOutlined from '@mui/icons-material/AssessmentOutlined'
 import { useAuthStore } from '@/stores/auth'
+import { useLicenseStore } from '@/stores/license'
 import styles from './AppSidebar.module.css'
 
 // Nav items ported 1:1 from AppSidebar.vue's `items` computed (Trends
@@ -39,13 +40,18 @@ export default function AppSidebar({ collapsed }) {
   const location = useLocation()
   const navigate = useNavigate()
   const role = useAuthStore((s) => s.user?.role ?? null)
+  // Not a security boundary — the backend gate (require_entitlement("reports"))
+  // is authoritative. This just avoids showing a nav entry that would 403.
+  const hasReports = useLicenseStore((s) => s.hasFeature('reports'))
 
   const activeIndex = '/' + (location.pathname.split('/')[1] || '')
 
+  const visibleItems = hasReports ? BASE_ITEMS : BASE_ITEMS.filter((i) => i.path !== '/reports')
+
   const items =
     role === 'admin'
-      ? [...BASE_ITEMS, { path: '/accounts', title: 'Accounts', Icon: PersonOutlined }]
-      : BASE_ITEMS
+      ? [...visibleItems, { path: '/accounts', title: 'Accounts', Icon: PersonOutlined }]
+      : visibleItems
 
   return (
     <div className={styles.sidebar}>

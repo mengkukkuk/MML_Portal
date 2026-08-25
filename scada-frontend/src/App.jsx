@@ -4,6 +4,8 @@ import CircularProgress from '@mui/material/CircularProgress'
 import { router } from './router/routes.jsx'
 import { bootstrapSession } from './lib/sessionBootstrap'
 import { useHealthPoll } from './lib/useHealthPoll'
+import { useLicenseStore } from './stores/license'
+import ActivateLicensePage from './pages/ActivateLicensePage.jsx'
 
 /**
  * App — gates the first render on the single-flight session bootstrap
@@ -14,6 +16,7 @@ import { useHealthPoll } from './lib/useHealthPoll'
  */
 export default function App() {
   const [bootstrapped, setBootstrapped] = useState(false)
+  const isBlocked = useLicenseStore((s) => s.isBlocked())
 
   // Runs during bootstrap too, so the login page can already say whether the
   // backend and its database are reachable.
@@ -21,7 +24,7 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false
-    bootstrapSession().finally(() => {
+    Promise.all([bootstrapSession(), useLicenseStore.getState().initialize()]).finally(() => {
       if (!cancelled) setBootstrapped(true)
     })
     return () => {
@@ -47,6 +50,14 @@ export default function App() {
         <CircularProgress />
       </div>
     )
+  }
+
+  // Rendered in place of the router entirely — not a route — so a blocked
+  // install can't be navigated away from it via client-side routing. Every
+  // gated API call would 402 anyway; this just avoids showing a broken app
+  // shell that fails on every request.
+  if (isBlocked) {
+    return <ActivateLicensePage />
   }
 
   return <RouterProvider router={router} />

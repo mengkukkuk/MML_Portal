@@ -84,7 +84,12 @@
       "Bash(echo \"$f ok\")",
       "Bash(venv/Scripts/python.exe -m pytest tests/ -q)",
       "Bash(venv/Scripts/python.exe -c \":*)",
-      "Bash(venv/Scripts/python.exe -c \"import db; print\\(''ok''\\)\")"
+      "Bash(venv/Scripts/python.exe -c \"import db; print\\(''ok''\\)\")",
+      "Bash(./venv/Scripts/python.exe -m pytest tests/test_router_envelopes.py::test_schema_latest_reports_a_bad_column_as_400 -q)",
+      "Bash(powershell -NoProfile -Command \"Get-Process -Id 53380 | Select-Object Id,ProcessName,Path,StartTime\")",
+      "Bash(powershell -NoProfile -Command \"Stop-Process -Id 53380 -Force\")",
+      "Bash(powershell -NoProfile -Command \"Get-NetTCPConnection -LocalPort 8088 -State Listen -ErrorAction SilentlyContinue\")",
+      "Bash(./venv/Scripts/python.exe -m pytest tests/ -q)"
     ]
   }
 }

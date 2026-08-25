@@ -14,10 +14,15 @@ import config
 import db
 import security
 from auth import require_admin
+from licensing import require_seat_available, require_valid_license
 
 logger = logging.getLogger("mml-api.users")
 
-router = APIRouter(prefix="/api/users", tags=["users"])
+router = APIRouter(
+    prefix="/api/users",
+    tags=["users"],
+    dependencies=[Depends(require_valid_license)],
+)
 
 VALID_ROLES = {"admin", "operator"}
 
@@ -78,7 +83,11 @@ def list_all_users(_admin: dict = Depends(require_admin)):
 
 
 @router.post("", response_model=UserAdminOut, status_code=status.HTTP_201_CREATED)
-def create_user(body: UserCreate, _admin: dict = Depends(require_admin)):
+def create_user(
+    body: UserCreate,
+    _admin: dict = Depends(require_admin),
+    _seat: object = Depends(require_seat_available),
+):
     username = body.username.strip()
     display_name = body.display_name.strip()
     if not username or not display_name:

@@ -15,9 +15,14 @@ from pydantic import BaseModel, field_validator
 
 import db
 from auth import active_datasources, get_current_user
+from licensing import require_valid_license
 from sources import SourceReport, sort_key
 
-router = APIRouter(prefix="/api/alarms", tags=["alarms"])
+router = APIRouter(
+    prefix="/api/alarms",
+    tags=["alarms"],
+    dependencies=[Depends(require_valid_license)],
+)
 
 
 _VALID_SEVERITIES = ("critical", "warning", "info")

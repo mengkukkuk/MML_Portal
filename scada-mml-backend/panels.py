@@ -16,8 +16,13 @@ from pydantic import BaseModel, Field
 
 import db
 from auth import get_current_user, require_admin, require_operator_or_admin
+from licensing import require_valid_license
 
-router = APIRouter(prefix="/api/panels", tags=["panels"])
+router = APIRouter(
+    prefix="/api/panels",
+    tags=["panels"],
+    dependencies=[Depends(require_valid_license)],
+)
 
 VALID_CHART_TYPES = {
     "timeseries",

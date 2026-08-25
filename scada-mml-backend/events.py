@@ -16,9 +16,14 @@ from pydantic import BaseModel
 
 import db
 from auth import active_datasources, get_current_user
+from licensing import require_valid_license
 from sources import SourceReport, sort_key
 
-router = APIRouter(prefix="/api/events", tags=["events"])
+router = APIRouter(
+    prefix="/api/events",
+    tags=["events"],
+    dependencies=[Depends(require_valid_license)],
+)
 
 
 class EventOut(BaseModel):

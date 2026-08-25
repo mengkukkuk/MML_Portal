@@ -12,8 +12,13 @@ from pydantic import BaseModel, Field
 
 import db
 from auth import get_current_user, require_admin
+from licensing import require_valid_license
 
-router = APIRouter(prefix="/api/dashboards", tags=["dashboards"])
+router = APIRouter(
+    prefix="/api/dashboards",
+    tags=["dashboards"],
+    dependencies=[Depends(require_valid_license)],
+)
 
 
 class DashboardOut(BaseModel):

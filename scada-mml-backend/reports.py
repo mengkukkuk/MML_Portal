@@ -27,9 +27,14 @@ from pydantic import BaseModel, Field
 import db
 import report_engine as engine
 from auth import active_datasources, get_current_user, require_admin
+from licensing import require_entitlement, require_valid_license
 from sources import SourceReport, sort_key
 
-router = APIRouter(prefix="/api/reports", tags=["reports"])
+router = APIRouter(
+    prefix="/api/reports",
+    tags=["reports"],
+    dependencies=[Depends(require_valid_license), Depends(require_entitlement("reports"))],
+)
 
 #: Hard ceiling on an export. Large enough to cover a month of a busy line,
 #: small enough that one click cannot exhaust the worker's memory. The response

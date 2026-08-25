@@ -15,9 +15,14 @@ from pydantic import BaseModel, ConfigDict
 
 import db
 from auth import active_datasources, get_current_user
+from licensing import require_valid_license
 from sources import SourceReport
 
-router = APIRouter(prefix="/api/tags", tags=["tags"])
+router = APIRouter(
+    prefix="/api/tags",
+    tags=["tags"],
+    dependencies=[Depends(require_valid_license)],
+)
 
 
 class TagOut(BaseModel):

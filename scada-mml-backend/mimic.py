@@ -23,8 +23,13 @@ from pydantic import BaseModel, Field
 
 import db
 from auth import get_current_user, require_admin
+from licensing import require_entitlement, require_valid_license
 
-router = APIRouter(prefix="/api/mimic", tags=["mimic"])
+router = APIRouter(
+    prefix="/api/mimic",
+    tags=["mimic"],
+    dependencies=[Depends(require_valid_license)],
+)
 
 # Guard rails on the document. A mimic is one plant on one screen; anything
 # past this is a runaway client, not a drawing someone made.
@@ -307,7 +312,12 @@ def get_layout(slug: str, _user: dict = Depends(get_current_user)):
 
 
 @router.put("/layouts/{slug}", response_model=MimicOut)
-def save_layout(slug: str, body: MimicIn, _admin: dict = Depends(require_admin)):
+def save_layout(
+    slug: str,
+    body: MimicIn,
+    _admin: dict = Depends(require_admin),
+    _tier: object = Depends(require_entitlement("monitor_editor")),
+):
     """Upsert the whole document. Partial saves would let the drawing and its
     bindings drift out of step, so there is no PATCH."""
     slug = slug.strip()
@@ -336,7 +346,11 @@ def save_layout(slug: str, body: MimicIn, _admin: dict = Depends(require_admin))
 
 
 @router.delete("/layouts/{slug}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_layout(slug: str, _admin: dict = Depends(require_admin)):
+def delete_layout(
+    slug: str,
+    _admin: dict = Depends(require_admin),
+    _tier: object = Depends(require_entitlement("monitor_editor")),
+):
     """Remove a drawing entirely. There is no soft delete: a mimic is a
     commissioned document, and leaving a hidden one behind would let its slug
     silently block a later drawing of the same name."""
@@ -434,6 +448,7 @@ def list_assets(_user: dict = Depends(get_current_user)):
 async def upload_asset(
     file: UploadFile = File(...),
     admin: dict = Depends(require_admin),
+    _tier: object = Depends(require_entitlement("monitor_editor")),
 ):
     """Store one image for use as a custom symbol's picture.
 
@@ -493,7 +508,11 @@ def get_asset(asset_id: int, _user: dict = Depends(get_current_user)):
 
 
 @router.delete("/assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_asset(asset_id: int, _admin: dict = Depends(require_admin)):
+def delete_asset(
+    asset_id: int,
+    _admin: dict = Depends(require_admin),
+    _tier: object = Depends(require_entitlement("monitor_editor")),
+):
     """Remove an upload. Refused while a library symbol still draws with it —
     deleting it anyway would turn every drawing using that symbol into a
     placeholder, with nothing on screen to explain why."""
@@ -629,12 +648,21 @@ def list_symbols(_user: dict = Depends(get_current_user)):
 
 
 @router.post("/symbols", response_model=SymbolOut, status_code=status.HTTP_201_CREATED)
-def create_symbol(body: SymbolIn, _admin: dict = Depends(require_admin)):
+def create_symbol(
+    body: SymbolIn,
+    _admin: dict = Depends(require_admin),
+    _tier: object = Depends(require_entitlement("monitor_editor")),
+):
     return db.insert_mimic_symbol(_validate_symbol(body))
 
 
 @router.put("/symbols/{symbol_id}", response_model=SymbolOut)
-def update_symbol(symbol_id: int, body: SymbolIn, _admin: dict = Depends(require_admin)):
+def update_symbol(
+    symbol_id: int,
+    body: SymbolIn,
+    _admin: dict = Depends(require_admin),
+    _tier: object = Depends(require_entitlement("monitor_editor")),
+):
     row = db.update_mimic_symbol(symbol_id, _validate_symbol(body))
     if row is None:
         raise HTTPException(
@@ -644,7 +672,11 @@ def update_symbol(symbol_id: int, body: SymbolIn, _admin: dict = Depends(require
 
 
 @router.delete("/symbols/{symbol_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_symbol(symbol_id: int, _admin: dict = Depends(require_admin)):
+def delete_symbol(
+    symbol_id: int,
+    _admin: dict = Depends(require_admin),
+    _tier: object = Depends(require_entitlement("monitor_editor")),
+):
     if not db.delete_mimic_symbol(symbol_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Symbol not found"

@@ -179,6 +179,36 @@ if (-not (Test-Path $envFile)) {
     Write-OK "  $envFile"
 }
 
+# -- Step 5b - License (optional, non-fatal) -----------------------------------
+Write-Step "License activation"
+$licenseDir  = "C:\ProgramData\MMLPortal"
+$licenseFile = Join-Path $licenseDir "license.lic"
+New-Item -ItemType Directory -Force $licenseDir | Out-Null
+
+if (Test-Path $licenseFile) {
+    Write-OK "License already present at $licenseFile - skipping."
+} else {
+    Write-Host ""
+    Write-Host "    Paste your license text below, or press Enter to skip and" -ForegroundColor Yellow
+    Write-Host "    activate later from an admin account in the app." -ForegroundColor Yellow
+    Write-Host ""
+    $licenseInput = Read-Host "    License text (Enter to skip)"
+
+    if (-not $licenseInput) {
+        Write-Warn "No license provided - continuing install in unlicensed mode."
+    } else {
+        $licenseInput | Out-File $licenseFile -Encoding utf8 -NoNewline
+        $verifyScript = Join-Path $SCRIPT_DIR "verify_license.py"
+        $verifyOutput = & $VENV_PYTHON $verifyScript $licenseFile 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-OK "License verified: $verifyOutput"
+        } else {
+            Write-Warn "License could not be verified: $verifyOutput"
+            Write-Warn "Install will continue; activate a valid license later from an admin account."
+        }
+    }
+}
+
 # -- Step 6 - Logs directory --------------------------------------------------
 Write-Step "Creating logs directory"
 New-Item -ItemType Directory -Force $LOG_DIR | Out-Null

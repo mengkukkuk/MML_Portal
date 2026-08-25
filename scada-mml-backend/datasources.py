@@ -19,8 +19,13 @@ from pydantic import BaseModel, Field
 import db
 import config
 from auth import get_current_user, require_admin
+from licensing import current_status, require_datasource_slot, require_valid_license
 
-router = APIRouter(prefix="/api/datasources", tags=["datasources"])
+router = APIRouter(
+    prefix="/api/datasources",
+    tags=["datasources"],
+    dependencies=[Depends(require_valid_license)],
+)
 
 VALID_TYPES = {"postgres", "timescaledb"}
 VALID_SSLMODES = {"disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
@@ -152,6 +157,13 @@ def get_selection(current_user: dict = Depends(get_current_user)):
 
 @router.put("/selection", response_model=SelectionOut)
 def put_selection(body: SelectionIn, current_user: dict = Depends(get_current_user)):
+    if len(body.datasource_ids) > 1:
+        features = (current_status().payload or {}).get("entitlements", {}).get("features", [])
+        if "multi_datasource" not in features:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"reason": "feature_not_entitled", "feature": "multi_datasource"},
+            )
     try:
         db.set_user_selection(current_user["id"], body.datasource_ids)
     except ValueError as e:
@@ -167,7 +179,11 @@ def clear_selection(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("", response_model=DatasourceOut, status_code=status.HTTP_201_CREATED)
-def create_datasource(body: DatasourceIn, _admin: dict = Depends(require_admin)):
+def create_datasource(
+    body: DatasourceIn,
+    _admin: dict = Depends(require_admin),
+    _slot: object = Depends(require_datasource_slot),
+):
     _validate(body)
     try:
         return db.create_datasource(

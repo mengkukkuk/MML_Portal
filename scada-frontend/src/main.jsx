@@ -17,6 +17,7 @@ import CssBaseline from '@mui/material/CssBaseline'
 // never forgotten later.
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
+import './fonts.css'
 import './styles/index.css'
 
 import { queryClient } from './lib/queryClient'

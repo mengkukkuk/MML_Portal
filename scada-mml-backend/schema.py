@@ -29,9 +29,14 @@ from pydantic import BaseModel
 
 import db
 from auth import active_datasources, get_current_user
+from licensing import require_valid_license
 from sources import SourceReport
 
-router = APIRouter(prefix="/api/schema", tags=["schema"])
+router = APIRouter(
+    prefix="/api/schema",
+    tags=["schema"],
+    dependencies=[Depends(require_valid_license)],
+)
 
 
 def _detail(e: Exception) -> str:
