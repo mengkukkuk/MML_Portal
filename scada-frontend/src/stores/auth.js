@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { login, logout, refreshToken, getProfile, register } from '@/api/auth'
 import { setAccessToken, clearAccessToken, apiErrorMessage } from '@/api/client'
+import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 
 /**
  * auth — ported 1:1 from the Pinia store (src/stores/auth.js).
@@ -93,6 +94,10 @@ export const useAuthStore = create((set, get) => ({
 
   _clearSession() {
     clearAccessToken()
+    // The datasource selection is per user and lives on the server. Dropping the
+    // local mirror stops the next sign-in from briefly rendering the previous
+    // user's plants — and from keying its first queries by them.
+    useDatasourceSelectionStore.getState().reset()
     set({ hasToken: false, user: null })
   },
 }))

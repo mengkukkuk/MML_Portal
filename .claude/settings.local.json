@@ -68,7 +68,23 @@
       "Bash(sc qc:*)",
       "Bash(reg query:*)",
       "Bash(nssm restart:*)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:8088/health)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:8088/health)",
+      "Read(//g/Code/scada-frontend/src/components/**)",
+      "Read(//g/Code/scada-frontend/src/router/**)",
+      "Bash(grep -E \"\\\\.py$\")",
+      "Bash(ls /g/Code/DEV/scada-mml-backend/*.md)",
+      "Bash(ls -la /G/Code/DEV/*.md)",
+      "Read(//g/Code/DEV/$APPDATA/**)",
+      "Read(//g/Code/DEV/$LOCALAPPDATA/**)",
+      "Bash(venv/Scripts/python.exe -c \"import main; print\\(''''ok''''\\)\")",
+      "Bash(grep -rn \"DATABASE_URL\\\\|DB_TARGET\\\\|DB_FALLBACK\\\\|candidate_report\\\\|db\\\\.failback\\\\|is_fallback\\\\|DB_HOST\\\\|DB_PASSWORD\\\\|DB_NAME\\\\|DB_USER\\\\|DB_PORT\" --include=*.py --include=*.ps1 --include=*.js --include=*.jsx --include=*.md --include=*.example --include=*.html . ../scada-frontend/src ../README.md ../MML_DEVELOPMENT.md ../CLAUDE.md)",
+      "Bash(sed -n '1,60p' simulate_data.py)",
+      "Bash(sed -n '140,200p' simulate_data.py)",
+      "Bash(do venv/Scripts/python.exe -c \"import $f\")",
+      "Bash(echo \"$f ok\")",
+      "Bash(venv/Scripts/python.exe -m pytest tests/ -q)",
+      "Bash(venv/Scripts/python.exe -c \":*)",
+      "Bash(venv/Scripts/python.exe -c \"import db; print\\(''ok''\\)\")"
     ]
   }
 }

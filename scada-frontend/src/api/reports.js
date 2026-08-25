@@ -6,6 +6,12 @@ import { apiClient } from './client'
  * Reads and runs are open to any signed-in user; template and settings writes
  * are admin-only (enforced server-side).
  *
+ * Templates and settings come from the app's own config database; everything
+ * that reads a log table answers for the datasources selected in the header.
+ * A machine's identity is therefore `(datasource_id, location, tag_name)` —
+ * two plants routinely both have a `Line 1 / M01`, and merging them would add
+ * one plant's downtime to the other's.
+ *
  * ⚠ Timestamps: the backend works in naive server-local time end to end (its
  * `datetime.now()` is naive, and comparing that to a tz-aware value raises).
  * `toNaive()` below is therefore not cosmetic — sending `.toISOString()`, which
@@ -72,7 +78,9 @@ export async function fetchCatalog(refresh = false) {
   const { data } = await apiClient.get('/reports/catalog', {
     params: refresh ? { refresh: true } : {},
   })
-  return data // [{ location, tag_name }]
+  // A flat merged list, not an envelope — the filter pickers consume it
+  // directly and an unreachable source simply contributes no options.
+  return data // [{ location, tag_name, datasource_id, datasource_name }]
 }
 
 // --- running ---------------------------------------------------------------
@@ -104,10 +112,15 @@ export async function runReport({
   // Report runs scan the log table and legitimately outrun the client's default
   // 10s timeout on a wide window.
   const { data } = await apiClient.post('/reports/run', body, { timeout: 120_000 })
+  // { window, totals, machines: [{ …, datasource_id, datasource_name }],
+  //   sources: [{ datasource_id, datasource_name, ok, error }], … }
   return data
 }
 
-/** One page of raw event_logs rows. `total` drives the pager. */
+/**
+ * One page of raw event_logs rows, merged across the selected sources.
+ * `total` drives the pager; `sources` reports the ones that did not answer.
+ */
 export async function fetchReportLogs({
   start,
   end,
@@ -132,5 +145,5 @@ export async function fetchReportLogs({
     paramsSerializer: { indexes: null },
     timeout: 120_000,
   })
-  return data // { total, limit, offset, truncated, rows }
+  return data // { total, limit, offset, truncated, rows, sources }
 }

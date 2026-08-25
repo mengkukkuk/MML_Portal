@@ -16,7 +16,7 @@ import useMimicPlant from './useMimicPlant'
  */
 
 const EMPTY = {
-  tags: {}, history: {}, events: [], ts: 0, running: false, error: '',
+  tags: {}, history: {}, events: [], ts: 0, running: false, error: '', sources: [],
 }
 
 /**
@@ -59,6 +59,8 @@ function remapDemo(snapshot, nodes) {
     ts: snapshot.ts,
     running: snapshot.running,
     error: '',
+    // Demo mode has no real datasources to report on.
+    sources: [],
   }
 }
 

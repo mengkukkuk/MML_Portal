@@ -9,6 +9,8 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider'
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
 import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import { fetchRecentEvents } from '@/api/events'
+import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
+import SourceStatus from '@/components/SourceStatus/SourceStatus.jsx'
 import styles from './EventPage.module.css'
 
 /**
@@ -45,14 +47,21 @@ export default function EventPage() {
   const [filterLocation, setFilterLocation] = useState('')
   const [filterTagName, setFilterTagName] = useState('')
 
+  // selectionKey is part of the key, not just an invalidation trigger: the rows
+  // are merged from whichever plants are selected, so a different selection is a
+  // different result set rather than a stale one.
+  const selectionKey = useDatasourceSelectionStore((s) => s.selectionKey)
+
   const eventsQuery = useQuery({
-    queryKey: ['events', 'recent', perCard],
+    queryKey: ['events', 'recent', perCard, selectionKey],
     queryFn: () => fetchRecentEvents(perCard),
     refetchInterval: POLL_MS,
     refetchIntervalInBackground: true,
   })
 
-  const events = eventsQuery.data ?? []
+  const events = eventsQuery.data?.events ?? []
+  const sources = eventsQuery.data?.sources ?? []
+  const multiSource = sources.length > 1
   const loading = eventsQuery.isLoading
   const error = eventsQuery.error
     ? eventsQuery.error?.response?.data?.detail || eventsQuery.error?.message || String(eventsQuery.error)
@@ -102,25 +111,40 @@ export default function EventPage() {
       rows = rows.filter((e) => (e.tag_name ?? UNKNOWN) === filterTagName)
     }
 
-    const locations = []
-    let curLoc = null
-    let curTag = null
+    // Keyed by source *and* location, not location alone. Two plants routinely
+    // both call a line "Line 1", and they are different physical lines — folding
+    // them into one band would merge unrelated machines into a single timeline.
+    // A Map rather than the previous adjacency scan because the merged list is
+    // ordered by location first, so one source's rows are not contiguous.
+    const byLocation = new Map()
     for (const row of rows) {
       const location = row.location ?? UNKNOWN
       const tagName = row.tag_name ?? UNKNOWN
-      if (!curLoc || curLoc.location !== location) {
-        curLoc = { location, tags: [], eventCount: 0 }
-        locations.push(curLoc)
-        curTag = null
+      const locKey = `${row.datasource_id ?? ''}::${location}`
+      let loc = byLocation.get(locKey)
+      if (!loc) {
+        loc = {
+          key: locKey,
+          location,
+          datasource_id: row.datasource_id ?? null,
+          datasource_name: row.datasource_name ?? null,
+          tags: new Map(),
+          eventCount: 0,
+        }
+        byLocation.set(locKey, loc)
       }
-      if (!curTag || curTag.tag_name !== tagName) {
-        curTag = { tag_name: tagName, events: [] }
-        curLoc.tags.push(curTag)
+      let tag = loc.tags.get(tagName)
+      if (!tag) {
+        tag = { key: `${locKey}::${tagName}`, tag_name: tagName, events: [] }
+        loc.tags.set(tagName, tag)
       }
-      curTag.events.push(row)
-      curLoc.eventCount += 1
+      tag.events.push(row)
+      loc.eventCount += 1
     }
-    return locations
+    return [...byLocation.values()].map((loc) => ({
+      ...loc,
+      tags: [...loc.tags.values()],
+    }))
   }, [events, filterStartDate, filterEndDate, filterLocation, filterTagName])
 
   const hasActiveFilters = !!(filterStartDate || filterEndDate || filterLocation || filterTagName)
@@ -238,6 +262,8 @@ export default function EventPage() {
           )}
         </div>
 
+        <SourceStatus sources={sources} />
+
         {error && <p className={styles['page__error']}>{error}</p>}
         {!error && loading && !events.length && (
           <p className={styles['page__empty']}>Loading events…</p>
@@ -249,9 +275,12 @@ export default function EventPage() {
         )}
 
         {grouped.map((loc) => (
-          <section key={loc.location} className={styles['evt__loc']}>
+          <section key={loc.key} className={styles['evt__loc']}>
             <header className={styles['evt__loc-head']}>
               <span className={styles['evt__loc-name']}>{loc.location}</span>
+              {multiSource && loc.datasource_name && (
+                <span className={styles['evt__source']}>{loc.datasource_name}</span>
+              )}
               <span className={styles['evt__loc-meta']}>
                 {loc.tags.length} {loc.tags.length === 1 ? 'tag' : 'tags'} · {loc.eventCount}{' '}
                 {loc.eventCount === 1 ? 'event' : 'events'}
@@ -260,11 +289,11 @@ export default function EventPage() {
 
             <div className={styles['evt__stack']}>
               {loc.tags.map((tag) => {
-                const key = `${loc.location}::${tag.tag_name}`
+                const key = tag.key
                 const isOpen = expanded === key
                 return (
                   <article
-                    key={tag.tag_name}
+                    key={key}
                     className={`${styles['evt__tag']} ${!isOpen ? styles['evt__tag--collapsed'] : ''}`}
                   >
                     <header className={styles['evt__tag-head']} onClick={() => toggleCard(key)}>
@@ -288,7 +317,7 @@ export default function EventPage() {
                       <ol className={styles['evt__timeline']}>
                         {tag.events.map((ev, i) => (
                           <li
-                            key={i}
+                            key={`${ev.at_date_time}::${ev.event}::${i}`}
                             className={`${styles['evt__item']} ${i === 0 ? styles['evt__item--latest'] : ''}`}
                           >
                             <span className={styles['evt__node']} aria-hidden="true" />

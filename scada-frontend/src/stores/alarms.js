@@ -18,6 +18,8 @@ import { fetchRecentAlarms, fetchActiveAlarms, acknowledgeAlarm } from '@/api/al
 export const useAlarmsStore = create((set, get) => ({
   alarms: [],
   activeAlarms: [],
+  /** Per-source {ok, error} — a failed plant looks like a quiet one without it. */
+  sources: [],
   loading: false,
   activeLoading: false,
   error: null,
@@ -31,8 +33,8 @@ export const useAlarmsStore = create((set, get) => ({
   async load(limit = 10) {
     set({ loading: true, error: null })
     try {
-      const alarms = await fetchRecentAlarms(limit)
-      set({ alarms, updatedAt: new Date() })
+      const { alarms, sources } = await fetchRecentAlarms(limit)
+      set({ alarms, sources, updatedAt: new Date() })
     } catch (e) {
       set({ error: e?.response?.data?.detail || e?.message || String(e) })
     } finally {
@@ -46,7 +48,7 @@ export const useAlarmsStore = create((set, get) => ({
     if (get().activeLoading) return
     set({ activeLoading: true, activeError: null })
     try {
-      const activeAlarms = await fetchActiveAlarms()
+      const { alarms: activeAlarms } = await fetchActiveAlarms()
       set({ activeAlarms })
     } catch (e) {
       set({ activeError: e?.response?.data?.detail || e?.message || String(e) })
@@ -55,13 +57,21 @@ export const useAlarmsStore = create((set, get) => ({
     }
   },
 
-  async acknowledge(id) {
-    if (get().acking.has(id)) return
-    set((state) => ({ acking: new Set(state.acking).add(id) }))
+  /**
+   * Acknowledge one alarm. Takes the row, not just the id: alarm ids come from
+   * each plant's own sequence, so id 42 exists in every selected source and
+   * means a different alarm in each. `acking` is keyed the same way.
+   */
+  async acknowledge(alarm) {
+    const key = `${alarm.datasource_id ?? ''}::${alarm.id}`
+    if (get().acking.has(key)) return
+    set((state) => ({ acking: new Set(state.acking).add(key) }))
     try {
-      const updated = await acknowledgeAlarm(id)
+      const updated = await acknowledgeAlarm(alarm.id, alarm.datasource_id)
       set((state) => {
-        const i = state.alarms.findIndex((x) => x.id === id)
+        const i = state.alarms.findIndex(
+          (x) => x.id === alarm.id && x.datasource_id === alarm.datasource_id
+        )
         if (i === -1) return {}
         const alarms = [...state.alarms]
         alarms[i] = { ...alarms[i], ...updated }
@@ -72,7 +82,7 @@ export const useAlarmsStore = create((set, get) => ({
     } finally {
       set((state) => {
         const acking = new Set(state.acking)
-        acking.delete(id)
+        acking.delete(key)
         return { acking }
       })
     }

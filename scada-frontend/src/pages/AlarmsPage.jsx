@@ -7,6 +7,8 @@ import MenuItem from '@mui/material/MenuItem'
 import CircularProgress from '@mui/material/CircularProgress'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import { fetchRecentAlarms, fetchActiveAlarms, acknowledgeAlarm } from '@/api/alarms'
+import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
+import SourceStatus from '@/components/SourceStatus/SourceStatus.jsx'
 import styles from './AlarmsPage.module.css'
 
 /**
@@ -50,27 +52,35 @@ export default function AlarmsPage() {
   const [perCard, setPerCard] = useState(10)
   const [expanded, setExpanded] = useState(null) // key of currently open card, null = all collapsed
 
+  // In the key rather than only invalidated on change: rows are merged from the
+  // selected plants, so a new selection is a different result set.
+  const selectionKey = useDatasourceSelectionStore((s) => s.selectionKey)
+
   const recentQuery = useQuery({
-    queryKey: ['alarms', 'recent', perCard],
+    queryKey: ['alarms', 'recent', perCard, selectionKey],
     queryFn: () => fetchRecentAlarms(perCard),
     refetchInterval: POLL_MS,
     refetchIntervalInBackground: true,
   })
 
   const activeQuery = useQuery({
-    queryKey: ['alarms', 'active'],
+    queryKey: ['alarms', 'active', selectionKey],
     queryFn: fetchActiveAlarms,
     refetchInterval: ACTIVE_POLL_MS,
     refetchIntervalInBackground: true,
   })
 
+  // The row, not the id: alarm ids come from each plant's own sequence, so the
+  // acknowledge has to name which database it means.
   const ackMutation = useMutation({
-    mutationFn: acknowledgeAlarm,
+    mutationFn: (alarm) => acknowledgeAlarm(alarm.id, alarm.datasource_id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['alarms', 'recent'] }),
   })
 
-  const alarms = recentQuery.data ?? []
-  const activeAlarms = activeQuery.data ?? []
+  const alarms = recentQuery.data?.alarms ?? []
+  const sources = recentQuery.data?.sources ?? []
+  const activeAlarms = activeQuery.data?.alarms ?? []
+  const multiSource = sources.length > 1
   const loading = recentQuery.isLoading
   const error = recentQuery.error
     ? recentQuery.error?.response?.data?.detail || recentQuery.error?.message || String(recentQuery.error)
@@ -78,31 +88,51 @@ export default function AlarmsPage() {
 
   const hasActive = activeAlarms.length > 0
 
+  // Keyed by source *and* location. Two plants routinely both call a line
+  // "Line 1" and they are different physical lines; folding them into one band
+  // would show an operator a single tag card mixing two machines' alarms. A Map
+  // rather than the previous adjacency scan because the merged list is ordered
+  // by location first, so one source's rows are not contiguous.
   const grouped = useMemo(() => {
-    const locations = []
-    let curLoc = null
-    let curTag = null
+    const byLocation = new Map()
     for (const row of alarms) {
       const location = row.location ?? UNKNOWN
       const tagName = row.tag_name ?? UNKNOWN
-      if (!curLoc || curLoc.location !== location) {
-        curLoc = { location, tags: [], alarmCount: 0 }
-        locations.push(curLoc)
-        curTag = null
+      const locKey = `${row.datasource_id ?? ''}::${location}`
+      let loc = byLocation.get(locKey)
+      if (!loc) {
+        loc = {
+          key: locKey,
+          location,
+          datasource_name: row.datasource_name ?? null,
+          tags: new Map(),
+          alarmCount: 0,
+        }
+        byLocation.set(locKey, loc)
       }
-      if (!curTag || curTag.tag_name !== tagName) {
-        curTag = { tag_name: tagName, alarms: [], severity: 'info', unacked: 0 }
-        curLoc.tags.push(curTag)
+      let tag = loc.tags.get(tagName)
+      if (!tag) {
+        tag = {
+          key: `${locKey}::${tagName}`,
+          tag_name: tagName,
+          alarms: [],
+          severity: 'info',
+          unacked: 0,
+        }
+        loc.tags.set(tagName, tag)
       }
-      curTag.alarms.push(row)
+      tag.alarms.push(row)
       const sev = row.severity || 'info'
-      if ((SEV_RANK[sev] || 0) > (SEV_RANK[curTag.severity] || 0)) {
-        curTag.severity = sev
+      if ((SEV_RANK[sev] || 0) > (SEV_RANK[tag.severity] || 0)) {
+        tag.severity = sev
       }
-      if (!row.acknowledged) curTag.unacked += 1
-      curLoc.alarmCount += 1
+      if (!row.acknowledged) tag.unacked += 1
+      loc.alarmCount += 1
     }
-    return locations
+    return [...byLocation.values()].map((loc) => ({
+      ...loc,
+      tags: [...loc.tags.values()],
+    }))
   }, [alarms])
 
   const isEmpty = !loading && !error && grouped.length === 0
@@ -158,7 +188,7 @@ export default function AlarmsPage() {
           <div className={styles['alm__active-grid']}>
             {activeAlarms.map((al) => (
               <article
-                key={`${al.location}::${al.tag_name}::${al.alarm_no}`}
+                key={`${al.datasource_id ?? ''}::${al.location}::${al.tag_name}::${al.alarm_no}`}
                 className={`${styles['alm__active-card']} ${styles[`alm__active-card--${al.severity || 'info'}`]}`}
               >
                 <div className={styles['alm__active-card-top']}>
@@ -168,7 +198,10 @@ export default function AlarmsPage() {
                   <span className={styles['alm__active-value']}>{al.alarm_value ?? '—'}</span>
                 </div>
                 <span className={styles['alm__active-tag']}>{al.tag_name ?? '—'}</span>
-                <span className={styles['alm__active-loc']}>{al.location ?? '—'}</span>
+                <span className={styles['alm__active-loc']}>
+                  {al.location ?? '—'}
+                  {multiSource && al.datasource_name ? ` · ${al.datasource_name}` : ''}
+                </span>
                 <p className={styles['alm__active-msg']}>{al.alarm ?? '—'}</p>
                 <time className={styles['alm__active-time']}>{fmtTime(al.at_date_time)}</time>
               </article>
@@ -177,6 +210,8 @@ export default function AlarmsPage() {
         </section>
       )}
 
+      <SourceStatus sources={sources} />
+
       {error && <p className={styles['page__error']}>{error}</p>}
       {!error && loading && !alarms.length && (
         <p className={styles['page__empty']}>Loading alarms…</p>
@@ -184,9 +219,12 @@ export default function AlarmsPage() {
       {!error && isEmpty && <p className={styles['page__empty']}>No alarms recorded.</p>}
 
       {grouped.map((loc) => (
-        <section key={loc.location} className={styles['alm__loc']}>
+        <section key={loc.key} className={styles['alm__loc']}>
           <header className={styles['alm__loc-head']}>
             <span className={styles['alm__loc-name']}>{loc.location}</span>
+            {multiSource && loc.datasource_name && (
+              <span className={styles['alm__source']}>{loc.datasource_name}</span>
+            )}
             <span className={styles['alm__loc-meta']}>
               {loc.tags.length} {loc.tags.length === 1 ? 'tag' : 'tags'} · {loc.alarmCount}{' '}
               {loc.alarmCount === 1 ? 'alarm' : 'alarms'}
@@ -195,11 +233,11 @@ export default function AlarmsPage() {
 
           <div className={styles['alm__stack']}>
             {loc.tags.map((tag) => {
-              const key = `${loc.location}::${tag.tag_name}`
+              const key = tag.key
               const isOpen = expanded === key
               return (
                 <article
-                  key={tag.tag_name}
+                  key={key}
                   className={`${styles['alm__tag']} ${styles[`alm__tag--${tag.severity}`]} ${
                     !isOpen ? styles['alm__tag--collapsed'] : ''
                   }`}
@@ -235,10 +273,13 @@ export default function AlarmsPage() {
                   {isOpen && (
                     <ol className={styles['alm__timeline']}>
                       {tag.alarms.map((al, i) => {
-                        const isPending = ackMutation.variables === al.id && ackMutation.isPending
+                        const isPending =
+                          ackMutation.isPending &&
+                          ackMutation.variables?.id === al.id &&
+                          ackMutation.variables?.datasource_id === al.datasource_id
                         return (
                           <li
-                            key={al.id}
+                            key={`${al.datasource_id ?? ''}::${al.id}`}
                             className={`${styles['alm__item']} ${styles[`alm__item--${al.severity || 'info'}`]} ${
                               i === 0 ? styles['alm__item--latest'] : ''
                             }`}
@@ -263,7 +304,7 @@ export default function AlarmsPage() {
                                     type="button"
                                     className={styles['alm__ack-btn']}
                                     disabled={isPending}
-                                    onClick={() => ackMutation.mutate(al.id)}
+                                    onClick={() => ackMutation.mutate(al)}
                                   >
                                     {isPending ? (
                                       <CircularProgress size={10} color="inherit" />

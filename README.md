@@ -49,7 +49,7 @@ C:\dev\
 │   ├── init_db.sql                 ← aspirational multi-schema reference (not loaded today)
 │   ├── tests\                      ← pytest suite
 │   ├── requirements.txt
-│   ├── .env.example                ← copy to .env and fill DB_PASSWORD + JWT_SECRET (+ Brevo/SMTP)
+│   ├── .env.example                ← copy to .env and fill JWT_SECRET (+ Brevo/SMTP)
 │   ├── .env                        ← LOCAL SECRETS — do NOT commit
 │   ├── logs\                       ← NSSM stdout/stderr (installer creates this)
 │   └── venv\                       ← Python 3.14 virtual environment (created by installer)
@@ -149,7 +149,6 @@ What it does:
 2. Locates `nssm.exe` (vendored, project dir, or PATH).
 3. Creates `venv\` if missing, installs `requirements.txt`.
 4. On first run, copies `.env.example` → `.env` and **interactively** prompts for:
-   - `DB_PASSWORD` (Postgres password — required, no default)
    - `JWT_SECRET` (Enter = auto-generate `secrets.token_hex(32)`)
    - `CORS_ORIGINS` (default `http://localhost:5173`)
 5. Creates `scada-mml-backend\logs\` for NSSM stdout/stderr.
@@ -175,7 +174,7 @@ cd C:\dev\scada-mml-backend
 py -3.14 -m venv venv
 .\venv\Scripts\python.exe -m pip install --upgrade pip
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
-Copy-Item .env.example .env         # then edit .env (set DB_PASSWORD + JWT_SECRET)
+Copy-Item .env.example .env         # then edit .env (set JWT_SECRET)
 .\venv\Scripts\python.exe seed_users.py
 
 # Register the NSSM service by hand
@@ -257,47 +256,68 @@ falls back to when a variable is unset; example values are illustrative.
 
 ### 4.1 Database
 
+The app uses **two kinds of database**, and the distinction is the reason there is almost
+nothing to configure here.
+
 | Key | Default | Example | Purpose |
 |---|---|---|---|
-| `DB_HOST` | `localhost` | `localhost` | Postgres host |
-| `DB_PORT` | `5432` | `5432` | Postgres port |
-| `DB_NAME` | `postgres` | `postgres` | Database name |
-| `DB_USER` | `postgres` | `postgres` | Database user |
-| `DB_PASSWORD` | *(empty)* | `P@ssw0rd` | **Required** — Postgres password |
-| `DB_CONNECT_TIMEOUT` | `5` | `5` | Seconds to wait for a TCP connect. Keep it small — without it an unreachable host blocks on the OS timeout. |
-| `DB_FALLBACK_1_HOST` | *(unset)* | `192.168.1.50` | Enables failover to a second database (see 4.1.1). Repeat as `_2_`, `_3_`, … |
-| `DB_FALLBACK_1_PORT` / `_NAME` / `_USER` / `_PASSWORD` | *(inherits primary)* | | Only set what differs from the primary. |
-| `DB_FAILOVER_COOLDOWN` | `10` | `10` | Seconds to fail fast after every candidate failed, rather than retrying each host on every request. |
-| `DB_TARGET` | *(unset)* | `fallback1` | Pins one database and disables failover. Used when seeding a fallback. |
+| `DB_CONNECT_TIMEOUT` | `5` | `5` | Seconds to wait for a TCP connect to a *plant* database. Keep it small — without it an unreachable host blocks on the OS timeout. |
 
-#### 4.1.1 Database failover
+There is deliberately **no** `DB_HOST` / `DB_NAME` / `DB_USER` / `DB_PASSWORD`. Setting them
+has no effect.
 
-The API starts and keeps serving even when its database is unreachable: `/health` stays 200
-with `"db": "unreachable"`, data routes answer `503`, and the service picks the database back
-up on its own when it returns — no restart. (Before this, an unreachable `DB_HOST` aborted
-startup and NSSM restart-looped the service for the whole outage.)
+#### 4.1.1 App/config database vs plant data
 
-Setting `DB_FALLBACK_1_HOST` goes further and keeps **login working** during an outage by
-switching to a second database. Two requirements:
+**The app/config database is hardcoded** to `localhost:5432`, database `postgres`, user
+`postgres`, password `P@ssw0rd` (`config.py`, `APP_DB_*`). It holds only MMLPortal's own
+configuration: users, dashboards, panels, mimic layouts/assets/symbols, report templates and
+settings, the saved datasource list, and each user's datasource selection.
 
-1. **Seed the fallback before you need it.** Table creation happens automatically, but the
-   `users` table comes from `seed_users.py` — without it a failover succeeds and then nobody
-   can sign in.
-   ```powershell
-   cd C:\dev\scada-mml-backend
-   $env:DB_TARGET="fallback1"; .\venv\Scripts\python.exe seed_users.py
-   $env:DB_TARGET=""
-   ```
-2. **Know that the two databases diverge.** The app writes to whichever database it is using,
-   so anything saved during an outage (panels, dashboards, mimic layouts, report templates)
-   stays on the fallback and is *not* copied back. For that reason returning to the primary is
-   deliberate, not automatic: `POST /api/system/db/failback` as an admin, or restart the
-   service. Admins can check which database is live at `GET /api/system/db`; everyone sees a
-   banner in the UI while a fallback is in use.
+It is hardcoded on purpose. Login and every page's chrome depend on it, so putting it on the
+same machine as the API means the product **always boots and always logs in** regardless of
+what the network is doing. That removes the failure this section used to describe, and the
+failover machinery that worked around it (`DB_FALLBACK_*`, `DB_TARGET`,
+`POST /api/system/db/failback`) has been removed with it.
 
-A switch only happens when a host does not answer. Errors from a *live* server — too many
-connections, an admin shutdown, a wrong password — are reported as-is and never trigger
-failover, so a brief connection spike cannot quietly move the app onto the fallback.
+> **Secure the local Postgres.** The password is in source control. Restrict `postgres` to
+> local connections in `pg_hba.conf` and do not expose port 5432.
+
+**Plant data** — readings, tags, events, alarms, report logs — comes from the rows in the
+`datasources` table, managed on the Settings page. Each operator picks one or more in the
+**data source selector in the top nav bar**, and every data endpoint answers for that
+selection:
+
+- **Live** panels draw one series per selected source, labelled with the source name.
+- **Events** and **Alarms** merge rows from all selected sources, each tagged with its origin.
+- **Reports** treat a machine as `(source, line, machine)`, so two plants that both have a
+  `Line 1 / M01` are never added together.
+- **Monitor** (mimic) reads the **first** selected source only — a symbol is one physical
+  asset, so fanning it out would draw several plants' numbers onto one piece of equipment.
+
+Each source is queried concurrently and independently. One unreachable plant costs its
+connect timeout and appears as a warning banner on the page; the healthy sources still render.
+A user with no explicit selection falls back to the lowest-id saved datasource, so a
+single-plant site needs no configuration at all.
+
+Admins can see the app database and the health of every saved datasource at
+`GET /api/system/db`.
+
+#### 4.1.2 Migrating an existing install
+
+If your configuration currently lives in a remote database (the old `DB_HOST`), copy it to
+localhost once:
+
+```powershell
+cd C:\dev\scada-mml-backend
+.\venv\Scripts\python.exe migrate_config_to_local.py            # dry run — reports what it would copy
+.\venv\Scripts\python.exe migrate_config_to_local.py --apply
+```
+
+It reads the source connection from the old `.env` values, copies only the config tables
+(never plant data), preserves ids, resets sequences, and registers the remote as a datasource
+selected for every user — so the app behaves exactly as it did before the split.
+
+**Back up localhost from day one.** Configuration saved after the cutover exists *only* there.
 
 ### 4.2 JWT
 
@@ -429,10 +449,11 @@ step 3.7 above.
 | Symptom | Cause / Fix |
 |---|---|
 | **`install.ps1` says NSSM not found** | The repo vendors `nssm.exe` next to `install.ps1` — make sure it wasn't deleted. Otherwise install NSSM and add to PATH, or drop `nssm.exe` into `scada-mml-backend\`. |
-| **Service dead / login unavailable when the DB host is off** | No longer the behaviour: the API boots and serves regardless. Check `GET /health` — `"db":"unreachable"` means the service is fine and the *database* is not. See §4.1.1 to keep login working through the outage. |
-| **`/health` says `"db_fallback": true`** | The primary was unreachable and the API switched to a fallback. Data saved now stays on the fallback. Return with `POST /api/system/db/failback` (admin) once the primary is back. |
-| **Signed in, but every page is empty and a red banner says the database is unreachable** | The API is up and its database is not. Check the DB host/VPN; the service recovers on its own, no restart needed. |
-| **`install.ps1` finishes but health check fails** | Service is registered but DB credentials in `.env` are wrong. Check `scada-mml-backend\logs\stderr.log`, fix `.env`, then `Restart-Service mml-api`. |
+| **Service dead / login unavailable when a plant host is off** | No longer the behaviour: login uses the local app database and is unaffected. The dead plant shows as a warning banner on the pages that read it, and the other selected sources still render. See §4.1.1. |
+| **Signed in, but every page is empty and a red banner says the database is unreachable** | The API is up and *its own* database (localhost) is not. `Get-Service postgresql*`; the service recovers on its own once Postgres is back, no restart needed. |
+| **Live/Events/Alarms are empty but the app works fine** | No data source is selected, or the selected one has no matching tables. Check the selector in the top nav bar and `GET /api/system/db` (admin) for per-datasource health. |
+| **Pages show the wrong plant's numbers after switching sources** | Reload once. If it persists it is a bug — every data query key includes the selection precisely to prevent this. |
+| **`install.ps1` finishes but health check fails** | Check `scada-mml-backend\logs\stderr.log`. Usually local Postgres is not running or does not accept `postgres` / `P@ssw0rd`. |
 | **NSSM "unexpected error" starting `mml-api`** | A bare `python` of `main.py` works because of the `__main__` block, but the canonical config uses `-m uvicorn main:app --host 127.0.0.1 --port 8088`. Check `logs\stderr.log` for the actual traceback. |
 | **`WinError 10013` binding 8088** | Another process holds 8088, or it's in a Windows reserved range. Check with `Get-NetTCPConnection -LocalPort 8088`. The Vite dev proxy and `web.config` both hard-code 8088. |
 | **`/api/*` returns `404` through IIS** | ARR proxy not enabled at the server level. See step 3.7.3 — the single toggle that fixes most prod proxy issues. |

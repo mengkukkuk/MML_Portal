@@ -161,6 +161,44 @@ def require_operator_or_admin(current_user: dict = Depends(get_current_user)) ->
     return current_user
 
 
+def resolve_active_datasources(user_id: int) -> list[int | None]:
+    """Which plant databases this user's reads should hit, in priority order.
+
+    Position 0 is the primary: mimic symbols and the legacy single-value
+    response fields resolve to it.
+
+    Three tiers, and the fallbacks are the interesting part:
+
+    1. The user's explicit selection.
+    2. Nothing selected -> the single lowest-id saved datasource. Deliberately
+       not *all* of them: first login would otherwise open N remote handshakes,
+       and one powered-off plant would cost a connect timeout on every request
+       for something nobody asked for. Deliberately not a hard error either --
+       that would show every user a broken app immediately after migration.
+       First-by-id makes the single-plant case work with zero configuration.
+    3. No saved datasources at all -> [None], the app database's own `public`
+       schema. Preserves current behaviour on a fresh install, which the
+       simulators and existing tests assume.
+
+    Neither fallback is persisted; an implicit default must not harden into a
+    choice the operator never made.
+    """
+    selected = db.get_user_selection(user_id)
+    if selected:
+        return [row["id"] for row in selected]
+    fallback = db.default_datasource()
+    return [fallback["id"]] if fallback else [None]
+
+
+def active_datasources(current_user: dict = Depends(get_current_user)) -> list[int | None]:
+    """FastAPI dependency form of resolve_active_datasources.
+
+    Lives here rather than in datasources.py because this is where
+    get_current_user is and auth already imports db — no new import cycle.
+    """
+    return resolve_active_datasources(current_user["id"])
+
+
 # --- Endpoints -------------------------------------------------------------
 @router.post("/login")
 def login(body: LoginRequest, response: Response):

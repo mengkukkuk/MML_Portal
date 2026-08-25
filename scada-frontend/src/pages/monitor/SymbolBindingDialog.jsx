@@ -7,7 +7,8 @@ import DialogActions from '@mui/material/DialogActions'
 import Button from '@mui/material/Button'
 import Alert from '@mui/material/Alert'
 import { fetchDatasources } from '@/api/datasources'
-import { fetchSchemaTables, fetchSchemaColumns, fetchSchemaValues, fetchSchemaLatest } from '@/api/schema'
+import { fetchSchemaTables, fetchSchemaColumns, fetchSchemaValues, fetchSchemaLatest, fromPrimarySource } from '@/api/schema'
+import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { symbolDef } from '@/components/mimic/symbols'
 import InstrumentBubble from '@/components/mimic/InstrumentBubble'
 import { deriveTag } from '@/components/mimic/deriveTag'
@@ -131,22 +132,28 @@ export default function SymbolBindingDialog({ open, node, onClose, onSave }) {
   const supportsState = def?.binding === 'both' || def?.binding === 'discrete'
 
   const dsId = form.datasourceId === '' ? undefined : Number(form.datasourceId)
+  const selectionKey = useDatasourceSelectionStore((s) => s.selectionKey)
+
+  // Leaving the connection picker empty means "whatever the header points at",
+  // which the server resolves to the first selected source. The cache key has to
+  // say so, or switching plants would keep offering the previous plant's tables.
+  const catalogueKey = dsId ?? `header:${selectionKey}`
 
   const datasourcesQuery = useQuery({
     queryKey: ['datasources'], queryFn: fetchDatasources, enabled: open,
   })
   const tablesQuery = useQuery({
-    queryKey: ['schema-tables', dsId ?? null],
+    queryKey: ['schema-tables', catalogueKey],
     queryFn: () => fetchSchemaTables(dsId),
     enabled: open,
   })
   const columnsQuery = useQuery({
-    queryKey: ['schema-columns', dsId ?? null, form.table],
+    queryKey: ['schema-columns', catalogueKey, form.table],
     queryFn: () => fetchSchemaColumns(form.table, dsId),
     enabled: open && !!form.table,
   })
   const valuesQuery = useQuery({
-    queryKey: ['schema-values', dsId ?? null, form.table, form.filterCol],
+    queryKey: ['schema-values', catalogueKey, form.table, form.filterCol],
     queryFn: () => fetchSchemaValues(form.table, form.filterCol, 500, dsId),
     enabled: open && !!form.table && !!form.filterCol,
   })
@@ -186,18 +193,25 @@ export default function SymbolBindingDialog({ open, node, onClose, onSave }) {
   const valid = !!form.table && !!form.valueCol && !exprError && !filterMissing
 
   // --- live preview ---------------------------------------------------------
+  // The connection picker above only decides which catalogue the table/column
+  // dropdowns browse. Reads come from the header selection, so the preview
+  // deliberately drops `datasourceId` and shows the primary source's value —
+  // which is exactly what the drawing will render once saved. Previewing the
+  // browsed connection instead would show a number the symbol never displays.
   const previewArgs = valid ? {
     table: form.table,
     valueCol: form.valueCol,
     tsCol: form.tsCol || undefined,
     filterCol: form.filterCol || undefined,
     filterVal: form.filterVal || undefined,
-    datasourceId: dsId,
   } : null
 
   const previewQuery = useQuery({
-    queryKey: ['binding-preview', previewArgs],
-    queryFn: () => fetchSchemaLatest(previewArgs),
+    queryKey: ['binding-preview', selectionKey, previewArgs],
+    queryFn: async () => {
+      const res = await fetchSchemaLatest(previewArgs)
+      return fromPrimarySource(res.readings, res.sources)
+    },
     enabled: open && !!previewArgs,
     retry: false,
   })

@@ -36,3 +36,30 @@ export async function testDatasource(payload) {
   const { data } = await apiClient.post('/datasources/test', payload)
   return data
 }
+
+/**
+ * The signed-in user's selected sources — which plants Live / Events / Alarms /
+ * Monitor / Reports read from. Stored server-side per user, so it survives a new
+ * browser and matches what the API is about to query.
+ *
+ * All three resolve to { selected: [{ id, name, host, database, position }],
+ * implicit }. `implicit` means nobody chose anything and the backend fell back
+ * to the first saved connection — the header renders that differently so a
+ * default is not mistaken for a deliberate choice.
+ */
+export async function fetchSelection() {
+  const { data } = await apiClient.get('/datasources/selection')
+  return data
+}
+
+export async function saveSelection(datasourceIds) {
+  const { data } = await apiClient.put('/datasources/selection', {
+    datasource_ids: datasourceIds,
+  })
+  return data
+}
+
+export async function clearSelection() {
+  const { data } = await apiClient.delete('/datasources/selection')
+  return data
+}

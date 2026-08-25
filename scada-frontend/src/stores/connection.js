@@ -4,36 +4,35 @@ import { create } from 'zustand'
  * connection — connectivity indicator shown in the header ConnectionPill,
  * plus the database state behind it.
  *
- * Three facts are tracked separately because they fail independently and an
+ * Two facts are tracked separately because they fail independently and an
  * operator needs to know which one it is: whether the API answers
- * (`apiReachable`), whether its database answers (`dbOk`), and whether it is
- * serving from the fallback database (`dbFallback`). `status` collapses those
- * into the pill's three severity levels; DbStatusBanner reads the raw flags to
- * say what actually happened.
+ * (`apiReachable`) and whether its config database answers (`dbOk`). `status`
+ * collapses those into the pill's severity levels; DbStatusBanner reads the raw
+ * flags to say what actually happened.
+ *
+ * `dbOk` describes the *app/config* database only — always localhost. Plant
+ * connectivity is per-datasource and reported alongside each source's data, not
+ * here, because one unreachable plant is not an outage of the product.
  */
 export const useConnectionStore = create((set) => ({
   status: 'connected', // 'connected' | 'degraded' | 'offline'
   lastHeartbeatAt: new Date().toISOString(),
   apiReachable: true,
   dbOk: true,
-  dbFallback: false,
 
   markHeartbeat: (status = 'connected') =>
     set({ status, lastHeartbeatAt: new Date().toISOString() }),
 
   /**
-   * Apply a /api/health response.
-   *
-   * Running on a fallback still works but is not normal ('degraded'); an
-   * unreachable database means nothing loads or saves ('offline').
+   * Apply a /api/health response. An unreachable config database means nothing
+   * loads or saves ('offline').
    */
-  applyHealth: ({ db, db_fallback: dbFallback }) => {
+  applyHealth: ({ db }) => {
     const dbOk = db === 'ok'
     return set({
-      status: !dbOk ? 'offline' : dbFallback ? 'degraded' : 'connected',
+      status: dbOk ? 'connected' : 'offline',
       apiReachable: true,
       dbOk,
-      dbFallback: Boolean(dbFallback),
       lastHeartbeatAt: new Date().toISOString(),
     })
   },

@@ -7,11 +7,14 @@ for developing or demonstrating the feature. This writes the RUN / STOP / IDLE /
 PLANNED_DOWN transitions a real line would emit, plus the ``alarm_logs`` rows
 that explain each stop.
 
+event_logs and alarm_logs are *plant* data and do not live in the app/config
+database, so a target must be named explicitly with --datasource or --dsn.
+
 Usage:
-    python simulate_events.py --seed 14      # backfill 14 days, then exit
-    python simulate_events.py --live         # keep emitting in real time
-    python simulate_events.py --seed 14 --live
-    python simulate_events.py --purge        # remove only this script's rows
+    python simulate_events.py --datasource 1 --seed 14   # backfill 14 days, exit
+    python simulate_events.py --datasource 1 --live      # emit in real time
+    python simulate_events.py --datasource 1 --seed 14 --live
+    python simulate_events.py --datasource 1 --purge     # remove this script's rows
 
 Timestamps are naive local, matching the column type and report_engine's model.
 Simulated machines use their own location/tag names, so nothing here collides
@@ -24,7 +27,7 @@ from datetime import datetime, timedelta
 
 import psycopg
 
-import config
+import plant_cli
 
 #: Simulated machines, kept clearly distinct from the real Line1 tags so a purge
 #: can never touch SCADA-written history.
@@ -211,13 +214,13 @@ def main() -> None:
                         help="Keep emitting transitions in real time")
     parser.add_argument("--purge", action="store_true",
                         help="Delete previously simulated rows first")
+    plant_cli.add_target_args(parser)
     args = parser.parse_args()
 
     if not (args.seed or args.live or args.purge):
         parser.error("nothing to do — pass --seed DAYS, --live or --purge")
 
-    with psycopg.connect(config.DATABASE_URL,
-                         row_factory=psycopg.rows.dict_row) as conn:
+    with plant_cli.connect(args) as conn:
         if args.purge:
             purge(conn)
         if args.seed:

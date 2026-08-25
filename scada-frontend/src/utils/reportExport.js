@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs'
 import { fetchReportLogs } from '@/api/reports'
-import { OEE_CAVEAT } from '@/components/report/reportFormat'
+import { OEE_CAVEAT, isMultiSource } from '@/components/report/reportFormat'
 import { describeRange } from '@/components/report/reportRange'
 
 /**
@@ -74,7 +74,13 @@ function addRows(sheet, startRow, columns, rows) {
 
 function buildSummary(wb, result, meta) {
   const sheet = wb.addWorksheet('Summary')
+  // A spreadsheet has no tooltip to fall back on: with two plants selected,
+  // `Line 1 / M01` appears twice with different numbers and nothing on the row
+  // says which is which. The column only appears when it is needed, so
+  // single-plant exports keep the layout people already have macros against.
+  const multi = isMultiSource(result.machines ?? [])
   const columns = [
+    ...(multi ? [{ header: 'Source', key: 'datasource_name', width: 20 }] : []),
     { header: 'Line', key: 'location', width: 16 },
     { header: 'Machine', key: 'tag_name', width: 20 },
     { header: 'Runtime (h)', key: 'run_h' },
@@ -94,6 +100,7 @@ function buildSummary(wb, result, meta) {
   const start = startSheet(sheet, columns, meta)
 
   const toRow = (m) => ({
+    datasource_name: m.datasource_name ?? '',
     location: m.location ?? '',
     tag_name: m.tag_name ?? '',
     run_h: hours(m.run_s),
@@ -116,6 +123,7 @@ function buildSummary(wb, result, meta) {
   if (t) {
     rows.push({
       ...toRow(t),
+      datasource_name: '',
       location: 'ALL',
       tag_name: `${t.machine_count} machines`,
       coverage: null,
@@ -178,14 +186,9 @@ function buildAlarms(wb, result, meta) {
 
 async function buildEventLog(wb, meta, filters) {
   const sheet = wb.addWorksheet('Event Log')
-  const columns = [
-    { header: 'Time', key: 'at', width: 22 },
-    { header: 'Line', key: 'location', width: 16 },
-    { header: 'Machine', key: 'tag_name', width: 20 },
-    { header: 'Event', key: 'event', width: 70 },
-  ]
-  const start = startSheet(sheet, columns, meta)
 
+  // Fetched before the columns are laid out: only the rows can say whether more
+  // than one plant answered, and the Source column depends on that.
   const page = await fetchReportLogs({
     start: filters.start,
     end: filters.end,
@@ -195,10 +198,22 @@ async function buildEventLog(wb, meta, filters) {
     offset: 0,
   })
 
+  const columns = [
+    { header: 'Time', key: 'at', width: 22 },
+    ...(isMultiSource(page.rows ?? [])
+      ? [{ header: 'Source', key: 'datasource_name', width: 20 }]
+      : []),
+    { header: 'Line', key: 'location', width: 16 },
+    { header: 'Machine', key: 'tag_name', width: 20 },
+    { header: 'Event', key: 'event', width: 70 },
+  ]
+  const start = startSheet(sheet, columns, meta)
+
   addRows(
     sheet, start, columns,
     (page.rows ?? []).map((r) => ({
       at: fmtTs(r.at_date_time),
+      datasource_name: r.datasource_name ?? '',
       location: r.location ?? '',
       tag_name: r.tag_name ?? '',
       event: r.event ?? '',

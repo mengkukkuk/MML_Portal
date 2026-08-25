@@ -3,8 +3,10 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import Button from '@mui/material/Button'
 import TextField from '@mui/material/TextField'
 import ReportBlock from './ReportBlock'
+import SourceStatus from '@/components/SourceStatus/SourceStatus'
 import { fetchReportLogs } from '@/api/reports'
-import { fmtDateTime } from '../reportFormat'
+import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
+import { fmtDateTime, isMultiSource } from '../reportFormat'
 import styles from './blocks.module.css'
 
 /**
@@ -22,6 +24,7 @@ const SEARCH_DEBOUNCE_MS = 350
 
 export default function RawLogTable({ block, filters }) {
   const pageSize = block?.options?.pageSize ?? 50
+  const selectionKey = useDatasourceSelectionStore((s) => s.selectionKey)
 
   const [offset, setOffset] = useState(0)
   const [searchInput, setSearchInput] = useState('')
@@ -32,14 +35,15 @@ export default function RawLogTable({ block, filters }) {
     return () => clearTimeout(t)
   }, [searchInput])
 
-  // Any filter or search change invalidates the current page number.
+  // Any filter or search change invalidates the current page number — as does
+  // changing the selection, which re-merges the rows into a different order.
   useEffect(() => {
     setOffset(0)
-  }, [search, filters.start, filters.end, filters.locations, filters.tagNames])
+  }, [search, selectionKey, filters.start, filters.end, filters.locations, filters.tagNames])
 
   const query = useQuery({
     queryKey: [
-      'report', 'logs',
+      'report', 'logs', selectionKey,
       filters.start, filters.end, filters.locations, filters.tagNames,
       search, pageSize, offset,
     ],
@@ -62,6 +66,7 @@ export default function RawLogTable({ block, filters }) {
   const data = query.data
   const rows = data?.rows ?? []
   const total = data?.total ?? 0
+  const multi = isMultiSource(rows)
   const from = total === 0 ? 0 : offset + 1
   const to = offset + rows.length
 
@@ -84,6 +89,11 @@ export default function RawLogTable({ block, filters }) {
         </p>
       )}
 
+      {/* A plant that failed contributes no rows, which on a paged table is
+          indistinguishable from a plant that logged nothing. */}
+      <SourceStatus sources={data?.sources} />
+
+
       {!query.error && rows.length === 0 ? (
         <p className={styles['block__empty']}>
           {query.isLoading ? 'Loading…' : 'No log rows match these filters.'}
@@ -94,15 +104,19 @@ export default function RawLogTable({ block, filters }) {
             <thead>
               <tr>
                 <th>Time</th>
+                {multi && <th>Source</th>}
                 <th>Line</th>
                 <th>Machine</th>
                 <th>Event</th>
               </tr>
             </thead>
             <tbody>
+              {/* `r.id` is a per-database serial, so it repeats across plants —
+                  the source has to be in the key or React drops a row. */}
               {rows.map((r) => (
-                <tr key={r.id ?? `${r.at_date_time}-${r.tag_name}`}>
+                <tr key={`${r.datasource_id ?? ''}:${r.id ?? `${r.at_date_time}-${r.tag_name}`}`}>
                   <td>{fmtDateTime(r.at_date_time)}</td>
+                  {multi && <td>{r.datasource_name ?? '—'}</td>}
                   <td>{r.location ?? '—'}</td>
                   <td>{r.tag_name ?? '—'}</td>
                   <td className={styles['table__wrap']}>{r.event ?? '—'}</td>

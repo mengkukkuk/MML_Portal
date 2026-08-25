@@ -8,6 +8,7 @@ import {
   STATE_LABELS,
   fmtDuration,
   fmtDateTime,
+  isMultiSource,
   machineLabel,
 } from '../reportFormat'
 import styles from './blocks.module.css'
@@ -71,7 +72,11 @@ export default function StateTimeline({ block, result }) {
   const machines = result?.machines ?? []
 
   const option = useMemo(() => {
-    const categories = machines.map(machineLabel)
+    // The y-axis is a category axis keyed by label, so two plants that both
+    // report `Line 1 / M01` would collapse onto one row and draw both plants'
+    // bands as one machine's timeline. The source name is what keeps them apart.
+    const multi = isMultiSource(machines)
+    const categories = machines.map((m) => machineLabel(m, multi))
     const data = []
 
     machines.forEach((m, row) => {

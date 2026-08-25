@@ -1,0 +1,79 @@
+/* ConnectionAlarmStrip — an annunciator strip, not a banner.
+ * Built entirely from existing design tokens (no new palette) so it reskins
+ * correctly under all three faceplates (cobalt/graphite/carbon). */
+
+.strip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: 6px var(--space-3);
+  background: color-mix(in srgb, var(--crit) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--crit) 40%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+.eyebrow {
+  flex: none;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--crit);
+}
+
+.tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.tile {
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 3px 10px 3px 13px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+/* The signature: a pulsing edge rather than a flashing tile. Reads as an
+ * instrument in fault, not an ad. */
+.bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--crit);
+  animation: alarmPulse 1.4s ease-in-out infinite;
+}
+
+.name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+.elapsed {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+@keyframes alarmPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar { animation: none; }
+}

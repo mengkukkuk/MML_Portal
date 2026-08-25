@@ -68,9 +68,35 @@ export function fmtDateTime(value) {
   return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString()
 }
 
-/** `Line 1 / M01`, the label used everywhere a machine is named. */
-export function machineLabel(m) {
-  return `${m.location ?? '—'} / ${m.tag_name ?? '—'}`
+/**
+ * True once the rows span more than one data source.
+ *
+ * Machine identity is `(datasource_id, location, tag_name)` server-side, but
+ * only the datasource part is invisible on screen — two plants routinely both
+ * have a `Line 1 / M01`. Everything that names or keys a machine consults this
+ * so the source is shown when it disambiguates and stays out of the way when
+ * there is nothing to disambiguate.
+ */
+export function isMultiSource(rows = []) {
+  return new Set(rows.map((r) => r.datasource_id ?? null)).size > 1
+}
+
+/**
+ * `Line 1 / M01`, the label used everywhere a machine is named — prefixed with
+ * the plant when asked.
+ *
+ * The prefix rather than a separate column is deliberate: a template's column
+ * list is saved per template, so a new column would never appear on any report
+ * anyone has already built.
+ */
+export function machineLabel(m, withSource = false) {
+  const base = `${m.location ?? '—'} / ${m.tag_name ?? '—'}`
+  return withSource && m.datasource_name ? `${m.datasource_name} · ${base}` : base
+}
+
+/** Stable React key for a machine row. Mirrors `_machine_key` in reports.py. */
+export function machineKey(m) {
+  return `${m.datasource_id ?? ''}::${m.location ?? ''}::${m.tag_name ?? ''}`
 }
 
 /**

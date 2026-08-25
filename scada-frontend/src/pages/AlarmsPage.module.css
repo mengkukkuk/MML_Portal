@@ -246,6 +246,17 @@
   color: var(--fg);
 }
 
+/* Which plant this band came from. Only rendered when more than one source is
+   selected, so the single-source page looks exactly as it did. */
+.alm__source {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
 .alm__loc-meta {
   font-size: 12px;
   color: var(--fg-muted);

@@ -4,9 +4,13 @@ SCADA Data Simulator
 Continuously inserts realistic sensor readings into PostgreSQL
 so Grafana has live time-series data to display.
 
+sensor_readings is *plant* data and does not live in the app/config database, so
+a target must be named explicitly.
+
 Usage:
-    python simulate_data.py           # run forever (Ctrl+C to stop)
-    python simulate_data.py --seed    # insert 2 hours of historical data first, then run live
+    python simulate_data.py --datasource "MMLData (plant)"
+    python simulate_data.py --datasource 1 --seed   # 2h of history first, then live
+    python simulate_data.py --dsn "host=10.0.0.5 dbname=MMLData user=postgres password=…"
 """
 
 import argparse
@@ -17,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 
 import psycopg
 
-import config
+import plant_cli
 
 # ---------------------------------------------------------------------------
 # Sensor definitions per device
@@ -155,10 +159,11 @@ def main() -> None:
         "--seed", action="store_true",
         help="Insert 2 hours of historical data before going live",
     )
+    plant_cli.add_target_args(parser)
     args = parser.parse_args()
 
     print("Connecting to PostgreSQL …", flush=True)
-    with psycopg.connect(config.DATABASE_URL, row_factory=psycopg.rows.dict_row) as conn:
+    with plant_cli.connect(args) as conn:
         ensure_devices(conn)
         device_ids = get_device_ids(conn)
         print(f"Found devices: {list(device_ids.keys())}", flush=True)

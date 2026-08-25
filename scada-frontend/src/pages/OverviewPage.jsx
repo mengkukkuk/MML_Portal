@@ -10,6 +10,7 @@ import GaugeTile from '@/components/GaugeTile/GaugeTile'
 import TrendChart from '@/components/TrendChart/TrendChart'
 import { fetchDevices } from '@/api/devices'
 import { fetchRecentAlarms } from '@/api/alarms'
+import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import styles from './OverviewPage.module.css'
 
 /**
@@ -33,14 +34,20 @@ import styles from './OverviewPage.module.css'
  * flagging here rather than silently fixing it.
  */
 export default function OverviewPage() {
+  // Only the alarms take the selection: fetchDevices here is still the mock
+  // list from api/devices.js, which never touches a plant.
+  const selectionKey = useDatasourceSelectionStore((s) => s.selectionKey)
+
   const { data: devices = [] } = useQuery({
     queryKey: ['devices'],
     queryFn: fetchDevices,
   })
-  const { data: alarms = [] } = useQuery({
-    queryKey: ['alarms', 'recent', 10],
+  const { data: alarmData } = useQuery({
+    queryKey: ['alarms', 'recent', 10, selectionKey],
     queryFn: () => fetchRecentAlarms(10),
   })
+
+  const alarms = alarmData?.alarms ?? []
 
   const onlineCount = devices.filter((d) => d.status === 'online').length
   const degradedCount = devices.filter((d) => d.status === 'degraded').length

@@ -36,9 +36,12 @@ py -3.14 -m venv venv
 # Single test
 .\venv\Scripts\python.exe -m pytest tests/test_report_engine.py::test_name
 
-# Optional — populate live demo data for /live and /trends
-.\venv\Scripts\python.exe simulate_data.py            # forever, 5s tick
-.\venv\Scripts\python.exe simulate_data.py --seed     # seed 2h history first
+# Optional — populate live demo data for /live and /trends.
+# These write *plant* tables, which no longer live in the app DB, so a target is
+# required: a saved datasource (by id or name) or a raw DSN.
+.\venv\Scripts\python.exe simulate_data.py --datasource 1           # forever, 5s tick
+.\venv\Scripts\python.exe simulate_data.py --datasource 1 --seed    # seed 2h history first
+.\venv\Scripts\python.exe simulate_data.py --dsn "host=… dbname=… user=… password=…"
 ```
 
 ### Frontend
@@ -63,6 +66,29 @@ cd C:\dev\scada-mml-backend
 
 ## Architecture
 
+### App/config database vs plant data
+The single most important split in this codebase.
+
+- The **app/config database is hardcoded** to `localhost:5432` / `postgres` / `postgres` /
+  `P@ssw0rd` (`config.APP_DB_*`). `.env` has no `DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASSWORD`
+  and setting them does nothing. It holds users, selections, dashboards, panels, mimic
+  layouts/assets/symbols, report templates/settings, and the `datasources` table itself.
+  Login, layout and settings therefore work even when every plant is unreachable.
+- **All plant data** — `sensor_readings`, `variables_tag`, `event_logs`, `alarm_logs` — is
+  read from the rows of `datasources` the current user has selected in the header
+  (`user_datasource_selection`, resolved from the JWT by `auth.resolve_active_datasources`).
+  No explicit selection falls back to the lowest-id datasource, flagged `implicit: true`.
+- **The header selection overrides everything.** A panel's or symbol's stored
+  `datasource_id` is not consulted for reads.
+- Reads **fan out** across the selection via `db.fan_out` / `db.fan_out_rows` (threaded,
+  bounded pool). Every response is `{"<rows>": [...], "sources": [...]}` and every row is
+  stamped `datasource_id` / `datasource_name` — a plant that failed must be distinguishable
+  from a plant with nothing to report.
+- Ids are **per-database serials and collide across plants**. Machine identity is
+  `(datasource_id, location, tag_name)`; React keys need the source in them.
+- Live fans out one series per source; Events/Alarms merge; Monitor mimic symbols use the
+  **first** selected source only. Writes (e.g. alarm acknowledge) never fan out.
+
 ### Auth Token Strategy
 - **Access token**: short-lived JWT (default 30 min), kept in module memory (`src/api/client.js`) only — never persisted to localStorage
 - **Refresh token**: long-lived JWT (default 7 days), set as HttpOnly cookie at path `/api/auth`
@@ -80,18 +106,21 @@ cd C:\dev\scada-mml-backend
 | `panels.py` | `/api/panels/*` — CRUD for the admin-managed Live dashboard (`dashboard_panels` table); admin token gates writes |
 | `schema.py` | `/api/schema/*` — table/column introspection for generic data source bindings in Live panels |
 | `dashboards.py` | `/api/dashboards/*` — multi-board grouping for Live panels (admin token gates writes) |
-| `datasources.py` | `/api/datasources/*` — named PostgreSQL connection management (admin token gates writes; test endpoint probes real connections) |
+| `datasources.py` | `/api/datasources/*` — plant connection CRUD (admin gates writes; test endpoint probes real connections) **and** `/selection` GET/PUT/DELETE, the per-user header choice (any role, max 8) |
+| `sources.py` | `SourceReport` — the per-source `ok`/`error` block every fanned-out response carries, plus a tz-safe sort key for merging plants |
 | `mimic.py` | `/api/mimic/*` — layout CRUD for `/monitor` drawings, asset uploads, symbol/wire binding validation (admin token gates writes) |
 | `events.py` | `/api/events/*` — read-only event-log endpoints backing the Events page |
 | `alarms.py` | `/api/alarms/*` — read-only alarm-log endpoints with Acknowledge action for the Alarms page |
 | `reports.py` | `/api/reports/*` — OEE/MES reporting: template CRUD (admin token gates template writes), report runs, CSV/Excel export |
 | `report_engine.py` | Pure state-interval arithmetic — turns `public.event_logs` transitions into machine runtime/downtime/OEE metrics |
 | `security.py` | Password hashing via stdlib `hashlib.scrypt`, JWT sign/verify |
-| `db.py` | Psycopg 3 access layer — all SQL lives here, including dynamic `variables_tag` column discovery and table init helpers |
+| `db.py` | Psycopg 3 access layer — all SQL lives here. `get_connection()` is **always the localhost app DB**; plant SQL goes through the per-datasource pools and `fan_out`/`fan_out_rows`. Also dynamic `variables_tag` column discovery and table init helpers |
 | `mailer.py` | Password-reset delivery: **Brevo HTTP API** (preferred) → SMTP fallback → log-only dev mode |
-| `config.py` | All env vars with fallback defaults |
-| `simulate_data.py` | Standalone CLI that writes synthetic time-series into `sensor_readings` |
-| `simulate_events.py` | Standalone CLI that writes machine state transitions and alarms into `event_logs`/`alarm_logs` for report demos |
+| `config.py` | All env vars with fallback defaults, plus the hardcoded `APP_DB_*` constants |
+| `migrate_config_to_local.py` | One-shot: copy config tables from an old remote DB to localhost. Dry-run by default, `--apply` to write |
+| `plant_cli.py` | Shared `--datasource` / `--dsn` target resolution for the CLI helpers below (they write plant tables, so localhost would be wrong) |
+| `simulate_data.py` | Standalone CLI that writes synthetic time-series into a plant's `sensor_readings` |
+| `simulate_events.py` | Standalone CLI that writes machine state transitions and alarms into a plant's `event_logs`/`alarm_logs` for report demos |
 | `init_db.sql` | Aspirational multi-schema reference design (core/asset/historian/alarm/…); not consumed by the running app today |
 
 Password hash format: `scrypt$<salt_hex>$<digest_hex>` (no third-party wheel needed for Python 3.14).
@@ -160,9 +189,11 @@ IIS rewrite rules are in `scada-frontend/public/web.config` (copied to `dist/` o
 
 ### Required Environment Variables (`scada-mml-backend/.env`)
 ```
-DB_PASSWORD=        # required
 JWT_SECRET=         # required — generate: python -c "import secrets; print(secrets.token_hex(32))"
 ```
+There is deliberately **no** `DB_HOST` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` — the app
+database is hardcoded (see above) and plant credentials live in the `datasources` table.
+`DB_CONNECT_TIMEOUT` is the only DB knob left; it bounds each fan-out leg.
 See `.env.example` for all options. For password-reset email delivery, set
 **`BREVO_API_KEY`** (preferred — Brevo HTTP API needs no IP allow-list) or fall
 back to `SMTP_HOST=…`. Leave both empty in dev to log reset links to the

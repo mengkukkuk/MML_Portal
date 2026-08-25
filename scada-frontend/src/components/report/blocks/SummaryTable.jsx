@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import ReportBlock from './ReportBlock'
-import { fmtDuration, fmtPct, gradeColor } from '../reportFormat'
+import { fmtDuration, fmtPct, gradeColor, isMultiSource, machineKey, machineLabel } from '../reportFormat'
 import styles from './blocks.module.css'
 
 /**
@@ -30,9 +30,9 @@ const DEFAULT_COLUMNS = [
   'machine', 'runtime', 'downtime', 'availability', 'stops', 'mtbf', 'mttr', 'alarms',
 ]
 
-function cell(key, m) {
+function cell(key, m, multi) {
   switch (key) {
-    case 'machine': return `${m.location ?? '—'} / ${m.tag_name ?? '—'}`
+    case 'machine': return machineLabel(m, multi)
     case 'runtime': return fmtDuration(m.run_s)
     case 'downtime': return fmtDuration(m.downtime_s)
     case 'unknown': return fmtDuration(m.unknown_s)
@@ -46,9 +46,11 @@ function cell(key, m) {
   }
 }
 
-function sortValue(key, m) {
+function sortValue(key, m, multi) {
   switch (key) {
-    case 'machine': return `${m.location ?? ''} ${m.tag_name ?? ''}`
+    // Sorting on the rendered label keeps machines from the same plant adjacent
+    // once the source is part of it.
+    case 'machine': return machineLabel(m, multi)
     case 'runtime': return m.run_s
     case 'downtime': return m.downtime_s
     case 'unknown': return m.unknown_s
@@ -70,6 +72,7 @@ export default function SummaryTable({ block, result }) {
 
   const columns = (block?.options?.columns ?? DEFAULT_COLUMNS).filter((c) => COLUMNS[c])
   const machines = result?.machines ?? []
+  const multi = isMultiSource(machines)
 
   // `totals` carries no alarm count — the server aggregates alarms separately,
   // and that summary counts every alarm in the window whether or not it landed
@@ -86,13 +89,13 @@ export default function SummaryTable({ block, result }) {
   const sorted = useMemo(() => {
     const rows = [...machines]
     rows.sort((a, b) => {
-      const va = sortValue(sortKey, a)
-      const vb = sortValue(sortKey, b)
+      const va = sortValue(sortKey, a, multi)
+      const vb = sortValue(sortKey, b, multi)
       if (typeof va === 'string') return asc ? va.localeCompare(vb) : vb.localeCompare(va)
       return asc ? va - vb : vb - va
     })
     return rows
-  }, [machines, sortKey, asc])
+  }, [machines, sortKey, asc, multi])
 
   function toggleSort(key) {
     if (key === sortKey) setAsc((v) => !v)
@@ -131,7 +134,7 @@ export default function SummaryTable({ block, result }) {
           </thead>
           <tbody>
             {sorted.map((m) => (
-              <tr key={`${m.location}::${m.tag_name}`}>
+              <tr key={machineKey(m)}>
                 {columns.map((key) => (
                   <td
                     key={key}
@@ -142,7 +145,7 @@ export default function SummaryTable({ block, result }) {
                         : undefined
                     }
                   >
-                    {cell(key, m)}
+                    {cell(key, m, multi)}
                   </td>
                 ))}
               </tr>

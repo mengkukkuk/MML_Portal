@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useQueries, keepPreviousData } from '@tanstack/react-query'
-import { fetchSchemaLatest, fetchSchemaSeries } from '@/api/schema'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { fetchSchemaLatest, fetchSchemaSeries, fromPrimarySource } from '@/api/schema'
+import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { applyExpr, compileExpr } from '@/utils/mathExpr'
+import { mergeSources, sourcesFromError, connectionErrorMessage } from '@/utils/sourceHealth'
 import { deriveTag, EVENT_LOG_SIZE } from './deriveTag'
 
 /**
@@ -12,21 +14,25 @@ import { deriveTag, EVENT_LOG_SIZE } from './deriveTag'
  * may legitimately watch the same loop and each needs its own reading, pulse
  * and event trail.
  *
- * ## One query per backend, not one per symbol
+ * ## One query for the whole drawing
  *
  * The page needs a *coherent* snapshot: plant status is reduced across every
  * tag, and the rail filters one shared event list. Independent per-symbol
  * queries can't produce either without a coordinating layer on top.
  *
- * But a single query for the whole plant would be worse. `_table_source_conn`
- * opens a fresh libpq handshake with `connect_timeout=5`, and `allSettled`
- * settles with the slowest call — so one unreachable historian would add ~5s to
- * every tick, app-database symbols included. Bucketing by `datasource_id` keeps
- * coherence where it matters and stops a dead host stalling the boiler. That is
- * the honest shape for a page designed to span backends.
+ * This used to be one query per `binding.datasource_id`, so that an unreachable
+ * historian couldn't add its connect timeout to every other symbol's tick. That
+ * bucketing no longer routes anywhere: every read now goes to the datasources
+ * selected in the header, so all bindings share one destination and the backend
+ * absorbs a dead host on its own fan-out workers.
  *
- * `useQueries` (not `useQuery` in a loop) because the number of backends is a
- * property of the drawing, not of the code.
+ * ## Symbols read the primary source only
+ *
+ * A symbol is one physical asset — a specific generator in a specific building
+ * — so fanning it out across plants would draw several plants' numbers onto one
+ * piece of equipment. Every reading is therefore taken from the first selected
+ * source; selecting more sources enriches Live/Events/Alarms and leaves the
+ * drawing alone.
  */
 
 /** Sparkline window. A view preference, so it lives here, not in the doc. */
@@ -36,7 +42,7 @@ export const HISTORY_MINUTES = 30
 const MAX_POINTS = 400
 
 const EMPTY_SNAPSHOT = {
-  tags: {}, history: {}, events: [], ts: 0, running: false, error: '',
+  tags: {}, history: {}, events: [], ts: 0, running: false, error: '', sources: [],
 }
 
 // Compiled transforms are keyed by source text: the same expression appears on
@@ -64,7 +70,6 @@ function argsOf(b) {
     tsCol: b.ts_col || undefined,
     filterCol: b.filter_col || undefined,
     filterVal: b.filter_val ?? undefined,
-    datasourceId: b.datasource_id ?? undefined,
   }
 }
 
@@ -85,6 +90,7 @@ function signatureOf(items) {
 async function seedGroup(items, minutes) {
   const points = {}
   const latest = {}
+  const sourceLists = []
   items.forEach(({ nodeId }) => { points[nodeId] = [] })
 
   const withTs = items.filter(({ b }) => b.ts_col)
@@ -94,12 +100,19 @@ async function seedGroup(items, minutes) {
     )
     results.forEach((res, i) => {
       const { nodeId, b } = withTs[i]
-      if (res.status !== 'fulfilled') return
+      if (res.status !== 'fulfilled') {
+        const errSources = sourcesFromError(res.reason)
+        if (errSources) sourceLists.push(errSources)
+        return
+      }
+      sourceLists.push(res.value.sources)
+      const one = fromPrimarySource(res.value.series, res.value.sources)
+      if (!one) return
       const fn = exprFor(b.expr)
-      const arr = res.value.points.map((p) => [new Date(p.ts).getTime(), applyExpr(fn, p.value)])
+      const arr = one.points.map((p) => [new Date(p.ts).getTime(), applyExpr(fn, p.value)])
       points[nodeId] = arr
       if (arr.length) {
-        const last = res.value.points[res.value.points.length - 1]
+        const last = one.points[one.points.length - 1]
         latest[nodeId] = {
           value: applyExpr(fn, last.value), ts: new Date(last.ts).getTime(), okAt: Date.now(),
         }
@@ -117,15 +130,25 @@ async function seedGroup(items, minutes) {
     )
     results.forEach((res, i) => {
       const { nodeId, b } = empty[i]
-      if (res.status !== 'fulfilled' || res.value.value == null) return
-      const value = applyExpr(exprFor(b.expr), res.value.value)
-      const t = res.value.ts ? new Date(res.value.ts).getTime() : Date.now()
+      if (res.status !== 'fulfilled') {
+        const errSources = sourcesFromError(res.reason)
+        if (errSources) sourceLists.push(errSources)
+        return
+      }
+      sourceLists.push(res.value.sources)
+      const row = fromPrimarySource(res.value.readings, res.value.sources)
+      if (row?.value == null) return
+      const value = applyExpr(exprFor(b.expr), row.value)
+      const t = row.ts ? new Date(row.ts).getTime() : Date.now()
       points[nodeId] = [[t, value]]
       latest[nodeId] = { value, ts: t, okAt: Date.now() }
     })
   }
 
-  return { points, latest }
+  // Every binding fans out over the identical selection, so a source any one
+  // of these concurrent requests caught mid-failure is really down — a
+  // luckier sibling request's "ok" must not hide it.
+  return { points, latest, sources: mergeSources(sourceLists) || [] }
 }
 
 // --- poll: one latest row per binding, appended --------------------------
@@ -137,20 +160,25 @@ async function pollGroup(items, prev, minutes) {
   const sampleT = Date.now()
   const points = { ...prev.points }
   const latest = { ...prev.latest }
+  const sourceLists = []
 
   results.forEach((res, i) => {
     const { nodeId, b } = items[i]
     if (res.status !== 'fulfilled') {
       // Leave the previous entry in place; deriveTag ages it into `stale`.
+      const errSources = sourcesFromError(res.reason)
+      if (errSources) sourceLists.push(errSources)
       console.error('[mimic] latest fetch failed:', nodeId, res.reason)
       return
     }
-    if (res.value.value == null) return
-    const value = applyExpr(exprFor(b.expr), res.value.value)
+    sourceLists.push(res.value.sources)
+    const row = fromPrimarySource(res.value.readings, res.value.sources)
+    if (row?.value == null) return
+    const value = applyExpr(exprFor(b.expr), row.value)
     // A history table carries a row timestamp, so only append when it advances.
     // A current-state table has none — sample at wall-clock so a steady value
     // still moves the trend forward instead of flat-lining at one point.
-    const t = b.ts_col && res.value.ts ? new Date(res.value.ts).getTime() : sampleT
+    const t = b.ts_col && row.ts ? new Date(row.ts).getTime() : sampleT
     const arr = points[nodeId] || []
     const lastT = arr.length ? arr[arr.length - 1][0] : -1
     if (t > lastT) points[nodeId] = trimWindow([...arr, [t, value]], minutes)
@@ -161,7 +189,7 @@ async function pollGroup(items, prev, minutes) {
     latest[nodeId] = { value, ts: t, okAt: sampleT }
   })
 
-  return { points, latest }
+  return { points, latest, sources: mergeSources(sourceLists) || prev.sources || [] }
 }
 
 export default function useMimicPlant({
@@ -171,58 +199,52 @@ export default function useMimicPlant({
   refreshSignal = 0,
   enabled = true,
 }) {
-  const bound = useMemo(
-    () => nodes.filter((n) => n.binding?.table && n.binding?.value_col),
+  const selectionKey = useDatasourceSelectionStore((s) => s.selectionKey)
+
+  const items = useMemo(
+    () => nodes
+      .filter((n) => n.binding?.table && n.binding?.value_col)
+      .map((n) => ({ nodeId: n.id, b: n.binding })),
     [nodes],
   )
-
-  const groups = useMemo(() => {
-    const byBackend = new Map()
-    bound.forEach((n) => {
-      const key = n.binding.datasource_id ?? null
-      if (!byBackend.has(key)) byBackend.set(key, [])
-      byBackend.get(key).push({ nodeId: n.id, b: n.binding })
-    })
-    return [...byBackend.entries()].map(([dsId, items]) => ({ dsId, items }))
-  }, [bound])
+  const bound = useMemo(() => nodes.filter((n) => n.binding?.table && n.binding?.value_col), [nodes])
 
   // Accumulators live in a ref, not React state: they are what the *next* poll
   // appends onto, and re-rendering on every append would double the work.
   const accumRef = useRef(new Map())
 
-  const queryDefs = useMemo(() => groups.map((g) => {
-    const queryKey = ['mimic-plant', g.dsId, signatureOf(g.items), historyMinutes, refreshSignal]
-    const hashed = JSON.stringify(queryKey)
-    return {
-      queryKey,
-      enabled: enabled && g.items.length > 0,
-      queryFn: async () => {
-        const prev = accumRef.current.get(hashed)
-        const result = prev
-          ? await pollGroup(g.items, prev, historyMinutes)
-          : await seedGroup(g.items, historyMinutes)
-        accumRef.current.set(hashed, result)
-        return result
-      },
-      // Cadence drives the interval only — never the key. Fold it in and every
-      // cadence change would discard the accumulated history and re-seed.
-      refetchInterval: pollSeconds * 1000,
-      // A SCADA wall display must not freeze in a background tab.
-      refetchIntervalInBackground: true,
-      placeholderData: keepPreviousData,
-    }
-  }), [groups, historyMinutes, refreshSignal, enabled, pollSeconds])
+  // The selection belongs in the key, not merely in an invalidation. A refetch
+  // under an unchanged key takes the *poll* path and appends onto the previous
+  // accumulator — switching plants without changing the key would splice the new
+  // plant's readings onto the old plant's trend as one continuous line.
+  const queryKey = useMemo(
+    () => ['mimic-plant', selectionKey, signatureOf(items), historyMinutes, refreshSignal],
+    [selectionKey, items, historyMinutes, refreshSignal],
+  )
+  const hashed = useMemo(() => JSON.stringify(queryKey), [queryKey])
 
-  const results = useQueries({ queries: queryDefs })
-
-  // Prune accumulators belonging to superseded signatures, or the map grows for
-  // the page's lifetime as an admin retunes bindings.
-  useEffect(() => {
-    const live = new Set(queryDefs.map((q) => JSON.stringify(q.queryKey)))
-    accumRef.current.forEach((_, key) => {
-      if (!live.has(key)) accumRef.current.delete(key)
-    })
-  }, [queryDefs])
+  const query = useQuery({
+    queryKey,
+    enabled: enabled && items.length > 0,
+    queryFn: async () => {
+      const prev = accumRef.current.get(hashed)
+      const result = prev
+        ? await pollGroup(items, prev, historyMinutes)
+        : await seedGroup(items, historyMinutes)
+      // Only the live key's accumulator can ever be read again; anything else
+      // belongs to a superseded signature or selection and would otherwise keep
+      // growing for the page's lifetime as an admin retunes bindings.
+      accumRef.current.clear()
+      accumRef.current.set(hashed, result)
+      return result
+    },
+    // Cadence drives the interval only — never the key. Fold it in and every
+    // cadence change would discard the accumulated history and re-seed.
+    refetchInterval: pollSeconds * 1000,
+    // A SCADA wall display must not freeze in a background tab.
+    refetchIntervalInBackground: true,
+    placeholderData: keepPreviousData,
+  })
 
   // --- derivation ----------------------------------------------------------
   // Carried across ticks, so it cannot live in a memo: React may discard and
@@ -232,13 +254,14 @@ export default function useMimicPlant({
   const eventsRef = useRef([])
   const [snapshot, setSnapshot] = useState(EMPTY_SNAPSHOT)
 
-  // `results` is a fresh array every render; a stamp of when each query last
-  // produced data is what actually says "there is something new to derive".
-  const stamp = results.map((r) => `${r.dataUpdatedAt}:${r.errorUpdatedAt}`).join(',')
-  const resultsRef = useRef(results)
-  resultsRef.current = results
-  const groupsRef = useRef(groups)
-  groupsRef.current = groups
+  // A stamp of when the query last produced data (or errored) is what actually
+  // says "there is something new to derive" — `query` itself is a fresh object
+  // on every render.
+  const stamp = `${query.dataUpdatedAt}:${query.errorUpdatedAt}`
+  const dataRef = useRef(query.data)
+  dataRef.current = query.data
+  const itemsRef = useRef(items)
+  itemsRef.current = items
   const boundRef = useRef(bound)
   boundRef.current = bound
 
@@ -252,18 +275,15 @@ export default function useMimicPlant({
     const now = Date.now()
     const readings = {}
     const history = {}
-    let anyData = false
+    const data = dataRef.current
+    const anyData = !!data
 
-    resultsRef.current.forEach((res, gi) => {
-      const group = groupsRef.current[gi]
-      if (!group) return
-      if (!res.data) return
-      anyData = true
-      group.items.forEach(({ nodeId }) => {
-        readings[nodeId] = res.data.latest[nodeId] ?? null
-        history[nodeId] = res.data.points[nodeId] ?? []
+    if (data) {
+      itemsRef.current.forEach(({ nodeId }) => {
+        readings[nodeId] = data.latest[nodeId] ?? null
+        history[nodeId] = data.points[nodeId] ?? []
       })
-    })
+    }
 
     const tags = {}
     const fresh = []
@@ -311,8 +331,9 @@ export default function useMimicPlant({
       // plan step 8 requires the rest of the drawing to survive, and silent
       // for a reachable-but-stale source, which the symbols already show.
       error: bound.length && unreadable === bound.length
-        ? 'Connection error — retrying…'
+        ? connectionErrorMessage(data?.sources)
         : '',
+      sources: data?.sources || [],
     })
   }, [stamp, enabled, pollSeconds, bound.length])
 

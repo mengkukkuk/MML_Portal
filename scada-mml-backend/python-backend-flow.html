@@ -775,8 +775,8 @@ const STEPS = [
     activeBox: ['box-sec','box-jwt'],
   },
   {
-    title: "db.py — psycopg3 Data Layer",
-    body: `<code>db.py</code> is a thin wrapper over psycopg3. <code>get_connection()</code> opens a new connection using <code>config.DATABASE_URL</code> (PostgreSQL keyword/value format). <code>row_factory=dict_row</code> means every row is returned as a Python <code>dict</code> — no ORM. Connections are opened per-call and closed via the <code>with</code> context manager. <b>Tables</b>: <code>users</code> (auth), <code>devices</code> (FX5U PLCs), <code>sensor_readings</code> (time-series data with btree index on <code>device_id, ts DESC</code>), <code>alarms</code> (SCADA events).`,
+    title: "db.py — psycopg3 Data Layer (app DB vs plant DBs)",
+    body: `<code>db.py</code> is a thin wrapper over psycopg3, split across <b>two kinds of database</b>. <code>get_connection()</code> is <b>always the app/config database</b>, hardcoded to <code>localhost</code> via <code>config.APP_DB_*</code> — <code>.env</code> cannot point it elsewhere, so login, layouts and settings survive any plant outage. It holds <code>users</code>, <code>user_datasource_selection</code>, <code>dashboards</code>/<code>dashboard_panels</code>, <code>mimic_*</code>, <code>report_*</code> and <code>datasources</code> itself. <b>Plant</b> tables — <code>sensor_readings</code>, <code>variables_tag</code>, <code>event_logs</code>, <code>alarm_logs</code> — live in the saved datasources instead, reached through one lazy pool per row and read via <code>fan_out()</code> across the sources the user picked in the header. <code>row_factory=dict_row</code> means every row is a Python <code>dict</code> — no ORM.`,
     light: ['n-db','tbl-users','tbl-devices','tbl-sensor','tbl-alarms'],
     active: ['n-db','tbl-users','tbl-devices','tbl-sensor','tbl-alarms'],
     arrows: ['va-db'],

@@ -1,12 +1,20 @@
-"""Report endpoints — OEE / production status reporting over public.event_logs.
+"""Report endpoints — OEE / production status reporting over event_logs.
 
-Read-only against the SCADA-owned log tables; the only writes are to the app's
-own report_templates / report_settings.
+Read-only against the SCADA-owned log tables in the selected datasources; the
+only writes are to the app's own report_templates / report_settings, which live
+in the config database regardless of what is selected.
 
 The interesting endpoint is POST /run. It builds each machine's state intervals
 *once* and projects that single interval set into every requested block, so the
 KPI cards, the Gantt, the Pareto and the summary table can never disagree with
 each other — which they would if each block queried independently.
+
+A machine's identity is `(datasource_id, location, tag_name)`, not
+`(location, tag_name)`. Two plants both running a "Line 1 / Packer" would
+otherwise have their events interleaved into one timeline, producing state
+transitions that never happened and an OEE figure for a machine that does not
+exist. `report_engine.build_intervals` is per-machine and key-agnostic, so it is
+unchanged by this.
 
 All timestamps are naive/server-local (see report_engine's module docstring).
 """
@@ -18,7 +26,8 @@ from pydantic import BaseModel, Field
 
 import db
 import report_engine as engine
-from auth import get_current_user, require_admin
+from auth import active_datasources, get_current_user, require_admin
+from sources import SourceReport, sort_key
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
@@ -65,6 +74,8 @@ class SettingsOut(BaseModel):
 class CatalogEntry(BaseModel):
     location: str | None = None
     tag_name: str
+    datasource_id: int | None = None
+    datasource_name: str | None = None
 
 
 class RunIn(BaseModel):
@@ -151,9 +162,23 @@ def write_settings(payload: SettingsIn, _admin: dict = Depends(require_admin)):
 
 # --- Catalog ----------------------------------------------------------------
 @router.get("/catalog", response_model=list[CatalogEntry])
-def catalog(refresh: bool = Query(False), _user: dict = Depends(get_current_user)):
-    """Selectable lines and machines. Cached for 5 minutes; ?refresh=1 busts it."""
-    return db.report_catalog(force=refresh)
+def catalog(
+    refresh: bool = Query(False),
+    _user: dict = Depends(get_current_user),
+    datasource_ids: list[int | None] = Depends(active_datasources),
+):
+    """Selectable lines and machines across the selected sources.
+
+    A flat list rather than an envelope: the filter bar's Line/Machine pickers
+    consume it directly, and a source that is unreachable simply contributes no
+    options. Cached per source for 5 minutes; ?refresh=1 busts it.
+    """
+    entries, _reports = db.fan_out_rows(
+        datasource_ids,
+        lambda ds: db.report_catalog(force=refresh, datasource_id=ds),
+        label="report catalog",
+    )
+    return entries
 
 
 # --- Run --------------------------------------------------------------------
@@ -170,53 +195,78 @@ def _validate_window(start: datetime, end: datetime) -> float:
     return seconds
 
 
+def _machine_key(row: dict[str, Any]) -> tuple:
+    return (row["datasource_id"], row["location"], row["tag_name"])
+
+
 @router.post("/run")
-def run_report(payload: RunIn = Body(...), _user: dict = Depends(get_current_user)):
+def run_report(
+    payload: RunIn = Body(...),
+    _user: dict = Depends(get_current_user),
+    datasource_ids: list[int | None] = Depends(active_datasources),
+):
     """Execute a report over a window and return one payload for every block."""
     window_seconds = _validate_window(payload.start, payload.end)
     settings = db.get_report_settings()
     rules = settings["state_rules"]
     lead = settings["alarm_lead_seconds"]
 
-    events = db.fetch_state_events(
-        payload.start, payload.end, payload.locations, payload.tag_names)
-    alarms = db.fetch_alarms_for_window(
-        payload.start - timedelta(seconds=lead), payload.end,
-        payload.locations, payload.tag_names)
+    events, event_sources = db.fan_out_rows(
+        datasource_ids,
+        lambda ds: db.fetch_state_events(
+            payload.start, payload.end, payload.locations, payload.tag_names,
+            datasource_id=ds),
+        label="state events",
+    )
+    alarms, _alarm_sources = db.fan_out_rows(
+        datasource_ids,
+        lambda ds: db.fetch_alarms_for_window(
+            payload.start - timedelta(seconds=lead), payload.end,
+            payload.locations, payload.tag_names, datasource_id=ds),
+        label="report alarms",
+    )
 
     # Group both feeds by machine so each machine's timeline is built from only
-    # its own rows.
+    # its own rows. The datasource is part of the key — see the module docstring.
     by_machine: dict[tuple, list] = {}
     for row in events:
-        by_machine.setdefault((row["location"], row["tag_name"]), []).append(row)
+        by_machine.setdefault(_machine_key(row), []).append(row)
     alarms_by_machine: dict[tuple, list] = {}
     for row in alarms:
-        alarms_by_machine.setdefault((row["location"], row["tag_name"]), []).append(row)
+        alarms_by_machine.setdefault(_machine_key(row), []).append(row)
 
     # A machine explicitly asked for but with no rows at all still deserves a row
     # in the report — showing it as 100% UNKNOWN is the finding.
     keys = set(by_machine) | set(alarms_by_machine)
+    names = db.datasource_names(datasource_ids)
     if payload.tag_names:
-        keys |= {(loc, tag) for loc, tag in
-                 ((c["location"], c["tag_name"]) for c in db.report_catalog())
-                 if tag in payload.tag_names
-                 and (not payload.locations or loc in payload.locations)}
+        catalog_entries, _ = db.fan_out_rows(
+            datasource_ids,
+            lambda ds: db.report_catalog(datasource_id=ds),
+            label="report catalog",
+        )
+        keys |= {_machine_key(c) for c in catalog_entries
+                 if c["tag_name"] in payload.tag_names
+                 and (not payload.locations or c["location"] in payload.locations)}
 
     now = datetime.now()
     want_intervals = "timeline" in payload.blocks
     machines: list[dict[str, Any]] = []
 
-    for location, tag_name in sorted(keys, key=lambda k: (k[0] or "", k[1] or "")):
+    for key in sorted(keys, key=lambda k: (k[1] or "", k[2] or "", k[0] or 0)):
+        ds_id, location, tag_name = key
         intervals = engine.build_intervals(
-            by_machine.get((location, tag_name), []),
+            by_machine.get(key, []),
             payload.start, payload.end, rules, now=now,
         )
-        machine_alarms = alarms_by_machine.get((location, tag_name), [])
+        machine_alarms = alarms_by_machine.get(key, [])
         engine.attribute_reasons(intervals, machine_alarms, lead)
 
         entry = {
             "location": location,
             "tag_name": tag_name,
+            "datasource_id": ds_id,
+            "datasource_name": names.get(ds_id),
             "alarm_count": len(machine_alarms),
             **engine.aggregate(intervals, window_seconds),
         }
@@ -233,6 +283,7 @@ def run_report(payload: RunIn = Body(...), _user: dict = Depends(get_current_use
             "generated_at": now,
         },
         "oee_mode": "availability_only",
+        "sources": event_sources,
         "totals": engine.totals_across(machines, window_seconds),
     }
 
@@ -273,21 +324,44 @@ def raw_logs(
     limit: int = Query(50, ge=1, le=MAX_EXPORT_ROWS),
     offset: int = Query(0, ge=0),
     _user: dict = Depends(get_current_user),
+    datasource_ids: list[int | None] = Depends(active_datasources),
 ):
-    """A page of raw event_logs rows.
+    """A page of raw event_logs rows, merged across the selected sources.
 
     The on-screen table pages through this 50 at a time; the export re-requests
     it with a large limit. `truncated` tells the caller the file is incomplete
     rather than letting a silently short download look authoritative.
+
+    Paging a merge has to over-fetch: row 100 of the merged order can come from
+    anywhere in the first 100 rows of any single source, so each source is asked
+    for `offset + limit` and the slice is taken after sorting. That cost grows
+    linearly with both the offset and the source count — the `MAX_EXPORT_ROWS`
+    ceiling now applies to the *merged* total, so a large export over several
+    plants is the expensive case to watch.
     """
     _validate_window(start, end)
-    total = db.count_event_log(start, end, locations, tag_names, search)
-    rows = db.fetch_event_log_page(
-        start, end, locations, tag_names, search, limit, offset)
+    counts = db.fan_out(
+        datasource_ids,
+        lambda ds: db.count_event_log(start, end, locations, tag_names, search,
+                                      datasource_id=ds),
+        label="log count",
+    )
+    total = sum(c["result"] or 0 for c in counts)
+
+    span = min(offset + limit, MAX_EXPORT_ROWS)
+    rows, reports = db.fan_out_rows(
+        datasource_ids,
+        lambda ds: db.fetch_event_log_page(start, end, locations, tag_names,
+                                           search, span, 0, datasource_id=ds),
+        label="log page",
+    )
+    rows.sort(key=sort_key("at_date_time"), reverse=True)
+    page = rows[offset:offset + limit]
     return {
         "total": total,
         "limit": limit,
         "offset": offset,
-        "truncated": offset + len(rows) < total,
-        "rows": rows,
+        "truncated": offset + len(page) < total,
+        "rows": page,
+        "sources": reports,
     }

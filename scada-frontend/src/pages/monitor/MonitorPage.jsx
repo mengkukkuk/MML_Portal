@@ -14,6 +14,7 @@ import RestartAltOutlined from '@mui/icons-material/RestartAltOutlined'
 import ChevronLeft from '@mui/icons-material/ChevronLeft'
 import ChevronRight from '@mui/icons-material/ChevronRight'
 import { useAuthStore } from '@/stores/auth'
+import ConnectionAlarmStrip from '@/components/ConnectionAlarm/ConnectionAlarmStrip'
 import usePlantData from '@/components/mimic/usePlantData'
 import { SYMBOLS, symbolDef, setCustomDefs } from '@/components/mimic/symbols'
 import { NORMAL_WIRE } from '@/components/mimic/wireTypes'
@@ -199,10 +200,11 @@ export default function MonitorPage() {
   const [pollSeconds, setPollSeconds] = useState(5)
 
   const {
-    tags, history, events, error: dataError, simulateExcursion, excursionTag,
+    tags, history, events, error: dataError, sources: connSources, simulateExcursion, excursionTag,
   } = usePlantData({
     nodes, demo, tickMs, pollSeconds,
   })
+  const anySourceFailed = connSources.some((s) => !s.ok)
 
   const datasourcesQuery = useQuery({ queryKey: ['datasources'], queryFn: fetchDatasources })
 
@@ -674,7 +676,12 @@ export default function MonitorPage() {
         * the drawing itself rather than this tick's poll. */}
       {lock && <Alert severity="warning">{lock}</Alert>}
 
-      {dataError && <Alert severity="warning">{dataError}</Alert>}
+      <ConnectionAlarmStrip sources={connSources} />
+
+      {/* Named alarm tiles above already say which source and for how long;
+        * the generic banner only earns its place when the strip has nothing
+        * to say (e.g. a stale-but-answering source). */}
+      {dataError && !anySourceFailed && <Alert severity="warning">{dataError}</Alert>}
 
       {/* Only the drawing waits on the switch — the switcher itself stays put,
         * so the control you just used does not vanish under your cursor. */}

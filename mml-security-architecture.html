@@ -491,16 +491,16 @@ salt  = os.urandom(16)  <span class="c"># per user</span></pre>
           <td>Signs all three token types. Compromise = full account impersonation.</td>
         </tr>
         <tr>
-          <td><b>DB_PASSWORD</b></td>
-          <td><code>.env</code></td>
-          <td><span class="pill pill-op">plaintext file</span></td>
-          <td>Assembled into the libpq connection string at import time.</td>
+          <td><b>APP_DB_PASSWORD</b></td>
+          <td><code>config.py</code> <span class="pill pill-op">source</span></td>
+          <td><span class="pill pill-op">hardcoded literal</span></td>
+          <td>The app/config database is fixed at <code>localhost</code> and its password is a literal in committed source, not <code>.env</code>. Tolerable only because the credential is worthless off-box: it must be paired with a loopback connection. It stops being tolerable the moment <code>pg_hba.conf</code> accepts that user from a non-loopback address — see the gaps table.</td>
         </tr>
         <tr>
           <td><b>Datasource passwords</b></td>
           <td><code>datasources.password</code></td>
           <td><span class="pill pill-admin">plaintext column</span></td>
-          <td>Never returned — the public projection exposes only <code>(password &lt;&gt; '') AS has_password</code>.</td>
+          <td>All <b>plant</b> credentials now live here rather than in <code>.env</code> — one row per plant database. Never returned: the public projection exposes only <code>(password &lt;&gt; '') AS has_password</code>. The blast radius of a read of the app database therefore grew from one database to every plant.</td>
         </tr>
         <tr>
           <td><b>BREVO_API_KEY / SMTP_PASS</b></td>
@@ -528,10 +528,13 @@ salt  = os.urandom(16)  <span class="c"># per user</span></pre>
 <span class="k">def</span> _get(name, default=<span class="k">None</span>):
     <span class="k">if</span> value <span class="k">is None</span>: <span class="k">raise</span> RuntimeError(...)
 
-<span class="c"># …but neither of these calls it:</span>
-DB_PASSWORD = os.getenv(<span class="s">"DB_PASSWORD"</span>, <span class="s">""</span>)
-JWT_SECRET  = os.getenv(<span class="s">"JWT_SECRET"</span>, <span class="s">"dev-insecure-change-me"</span>)</pre>
-      <div class="note risk">CLAUDE.md and <code class="inl">.env.example</code> both call these <b>required</b>. The code treats them as optional with defaults. A deployment that forgets <code class="inl">JWT_SECRET</code> starts successfully and signs every token with a value published in this repository — anyone can then mint a valid admin token. Carried to the gaps step as item #1.</div>
+<span class="c"># …but the one secret that matters most does not call it:</span>
+JWT_SECRET  = os.getenv(<span class="s">"JWT_SECRET"</span>, <span class="s">"dev-insecure-change-me"</span>)
+
+<span class="c"># and the app database is not configurable at all:</span>
+APP_DB_HOST     = <span class="s">"localhost"</span>
+APP_DB_PASSWORD = <span class="s">"P@ssw0rd"</span></pre>
+      <div class="note risk">CLAUDE.md and <code class="inl">.env.example</code> call <code class="inl">JWT_SECRET</code> <b>required</b>. The code treats it as optional with a default. A deployment that forgets it starts successfully and signs every token with a value published in this repository — anyone can then mint a valid admin token. Carried to the gaps step as item #1.<br><br>The hardcoded <code class="inl">APP_DB_PASSWORD</code> is a deliberate trade: it removes a whole class of "the app will not boot because <code class="inl">.env</code> is wrong" failures, and the credential only works over loopback. That guarantee is enforced by <code class="inl">pg_hba.conf</code>, not by this code — nothing here fails closed if the operator widens it.</div>
     </div>
   </div>
 
@@ -1097,7 +1100,17 @@ sql = <span class="k">f</span><span class="s">"SELECT tag_name, active, … {sel
         <tr>
           <td><b>1 · JWT_SECRET has a public default</b><br><span style="color:var(--muted)">Docs say required; code says optional</span></td>
           <td><code>config.py</code></td>
-          <td>Route it through the existing <code>_get()</code> helper so a missing value refuses to boot. Same for <code>DB_PASSWORD</code>.</td>
+          <td>Route it through the existing <code>_get()</code> helper so a missing value refuses to boot.</td>
+        </tr>
+        <tr>
+          <td><b>1b · App DB password is a source literal</b><br><span style="color:var(--muted)">Safe only while Postgres refuses it off-loopback</span></td>
+          <td><code>config.py</code> · <code>pg_hba.conf</code></td>
+          <td>Confirm <code>pg_hba.conf</code> grants the <code>postgres</code> user <code>host</code> access from <code>127.0.0.1/32</code> and <code>::1/128</code> only. Widening it to a subnet turns a published literal into a remote credential. Verify after any PostgreSQL upgrade — installers rewrite this file.</td>
+        </tr>
+        <tr>
+          <td><b>1c · Plant credentials concentrate in one table</b><br><span style="color:var(--muted)">Read access to the app DB now yields every plant</span></td>
+          <td><code>datasources.password</code></td>
+          <td>Stored plaintext. Encrypt at rest with a key held outside the database, so a stolen backup is not a set of live plant logins. Until then, treat app-DB backups at the same classification as the plant credentials themselves.</td>
         </tr>
         <tr>
           <td><b>2 · COOKIE_SECURE defaults to false</b></td>

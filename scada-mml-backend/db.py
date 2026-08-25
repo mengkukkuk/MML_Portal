@@ -1,16 +1,21 @@
 """Thin PostgreSQL access layer using psycopg 3."""
+import atexit
 import logging
 import threading
-import time
 from collections import deque
+from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from time import monotonic
 from typing import Any
 
 import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
+from psycopg_pool import ConnectionPool, PoolTimeout
 
 import config
 
@@ -20,42 +25,33 @@ logger = logging.getLogger("mml-api.db")
 # database. False means the app is serving without a verified schema.
 SCHEMA_READY = False
 
-# --- Connection failover ---------------------------------------------------
-# Every query in the app funnels through get_connection(), so it is the single
-# place that decides *which* database is in use. It walks config.DB_CANDIDATES
-# (primary first) and adopts the first that answers.
-_conn_lock = threading.Lock()
-_active_index = 0
-_all_down_until = 0.0          # monotonic deadline for fail-fast during a full outage
-_last_errors: dict[str, str] = {}
-_ALL_DOWN = "\x00all"          # sentinel key; cannot collide with a candidate name
-# Names already reported as unreachable. Per candidate rather than one global
-# flag: with a fallback configured the probe loop keeps *succeeding* on the
-# fallback, which would clear a global flag every cycle and re-log the primary's
-# outage indefinitely -- the log flood this suppression exists to prevent.
-_outage_logged: set[str] = set()
-_db_state: dict[str, Any] = {
-    "ok": False,
-    "candidate": None,
-    "checked_at": None,
-}
+# --- Connection pools -------------------------------------------------------
+# One pool per database the process talks to: `None` is the app/config database
+# (always localhost), an int is a saved datasource. Pooling matters because the
+# fan-out reads below hit every selected datasource on a 1-5s cadence, and a
+# fresh TCP+TLS+auth handshake per poll per source does not fit in the budget.
+_pools: dict[int | None, "ConnectionPool"] = {}
+_pool_schemas: dict[int | None, str] = {None: "public"}
+_pool_lock = threading.Lock()
 
+# Cached app-DB health served by /health. Only ever describes localhost --
+# per-datasource health is reported separately by datasource_health().
+_db_state: dict[str, Any] = {"ok": False, "checked_at": None}
 
-def _is_unreachable(exc: psycopg.OperationalError) -> bool:
-    """True when the error means "no server answered", not "the server said no".
+# Datasource ids already reported as unreachable, so a plant that stays down
+# does not re-log on every poll.
+_outage_logged: set[int | None] = set()
+_ds_errors: dict[int | None, str | None] = {}
 
-    psycopg maps several *server-originated* conditions onto OperationalError --
-    53300 too_many_connections, 57P01 admin_shutdown, 28P01 invalid_password --
-    so the exception class alone cannot justify a failover. Treating those as
-    "host is down" would migrate the whole app onto the fallback on a transient
-    connection spike and start splitting writes across two databases, which is
-    worse than the outage this failover exists to survive.
-
-    A connect that never reached a server carries no sqlstate; class 08 covers
-    the genuine connection exceptions a server does report.
-    """
-    state = getattr(exc, "sqlstate", None)
-    return state is None or state.startswith("08")
+#: How long a source stays fast-failing after a connection failure, i.e. how
+#: often it is re-probed. Kept at the poll cadence: long enough that one dead
+#: plant costs one connect timeout per round instead of one per request, short
+#: enough that a plant coming back is noticed on the next poll rather than after
+#: a backoff an operator would read as "still broken".
+_DS_RETRY_AFTER_S = 5.0
+_ds_down_until: dict[int | None, float] = {}
+_ds_probing: set[int | None] = set()
+_ds_down_lock = threading.Lock()
 
 
 def _first_line(exc: Exception) -> str | None:
@@ -63,167 +59,201 @@ def _first_line(exc: Exception) -> str | None:
     return text.splitlines()[0] if text else None
 
 
-def _record(ok: bool, name: str | None, error: str | None = None) -> None:
-    """Update the cached DB health served by /health.
+def _claim_probe(datasource_id: int | None) -> bool:
+    """Whether this caller should really attempt a connection to a known-down
+    source, or fast-fail on the last known error instead.
 
-    Written on every connection attempt rather than from a background loop, so
-    it can never report a stale "ok" for a database that died after boot.
+    One Monitor poll issues a request per bound symbol, and one Live page issues
+    a request per tile. Letting each of them independently pay DB_CONNECT_TIMEOUT
+    against a powered-off plant queues work faster than it drains: the fan-out
+    workers fill with sleeping sockets and requests for *healthy* sources — and
+    for the app database — start timing out behind them. The page then stops
+    responding altogether, which is a far worse failure than the one source being
+    unreachable.
+
+    So a source that just failed is fast-failed for `_DS_RETRY_AFTER_S`, after
+    which exactly one caller is let through to probe it while the rest keep
+    fast-failing. That single probe is the reconnection attempt: when it
+    succeeds the window is cleared and every subsequent request goes straight
+    through, so recovery costs one poll, not a restart.
+    """
+    with _ds_down_lock:
+        until = _ds_down_until.get(datasource_id)
+        if until is None:
+            return True
+        if monotonic() < until or datasource_id in _ds_probing:
+            return False
+        _ds_probing.add(datasource_id)
+        return True
+
+
+def _mark_reachable(datasource_id: int | None) -> None:
+    """Record that this source answered, whatever the query then did."""
+    if datasource_id in _outage_logged:
+        logger.info("Datasource %s reachable again", datasource_id)
+        _outage_logged.discard(datasource_id)
+    _ds_errors[datasource_id] = None
+    _probe_done(datasource_id, ok=True)
+
+
+def _probe_done(datasource_id: int | None, *, ok: bool) -> None:
+    """Close out a connection attempt, opening or extending the fast-fail window."""
+    with _ds_down_lock:
+        _ds_probing.discard(datasource_id)
+        if ok:
+            _ds_down_until.pop(datasource_id, None)
+        else:
+            _ds_down_until[datasource_id] = monotonic() + _DS_RETRY_AFTER_S
+
+
+def _record(ok: bool, error: str | None = None) -> None:
+    """Update cached app-DB health.
+
+    Written on every app-DB connection attempt rather than from a background
+    loop, so it can never report a stale "ok" for a database that died after boot.
     """
     _db_state["ok"] = ok
-    _db_state["candidate"] = name
     _db_state["checked_at"] = datetime.now(timezone.utc).isoformat()
-    if name is not None:
-        if error:
-            _last_errors[name] = error
-        else:
-            _last_errors.pop(name, None)
+    _ds_errors[None] = error
 
 
 def db_state() -> dict[str, Any]:
-    """Snapshot of connection health for /health and the admin status route."""
-    with _conn_lock:
-        active_index = _active_index
+    """Snapshot of app-database health for /health and the admin status route."""
     return {
         "ok": _db_state["ok"],
-        "candidate": _db_state["candidate"],
         "checked_at": _db_state["checked_at"],
-        "is_fallback": active_index != 0,
-        "active": config.DB_CANDIDATES[active_index]["name"],
         "schema_ready": SCHEMA_READY,
+        "host": config.APP_DB_HOST,
+        "database": config.APP_DB_NAME,
     }
 
 
-def candidate_report() -> list[dict[str, Any]]:
-    """Per-candidate detail for the admin-gated status route.
+def _build_pool(datasource_id: int | None) -> tuple["ConnectionPool", str]:
+    """Construct (but do not block on) a pool for one database.
 
-    Never exposed on /health: the error text carries host and port.
+    `open=False` then `open(wait=False)` is deliberate: a powered-off plant host
+    must not stall startup or the first request that happens to touch it. The
+    failure surfaces later at `pool.connection()` as PoolTimeout, which fan_out
+    catches per source.
     """
-    with _conn_lock:
-        active = _active_index
-    return [
-        {
-            "name": c["name"],
-            "host": c["host"],
-            "port": c["port"],
-            "database": c["dbname"],
-            "active": i == active,
-            "last_error": _last_errors.get(c["name"]),
-        }
-        for i, c in enumerate(config.DB_CANDIDATES)
-    ]
+    if datasource_id is None:
+        kwargs = dict(config.APP_DB_KWARGS)
+        min_size, max_size, schema = (
+            config.APP_DB_POOL_MIN, config.APP_DB_POOL_MAX, "public",
+        )
+    else:
+        ds = get_datasource_secret(datasource_id)
+        if ds is None:
+            raise ValueError(f"datasource {datasource_id} not found")
+        kwargs = dict(
+            host=ds["host"], port=ds["port"], dbname=ds["database"],
+            user=ds["username"], password=ds["password"], sslmode=ds["sslmode"],
+            connect_timeout=config.DB_CONNECT_TIMEOUT,
+        )
+        # min_size=0: a saved-but-unselected datasource must hold zero sockets.
+        min_size, max_size = 0, config.DS_POOL_MAX
+        schema = ds.get("db_schema") or "public"
 
-
-def _pinned_index() -> int:
-    """Index named by DB_TARGET. Raises if the name is unknown."""
-    for i, c in enumerate(config.DB_CANDIDATES):
-        if c["name"] == config.DB_TARGET:
-            return i
-    names = ", ".join(c["name"] for c in config.DB_CANDIDATES)
-    raise RuntimeError(
-        f"DB_TARGET={config.DB_TARGET!r} matches no candidate (have: {names})"
+    pool = ConnectionPool(
+        kwargs={**kwargs, "row_factory": dict_row},
+        min_size=min_size, max_size=max_size,
+        timeout=config.DB_CONNECT_TIMEOUT,
+        open=False, name=f"ds-{datasource_id}",
     )
+    pool.open(wait=False)
+    return pool, schema
 
 
-def failback() -> str:
-    """Return to the primary. Deliberately manual -- see get_connection on write
-    divergence. Returns the candidate name now active."""
-    global _active_index, _all_down_until
-    with _conn_lock:
-        _active_index = 0
-        _all_down_until = 0.0
-    logger.warning("Database failback: switched to primary by request")
-    return config.DB_CANDIDATES[0]["name"]
+def _pool_for(datasource_id: int | None) -> "ConnectionPool":
+    """Pool for one database, created on first use."""
+    with _pool_lock:
+        pool = _pools.get(datasource_id)
+        if pool is not None:
+            return pool
+    # Build outside the lock: resolving a datasource's secret is itself an
+    # app-DB query, and holding _pool_lock across it would deadlock against the
+    # nested _pool_for(None) that query needs.
+    pool, schema = _build_pool(datasource_id)
+    with _pool_lock:
+        existing = _pools.get(datasource_id)
+        if existing is not None:
+            # Lost a race; discard ours rather than leak the loser's sockets.
+            pool.close()
+            return existing
+        _pools[datasource_id] = pool
+        _pool_schemas[datasource_id] = schema
+        return pool
 
 
-def get_connection() -> psycopg.Connection:
-    """Open a new connection to the active database. Rows are returned as dicts.
+def drop_pool(datasource_id: int) -> None:
+    """Discard a datasource's pool after its row was edited or deleted.
 
-    On an *unreachable* database the remaining candidates are tried in order and
-    the first that answers is adopted for subsequent calls. Switching back to the
-    primary is never automatic: once the app has written panels or layouts to a
-    fallback, silently returning would split those writes across two databases.
+    close() is called *outside* _pool_lock: it waits for checked-out connections
+    to be returned, and a fan-out worker blocked in _pool_for would deadlock
+    against it.
     """
-    global _active_index, _all_down_until
+    with _pool_lock:
+        pool = _pools.pop(datasource_id, None)
+        _pool_schemas.pop(datasource_id, None)
+    _outage_logged.discard(datasource_id)
+    _ds_errors.pop(datasource_id, None)
+    with _ds_down_lock:
+        _ds_down_until.pop(datasource_id, None)
+        _ds_probing.discard(datasource_id)
+    if pool is not None:
+        pool.close()
 
-    # Pinned mode: one database, no walking. A walk here could seed or migrate
-    # the wrong host while the intended one is briefly unavailable.
-    if config.DB_TARGET:
-        cand = config.DB_CANDIDATES[_pinned_index()]
+
+def close_all_pools() -> None:
+    """Release every pooled socket. Called on shutdown so a uvicorn reload does
+    not leak connections into the plant databases."""
+    with _pool_lock:
+        pools = list(_pools.values())
+        _pools.clear()
+        _pool_schemas.clear()
+        _pool_schemas[None] = "public"
+    for pool in pools:
         try:
-            conn = psycopg.connect(cand["dsn"], row_factory=dict_row)
-        except psycopg.OperationalError as e:
-            _record(False, cand["name"], _first_line(e))
-            raise
-        _record(True, cand["name"])
-        return conn
+            pool.close()
+        except Exception:  # noqa: BLE001 - shutdown must not raise
+            pass
 
-    candidates = config.DB_CANDIDATES
-    with _conn_lock:
-        start = _active_index
-        cooling = time.monotonic() < _all_down_until
 
-    if cooling:
-        # Every candidate failed moments ago. Fail fast so callers get a prompt
-        # 503 instead of paying the full connect timeout for each host again.
-        raise psycopg.OperationalError("All configured databases are unreachable")
+# A pool runs background worker threads. Left to the garbage collector they are
+# joined during interpreter finalization, which raises PythonFinalizationError --
+# harmless but alarming noise in every CLI script and test run. atexit runs early
+# enough that the join succeeds. main.py still closes them explicitly on shutdown
+# so a uvicorn reload releases plant sockets without waiting for process exit.
+atexit.register(close_all_pools)
 
-    # Active candidate first, then the rest in declared order.
-    order = [start] + [i for i in range(len(candidates)) if i != start]
-    last_exc: psycopg.OperationalError | None = None
 
-    for idx in order:
-        cand = candidates[idx]
-        try:
-            # Connect outside the lock: holding it across a multi-second connect
-            # would serialise every request in the process behind one attempt.
-            conn = psycopg.connect(cand["dsn"], row_factory=dict_row)
-        except psycopg.OperationalError as e:
-            detail = _first_line(e) or repr(e)
-            _record(False, cand["name"], detail)
-            if not _is_unreachable(e):
-                # The server answered and refused. Surface it against this
-                # candidate rather than drifting onto another database.
-                if getattr(e, "sqlstate", None) == "28P01":
-                    logger.error(
-                        "Database %s rejected our credentials (28P01) -- check the "
-                        "password in .env. Not treating this as an outage.",
-                        cand["name"],
-                    )
-                raise
-            last_exc = e
-            if cand["name"] not in _outage_logged:
-                logger.warning("Database %s unreachable: %s", cand["name"], detail)
-                _outage_logged.add(cand["name"])
-            continue
+@contextmanager
+def get_connection():
+    """A connection to the APP/CONFIG database (always localhost).
 
-        if idx != start:
-            with _conn_lock:
-                _active_index = idx
-                _all_down_until = 0.0
-            logger.warning(
-                "Database failover: now using %s (%s:%s/%s)",
-                cand["name"], cand["host"], cand["port"], cand["dbname"],
-            )
-        elif cand["name"] in _outage_logged:
-            logger.info("Database %s reachable again", cand["name"])
-        _outage_logged.discard(cand["name"])
-        _outage_logged.discard(_ALL_DOWN)
-        _record(True, cand["name"])
-        return conn
-
-    with _conn_lock:
-        _all_down_until = time.monotonic() + config.DB_FAILOVER_COOLDOWN
-    _record(False, candidates[start]["name"])
-    if _ALL_DOWN not in _outage_logged:
-        logger.error("All %d database candidate(s) unreachable", len(candidates))
-        _outage_logged.add(_ALL_DOWN)
-    if last_exc is not None:
-        raise last_exc
-    raise psycopg.OperationalError("No database candidates configured")
+    Never plant data. Everything reachable from here -- users, dashboards,
+    panels, mimic layouts, report templates, saved datasources -- is MMLPortal's
+    own state. Plant reads go through `_table_source_conn(datasource_id)`.
+    """
+    try:
+        with _pool_for(None).connection() as conn:
+            _record(True)
+            yield conn
+    except (psycopg.OperationalError, PoolTimeout) as e:
+        detail = _first_line(e) or repr(e)
+        _record(False, detail)
+        if None not in _outage_logged:
+            logger.warning("App database unreachable: %s", detail)
+            _outage_logged.add(None)
+        raise
+    else:
+        if None in _outage_logged:
+            logger.info("App database reachable again")
+            _outage_logged.discard(None)
 
 
 def probe() -> bool:
-    """Open and close one connection purely to refresh cached health.
+    """Open and close one app-DB connection purely to refresh cached health.
 
     Lets /health stay accurate on an idle service, where no request would
     otherwise exercise get_connection().
@@ -232,8 +262,151 @@ def probe() -> bool:
         with get_connection() as conn:
             conn.execute("SELECT 1")
         return True
-    except psycopg.OperationalError:
+    except (psycopg.OperationalError, PoolTimeout):
         return False
+
+
+def datasource_health() -> list[dict[str, Any]]:
+    """Per-datasource connection detail for the admin-gated status route.
+
+    Never exposed on /health: the error text carries host and port.
+
+    There are three real states, not two: never tried, working, failing. `ok`
+    answers only "is there a known failure", so an untried source reports
+    ok=True / in_use=False rather than ok=False -- a configured plant nobody has
+    opened yet is not a broken one, and reporting it as broken trains an admin
+    to ignore this page. `in_use` is what says whether ok=True was actually
+    verified.
+    """
+    with _pool_lock:
+        in_use = set(_pools) - {None}
+    rows = list_datasources()
+    return [
+        {
+            "id": r["id"],
+            "name": r["name"],
+            "in_use": r["id"] in in_use,
+            "last_error": _ds_errors.get(r["id"]),
+            "ok": _ds_errors.get(r["id"]) is None,
+        }
+        for r in rows
+    ]
+
+
+def datasource_reachable(datasource_id: int | None) -> bool:
+    """True when the most recent plant query against this source succeeded.
+
+    Absent from `_ds_errors` means "never tried"; the value is set to None only
+    after a query actually came back. This is how the request path — panels
+    polling every few seconds — reports a recovered plant to the background tag
+    buffer, which would otherwise sit out its full backoff before finding out.
+    """
+    return _ds_errors.get(datasource_id, "never tried") is None
+
+
+# --- Fan-out across the selected datasources --------------------------------
+# A module-level bounded executor, not a per-call `with ThreadPoolExecutor(...)`:
+# the per-call form creates and joins N OS threads per request, and at 1 Hz x N
+# panels x N sources that is real churn plus an unbounded thread count. The cap
+# also bounds total concurrent remote connections independently of DS_POOL_MAX.
+_fanout_pool = ThreadPoolExecutor(
+    max_workers=config.FANOUT_MAX_WORKERS, thread_name_prefix="ds-fanout"
+)
+atexit.register(lambda: _fanout_pool.shutdown(wait=False, cancel_futures=True))
+
+
+def fan_out(
+    datasource_ids: Sequence[int | None],
+    query,
+    *,
+    timeout: int | None = None,
+    label: str = "query",
+) -> list[dict[str, Any]]:
+    """Run ``query(datasource_id)`` against each source concurrently.
+
+    Returns one entry per input id, in the SAME order as ``datasource_ids``::
+
+        {"datasource_id", "datasource_name", "ok", "result", "error"}
+
+    Threaded rather than sequential because /api/alarms/active is polled once a
+    second. With three sources of which one is powered off, sequential costs a
+    full connect timeout plus two live queries *every tick* — the poll interval
+    is exceeded before the first byte and requests queue until the anyio
+    threadpool is exhausted. Threaded costs max(...) instead of sum(...), and the
+    dead source's timeout is paid on a worker, not on the request thread.
+
+    Error contract: a per-source failure NEVER propagates. An OperationalError
+    from a powered-off host, an UndefinedTable from a plant DB with no
+    `event_logs` — caught, reduced to its first line, returned as ok=False.
+    Callers decide what partial means for them.
+
+    A future not complete within `timeout` is recorded ok=False and abandoned
+    rather than cancelled: libpq is already blocked in a syscall, so cancelling
+    would not free the worker any sooner.
+
+    Callers must be sync defs. Every affected route already is, so it runs on the
+    anyio worker threadpool where blocking is correct.
+    """
+    ids = list(datasource_ids)
+    names = datasource_names(ids)
+    deadline = (timeout if timeout is not None else config.FANOUT_TIMEOUT_S)
+    futures = [_fanout_pool.submit(query, ds_id) for ds_id in ids]
+
+    out: list[dict[str, Any]] = []
+    remaining = deadline
+    for ds_id, future in zip(ids, futures):
+        started = monotonic()
+        try:
+            result = future.result(timeout=max(remaining, 0))
+            entry = {"ok": True, "result": result, "error": None}
+        except FuturesTimeout:
+            remaining = 0
+            entry = {"ok": False, "result": None, "error": "timed out"}
+            logger.warning("Fan-out %s timed out on datasource %s", label, ds_id)
+        except Exception as e:  # noqa: BLE001 — isolation is the whole point
+            detail = _first_line(e) or type(e).__name__
+            entry = {"ok": False, "result": None, "error": detail}
+            logger.warning("Fan-out %s failed on datasource %s: %s", label, ds_id, detail)
+        else:
+            remaining -= monotonic() - started
+        out.append({
+            "datasource_id": ds_id,
+            "datasource_name": names.get(ds_id, str(ds_id)),
+            **entry,
+        })
+    return out
+
+
+def fan_out_rows(
+    datasource_ids: Sequence[int | None],
+    query,
+    *,
+    label: str = "rows",
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """fan_out + flatten. Every row gains `datasource_id` and `datasource_name`.
+
+    Returns ``(rows, sources)``. `sources` is the per-source report, kept even on
+    success so the UI can say which plants a merged list actually came from —
+    "3 alarms" means something different from two sources than from one.
+
+    Rows are tagged rather than grouped because the pages that consume this merge
+    and sort across sources anyway; the tag is what makes React keys and the
+    acknowledge path able to tell two plants' identically-named rows apart.
+    """
+    reports = fan_out(datasource_ids, query, label=label)
+    rows: list[dict[str, Any]] = []
+    for report in reports:
+        for row in report["result"] or []:
+            rows.append({
+                **row,
+                "datasource_id": report["datasource_id"],
+                "datasource_name": report["datasource_name"],
+            })
+    sources = [
+        {k: r[k] for k in ("datasource_id", "datasource_name", "ok", "error")}
+        for r in reports
+    ]
+    return rows, sources
 
 
 def get_user_by_username(username: str) -> dict[str, Any] | None:
@@ -340,51 +513,68 @@ def count_admins() -> int:
 
 
 # --- Live sensor readings (real-time charts) --------------------------------
-def list_devices() -> list[dict[str, Any]]:
+# Plant data. Every function here takes a `datasource_id` and reaches the
+# database through _table_source_conn, which also supplies that source's
+# configured schema. The schema part is easy to miss and matters: a saved
+# datasource can be on something other than `public`, and the hardcoded
+# `public.`/bare table names these used to carry would silently 500 there.
+def list_devices(datasource_id: int | None = None) -> list[dict[str, Any]]:
     """All monitored devices, ordered by id."""
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
         rows = conn.execute(
-            """SELECT id, name, type, location, status
-            FROM devices ORDER BY id"""
+            sql.SQL(
+                """SELECT id, name, type, location, status
+                FROM {} ORDER BY id"""
+            ).format(sql.Identifier(schema, "devices"))
         ).fetchall()
     return rows
 
 
-def list_metrics(device_id: int) -> list[dict[str, Any]]:
+def list_metrics(device_id: int, datasource_id: int | None = None) -> list[dict[str, Any]]:
     """Distinct metrics (with their most recent unit) recorded for a device."""
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
         rows = conn.execute(
-            """SELECT DISTINCT ON (metric) metric, unit
-            FROM sensor_readings
-            WHERE device_id = %s
-            ORDER BY metric, ts DESC""",
+            sql.SQL(
+                """SELECT DISTINCT ON (metric) metric, unit
+                FROM {}
+                WHERE device_id = %s
+                ORDER BY metric, ts DESC"""
+            ).format(sql.Identifier(schema, "sensor_readings")),
             (device_id,),
         ).fetchall()
     return rows
 
 
-def latest_reading(device_id: int, metric: str) -> dict[str, Any] | None:
+def latest_reading(
+    device_id: int, metric: str, datasource_id: int | None = None
+) -> dict[str, Any] | None:
     """Single most-recent reading for a device/metric, or None if none exist."""
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
         row = conn.execute(
-            """SELECT value, unit, ts
-            FROM sensor_readings
-            WHERE device_id = %s AND metric = %s
-            ORDER BY ts DESC LIMIT 1""",
+            sql.SQL(
+                """SELECT value, unit, ts
+                FROM {}
+                WHERE device_id = %s AND metric = %s
+                ORDER BY ts DESC LIMIT 1"""
+            ).format(sql.Identifier(schema, "sensor_readings")),
             (device_id, metric),
         ).fetchone()
     return row
 
 
-def reading_series(device_id: int, metric: str, minutes: int) -> list[dict[str, Any]]:
+def reading_series(
+    device_id: int, metric: str, minutes: int, datasource_id: int | None = None
+) -> list[dict[str, Any]]:
     """Time-ordered readings for a device/metric over the last `minutes`."""
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
         rows = conn.execute(
-            """SELECT value, unit, ts
-            FROM sensor_readings
-            WHERE device_id = %s AND metric = %s
-              AND ts >= now() - make_interval(mins => %s)
-            ORDER BY ts ASC""",
+            sql.SQL(
+                """SELECT value, unit, ts
+                FROM {}
+                WHERE device_id = %s AND metric = %s
+                  AND ts >= now() - make_interval(mins => %s)
+                ORDER BY ts ASC"""
+            ).format(sql.Identifier(schema, "sensor_readings")),
             (device_id, metric, minutes),
         ).fetchall()
     return rows
@@ -548,18 +738,20 @@ _NUMERIC_TYPES = (
     "real", "double precision", "numeric", "decimal",
 )
 
-# Process-lifetime cache of discovered API field names. DDL on variables_tag is
-# rare and is only picked up on FastAPI restart — comment in plan.
-_tag_fields_cache: tuple[str, ...] | None = None
+# Discovered API field names, per datasource. Two plants can be on different
+# variables_tag revisions, so one cached tuple for the whole process would show
+# the first-sampled plant's columns for every source. DDL on variables_tag is
+# rare, so the cache is still process-lifetime and picked up on restart.
+_tag_fields_cache: dict[int | None, tuple[str, ...]] = {}
 
 
-def _discover_tag_fields() -> tuple[str, ...]:
-    """Introspect public.variables_tag and return numeric columns as API field names.
+def _discover_tag_fields(datasource_id: int | None = None) -> tuple[str, ...]:
+    """Introspect variables_tag and return numeric columns as API field names.
 
     Excludes primary-key columns (e.g. integer `id`) since they identify rows,
     not metric values.
     """
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
         rows = conn.execute(
             """SELECT c.column_name
                FROM information_schema.columns c
@@ -570,79 +762,147 @@ def _discover_tag_fields() -> tuple[str, ...]:
                    ON kcu.constraint_name = tc.constraint_name
                   AND kcu.table_schema   = tc.table_schema
                   AND kcu.table_name     = tc.table_name
-                 WHERE tc.table_schema = 'public'
+                 WHERE tc.table_schema = %s
                    AND tc.table_name   = 'variables_tag'
                    AND tc.constraint_type = 'PRIMARY KEY'
                ) pk ON pk.column_name = c.column_name
-               WHERE c.table_schema = 'public'
+               WHERE c.table_schema = %s
                  AND c.table_name   = 'variables_tag'
                  AND c.data_type    = ANY(%s)
                  AND pk.column_name IS NULL
                ORDER BY c.ordinal_position""",
-            (list(_NUMERIC_TYPES),),
+            (schema, schema, list(_NUMERIC_TYPES)),
         ).fetchall()
     return tuple(_DB_COLUMN_FIELD.get(r["column_name"], r["column_name"]) for r in rows)
 
 
-def tag_fields() -> tuple[str, ...]:
-    """API field names exposed for panel `metric`. Cached after first call."""
-    global _tag_fields_cache
-    if _tag_fields_cache is None:
-        _tag_fields_cache = _discover_tag_fields()
-    return _tag_fields_cache
+def tag_fields(datasource_id: int | None = None) -> tuple[str, ...]:
+    """API field names exposed for panel `metric`. Cached per datasource.
+
+    Only a non-empty discovery is cached. An empty one is what a plant looks like
+    while its database is being restored or migrated, and caching that for the
+    process lifetime makes snapshot_variables_tag return early forever — a state
+    only a service restart can leave.
+    """
+    cached = _tag_fields_cache.get(datasource_id)
+    if cached:
+        return cached
+    fields = _discover_tag_fields(datasource_id)
+    if fields:
+        _tag_fields_cache[datasource_id] = fields
+    return fields
 
 
-def list_tags() -> list[dict[str, Any]]:
+def _metric_select(fields: Sequence[str]) -> sql.Composed:
+    """`"<db_col>" AS "<api_field>"` for each discovered field."""
+    return sql.SQL(", ").join(
+        sql.SQL("{} AS {}").format(
+            sql.Identifier(_FIELD_DB_COLUMN.get(f, f)), sql.Identifier(f)
+        )
+        for f in fields
+    )
+
+
+def list_tags(datasource_id: int | None = None) -> list[dict[str, Any]]:
     """All distinct tag names in variables_tag, ordered alphabetically."""
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
         rows = conn.execute(
-            "SELECT DISTINCT tag_name FROM public.variables_tag "
-            "WHERE tag_name IS NOT NULL ORDER BY tag_name"
+            sql.SQL(
+                "SELECT DISTINCT tag_name FROM {} "
+                "WHERE tag_name IS NOT NULL ORDER BY tag_name"
+            ).format(sql.Identifier(schema, "variables_tag"))
         ).fetchall()
     return rows
 
 
-def latest_tag(tag_name: str) -> dict[str, Any] | None:
+def latest_tag(tag_name: str, datasource_id: int | None = None) -> dict[str, Any] | None:
     """Most-recent row for a tag — all discovered numeric columns + updated_at + active."""
-    fields = tag_fields()
-    # Build "<db_col> AS <api_field>" for each discovered field; pass through if no alias.
-    select_metrics = ", ".join(f'{_FIELD_DB_COLUMN.get(f, f)} AS {f}' for f in fields)
-    sql = (
-        f"SELECT tag_name, active, updated_at AS ts, {select_metrics} "
-        "FROM public.variables_tag WHERE tag_name = %s "
-        "ORDER BY updated_at DESC NULLS LAST LIMIT 1"
-    )
-    with get_connection() as conn:
-        row = conn.execute(sql, (tag_name,)).fetchone()
+    fields = tag_fields(datasource_id)
+    with _table_source_conn(datasource_id) as (conn, schema):
+        row = conn.execute(
+            sql.SQL(
+                "SELECT tag_name, active, updated_at AS ts, {metrics} "
+                "FROM {table} WHERE tag_name = %s "
+                "ORDER BY updated_at DESC NULLS LAST LIMIT 1"
+            ).format(
+                metrics=_metric_select(fields),
+                table=sql.Identifier(schema, "variables_tag"),
+            ),
+            (tag_name,),
+        ).fetchone()
     return row
 
 
 # --- Tag history buffer ------------------------------------------------------
-# public.variables_tag is overwritten in place by the external SCADA writer
-# (single row per tag_name — see tag_fields() above), so it has no real row
-# history a SQL query can window over. snapshot_variables_tag() polls it on a
-# timer (see main.py) and appends a wall-clock-stamped point per (tag_name,
-# column) here; table_series() then serves variables_tag from this buffer
-# instead of issuing its usual (always-≤1-row) SQL query. Process-lifetime
-# only — resets on backend restart — and capped to TAG_BUFFER_RETENTION_MINUTES
-# regardless of how far back a panel's range selector asks.
-_tag_buffer: dict[tuple[str, str], deque[tuple[datetime, float]]] = {}
+# variables_tag is overwritten in place by the external SCADA writer (single row
+# per tag_name — see tag_fields() above), so it has no real row history a SQL
+# query can window over. snapshot_variables_tag() polls it on a timer (see
+# main.py) and appends a wall-clock-stamped point per (datasource, tag_name,
+# column) here; table_series() then serves variables_tag from this buffer instead
+# of issuing its usual (always-≤1-row) SQL query. Process-lifetime only — resets
+# on backend restart.
+#
+# Keyed by datasource because two plants publish the same tag names for different
+# equipment; a shared key would interleave two machines into one chart.
+_tag_buffer: dict[tuple[int | None, str, str], deque[tuple[datetime, float]]] = {}
+# One lock for the whole buffer: writes happen once every TAG_BUFFER_POLL_SECONDS,
+# so contention is negligible and per-source locks would only complicate eviction.
 _tag_buffer_lock = threading.Lock()
+# datasource_id -> monotonic() of its last successful snapshot.
+# table_latest/table_series consult this before serving variables_tag from memory:
+# an unsampled source would render a permanently blank chart, which is worse than
+# a slower live query.
+_tag_sampled_at: dict[int | None, float] = {}
+_last_evict_log = 0.0
 
 
-def snapshot_variables_tag() -> None:
+def _buffer_maxlen() -> int:
+    """Points to keep per series. Bounding the deque makes eviction O(1) and
+    free; the previous unbounded deques leaked, which multiplying by N sources
+    turns from slow into urgent."""
+    poll = max(config.TAG_BUFFER_POLL_SECONDS, 1)
+    return -(-config.TAG_BUFFER_RETENTION_MINUTES * 60 // poll) + 10
+
+
+def _evict_excess_keys() -> None:
+    """Cap total series, dropping the least-recently-written first.
+
+    Called with _tag_buffer_lock held. The key count, not the source count, is
+    the real memory bound: at the defaults one series is ~47 KB, so 5000 keys is
+    roughly 235 MB.
+    """
+    global _last_evict_log
+    excess = len(_tag_buffer) - config.TAG_BUFFER_MAX_KEYS
+    if excess <= 0:
+        return
+    stale = sorted(_tag_buffer, key=lambda k: _tag_buffer[k][-1][0] if _tag_buffer[k] else datetime.min.replace(tzinfo=timezone.utc))
+    for key in stale[:excess]:
+        del _tag_buffer[key]
+    now = monotonic()
+    if now - _last_evict_log > 60:
+        _last_evict_log = now
+        logger.warning(
+            "Tag buffer at its %d-key cap; evicted %d least-recently-written "
+            "series. Raise TAG_BUFFER_MAX_KEYS or select fewer datasources.",
+            config.TAG_BUFFER_MAX_KEYS, excess,
+        )
+
+
+def snapshot_variables_tag(datasource_id: int | None = None) -> None:
     """Sample every tag's current numeric columns into the history buffer."""
-    fields = tag_fields()
+    fields = tag_fields(datasource_id)
     if not fields:
         return
-    select_cols = ", ".join(f'{_FIELD_DB_COLUMN.get(f, f)} AS {f}' for f in fields)
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
         rows = conn.execute(
-            f"SELECT tag_name, {select_cols} FROM public.variables_tag "
-            "WHERE tag_name IS NOT NULL"
+            sql.SQL("SELECT tag_name, {metrics} FROM {table} WHERE tag_name IS NOT NULL")
+            .format(
+                metrics=_metric_select(fields),
+                table=sql.Identifier(schema, "variables_tag"),
+            )
         ).fetchall()
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(minutes=config.TAG_BUFFER_RETENTION_MINUTES)
+    maxlen = _buffer_maxlen()
     with _tag_buffer_lock:
         for row in rows:
             tag = row["tag_name"]
@@ -650,24 +910,63 @@ def snapshot_variables_tag() -> None:
                 v = row[f]
                 if v is None:
                     continue
-                key = (tag, _FIELD_DB_COLUMN.get(f, f))
-                buf = _tag_buffer.setdefault(key, deque())
+                key = (datasource_id, tag, _FIELD_DB_COLUMN.get(f, f))
+                buf = _tag_buffer.get(key)
+                if buf is None:
+                    buf = _tag_buffer[key] = deque(maxlen=maxlen)
                 buf.append((now, float(v)))
-                while buf and buf[0][0] < cutoff:
-                    buf.popleft()
+        _evict_excess_keys()
+    # Stamped after the lock is released, so the freshness gate can only open
+    # once the points behind it are committed — never the other way round.
+    _tag_sampled_at[datasource_id] = monotonic()
 
 
-def buffered_tag_series(tag_name: str, value_col: str, minutes: int) -> list[dict[str, Any]]:
+def tag_buffer_stale_after() -> float:
+    """Seconds a buffer may go unrefreshed before it stops being authoritative.
+
+    Matched to the point at which the sampling loop itself gives up on a source
+    (TAG_BUFFER_FAIL_LIMIT consecutive misses), plus a tick of slack so a merely
+    late poll does not flip the gate.
+    """
+    return max(config.TAG_BUFFER_POLL_SECONDS, 1) * (config.TAG_BUFFER_FAIL_LIMIT + 1)
+
+
+def is_tag_buffered(datasource_id: int | None) -> bool:
+    """Whether the buffer loop is *currently* sampling this source.
+
+    Currently, not ever — and the difference is the whole reason a Live tile or a
+    mimic symbol used to freeze permanently when its plant went down. The buffer
+    holds the last sample taken before the outage; served unconditionally, that
+    sample is returned as a perfectly good 200 forever, so nothing downstream
+    ever learns the source is gone: no error, no reconnect, and no recovery when
+    the plant comes back. Letting the gate expire routes the next poll at the
+    live query instead, which either succeeds (the source is back, and the tile
+    recovers on that poll) or raises, which fan_out reports as ok=False and the
+    frontend renders as "retrying".
+
+    Gated on this rather than on `datasource_id is None`: a source the buffer
+    loop never polls would otherwise draw a permanently blank chart, where the
+    live query at least shows the one row variables_tag holds.
+    """
+    at = _tag_sampled_at.get(datasource_id)
+    return at is not None and monotonic() - at <= tag_buffer_stale_after()
+
+
+def buffered_tag_series(
+    tag_name: str, value_col: str, minutes: int, datasource_id: int | None = None
+) -> list[dict[str, Any]]:
     """In-memory substitute for table_series() against variables_tag."""
     cutoff = datetime.now(timezone.utc) - timedelta(
         minutes=min(minutes, config.TAG_BUFFER_RETENTION_MINUTES)
     )
     with _tag_buffer_lock:
-        buf = _tag_buffer.get((tag_name, value_col), deque())
+        buf = _tag_buffer.get((datasource_id, tag_name, value_col), deque())
         return [{"ts": ts, "value": v} for ts, v in buf if ts >= cutoff]
 
 
-def buffered_tag_latest(tag_name: str, value_col: str) -> dict[str, Any] | None:
+def buffered_tag_latest(
+    tag_name: str, value_col: str, datasource_id: int | None = None
+) -> dict[str, Any] | None:
     """In-memory substitute for table_latest() against variables_tag.
 
     variables_tag is overwritten in place and its updated_at is not maintained,
@@ -678,103 +977,122 @@ def buffered_tag_latest(tag_name: str, value_col: str) -> dict[str, Any] | None:
     caller falls back to the direct SQL query.
     """
     with _tag_buffer_lock:
-        buf = _tag_buffer.get((tag_name, value_col))
+        buf = _tag_buffer.get((datasource_id, tag_name, value_col))
         if not buf:
             return None
         ts, v = buf[-1]
     return {"value": v, "ts": ts}
 
 
-# --- Event log (real SCADA data — public.event_logs, read-only) ---------------
-def list_recent_events(limit: int) -> list[dict[str, Any]]:
+# --- Event log (real SCADA data — event_logs, read-only) ---------------------
+def list_recent_events(limit: int, datasource_id: int | None = None) -> list[dict[str, Any]]:
     """Last `limit` events per (location, tag_name), newest first.
 
-    Reads the externally-populated public.event_logs. Ordered so the frontend can
+    Reads the externally-populated event_logs. Ordered so the frontend can
     group location -> tag_name in a single pass.
     """
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
         rows = conn.execute(
-            """SELECT location, tag_name, event, at_date_time
-               FROM (
-                 SELECT location, tag_name, event, at_date_time,
-                        ROW_NUMBER() OVER (
-                          PARTITION BY location, tag_name
-                          ORDER BY at_date_time DESC
-                        ) AS rn
-                 FROM public.event_logs
-               ) ranked
-               WHERE rn <= %s
-               ORDER BY location, tag_name, at_date_time DESC""",
+            sql.SQL(
+                """SELECT location, tag_name, event, at_date_time
+                   FROM (
+                     SELECT location, tag_name, event, at_date_time,
+                            ROW_NUMBER() OVER (
+                              PARTITION BY location, tag_name
+                              ORDER BY at_date_time DESC
+                            ) AS rn
+                     FROM {}
+                   ) ranked
+                   WHERE rn <= %s
+                   ORDER BY location, tag_name, at_date_time DESC"""
+            ).format(sql.Identifier(schema, "event_logs")),
             (limit,),
         ).fetchall()
     return rows
 
 
-# --- Alarm log (real SCADA data — public.alarm_logs) -------------------------
+# --- Alarm log (real SCADA data — alarm_logs) --------------------------------
 # DB column `alarm_events` is surfaced as API field `alarm`; `created_at` is
 # surfaced as `at_date_time` so the frontend can share the events timestamp
 # shape. Severity / acknowledgement columns were added via a one-shot
 # migration (see _probe_alarms.py).
-def list_recent_alarms(limit: int) -> list[dict[str, Any]]:
+def list_recent_alarms(limit: int, datasource_id: int | None = None) -> list[dict[str, Any]]:
     """Last `limit` alarms per (location, tag_name), newest first."""
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
         rows = conn.execute(
-            """SELECT id, location, tag_name,
-                      alarm_events AS alarm,
-                      severity,
-                      created_at   AS at_date_time,
-                      acknowledged, acknowledged_at, acknowledged_by
-               FROM (
-                 SELECT id, location, tag_name, alarm_events, severity,
-                        created_at, acknowledged, acknowledged_at,
-                        acknowledged_by,
-                        ROW_NUMBER() OVER (
-                          PARTITION BY location, tag_name
-                          ORDER BY created_at DESC
-                        ) AS rn
-                 FROM public.alarm_logs
-               ) ranked
-               WHERE rn <= %s
-               ORDER BY location, tag_name, created_at DESC""",
+            sql.SQL(
+                """SELECT id, location, tag_name,
+                          alarm_events AS alarm,
+                          severity,
+                          created_at   AS at_date_time,
+                          acknowledged, acknowledged_at, acknowledged_by
+                   FROM (
+                     SELECT id, location, tag_name, alarm_events, severity,
+                            created_at, acknowledged, acknowledged_at,
+                            acknowledged_by,
+                            ROW_NUMBER() OVER (
+                              PARTITION BY location, tag_name
+                              ORDER BY created_at DESC
+                            ) AS rn
+                     FROM {}
+                   ) ranked
+                   WHERE rn <= %s
+                   ORDER BY location, tag_name, created_at DESC"""
+            ).format(sql.Identifier(schema, "alarm_logs")),
             (limit,),
         ).fetchall()
     return rows
 
 
-def list_active_alarms() -> list[dict[str, Any]]:
+def list_active_alarms(datasource_id: int | None = None) -> list[dict[str, Any]]:
     """Tags currently in alarm (variables_tag.alarm_no not null), joined to the
     triggering alarm_logs row for the event text. Empty list when nothing active."""
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
         rows = conn.execute(
-            """SELECT st.tag_name, st.location,
-                      st.alarm_value, st.alarm_no, st.alarm_active,
-                      al.id            AS alarm_id,
-                      al.alarm_events  AS alarm,
-                      al.severity,
-                      al.created_at    AS at_date_time
-               FROM public.variables_tag st
-               JOIN public.alarm_logs al ON al.id = st.alarm_no
-               WHERE st.alarm_no IS NOT NULL
-               ORDER BY st.location, st.tag_name"""
+            sql.SQL(
+                """SELECT st.tag_name, st.location,
+                          st.alarm_value, st.alarm_no, st.alarm_active,
+                          al.id            AS alarm_id,
+                          al.alarm_events  AS alarm,
+                          al.severity,
+                          al.created_at    AS at_date_time
+                   FROM {tags} st
+                   JOIN {alarms} al ON al.id = st.alarm_no
+                   WHERE st.alarm_no IS NOT NULL
+                   ORDER BY st.location, st.tag_name"""
+            ).format(
+                tags=sql.Identifier(schema, "variables_tag"),
+                alarms=sql.Identifier(schema, "alarm_logs"),
+            )
         ).fetchall()
     return rows
 
 
-def acknowledge_alarm(alarm_id: int, user_id: int) -> dict[str, Any] | None:
+def acknowledge_alarm(
+    alarm_id: int, user_id: int, datasource_id: int | None = None
+) -> dict[str, Any] | None:
     """Mark an alarm acknowledged. Returns the updated row, or None if the
-    alarm doesn't exist or was already acknowledged."""
-    with get_connection() as conn:
+    alarm doesn't exist or was already acknowledged.
+
+    Never fan this out. Alarm ids come from each database's own sequence and
+    therefore collide across sources: trying each source in turn would happily
+    acknowledge a different plant's alarm. The caller must resolve exactly one
+    datasource_id before calling.
+    """
+    with _table_source_conn(datasource_id) as (conn, schema):
         row = conn.execute(
-            """UPDATE public.alarm_logs
-                  SET acknowledged    = TRUE,
-                      acknowledged_at = now(),
-                      acknowledged_by = %s
-                WHERE id = %s AND acknowledged = FALSE
-                RETURNING id, location, tag_name,
-                          alarm_events AS alarm,
-                          severity,
-                          created_at   AS at_date_time,
-                          acknowledged, acknowledged_at, acknowledged_by""",
+            sql.SQL(
+                """UPDATE {}
+                      SET acknowledged    = TRUE,
+                          acknowledged_at = now(),
+                          acknowledged_by = %s
+                    WHERE id = %s AND acknowledged = FALSE
+                    RETURNING id, location, tag_name,
+                              alarm_events AS alarm,
+                              severity,
+                              created_at   AS at_date_time,
+                              acknowledged, acknowledged_at, acknowledged_by"""
+            ).format(sql.Identifier(schema, "alarm_logs")),
             (user_id, alarm_id),
         ).fetchone()
         conn.commit()
@@ -931,28 +1249,58 @@ _TS_TYPES = (
 
 @contextmanager
 def _table_source_conn(datasource_id: int | None):
-    """Yield ``(conn, schema)`` for table-source queries.
+    """Yield ``(conn, schema)`` for every *plant data* query.
 
-    ``None`` → the app database + the ``public`` schema (unchanged behaviour).
-    Otherwise opens a short-lived libpq connection to the saved datasource and
-    uses its configured schema. Raises ``ValueError`` if the datasource id is
-    unknown; ``psycopg.Error`` propagates when it can't be reached so callers can
-    surface a connection failure. ``get_datasource_secret`` is defined later in
-    this module — fine, it's only referenced at call time.
+    ``None`` → the app database + the ``public`` schema. Otherwise a pooled
+    connection to the saved datasource, using its configured schema. Raises
+    ``ValueError`` if the datasource id is unknown; ``psycopg.Error`` and
+    ``PoolTimeout`` propagate when it can't be reached so ``fan_out`` can record
+    the failure against that one source. ``get_datasource_secret`` is defined
+    later in this module — fine, it's only referenced at call time.
     """
     if datasource_id is None:
         with get_connection() as conn:
             yield conn, "public"
         return
-    ds = get_datasource_secret(datasource_id)
-    if ds is None:
-        raise ValueError(f"datasource {datasource_id} not found")
-    with psycopg.connect(
-        host=ds["host"], port=ds["port"], dbname=ds["database"],
-        user=ds["username"], password=ds["password"], sslmode=ds["sslmode"],
-        connect_timeout=config.DB_CONNECT_TIMEOUT, row_factory=dict_row,
-    ) as conn:
-        yield conn, (ds.get("db_schema") or "public")
+    # Resolve the pool *before* claiming the probe. _pool_for raises ValueError
+    # for an unknown id, and a claim made above it would never be released --
+    # wedging that id into fast-fail for the life of the process.
+    pool = _pool_for(datasource_id)
+    # Read the schema after _pool_for, which is what populates it.
+    schema = _pool_schemas.get(datasource_id, "public")
+    # Raised as OperationalError, not a bespoke type, because that is what this
+    # is -- and because every caller and test already handles it.
+    if not _claim_probe(datasource_id):
+        raise psycopg.OperationalError(
+            _ds_errors.get(datasource_id) or f"datasource {datasource_id} unreachable"
+        )
+    unreachable: Exception | None = None
+    try:
+        with pool.connection() as conn:
+            yield conn, schema
+    except (psycopg.OperationalError, PoolTimeout) as e:
+        unreachable = e
+        raise
+    finally:
+        # A `finally`, not a pair of except arms: a BaseException — a cancelled
+        # task, a KeyboardInterrupt — is not an `except Exception`, and letting
+        # one skip the release would leave this source claimed as "probe in
+        # flight" forever, fast-failing every later request against a host that
+        # is perfectly healthy.
+        if unreachable is not None:
+            detail = _first_line(unreachable) or repr(unreachable)
+            _ds_errors[datasource_id] = detail
+            _probe_done(datasource_id, ok=False)
+            if datasource_id not in _outage_logged:
+                logger.warning("Datasource %s unreachable: %s", datasource_id, detail)
+                _outage_logged.add(datasource_id)
+        else:
+            # Every other outcome means the host answered — including a query
+            # fault (missing table, bad column, denied identifier), which says
+            # nothing about reachability. Recording those as down would
+            # fast-fail every other panel on this source and keep the tag buffer
+            # parked on evidence of nothing.
+            _mark_reachable(datasource_id)
 
 
 def _allowed_tables(conn, schema: str) -> set[str]:
@@ -1069,12 +1417,12 @@ def table_latest(
     back to the direct SQL query only when the buffer is empty.
     """
     if (
-        datasource_id is None
-        and table == "variables_tag"
+        table == "variables_tag"
         and filter_col == "tag_name"
         and filter_val is not None
+        and is_tag_buffered(datasource_id)
     ):
-        buffered = buffered_tag_latest(filter_val, value_col)
+        buffered = buffered_tag_latest(filter_val, value_col, datasource_id)
         if buffered is not None:
             return buffered
     with _table_source_conn(datasource_id) as (conn, schema):
@@ -1110,16 +1458,20 @@ def table_series(
 
     variables_tag is a special case: it has no real row history (overwritten
     in place — see snapshot_variables_tag's docstring), so a panel bound
-    directly to it (the app's own database, filtered by tag_name) is served
-    from the in-memory buffer instead of the table's always-≤1-row SQL query.
+    directly to it and filtered by tag_name is served from the in-memory buffer
+    instead of the table's always-≤1-row SQL query.
+
+    Gated on the source actually being sampled, not on it being the app DB: a
+    source the buffer loop never polls would otherwise render a permanently
+    blank chart, which is worse than a slower live query returning one point.
     """
     if (
-        datasource_id is None
-        and table == "variables_tag"
+        table == "variables_tag"
         and filter_col == "tag_name"
         and filter_val is not None
+        and is_tag_buffered(datasource_id)
     ):
-        return buffered_tag_series(filter_val, value_col, minutes)
+        return buffered_tag_series(filter_val, value_col, minutes, datasource_id)
     with _table_source_conn(datasource_id) as (conn, schema):
         _safe_identifiers(conn, schema, table, value_col, filter_col, ts_col)
         query = sql.SQL(
@@ -1137,6 +1489,33 @@ def table_series(
         query += sql.SQL(" ORDER BY {} ASC").format(sql.Identifier(ts_col))
         rows = conn.execute(query, params).fetchall()
     return rows
+
+
+def init_users_table() -> None:
+    """Create the users table if it doesn't exist. Idempotent.
+
+    Mirrors seed_users.CREATE_TABLE. Duplicated deliberately: the app cannot log
+    anyone in without this table, and `user_datasource_selection` carries a
+    foreign key to it, so it has no business being create-on-demand from a
+    seeding script that a fresh install might never run.
+    """
+    with get_connection() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS users (
+                id            SERIAL PRIMARY KEY,
+                username      TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role          TEXT NOT NULL DEFAULT 'operator',
+                display_name  TEXT NOT NULL,
+                created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+            )"""
+        )
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT")
+        conn.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_key
+               ON users (lower(email)) WHERE email IS NOT NULL"""
+        )
+        conn.commit()
 
 
 # --- Saved connections (datasources) ----------------------------------------
@@ -1260,6 +1639,10 @@ def update_datasource(
              db_schema, datasource_id),
         ).fetchone()
         conn.commit()
+    # The pool holds the *old* host/credentials/schema. Drop it so the next read
+    # rebuilds against what was just saved, rather than silently querying the
+    # previous server until the process restarts.
+    drop_pool(datasource_id)
     return row
 
 
@@ -1269,7 +1652,166 @@ def delete_datasource(datasource_id: int) -> bool:
     with get_connection() as conn:
         cur = conn.execute("DELETE FROM datasources WHERE id = %s", (datasource_id,))
         conn.commit()
-        return cur.rowcount > 0
+        removed = cur.rowcount > 0
+    if removed:
+        drop_pool(datasource_id)
+    return removed
+
+
+# --- Per-user datasource selection ------------------------------------------
+# Which plant datasources a user has chosen in the header. Every plant read
+# fans out across this list, so it is the single input that decides where data
+# comes from -- panel.datasource_id and per-symbol bindings no longer do.
+def init_user_datasource_selection_table() -> None:
+    """Create the user_datasource_selection table. Idempotent.
+
+    `position` 0 is the *primary* source: what mimic symbols and the legacy
+    single-value response fields resolve to. The order the operator picks is
+    therefore load-bearing, not cosmetic.
+
+    Both foreign keys cascade so a deleted user or datasource can never leave a
+    dangling selection row. Without that, every read path would have to defend
+    against ids that no longer exist.
+    """
+    with get_connection() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS user_datasource_selection (
+                user_id       INTEGER NOT NULL REFERENCES users(id)       ON DELETE CASCADE,
+                datasource_id INTEGER NOT NULL REFERENCES datasources(id) ON DELETE CASCADE,
+                position      INTEGER NOT NULL DEFAULT 0,
+                updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (user_id, datasource_id)
+            )"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_uds_user
+               ON user_datasource_selection (user_id, position)"""
+        )
+        conn.commit()
+
+
+_SELECTION_COLS = (
+    "d.id, d.name, d.host, d.port, d.dbname AS database, d.db_schema, s.position"
+)
+
+
+def get_user_selection(user_id: int) -> list[dict[str, Any]]:
+    """This user's chosen datasources in position order.
+
+    Joined to `datasources` so the caller only ever sees sources that still
+    exist, and gets their current name rather than one cached at selection time.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""SELECT {_SELECTION_COLS}
+                FROM user_datasource_selection s
+                JOIN datasources d ON d.id = s.datasource_id
+                WHERE s.user_id = %s
+                ORDER BY s.position, d.name""",
+            (user_id,),
+        ).fetchall()
+    return rows
+
+
+def set_user_selection(user_id: int, datasource_ids: list[int]) -> list[dict[str, Any]]:
+    """Replace this user's selection atomically, preserving the given order.
+
+    Unknown ids raise ValueError rather than being silently dropped: a selector
+    that quietly discards half the operator's choice is worse than one that
+    reports the stale id. Validation runs inside the same transaction as the
+    replace, so a datasource deleted concurrently surfaces as a readable 400
+    instead of a foreign-key 500.
+    """
+    if len(datasource_ids) > config.MAX_SELECTED_DATASOURCES:
+        raise ValueError(
+            f"at most {config.MAX_SELECTED_DATASOURCES} datasources may be selected"
+        )
+    # De-duplicate while keeping first-seen order; the PK would reject dupes and
+    # position 0 is meaningful, so the *first* mention is the one that counts.
+    ordered = list(dict.fromkeys(datasource_ids))
+    with get_connection() as conn:
+        if ordered:
+            found = {
+                r["id"] for r in conn.execute(
+                    "SELECT id FROM datasources WHERE id = ANY(%s)", (ordered,)
+                ).fetchall()
+            }
+            missing = [i for i in ordered if i not in found]
+            if missing:
+                conn.rollback()
+                raise ValueError(
+                    "unknown datasource id(s): " + ", ".join(str(i) for i in missing)
+                )
+        conn.execute(
+            "DELETE FROM user_datasource_selection WHERE user_id = %s", (user_id,)
+        )
+        for position, ds_id in enumerate(ordered):
+            conn.execute(
+                """INSERT INTO user_datasource_selection (user_id, datasource_id, position)
+                   VALUES (%s, %s, %s)""",
+                (user_id, ds_id, position),
+            )
+        conn.commit()
+    return get_user_selection(user_id)
+
+
+def default_datasource() -> dict[str, Any] | None:
+    """Lowest-id saved connection, used as the implicit selection.
+
+    Deliberately not "all datasources": a user who has chosen nothing should not
+    cause N remote handshakes, one of which may be a powered-off plant costing a
+    full connect timeout on every request.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            f"SELECT {_DS_PUBLIC_COLS} FROM datasources ORDER BY id LIMIT 1"
+        ).fetchone()
+    return row
+
+
+def all_selected_datasource_ids() -> list[int]:
+    """Union of every user's selection — the set the tag buffer needs to sample.
+
+    One cheap localhost query per poll, rather than a static config list that
+    drifts the moment an operator selects something new.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT DISTINCT datasource_id
+               FROM user_datasource_selection ORDER BY datasource_id"""
+        ).fetchall()
+    return [r["datasource_id"] for r in rows]
+
+
+def sampled_datasource_ids() -> list[int | None]:
+    """Which sources the tag buffer should poll.
+
+    The union of every explicit selection, falling back through the same ladder
+    as auth.resolve_active_datasources — otherwise a fresh install where nobody
+    has chosen anything yet buffers nothing, and every Live panel on the implicit
+    default draws a blank chart until someone touches the header.
+    """
+    ids: list[int | None] = list(all_selected_datasource_ids())
+    if ids:
+        return ids
+    fallback = default_datasource()
+    return [fallback["id"]] if fallback else [None]
+
+
+def datasource_names(datasource_ids: Sequence[int | None]) -> dict[int | None, str]:
+    """{id: display name} for tagging fanned-out rows. `None` is the app DB."""
+    concrete = [i for i in datasource_ids if i is not None]
+    names: dict[int | None, str] = {None: "Local"}
+    if concrete:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT id, name FROM datasources WHERE id = ANY(%s)", (concrete,)
+            ).fetchall()
+        names.update({r["id"]: r["name"] for r in rows})
+    # A selected-then-deleted source still needs a label rather than a KeyError.
+    for i in concrete:
+        names.setdefault(i, f"datasource {i}")
+    return names
 
 
 # --- Mimic layouts (/monitor) -----------------------------------------------
@@ -1765,28 +2307,36 @@ def update_report_settings(state_rules: dict, alarm_lead_seconds: int) -> dict[s
 # covers decommissioned machines that still have history. The union is cached
 # because the event_logs DISTINCT is the expensive half and the answer changes
 # only when the plant is re-tagged.
-_catalog_cache: tuple[float, list[dict[str, Any]]] | None = None
+# Keyed by datasource: two plants have entirely unrelated machine lists, and a
+# single cache would serve whichever one asked first to everybody.
+_catalog_cache: dict[int | None, tuple[float, list[dict[str, Any]]]] = {}
 _CATALOG_TTL_SECONDS = 300
 
 
-def report_catalog(force: bool = False) -> list[dict[str, Any]]:
+def report_catalog(force: bool = False,
+                   datasource_id: int | None = None) -> list[dict[str, Any]]:
     """Distinct (location, tag_name) pairs — feeds the Line/Machine pickers."""
-    global _catalog_cache
     now = datetime.now().timestamp()
-    if not force and _catalog_cache and now - _catalog_cache[0] < _CATALOG_TTL_SECONDS:
-        return _catalog_cache[1]
+    cached = _catalog_cache.get(datasource_id)
+    if not force and cached and now - cached[0] < _CATALOG_TTL_SECONDS:
+        return cached[1]
 
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
         rows = conn.execute(
-            """SELECT location, tag_name FROM (
-                   SELECT location, tag_name FROM public.variables_tag
-                   UNION
-                   SELECT location, tag_name FROM public.event_logs
-               ) c
-               WHERE tag_name IS NOT NULL
-               ORDER BY location NULLS LAST, tag_name"""
+            sql.SQL(
+                """SELECT location, tag_name FROM (
+                       SELECT location, tag_name FROM {tags}
+                       UNION
+                       SELECT location, tag_name FROM {events}
+                   ) c
+                   WHERE tag_name IS NOT NULL
+                   ORDER BY location NULLS LAST, tag_name"""
+            ).format(
+                tags=sql.Identifier(schema, "variables_tag"),
+                events=sql.Identifier(schema, "event_logs"),
+            )
         ).fetchall()
-    _catalog_cache = (now, rows)
+    _catalog_cache[datasource_id] = (now, rows)
     return rows
 
 
@@ -1805,7 +2355,8 @@ def _machine_filter(locations, tag_names):
 
 
 def fetch_state_events(start: datetime, end: datetime, locations=None,
-                       tag_names=None) -> list[dict[str, Any]]:
+                       tag_names=None, datasource_id: int | None = None,
+                       ) -> list[dict[str, Any]]:
     """Window events plus one carry-in row per machine, in a single round trip.
 
     The carry-in half (DISTINCT ON … at_date_time < start) is what lets a machine
@@ -1813,69 +2364,80 @@ def fetch_state_events(start: datetime, end: datetime, locations=None,
     runtime. Both halves ride the (location, tag_name, at_date_time) index.
     """
     where, params = _machine_filter(locations, tag_names)
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
         return conn.execute(
-            f"""(SELECT DISTINCT ON (location, tag_name)
-                        location, tag_name, event, at_date_time
-                   FROM public.event_logs
-                  WHERE at_date_time < %s{where}
-                  ORDER BY location, tag_name, at_date_time DESC)
-                UNION ALL
-                (SELECT location, tag_name, event, at_date_time
-                   FROM public.event_logs
-                  WHERE at_date_time >= %s AND at_date_time < %s{where})
-                ORDER BY 1, 2, 4""",
+            sql.SQL(
+                """(SELECT DISTINCT ON (location, tag_name)
+                           location, tag_name, event, at_date_time
+                      FROM {events}
+                     WHERE at_date_time < %s""" + where + """
+                     ORDER BY location, tag_name, at_date_time DESC)
+                   UNION ALL
+                   (SELECT location, tag_name, event, at_date_time
+                      FROM {events}
+                     WHERE at_date_time >= %s AND at_date_time < %s""" + where + """)
+                   ORDER BY 1, 2, 4"""
+            ).format(events=sql.Identifier(schema, "event_logs")),
             (start, *params, start, end, *params),
         ).fetchall()
 
 
 def fetch_alarms_for_window(start: datetime, end: datetime, locations=None,
-                            tag_names=None) -> list[dict[str, Any]]:
+                            tag_names=None, datasource_id: int | None = None,
+                            ) -> list[dict[str, Any]]:
     """Alarms overlapping the window, used to name downtime causes.
 
     `start` is expected to be already widened by the lead window so an alarm that
     fired just before the machine halted still matches.
     """
     where, params = _machine_filter(locations, tag_names)
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
         return conn.execute(
-            f"""SELECT id, location, tag_name, alarm_events AS text,
-                       severity, created_at AS at
-                  FROM public.alarm_logs
-                 WHERE created_at >= %s AND created_at < %s{where}
-                 ORDER BY created_at""",
+            sql.SQL(
+                """SELECT id, location, tag_name, alarm_events AS text,
+                          severity, created_at AS at
+                     FROM {alarms}
+                    WHERE created_at >= %s AND created_at < %s""" + where + """
+                    ORDER BY created_at"""
+            ).format(alarms=sql.Identifier(schema, "alarm_logs")),
             (start, end, *params),
         ).fetchall()
 
 
-def count_event_log(start, end, locations=None, tag_names=None, search=None) -> int:
+def count_event_log(start, end, locations=None, tag_names=None, search=None,
+                    datasource_id: int | None = None) -> int:
     where, params = _machine_filter(locations, tag_names)
     if search:
         where += " AND event ILIKE %s"
         params.append(f"%{search}%")
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
         row = conn.execute(
-            f"""SELECT COUNT(*) AS n FROM public.event_logs
-                 WHERE at_date_time >= %s AND at_date_time < %s{where}""",
+            sql.SQL(
+                """SELECT COUNT(*) AS n FROM {events}
+                    WHERE at_date_time >= %s AND at_date_time < %s""" + where
+            ).format(events=sql.Identifier(schema, "event_logs")),
             (start, end, *params),
         ).fetchone()
     return row["n"]
 
 
 def fetch_event_log_page(start, end, locations=None, tag_names=None, search=None,
-                         limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+                         limit: int = 50, offset: int = 0,
+                         datasource_id: int | None = None) -> list[dict[str, Any]]:
     """One page of the raw log, newest first — backs the on-screen table and,
     with a large limit, the spreadsheet export."""
     where, params = _machine_filter(locations, tag_names)
     if search:
         where += " AND event ILIKE %s"
         params.append(f"%{search}%")
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
         return conn.execute(
-            f"""SELECT location, tag_name, event, at_date_time
-                  FROM public.event_logs
-                 WHERE at_date_time >= %s AND at_date_time < %s{where}
-                 ORDER BY at_date_time DESC
-                 LIMIT %s OFFSET %s""",
+            sql.SQL(
+                """SELECT location, tag_name, event, at_date_time
+                     FROM {events}
+                    WHERE at_date_time >= %s AND at_date_time < %s""" + where + """
+                    ORDER BY at_date_time DESC
+                    LIMIT %s OFFSET %s"""
+            ).format(events=sql.Identifier(schema, "event_logs")),
             (start, end, *params, limit, offset),
         ).fetchall()

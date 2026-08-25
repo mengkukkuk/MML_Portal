@@ -8,6 +8,7 @@ import MenuItem from '@mui/material/MenuItem'
 import Select from '@mui/material/Select'
 import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker'
 import { fetchCatalog } from '@/api/reports'
+import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { PRESETS } from './reportRange'
 import styles from './ReportFilterBar.module.css'
 
@@ -22,11 +23,18 @@ import styles from './ReportFilterBar.module.css'
  * variables_tag with the distinct machines in event_logs — so a machine that
  * has been decommissioned out of variables_tag can still be reported on
  * historically.
+ *
+ * The catalogue spans every selected source and the options are deduplicated by
+ * *name*, not by machine identity. That is deliberate: the filters travel to
+ * the server as plain location and tag strings and are applied to each source
+ * independently, so picking `Line 1` means "Line 1 wherever it exists". The
+ * report itself still separates the two plants — see `_machine_key`.
  */
 
 export default function ReportFilterBar({ filters, onChange, onRefresh, isFetching }) {
+  const selectionKey = useDatasourceSelectionStore((s) => s.selectionKey)
   const catalogQuery = useQuery({
-    queryKey: ['report', 'catalog'],
+    queryKey: ['report', 'catalog', selectionKey],
     queryFn: () => fetchCatalog(),
     staleTime: 5 * 60_000,
   })

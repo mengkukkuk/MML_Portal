@@ -79,8 +79,14 @@ export function usePanelSeries(panel, { filterOverride = null } = {}) {
   const tableHasFilter = !!panel.filter_col && effectiveFilters.length > 0
   const showFilterChanger = isTable && !!panel.filter_col && tableFilters.length === 1
 
-  // Canonical series model: one entry per output series carrying everything
-  // needed to fetch and render it.
+  // Canonical series model: one entry per *configured* series, carrying
+  // everything needed to fetch and label it.
+  //
+  // Not the final rendered set. Each of these fans out into one series per
+  // selected datasource, which only the response can tell us — usePanelPolling
+  // expands them and returns the result as `resolvedSpecs`. There is still
+  // exactly one request per entry here: the backend answers for every selected
+  // source at once.
   const seriesSpecs = useMemo(() => {
     if (isTag) {
       const tags = opts.tags
@@ -119,7 +125,6 @@ export function usePanelSeries(panel, { filterOverride = null } = {}) {
   // renderers (and warn/crit thresholds) see post-transform numbers.
   const mathFn = useMemo(() => compileExpr(opts.mathExpr || '').fn, [opts.mathExpr])
 
-  const isMulti = seriesSpecs.length > 1
   const isGeneric = GENERIC_VIZ_TYPES.has(vizType)
   const showHeaderValue = HEADER_VALUE_VIZ_TYPES.has(vizType)
 
@@ -137,7 +142,7 @@ export function usePanelSeries(panel, { filterOverride = null } = {}) {
   return {
     vizType, opts, isTag, isTable,
     tableValueCols, tableFilters, effectiveFilters, tableHasFilter, showFilterChanger,
-    seriesSpecs, seriesTags, mathFn, isMulti, isGeneric, showHeaderValue, unitFor,
+    seriesSpecs, seriesTags, mathFn, isGeneric, showHeaderValue, unitFor,
   }
 }
 

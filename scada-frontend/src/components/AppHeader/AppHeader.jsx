@@ -19,12 +19,14 @@ import Alert from '@mui/material/Alert'
 import ConnectionPill from '@/components/ConnectionPill/ConnectionPill.jsx'
 import { useAuthStore } from '@/stores/auth'
 import { changePassword } from '@/api/auth'
+import DatasourcePicker from './DatasourcePicker.jsx'
 import styles from './AppHeader.module.css'
 
 /**
  * AppHeader — top navigation bar rendered inside AppShell.
  * Shows the current page title (from the matched route's handle.title), the
- * ConnectionPill, and a user menu with "Change password" and "Sign out".
+ * DatasourcePicker, the ConnectionPill, and a user menu with "Change password"
+ * and "Sign out".
  * Props: collapsed (Boolean) — mirrors sidebar state to show Menu/MenuOpen icon.
  * onToggle() — requests sidebar collapse/expand from AppShell.
  */
@@ -93,6 +95,7 @@ export default function AppHeader({ collapsed, onToggle }) {
         <h1 className={styles.title}>{pageTitle}</h1>
       </div>
       <div className={styles.right}>
+        <DatasourcePicker />
         <ConnectionPill />
         <Button
           className={styles.user}

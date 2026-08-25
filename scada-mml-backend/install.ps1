@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Installs the MML Portal backend as a Windows service via NSSM.
 
@@ -148,8 +148,10 @@ if (-not (Test-Path $envFile)) {
     Write-Host "    Provide the required values below (Enter = keep existing default)." -ForegroundColor Yellow
     Write-Host ""
 
-    # DB_PASSWORD (required - no default in .env.example)
-    $dbPass = Read-Host "    DB_PASSWORD (Postgres password)"
+    # No DB_PASSWORD prompt: the app/config database is hardcoded to
+    # localhost/postgres/postgres in config.py. Asking for a value the app
+    # ignores is worse than not asking. Plant databases are added later in the
+    # UI under Settings - Data sources.
 
     # JWT_SECRET - auto-generate if blank
     $jwtInput = Read-Host "    JWT_SECRET  (Enter to auto-generate a secure random key)"
@@ -164,7 +166,6 @@ if (-not (Test-Path $envFile)) {
 
     # Patch the copied .env in-place
     $content = Get-Content $envFile -Raw
-    $content = [regex]::Replace($content, '(?m)^DB_PASSWORD=.*$', "DB_PASSWORD=$dbPass")
     $content = [regex]::Replace($content, '(?m)^JWT_SECRET=.*$',  "JWT_SECRET=$jwtInput")
     if ($content -match '(?m)^CORS_ORIGINS=') {
         $content = [regex]::Replace($content, '(?m)^CORS_ORIGINS=.*$', "CORS_ORIGINS=$corsInput")

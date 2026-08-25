@@ -2,8 +2,13 @@
 
 Idempotent. Run once after the table is created; safe to re-run.
 Not committed long-term — once applied to the live DB this file can be deleted.
+
+alarm_logs is plant data, so the target plant must be named:
+    python _probe_alarms.py --datasource 1
 """
-import db
+import argparse
+
+import plant_cli
 
 
 MIGRATIONS = [
@@ -24,13 +29,15 @@ MIGRATIONS = [
 
 
 def main() -> None:
-    with db.get_connection() as conn:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    plant_cli.add_target_args(parser)
+    args = parser.parse_args()
+
+    with plant_cli.connect(args) as conn:
         for sql in MIGRATIONS:
             print(f"  >> {sql.splitlines()[0][:70]}")
             conn.execute(sql)
         conn.commit()
-    # Verify
-    with db.get_connection() as conn:
         rows = conn.execute(
             """SELECT column_name, data_type
                  FROM information_schema.columns

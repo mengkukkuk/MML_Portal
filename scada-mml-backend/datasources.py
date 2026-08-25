@@ -76,7 +76,48 @@ class TestResult(BaseModel):
     server_version: str | None = None
 
 
+class SelectedDatasourceOut(BaseModel):
+    id: int
+    name: str
+    host: str
+    database: str
+    position: int
+
+
+class SelectionOut(BaseModel):
+    selected: list[SelectedDatasourceOut]
+    # True when nothing was explicitly chosen and the server picked a default.
+    # The header renders an implicit choice muted, so an operator can tell the
+    # difference between "I selected this plant" and "this is just what there is".
+    implicit: bool
+
+
+class SelectionIn(BaseModel):
+    datasource_ids: list[int] = Field(default_factory=list)
+
+
 # --- Helpers ---------------------------------------------------------------
+def _selection_response(user_id: int) -> "SelectionOut":
+    """Current selection, falling back to the implicit default.
+
+    Mirrors auth.resolve_active_datasources so the header always shows exactly
+    the sources the data endpoints are about to read. The [None] tier — no saved
+    datasources at all — has nothing to name, so it renders as an empty list.
+    """
+    rows = db.get_user_selection(user_id)
+    if rows:
+        return SelectionOut(
+            selected=[SelectedDatasourceOut(**r) for r in rows], implicit=False
+        )
+    fallback = db.default_datasource()
+    return SelectionOut(
+        selected=(
+            [SelectedDatasourceOut(**fallback, position=0)] if fallback else []
+        ),
+        implicit=True,
+    )
+
+
 def _validate(body: DatasourceIn) -> None:
     if body.type not in VALID_TYPES:
         raise HTTPException(
@@ -94,6 +135,35 @@ def _validate(body: DatasourceIn) -> None:
 @router.get("", response_model=list[DatasourceOut])
 def list_datasources(_user: dict = Depends(get_current_user)):
     return db.list_datasources()
+
+
+# --- Per-user selection ----------------------------------------------------
+# Declared BEFORE /{datasource_id}: FastAPI matches in declaration order, and
+# `PUT /api/datasources/selection` would otherwise be captured by
+# `PUT /api/datasources/{datasource_id}` and 422 on the int conversion.
+#
+# Gated on get_current_user rather than require_admin: which plants an operator
+# is looking at is personalisation, not configuration, and GET /api/datasources
+# is already open to any authenticated user.
+@router.get("/selection", response_model=SelectionOut)
+def get_selection(current_user: dict = Depends(get_current_user)):
+    return _selection_response(current_user["id"])
+
+
+@router.put("/selection", response_model=SelectionOut)
+def put_selection(body: SelectionIn, current_user: dict = Depends(get_current_user)):
+    try:
+        db.set_user_selection(current_user["id"], body.datasource_ids)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    return _selection_response(current_user["id"])
+
+
+@router.delete("/selection", response_model=SelectionOut)
+def clear_selection(current_user: dict = Depends(get_current_user)):
+    """Drop the explicit selection and fall back to the implicit default."""
+    db.set_user_selection(current_user["id"], [])
+    return _selection_response(current_user["id"])
 
 
 @router.post("", response_model=DatasourceOut, status_code=status.HTTP_201_CREATED)

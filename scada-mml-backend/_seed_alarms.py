@@ -1,5 +1,11 @@
-"""One-shot seed of public.alarm_logs for the /alarms page verification."""
-import db
+"""One-shot seed of public.alarm_logs for the /alarms page verification.
+
+alarm_logs is plant data, so the target plant must be named:
+    python _seed_alarms.py --datasource 1
+"""
+import argparse
+
+import plant_cli
 
 
 ROWS = [
@@ -13,7 +19,11 @@ ROWS = [
 
 
 def main() -> None:
-    with db.get_connection() as conn:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    plant_cli.add_target_args(parser)
+    args = parser.parse_args()
+
+    with plant_cli.connect(args) as conn:
         for location, tag, msg, sev, ago in ROWS:
             conn.execute(
                 """INSERT INTO public.alarm_logs
@@ -23,7 +33,6 @@ def main() -> None:
                 (location, tag, msg, sev, ago, ago),
             )
         conn.commit()
-    with db.get_connection() as conn:
         n = conn.execute("SELECT count(*) AS n FROM public.alarm_logs").fetchone()
         print(f"alarm_logs row count: {n['n']}")
 

@@ -102,7 +102,10 @@ C:\dev\
 │   ├── dashboards.py             # /api/dashboards router — group panels into named boards
 │   ├── schema.py                 # /api/schema router — generic table/column introspection
 │   │                               (backs generic Live panel bindings)
-│   ├── datasources.py            # /api/datasources router — saved DB connections (for external historians)
+│   ├── datasources.py            # /api/datasources router — saved plant DB connections,
+│   │                               plus /selection (which plants this user reads from)
+│   ├── sources.py                # `SourceReport` — the per-source ok/error block every
+│   │                               fanned-out response carries, + tz-safe merge sort key
 │   ├── mimic.py                  # /api/mimic router — layouts CRUD, symbol upload, asset mgmt
 │   ├── events.py                 # /api/events router — read public.event_logs
 │   ├── alarms.py                 # /api/alarms router — read/acknowledge public.alarm_logs
@@ -110,6 +113,9 @@ C:\dev\
 │   ├── report_engine.py          # Report analysis: state intervals, KPIs, Pareto, etc.
 │   ├── mailer.py                 # Brevo HTTP API → SMTP fallback → log-only reset delivery
 │   ├── seed_users.py             # Creates/migrates users table + seeds mock users
+│   ├── migrate_config_to_local.py # One-shot: copy config tables from a remote DB to localhost
+│   ├── plant_cli.py              # Shared --datasource/--dsn plant target for the CLI helpers
+│   │                               below (they write plant tables, so localhost is wrong)
 │   ├── simulate_data.py          # Writes synthetic sensor_readings every 5s (CLI)
 │   ├── simulate_events.py        # Standalone CLI for injecting test events into event_logs
 │   ├── _seed_alarms.py           # Dev helper: seed alarm_logs (ad-hoc, not shipped)
@@ -187,7 +193,8 @@ cd C:\dev\scada-mml-backend
 py -3.14 -m venv venv
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
 
-# 2. configure environment — copy the example and fill DB_PASSWORD
+# 2. configure environment — copy the example and fill JWT_SECRET.
+#    The app/config database is hardcoded to localhost; .env does not configure it.
 Copy-Item .env.example .env    # then edit .env
 
 # 3. seed the database (creates users table + mock users; idempotent)
@@ -197,9 +204,15 @@ Copy-Item .env.example .env    # then edit .env
 .\venv\Scripts\python.exe main.py
 #    → http://0.0.0.0:8088   |   Swagger UI: http://localhost:8088/docs
 
-# 5. (optional) keep sensor_readings flowing so /live and /trends have data
-.\venv\Scripts\python.exe simulate_data.py            # forever
-.\venv\Scripts\python.exe simulate_data.py --seed     # seed 2h history first
+# 5. add at least one plant connection — nothing on /live, /events or /alarms can show
+#    data until one exists. Settings → Data sources in the UI, or POST /api/datasources.
+#    Then pick it in the header; the choice is saved per user.
+
+# 6. (optional) keep sensor_readings flowing so /live and /trends have data.
+#    These write *plant* tables, so they need a target: a saved datasource or a raw DSN.
+.\venv\Scripts\python.exe simulate_data.py --datasource "MMLData (plant)"
+.\venv\Scripts\python.exe simulate_data.py --datasource 1 --seed   # seed 2h history first
+.\venv\Scripts\python.exe simulate_data.py --dsn "host=10.0.0.5 dbname=MMLData user=postgres password=…"
 ```
 
 `main.py` has an `if __name__ == "__main__"` block that launches uvicorn, so `python main.py`
@@ -214,7 +227,6 @@ The full reference (~25 keys, grouped DB / JWT / Account / Brevo / SMTP / CORS /
 
 | Key                  | Default     | Purpose |
 |----------------------|-------------|---------|
-| `DB_PASSWORD`        | *(blank)*   | **Required** — Postgres password |
 | `JWT_SECRET`         | dev value   | HMAC secret — generate with `python -c "import secrets;print(secrets.token_hex(32))"` |
 | `APP_BASE_URL`       | `http://localhost:5173` | Base URL used to build password-reset links in emails |
 
@@ -223,43 +235,59 @@ Optional sections covered in the README: token lifetimes (`ACCESS_EXPIRE_MIN`, `
 fallback (`SMTP_*`), CORS allow-list (`CORS_ORIGINS`), and the HTTPS-only cookie flag
 (`COOKIE_SECURE`).
 
-### Surviving a database outage
+### App/config database vs plant data
 
-The API no longer requires its database to start. Schema creation is attempted on boot and
-retried in the background, so an unreachable `DB_HOST` leaves the service **running and
-answering** instead of exiting — previously it aborted startup, and NSSM restart-looped it
-for the length of the outage while the frontend showed a blank page.
+Two different kinds of database, with different lifetimes and different failure modes.
 
-While the database is down: `/health` stays **200** with `"db": "unreachable"`, data routes
-answer **503**, and the SPA shows a banner instead of failing silently. When the host comes
-back the service picks it up on its own — no restart.
+**The app/config database is hardcoded** in `config.py` (`APP_DB_*`): `localhost:5432`,
+database `postgres`, user `postgres`, password `P@ssw0rd`. No env override, no failover. It
+holds *only* MMLPortal's own configuration — users, dashboards, panels, mimic layouts, assets
+and symbols, report templates and settings, the `datasources` catalogue, and
+`user_datasource_selection`.
+
+Hardcoding it is the point: the app cannot log in without this database, so it lives on the
+same machine as the API and the product therefore always boots and always signs in. The
+failover machinery that used to work around a remote config database (`DB_FALLBACK_*`,
+`DB_TARGET`, `POST /api/system/db/failback`) is gone.
+
+> The password sits in source control. Restrict `postgres` to local connections in
+> `pg_hba.conf` and keep 5432 off the network.
+
+**Plant data** — `sensor_readings`, `variables_tag`, `event_logs`, `alarm_logs` — is read from
+the rows of the `datasources` table. Each user picks one or more in the top-nav selector; the
+choice is stored server-side in `user_datasource_selection` and resolved from the JWT by
+`auth.active_datasources`. A user with no explicit selection gets the lowest-id datasource
+(implicit, not persisted); with no datasources at all, the app database's own `public` schema.
+
+**Fan-out.** `db.fan_out(datasource_ids, query)` runs the query against every selected source
+on a bounded module-level thread pool and returns one entry per input id — in input order,
+with `ok`/`error` — so a source that failed is distinguishable from a source that was quiet.
+`db.fan_out_rows` flattens the results and stamps every row with `datasource_id` and
+`datasource_name`. Responses are additive envelopes: `{"events": [...], "sources": [...]}`.
+
+Threaded rather than sequential because `/api/alarms/active` polls at 1 Hz: with one dead
+source, sequential cost is `sum()` of the connect timeouts and exceeds the poll interval
+before the first byte. Threaded it is `max()`, and the dead source's timeout is paid on a
+worker instead of the request thread.
 
 | Key | Default | Purpose |
 |-----|---------|---------|
-| `DB_CONNECT_TIMEOUT` | `5` | Seconds to wait for a TCP connect. Without it a powered-off host blocks on the OS timeout. |
-| `DB_FALLBACK_<n>_HOST` | *(unset)* | Enables failover to a second database. Other `DB_FALLBACK_<n>_*` keys inherit from the primary. |
-| `DB_FAILOVER_COOLDOWN` | `10` | Seconds to fail fast after every candidate has failed, instead of retrying each host per request. |
-| `DB_TARGET` | *(unset)* | Pins one candidate by name and disables failover. Used for seeding. |
+| `DB_CONNECT_TIMEOUT` | `5` | Seconds to wait for a TCP connect to a *plant* host. Without it a powered-off host blocks on the OS timeout. |
 
-**Failover.** With `DB_FALLBACK_1_HOST` set, an unreachable primary makes the API adopt the
-fallback automatically, so users can still sign in. Two things this depends on:
+Connections are pooled per datasource (`db._pool_for`). The app pool has `min_size=2` — it is
+on the hot path of every authenticated request. Plant pools have `min_size=0`, so an
+unselected source holds no sockets, and are opened with `wait=False` so a powered-off host
+cannot block startup.
 
-1. **Seed the fallback first.** Schema DDL runs against whichever database is adopted, but
-   `users` is owned by `seed_users.py` — an unseeded fallback fails over successfully and
-   then nobody can log in. Run once, ahead of time:
-   ```powershell
-   $env:DB_TARGET="fallback1"; venv\Scripts\python.exe seed_users.py
-   ```
-2. **Failback is manual, on purpose.** The app *writes* to whichever database it is using, so
-   panels, dashboards, mimic layouts and report templates saved during an outage live on the
-   fallback and are **not** copied back. Returning automatically would split those writes
-   across two databases. Return explicitly with `POST /api/system/db/failback` (admin) or a
-   service restart.
+**Per-consumer resolution.** Live panels fan out (one series per source, labelled with the
+source name); Events, Alarms and Reports merge; Monitor symbols read the **first** selected
+source only, because a symbol is one physical asset. Alarm acknowledgement is never fanned
+out — alarm ids are per-database sequences and collide, so acking "id 42" across sources would
+ack a different plant's alarm.
 
-Failover triggers only on a database that does not answer. Errors returned *by* a live server
-— `53300 too_many_connections`, `57P01 admin_shutdown`, `28P01` bad password — are surfaced
-as-is and never cause a switch, so a transient connection spike cannot silently migrate the
-app onto the fallback.
+**Migration.** `migrate_config_to_local.py` copies an existing remote config to localhost:
+config tables only, ids preserved, sequences reset, `ON CONFLICT DO NOTHING`, and it registers
+the old remote as a datasource selected for every user. `--dry-run` by default.
 
 ---
 
@@ -267,8 +295,20 @@ app onto the fallback.
 
 ### 6.1 Tables the running app uses
 
+These live in two different places, and which one a table belongs to is not a detail — see
+§4.1.1.
+
+| Where | Tables |
+|-------|--------|
+| **App/config DB** (hardcoded localhost, always reachable) | `users`, `user_datasource_selection`, `dashboards`, `dashboard_panels`, `datasources`, `mimic_layouts`, `mimic_assets`, `mimic_symbols`, `report_templates`, `report_settings` |
+| **Plant DB** (each selected row of `datasources`) | `devices`, `sensor_readings`, `variables_tag`, `event_logs`, `alarm_logs`, `mmldatabuffer` |
+
+The app never creates the plant tables — it only reads them, through the `db_schema` recorded on
+the datasource row. A plant database missing one of them degrades that one feature for that one
+source rather than failing the request.
+
 ```sql
--- users (created/migrated by seed_users.py)
+-- users (created by db.init_users_table() on startup; also created/migrated by seed_users.py)
 CREATE TABLE IF NOT EXISTS users (
   id            SERIAL PRIMARY KEY,
   username      TEXT UNIQUE NOT NULL,
@@ -297,9 +337,10 @@ CREATE TABLE IF NOT EXISTS dashboard_panels (
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- devices + sensor_readings (populated by simulate_data.py in dev; by your own
--- ingest pipeline in prod). Schema is implicit — see simulate_data.py for shape.
--- public.variables_tag is supplied by the real SCADA system; the backend just reads it.
+-- devices + sensor_readings live in each *plant* database, not here (populated by
+-- simulate_data.py in dev; by your own ingest pipeline in prod). Schema is implicit —
+-- see simulate_data.py for shape. variables_tag is supplied by the real SCADA system;
+-- the backend just reads it, from the datasource's db_schema.
 
 -- dashboards (created/migrated by db.init_dashboards_table() on startup)
 -- Groups panels so /live can host multiple named boards. Existing panels are
@@ -313,9 +354,9 @@ CREATE TABLE IF NOT EXISTS dashboards (
 -- dashboard_panels altered to add: dashboard_id INTEGER REFERENCES dashboards(id) ON DELETE CASCADE
 
 -- datasources (created/migrated by db.init_datasources_table() on startup)
--- Saved database connections for external historians (e.g. a separate historian DB).
--- Admin provides host/port/credentials; backend opens connections on demand to fetch
--- time-series data when a Live panel binds to an external table.
+-- Every plant database the app can read. Admin provides host/port/credentials; the
+-- backend keeps one lazy pool per row and opens it on demand. This table is the *only*
+-- way plant data is reached -- there is no implicit "default" plant DB in .env.
 CREATE TABLE IF NOT EXISTS datasources (
   id         SERIAL PRIMARY KEY,
   name       TEXT NOT NULL UNIQUE,
@@ -330,6 +371,26 @@ CREATE TABLE IF NOT EXISTS datasources (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- user_datasource_selection (created by db.init_user_datasource_selection_table() on startup)
+-- Which plants each user is looking at. Read on every plant request via the JWT, so it is
+-- the single input deciding where data comes from -- panel.datasource_id and per-symbol
+-- bindings no longer do. `position` 0 is the PRIMARY source: mimic symbols and the legacy
+-- single-value response fields resolve to it, so operator ordering is load-bearing.
+-- Both FKs cascade: a deleted user or datasource can never leave a dangling selection row,
+-- which is what lets every read path skip defending against ids that no longer exist.
+CREATE TABLE IF NOT EXISTS user_datasource_selection (
+  user_id       INTEGER NOT NULL REFERENCES users(id)       ON DELETE CASCADE,
+  datasource_id INTEGER NOT NULL REFERENCES datasources(id) ON DELETE CASCADE,
+  position      INTEGER NOT NULL DEFAULT 0,
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, datasource_id)
+);
+CREATE INDEX IF NOT EXISTS idx_uds_user
+  ON user_datasource_selection (user_id, position);
+-- No row for a user means "not chosen yet", not "nothing selected": the resolver falls back
+-- to the lowest-id datasource and flags the response `implicit: true`. Rows are replaced
+-- wholesale on PUT, so position never has to be reconciled.
 
 -- mimic_layouts (created/migrated by db.init_mimic_table() on startup)
 -- One row per /monitor plant drawing. The document is stored whole as JSONB
@@ -564,21 +625,52 @@ sensitive tables are denylisted. Filter values are always parameterized.
 
 ### 7.8 `/api/datasources` — saved DB connections (Bearer, any role; writes require admin)
 
-External database connections for historians or data warehouses. Admins configure the connection;
-the backend opens it on demand when a Live panel or report generator needs external data.
+Saved plant connections. **All plant data is read through these rows** — the app's own config
+lives in the hardcoded localhost database instead (§4.1.1). Admins configure the connection;
+the backend opens it on demand, from a per-datasource pool.
 Password is never returned in read responses (only `has_password` boolean).
 
 | Method | Path                      | Body / Auth                                   | Success response |
 |--------|---------------------------|-----------------------------------------------|------------------|
 | GET    | `/api/datasources`        | Bearer                                        | `[{id, name, type, host, port, database, username, sslmode, db_schema, has_password, created_at, updated_at}, ...]` |
-| POST   | `/api/datasources`        | Bearer admin + `{name, type, host, port, dbname, username, password, sslmode, db_schema?}` | `201` + datasource object (no password) |
-| GET    | `/api/datasources/{id}`   | Bearer                                        | one datasource (no password); **404** if missing |
+| POST   | `/api/datasources`        | Bearer admin + `{name, type, host, port, database, username, password, sslmode, db_schema?}` | `201` + datasource object (no password) |
 | PUT    | `/api/datasources/{id}`   | Bearer admin + same body shape as POST        | datasource object (no password); **404** if missing |
 | DELETE | `/api/datasources/{id}`   | Bearer admin                                  | `204`; **404** if missing |
+| POST   | `/api/datasources/test`   | Bearer admin + `{datasource_id?, host?, port?, ...}` | `{ok, message, server_version?}` — opens a real connection |
 
 Type is currently always `'postgres'`. Validation: `name` must be unique; `port` 1–65535; if
 changing password to empty string, the old password is retained (idempotent for admins who
-forget the password).
+forget the password). Editing or deleting a datasource disposes its connection pool, so a
+corrected password takes effect on the next request without a restart.
+
+The JSON field is **`database`**, though the underlying column is `dbname`. Sending `dbname`
+is silently ignored and the datasource is saved with an empty database name — which then fails
+only later, at connect time, with a confusing error.
+
+**Selection** — which sources the *current user* reads from. Backs the picker in the top nav bar.
+
+| Method | Path                          | Body / Auth                          | Success response |
+|--------|-------------------------------|--------------------------------------|------------------|
+| GET    | `/api/datasources/selection`  | Bearer                               | `{selected: [{id, name, host, database, position}], implicit: bool}` |
+| PUT    | `/api/datasources/selection`  | Bearer + `{datasource_ids: [int]}`   | same shape, `implicit: false`; **400** on an unknown id or more than 8 ids |
+| DELETE | `/api/datasources/selection`  | Bearer                               | same shape, back to `implicit: true` |
+
+Auth is `get_current_user`, not `require_admin`: a selection is per-user personalisation, and
+the datasource list is already readable by any authenticated user.
+
+`position` is significant, not cosmetic — **position 0 is the primary source**, which is what
+mimic symbols and the legacy top-level `/latest` fields resolve to (§4.1.1).
+
+`implicit: true` means the user has chosen nothing and the server fell back to the lowest-id
+row in `datasources`; the picker renders that muted so an operator can tell "I selected this
+plant" from "this is just what there is". The rows are stored in `user_datasource_selection`
+with `ON DELETE CASCADE` on both foreign keys, so deleting a datasource silently drops it from
+everyone's selection rather than leaving a dangling id for the resolver to defend against.
+
+These routes are declared **above** `/api/datasources/{datasource_id}` so `selection` is not
+captured as an id. The 8-source ceiling (`MAX_SELECTED_DATASOURCES`) exists because every
+fan-out is O(N) remote connections; without it one user can stall the shared fan-out pool for
+everyone.
 
 ### 7.9 `/api/mimic` — process drawing layouts (Bearer, any role; writes require admin)
 
@@ -628,11 +720,18 @@ for edges. Bubble is optional JSON for a data popover on click.
 
 ### 7.10 `/api/events` — event log (Bearer, any role; read-only)
 
-Reads from `public.event_logs` (owned by the SCADA system). Backs the Events page.
+Reads `event_logs` (owned by the SCADA system) from **every selected source**, merged. Backs
+the Events page.
 
 | Method | Path                | Query                                  | Success response |
 |--------|---------------------|----------------------------------------|------------------|
-| GET    | `/api/events/recent` | `limit?` (1–100, default 10)            | `[{location, tag_name, event, at_date_time}, ...]` — last N events per tag, newest first |
+| GET    | `/api/events/recent` | `limit?` (1–100, default 10)            | `{events: [{location, tag_name, event, at_date_time, datasource_id, datasource_name}, ...], sources: [...]}` — grouped by line/machine, newest first within each |
+
+`limit` is applied **per source**, not `limit/N`, so two selected plants can return up to
+`2 × limit` rows. Splitting the budget would let a chatty plant crowd a quiet one off the page.
+
+Rows carry provenance because `event_logs.id` is a per-database serial that collides across
+plants — the frontend's React keys include `datasource_id` for exactly this reason.
 
 The table is populated externally by the SCADA system; this API is read-only. Events are
 typically state changes, mode switches, or log entries written by the control system.
@@ -645,12 +744,24 @@ only idempotent and does not require admin.
 
 | Method | Path                        | Body / Auth                | Success response |
 |--------|-----------------------------|-----------------------------|------------------|
-| GET    | `/api/alarms/active`        | Bearer                      | `[{alarm_id, location, tag_name, alarm, severity, alarm_active, at_date_time}, ...]` — tags currently in alarm |
-| GET    | `/api/alarms/recent`        | Bearer + `limit?` (1–100, default 10) | `[{id, location, tag_name, alarm, severity, at_date_time, acknowledged, acknowledged_at, acknowledged_by}, ...]` — last N alarms per tag, newest first |
-| POST   | `/api/alarms/{alarm_id}/acknowledge` | Bearer                 | `{...}` same alarm object; **404** if missing or already acknowledged |
+| GET    | `/api/alarms/active`        | Bearer                      | `{alarms: [{alarm_id, location, tag_name, alarm, severity, alarm_active, at_date_time, datasource_id, datasource_name}, ...], sources: [...]}` — tags currently in alarm, merged |
+| GET    | `/api/alarms/recent`        | Bearer + `limit?` (1–100, default 10) | `{alarms: [{id, …, acknowledged, acknowledged_at, acknowledged_by, datasource_id, datasource_name}, ...], sources: [...]}` — `limit` applied per source |
+| POST   | `/api/alarms/{alarm_id}/acknowledge` | Bearer + `datasource_id?` | `{...}` same alarm object; **404** if missing or already acknowledged; **400** if `datasource_id` is outside the caller's current selection |
 
 Acknowledge is idempotent (second call on an already-acked alarm returns **404**, not 200,
 since there's no state change to apply).
+
+**Acknowledge never fans out.** `alarm_id` is a per-database sequence, so "ack id 42" is
+ambiguous the moment two sources are selected — broadcasting it would acknowledge an unrelated
+alarm on every other plant. The write therefore targets exactly one source: the frontend passes
+back the `datasource_id` it received on the row, omitting it only falls back to the primary
+source for clients that predate the field, and a value outside the caller's own selection is a
+**400** rather than a write to a plant they are not looking at. This is the one place the
+header selection is not sufficient on its own.
+
+`/active` matters most when a source is down: three healthy plants reporting no alarms and two
+unreachable plants look identical in the `alarms` array alone. That is what `sources` is for,
+and why the Alarms page renders a banner from it rather than a silent empty state.
 
 ### 7.12 `/api/reports` — OEE / production status reporting (Bearer, any role; template edits require admin)
 
@@ -688,24 +799,60 @@ etc.). Changing this changes all historical reports — admin-only.
 
 | Method | Path                  | Query / Body                 | Success response |
 |--------|-----------------------|------------------------------|------------------|
-| GET    | `/api/reports/catalog` | Bearer                       | `[{location, tag_name}, ...]` — all locations/tags in event_logs |
-| POST   | `/api/reports/run`    | Bearer + `{start, end, locations, tag_names, blocks, pareto_top_n?, pareto_rank_by?}` | `{kpi: {...}, timeline: [...intervals], pareto: [...], alarms: [...], summary_table: [...]}` per requested blocks |
-| GET    | `/api/reports/export` | `template_id`, `start`, `end`, `locations?`, `tag_names?`, `format?` (json/xlsx) | raw Excel file or JSON; **400** if window > 400 days or row count > 100k |
+| GET    | `/api/reports/catalog` | Bearer, `refresh?`           | `[{location, tag_name, datasource_id, datasource_name}, ...]` across the selected sources. Deliberately a **flat list, not an envelope** — the filter bar's pickers consume it directly and an unreachable source simply contributes no options. Cached 5 min per source; `?refresh=1` busts it |
+| POST   | `/api/reports/run`    | Bearer + `{start, end, locations, tag_names, blocks, pareto_top_n?, pareto_rank_by?}` | `{window, totals, machines: [...], sources: [...], ...}` per requested block |
+| GET    | `/api/reports/logs`   | Bearer + `start`, `end`, `locations?`, `tag_names?`, `search?`, `limit`, `offset` | `{total, limit, offset, truncated, rows, sources}` |
 
 The `/run` endpoint builds each machine's state intervals *once* and projects them into every
 requested block, so KPI cards, timeline, and Pareto never disagree with each other.
 
-### 7.13 `/api/system` - database failover status (admin)
+A machine is identified by **`(datasource_id, location, tag_name)`** (`reports._machine_key`).
+Two plants routinely both have a `Line 1 / M01`; merging them would add one plant's downtime to
+the other's. The filters, by contrast, are plain strings applied to each source independently —
+picking `Line 1` means "Line 1 wherever it exists".
+
+### 7.13 `/api/system` - database status (admin)
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET  | `/api/system/db` | Candidate list, which database is active, last error per candidate. Admin only - the body carries hostnames. |
-| POST | `/api/system/db/failback` | Switch back to the primary. Deliberately manual; see the outage section above. |
+| GET  | `/api/system/db` | Health of the app/config database plus every saved plant datasource. Admin only - the body carries hostnames and connection error text. |
+
+```json
+{
+  "ok": true, "schema_ready": true, "checked_at": "...",
+  "host": "localhost", "database": "postgres",
+  "datasources": [
+    {"id": 1, "name": "MMLData (plant)", "in_use": true, "ok": true, "last_error": null},
+    {"id": 2, "name": "Plant B", "in_use": false, "ok": true, "last_error": null}
+  ]
+}
+```
+
+`host`/`database` are the hardcoded app database and have no failover - see §4.1.1. Plant
+connectivity is per-datasource and degrades independently, which is what `datasources` reports.
+
+There are **three** states, not two, so read `ok` together with `in_use`:
+
+| `in_use` | `ok` | Meaning |
+|----------|------|---------|
+| `false`  | `true`  | Configured but never opened this process lifetime. Not an error - and not a clean bill of health either, since nothing has been verified. |
+| `true`   | `true`  | Opened and working. |
+| any      | `false` | A real failure; `last_error` has the reason. |
+
+`ok` answers only "is there a known failure". A configured plant nobody has selected yet is not
+a broken one, and reporting it as broken trains an admin to ignore this page.
+
+**Two different `ok` fields exist and they legitimately disagree.** The one here is about the
+*connection* and is only set by connect failures. The `ok` inside a fanned-out response's
+`sources` block is about *that one query*. A plant that connects fine but is missing
+`event_logs` reports `ok: true` here and `ok: false` on `/api/events/recent` — which is the
+useful answer to two different questions: "is the plant reachable" versus "did this page get
+its data".
 
 `GET /api/health` (no auth) mirrors `/health` for the browser, since IIS proxies only `/api/*`
 to the service. It answers 200 even when the database is down:
-`{"status":"ok","db":"unreachable","db_fallback":false,"checked_at":"..."}`. It stays coarse
-because it is unauthenticated - per-candidate detail is in `/api/system/db`.
+`{"status":"ok","db":"unreachable","checked_at":"..."}`. It stays coarse because it is
+unauthenticated - per-datasource detail is in `/api/system/db`.
 
 ### 7.14 Errors
 
@@ -922,9 +1069,10 @@ cd C:\dev\scada-mml-backend
 1. Verifies Python is in PATH.
 2. Locates `nssm.exe` (vendored, project dir, or PATH).
 3. Creates the venv if missing, installs `requirements.txt`.
-4. Copies `.env.example` → `.env` on first run and interactively prompts for
-   `DB_PASSWORD`, auto-generates a strong `JWT_SECRET` if you accept the default,
-   and lets you set `CORS_ORIGINS`.
+4. Copies `.env.example` → `.env` on first run, auto-generates a strong `JWT_SECRET`
+   if you accept the default, and lets you set `CORS_ORIGINS`. No database prompt —
+   the app database is hardcoded to localhost, and plant connections are added later
+   through the UI or `plant_cli.py`.
 5. Creates `scada-mml-backend\logs\` for stdout/stderr.
 6. Runs `seed_users.py` (idempotent — non-fatal if DB is not reachable yet).
 7. Removes any existing `mml-api` service, then registers a new one with:

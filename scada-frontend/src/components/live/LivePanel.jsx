@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import Popover from '@mui/material/Popover'
 import FormControl from '@mui/material/FormControl'
@@ -10,6 +10,7 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 import CloseIcon from '@mui/icons-material/Close'
 import EChart from '@/components/charts/EChart'
 import { fetchSchemaValues } from '@/api/schema'
+import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { colorAt } from '@/utils/seriesPalette'
 import {
   usePanelSeries, buildSeriesList, computeAlertSeries, POLL_INTERVALS, TIME_RANGES,
@@ -50,6 +51,11 @@ export default function LivePanel({
   onDelete,
   onPollIntervalChange,
   onUpdated,
+  // Lifts this tile's most recent per-source ok/error report to the page,
+  // which merges every panel's report into one page-wide connection alarm —
+  // a source bound to five tiles must only ever produce one alarm tile, not
+  // five duplicates flickering independently as each panel polls.
+  onSourcesReport,
 }) {
   // Time-range selector — view-only preference, not persisted to the panel
   // record, so any viewer can widen/narrow their own window independently.
@@ -64,33 +70,47 @@ export default function LivePanel({
   const gearOpen = Boolean(gearAnchor)
   const closeGear = () => setGearAnchor(null)
 
+  const selectionKey = useDatasourceSelectionStore((s) => s.selectionKey)
+
   const {
     vizType, opts, isTag, isTable,
     tableValueCols, effectiveFilters, tableHasFilter, showFilterChanger,
-    seriesSpecs, seriesTags, mathFn, isMulti, isGeneric, showHeaderValue, unitFor,
+    seriesSpecs, seriesTags, mathFn, isGeneric, showHeaderValue, unitFor,
   } = usePanelSeries(panel, { filterOverride })
 
   const pollSeconds = panel.poll_interval_seconds || 5
 
   const {
-    seriesPoints, seriesLatest, unit, error, isLoading, isFetching, isReseeding,
+    seriesPoints, seriesLatest, resolvedSpecs, unit, sources, error, isLoading, isFetching, isReseeding,
   } = usePanelPolling({
     panel, seriesSpecs, seriesTags, isTag, isTable, mathFn, rangeMinutes, refreshSignal, onUpdated,
   })
 
+  useEffect(() => {
+    if (sources) onSourcesReport?.(panel.id, sources)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sources, panel.id])
+
   // Hydrated view model for every renderer below: one entry per series with
   // its colour, resolved unit and live points/latest.
+  //
+  // Built from the *resolved* specs, not the configured ones: each configured
+  // series fans out into one per selected source, and only the response knows
+  // how many that is (the header's implicit default resolves server-side, so
+  // the client can't predict the source ids).
+  const specs = resolvedSpecs || seriesSpecs
   const seriesList = useMemo(
-    () => buildSeriesList(seriesSpecs, { seriesPoints, seriesLatest, unitFor, deviceUnit: unit }),
-    [seriesSpecs, seriesPoints, seriesLatest, unitFor, unit],
+    () => buildSeriesList(specs, { seriesPoints, seriesLatest, unitFor, deviceUnit: unit }),
+    [specs, seriesPoints, seriesLatest, unitFor, unit],
   )
+  const isMulti = seriesList.length > 1
 
   // Series currently in alert — de-duped union of every true condition's
   // referenced series, recomputed each poll via the hydrated seriesList.
   const alertSeries = useMemo(() => computeAlertSeries(panel, seriesList), [panel.options, seriesList])
 
   // Single-value header (first/only series).
-  const firstLatest = seriesLatest[seriesSpecs[0]?.key] || null
+  const firstLatest = seriesList[0]?.latest || null
   const headerUnit = seriesList[0]?.unit || ''
 
   // One shared ECharts option object for the 9 "generic" viz types — pure
@@ -114,9 +134,12 @@ export default function LivePanel({
 
   // Available values for the series-value changer — fetched once (view-only,
   // not polled), mirroring Vue's onMounted-only fetchSchemaValues call.
+  // The offered values come from whichever source the header resolves to, so
+  // the selection has to be in the key — otherwise switching plants would keep
+  // offering the previous plant's filter values from cache.
   const filtersQuery = useQuery({
-    queryKey: ['live-panel-filter-values', panel.table_name, panel.filter_col, panel.datasource_id],
-    queryFn: () => fetchSchemaValues(panel.table_name, panel.filter_col, 500, panel.datasource_id || undefined),
+    queryKey: ['live-panel-filter-values', panel.table_name, panel.filter_col, selectionKey],
+    queryFn: () => fetchSchemaValues(panel.table_name, panel.filter_col, 500),
     enabled: showFilterChanger,
   })
   const availableFilters = filtersQuery.data || []

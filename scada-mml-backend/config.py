@@ -13,87 +13,49 @@ def _get(name: str, default: str | None = None) -> str:
     return value
 
 
-# --- Database (local PostgreSQL) ---
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME", "postgres")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
-
 # Seconds libpq waits for a TCP connect before giving up. Without this a host
 # that is powered off (rather than actively refusing) blocks on the OS-level
 # timeout — tens of seconds per attempt — which is what turned a downed DB into
-# a dead service. Matches the 5s already used for saved datasources.
+# a dead service.
 DB_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
 
-# After every candidate has failed, how long db.get_connection() fails fast
-# instead of re-walking the whole list on each request.
-DB_FAILOVER_COOLDOWN = int(os.getenv("DB_FAILOVER_COOLDOWN", "10"))
+# --- Application / configuration database ----------------------------------
+# Deliberately hardcoded and deliberately local. This database holds *only*
+# MMLPortal's own configuration: users, dashboards, panels, mimic layouts and
+# assets, report templates, saved datasources, and each user's source selection.
+#
+# Plant data never comes from here. It comes from the rows in `datasources` that
+# the operator selects in the header. Keeping config on localhost is what lets
+# the app boot and log in even when every plant is unreachable — the failure this
+# separation exists to survive.
+APP_DB_HOST = "localhost"
+APP_DB_PORT = 5432
+APP_DB_NAME = "postgres"
+APP_DB_USER = "postgres"
+APP_DB_PASSWORD = "P@ssw0rd"
 
-# Pin one candidate by name and disable failover entirely. Used by seed_users.py
-# to seed a specific database ("DB_TARGET=fallback1 python seed_users.py") — a
-# walk there could silently seed the wrong host.
-DB_TARGET = os.getenv("DB_TARGET", "").strip()
+APP_DB_KWARGS = dict(
+    host=APP_DB_HOST, port=APP_DB_PORT, dbname=APP_DB_NAME,
+    user=APP_DB_USER, password=APP_DB_PASSWORD,
+    connect_timeout=DB_CONNECT_TIMEOUT,
+)
 
+# --- Connection pooling -----------------------------------------------------
+# The app DB is on the hot path of every authenticated request, so it keeps a
+# warm floor. A saved datasource keeps min_size=0: a configured-but-unselected
+# plant must hold zero sockets.
+APP_DB_POOL_MIN = int(os.getenv("APP_DB_POOL_MIN", "2"))
+APP_DB_POOL_MAX = int(os.getenv("APP_DB_POOL_MAX", "10"))
+DS_POOL_MAX = int(os.getenv("DS_POOL_MAX", "5"))
 
-def _quote(value: str) -> str:
-    """Quote a libpq keyword/value component.
-
-    Unquoted, a password containing a space silently truncates the connection
-    string and the failure surfaces far from its cause.
-    """
-    escaped = value.replace("\\", "\\\\").replace("'", "\'")
-    return f"'{escaped}'"
-
-
-def _dsn(host: str, port: str, dbname: str, user: str, password: str) -> str:
-    """Build a psycopg keyword/value connection string."""
-    return (
-        f"host={_quote(host)} port={_quote(port)} dbname={_quote(dbname)} "
-        f"user={_quote(user)} password={_quote(password)} "
-        f"connect_timeout={DB_CONNECT_TIMEOUT}"
-    )
-
-
-def _discover_candidates() -> list[dict]:
-    """Ordered list of databases to try: the primary, then any fallbacks.
-
-    Fallbacks are declared as DB_FALLBACK_<n>_HOST (n = 1, 2, ...) and inherit
-    every unset key from the primary, so the common case is a single line in
-    .env. Scanning stops at the first gap in the numbering.
-    """
-    candidates = [{
-        "name": "primary",
-        "host": DB_HOST,
-        "port": DB_PORT,
-        "dbname": DB_NAME,
-        "dsn": _dsn(DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD),
-    }]
-    n = 1
-    while True:
-        host = os.getenv(f"DB_FALLBACK_{n}_HOST")
-        if not host:
-            break
-        port = os.getenv(f"DB_FALLBACK_{n}_PORT", DB_PORT)
-        dbname = os.getenv(f"DB_FALLBACK_{n}_NAME", DB_NAME)
-        user = os.getenv(f"DB_FALLBACK_{n}_USER", DB_USER)
-        password = os.getenv(f"DB_FALLBACK_{n}_PASSWORD", DB_PASSWORD)
-        candidates.append({
-            "name": f"fallback{n}",
-            "host": host,
-            "port": port,
-            "dbname": dbname,
-            "dsn": _dsn(host, port, dbname, user, password),
-        })
-        n += 1
-    return candidates
-
-
-DB_CANDIDATES = _discover_candidates()
-
-# Kept for backwards compatibility — the primary's DSN. Runtime code should go
-# through db.get_connection(), which honours failover.
-DATABASE_URL = DB_CANDIDATES[0]["dsn"]
+# --- Multi-datasource fan-out ----------------------------------------------
+# Reads spread across every selected datasource concurrently. The worker cap
+# also bounds total concurrent remote connections independently of DS_POOL_MAX.
+FANOUT_MAX_WORKERS = int(os.getenv("FANOUT_MAX_WORKERS", "8"))
+FANOUT_TIMEOUT_S = int(os.getenv("FANOUT_TIMEOUT_S", "12"))
+# Every fan-out is O(N) remote connections; without a ceiling one user's
+# selection can stall the shared threadpool for everyone.
+MAX_SELECTED_DATASOURCES = int(os.getenv("MAX_SELECTED_DATASOURCES", "8"))
 
 # --- JWT ---
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-insecure-change-me")
@@ -131,3 +93,14 @@ SMTP_TIMEOUT = int(os.getenv("SMTP_TIMEOUT", "10"))
 # row history — see db.snapshot_variables_tag) ---
 TAG_BUFFER_POLL_SECONDS = int(os.getenv("TAG_BUFFER_POLL_SECONDS", "5"))
 TAG_BUFFER_RETENTION_MINUTES = int(os.getenv("TAG_BUFFER_RETENTION_MINUTES", "60"))
+
+# The buffer is now keyed per datasource, so its footprint scales with how many
+# sources users have selected. At the defaults one series holds ~730 samples of
+# ~64 bytes (~47 KB), so 5000 keys is roughly 235 MB — the key cap, not the
+# source cap, is the real bound. Size it to
+# MAX_SELECTED_DATASOURCES x expected tags x numeric fields.
+TAG_BUFFER_MAX_SOURCES = int(os.getenv("TAG_BUFFER_MAX_SOURCES", "8"))
+TAG_BUFFER_MAX_KEYS = int(os.getenv("TAG_BUFFER_MAX_KEYS", "5000"))
+# Consecutive sampling failures before a source is parked. A plant DB with no
+# `variables_tag` would otherwise raise every poll forever — 720 log lines/hour.
+TAG_BUFFER_FAIL_LIMIT = int(os.getenv("TAG_BUFFER_FAIL_LIMIT", "5"))

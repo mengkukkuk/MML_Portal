@@ -1,0 +1,60 @@
+.control {
+  min-width: 160px;
+  max-width: 340px;
+}
+
+/* The header is a fixed-height row, so the select has to sit flush with the
+   pill and the user button rather than carry MUI's default outlined padding. */
+.control :global(.MuiOutlinedInput-root) {
+  font-size: 13px;
+  background: var(--surface-2, transparent);
+}
+
+.control :global(.MuiSelect-select) {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+/* An implicit default is a fallback, not a choice the operator made — muted so
+   it does not read as a deliberate selection. */
+.value[data-implicit] {
+  opacity: 0.7;
+}
+
+.icon {
+  color: var(--fg-muted);
+  font-size: 16px;
+  flex: none;
+}
+
+.chip {
+  max-width: 140px;
+  height: 20px;
+  font-size: 11px;
+}
+
+.empty,
+.default {
+  color: var(--fg-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .control {
+    min-width: 44px;
+  }
+
+  .chip,
+  .empty,
+  .default {
+    display: none;
+  }
+}

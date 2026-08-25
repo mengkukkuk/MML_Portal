@@ -16,7 +16,10 @@ import RefreshIcon from '@mui/icons-material/Refresh'
 import AddIcon from '@mui/icons-material/Add'
 import { useAuthStore } from '@/stores/auth'
 import LivePanel from '@/components/live/LivePanel'
+import ConnectionAlarmStrip from '@/components/ConnectionAlarm/ConnectionAlarmStrip'
+import { applySourceUpdate } from '@/utils/sourceHealth'
 import { fetchDevices } from '@/api/readings'
+import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import {
   fetchPanels, createPanel, updatePanel, deletePanel, updatePollInterval,
 } from '@/api/panels'
@@ -92,8 +95,15 @@ export default function LivePage() {
   const dashboardsQuery = useQuery({ queryKey: ['dashboards'], queryFn: fetchDashboards })
   const dashboards = dashboardsQuery.data || []
 
-  const devicesQuery = useQuery({ queryKey: ['live-devices'], queryFn: fetchDevices })
-  const devices = devicesQuery.data || []
+  // Device ids are per-database serials, so with several plants selected the
+  // same id appears more than once. This lookup only supplies a display name
+  // for legacy device-source panels, so first match is good enough.
+  const selectionKey = useDatasourceSelectionStore((s) => s.selectionKey)
+  const devicesQuery = useQuery({
+    queryKey: ['live-devices', selectionKey],
+    queryFn: fetchDevices,
+  })
+  const devices = devicesQuery.data?.devices || []
   const deviceName = useCallback((id) => devices.find((d) => d.id === id)?.name || '', [devices])
 
   const datasourcesQuery = useQuery({ queryKey: ['datasources'], queryFn: fetchDatasources })
@@ -275,6 +285,33 @@ export default function LivePage() {
   const handlePanelUpdated = useCallback((ts) => {
     setLastUpdatedAt((prev) => (ts > prev ? ts : prev))
   }, [])
+
+  // --- page-wide connection health ------------------------------------------
+  // Every panel polls independently and each carries the full per-source
+  // report from its own response, so a source bound to five tiles would
+  // otherwise surface as five independent, out-of-phase alarms. Tracking one
+  // entry per datasource id — always overwritten by whichever panel reports
+  // it most recently — keeps a single alarm tile per source no matter how
+  // many panels are watching it.
+  //
+  // This is deliberately NOT "one array of sources per panel, re-merged from
+  // scratch on every report": rebuilding from every panel's last-known array
+  // lets a slow panel's stale, pre-outage "ok" for a source silently
+  // overwrite a fast panel's current "down" for that same source, in
+  // whatever order the panels happen to iterate — a real outage then never
+  // shows. Updating the per-source entry directly means only a fresher
+  // observation of *that* source can ever change its status.
+  const sourceHealthRef = useRef(new Map())
+  const [sourceHealth, setSourceHealth] = useState([])
+  const handleSourcesReport = useCallback((_panelId, sources) => {
+    if (applySourceUpdate(sourceHealthRef.current, sources)) {
+      setSourceHealth(Array.from(sourceHealthRef.current.values()))
+    }
+  }, [])
+  useEffect(() => {
+    sourceHealthRef.current = new Map()
+    setSourceHealth([])
+  }, [activeDashboardId])
   const lastUpdatedLabel = useMemo(() => {
     if (!lastUpdatedAt) return ''
     const d = new Date(lastUpdatedAt)
@@ -411,6 +448,8 @@ export default function LivePage() {
         </div>
       </header>
 
+      <ConnectionAlarmStrip sources={sourceHealth} />
+
       {loadError && (
         <Alert severity="error">
           {loadError?.response?.data?.detail || loadError?.message || 'Failed to load dashboard.'}
@@ -459,6 +498,7 @@ export default function LivePage() {
                   onDelete={openDelete}
                   onPollIntervalChange={handlePollIntervalChange}
                   onUpdated={handlePanelUpdated}
+                  onSourcesReport={handleSourcesReport}
                 />
               </div>
             )

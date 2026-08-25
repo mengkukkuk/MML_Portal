@@ -13,7 +13,9 @@ import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
 
 import { fetchDefaultTemplate, fetchTemplate, fetchTemplates, runReport } from '@/api/reports'
 import { useAuthStore } from '@/stores/auth'
+import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import ReportFilterBar from '@/components/report/ReportFilterBar'
+import SourceStatus from '@/components/SourceStatus/SourceStatus'
 import {
   DEFAULT_PRESET,
   describeRange,
@@ -70,6 +72,7 @@ export default function ReportPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const isAdmin = useAuthStore((s) => s.user?.role === 'admin')
+  const selectionKey = useDatasourceSelectionStore((s) => s.selectionKey)
 
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState('')
@@ -138,7 +141,7 @@ export default function ReportPage() {
 
   const runQuery = useQuery({
     queryKey: [
-      'report', 'run', template?.id,
+      'report', 'run', template?.id, selectionKey,
       start?.valueOf(), end?.valueOf(),
       filters.locations, filters.tagNames, runBlocks,
       paretoBlock?.options?.topN, paretoBlock?.options?.rankBy,
@@ -283,6 +286,13 @@ export default function ReportPage() {
 
         {loadError && <p className={styles.error}>{errorText(loadError)}</p>}
         {runError && <p className={styles.error}>{errorText(runError)}</p>}
+
+        {/* A plant that failed to answer drops out of the report entirely, and
+            its machines then read as "nothing happened" rather than "not
+            asked" — a downtime report that quietly omits a line is worse than
+            one that fails. */}
+        <SourceStatus sources={runQuery.data?.sources} />
+
         {exportError && <p className={styles.error}>Export failed — {exportError}</p>}
 
         {runQuery.isLoading && <p className={styles.empty}>Running report…</p>}
