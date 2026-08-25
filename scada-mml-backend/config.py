@@ -104,3 +104,15 @@ TAG_BUFFER_MAX_KEYS = int(os.getenv("TAG_BUFFER_MAX_KEYS", "5000"))
 # Consecutive sampling failures before a source is parked. A plant DB with no
 # `variables_tag` would otherwise raise every poll forever — 720 log lines/hour.
 TAG_BUFFER_FAIL_LIMIT = int(os.getenv("TAG_BUFFER_FAIL_LIMIT", "5"))
+
+# --- Licensing (offline, signed license file; no phone-home) ---------------
+# ProgramData survives an app-directory wipe/reinstall, unlike a path next to
+# .env. The service account (NSSM) must have write access here; licensing.py
+# creates the directory on first use if it doesn't exist yet.
+LICENSE_FILE_PATH = os.getenv(
+    "LICENSE_FILE_PATH",
+    r"C:\ProgramData\MMLPortal\license.lic",
+)
+# Cosmetic-only pre-expiry heads-up window (NOT part of the signed payload —
+# grace_period_days in the license itself is the trust boundary, see licensing.py).
+LICENSE_WARNING_WINDOW_DAYS = int(os.getenv("LICENSE_WARNING_WINDOW_DAYS", "14"))
