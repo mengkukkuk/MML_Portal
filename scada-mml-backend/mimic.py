@@ -130,6 +130,9 @@ class MimicOut(BaseModel):
 class MimicIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     doc: dict = {}
+    # Optional for backwards compatibility. ``model_fields_set`` below keeps
+    # an omitted value distinct from an explicit null used for a new layout.
+    base_updated_at: datetime | None = None
 
 
 # --- Validation ------------------------------------------------------------
@@ -313,7 +316,23 @@ def save_layout(slug: str, body: MimicIn, _admin: dict = Depends(require_admin))
             "slug must be lowercase letters, digits, dash or underscore (max 64 characters)"
         )
     _validate(body.doc)
-    return db.upsert_mimic_layout(slug, body.name.strip(), body.doc)
+    enforce_revision = "base_updated_at" in body.model_fields_set
+    row = db.upsert_mimic_layout(
+        slug,
+        body.name.strip(),
+        body.doc,
+        base_updated_at=body.base_updated_at,
+        enforce_revision=enforce_revision,
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This mimic changed on the server after editing began. "
+                "Reload the server revision or export the draft before retrying."
+            ),
+        )
+    return row
 
 
 @router.delete("/layouts/{slug}", status_code=status.HTTP_204_NO_CONTENT)

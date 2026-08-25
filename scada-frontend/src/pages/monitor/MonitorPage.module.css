@@ -143,11 +143,119 @@
   min-width: 0;
 }
 
+/* --- explicit drafting workspace --------------------------------------- */
+.editorWorkspace {
+  position: relative;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr) 320px;
+  align-items: stretch;
+  min-height: 640px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  overflow: clip;
+  background: var(--bg-app);
+}
+
+.editorPaletteRail,
+.editorInspectorRail {
+  position: relative;
+  z-index: 8;
+  min-width: 0;
+  padding: var(--space-2);
+  background: var(--bg-panel);
+  overflow-y: auto;
+  transition: width 160ms ease, transform 160ms ease;
+}
+
+.editorPaletteRail { border-right: 1px solid var(--border); }
+.editorInspectorRail { border-left: 1px solid var(--border); }
+
+.editorRailClosed {
+  width: 42px;
+  padding-inline: 4px;
+  overflow: hidden;
+}
+
+.editorWorkspace:has(.editorPaletteRail.editorRailClosed) {
+  grid-template-columns: 42px minmax(0, 1fr) 320px;
+}
+
+.editorWorkspace:has(.editorInspectorRail.editorRailClosed) {
+  grid-template-columns: 280px minmax(0, 1fr) 42px;
+}
+
+.editorWorkspace:has(.editorPaletteRail.editorRailClosed):has(.editorInspectorRail.editorRailClosed) {
+  grid-template-columns: 42px minmax(0, 1fr) 42px;
+}
+
+.editorRailToggle {
+  appearance: none;
+  width: 100%;
+  min-height: 30px;
+  margin-bottom: var(--space-2);
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font: 600 10px var(--font-display);
+  letter-spacing: .12em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.editorRailClosed .editorRailToggle {
+  writing-mode: vertical-rl;
+  height: 120px;
+  border: 0;
+  text-align: center;
+}
+
+.editorCenter {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-app);
+}
+
+.editorCanvas {
+  flex: 1 1 auto;
+  display: grid;
+  place-items: center;
+  min-height: 540px;
+  overflow: hidden;
+  padding: var(--space-2);
+}
+
+.editorHelp {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-4);
+  color: var(--fg-muted);
+}
+
+.editorHelp > span,
+.editorHelp h3,
+.editorHelp p { grid-column: 1 / -1; }
+.editorHelp > span { color: var(--accent); font: 600 11px var(--font-display); letter-spacing: .16em; text-transform: uppercase; }
+.editorHelp h3 { margin: var(--space-2) 0 0; color: var(--fg); font: 600 20px var(--font-display); }
+.editorHelp p { margin: 0 0 var(--space-3); font-size: 12px; line-height: 1.6; }
+.editorHelp kbd { border: 1px solid var(--border); background: var(--bg-app); border-radius: 4px; padding: 4px 6px; color: var(--fg); font: 10px var(--font-mono); }
+.editorHelp small { align-self: center; color: var(--fg-dim); }
+
+.editorWorkspaceSaving .editorPaletteRail,
+.editorWorkspaceSaving .editorCenter,
+.editorWorkspaceSaving .editorInspectorRail {
+  pointer-events: none;
+}
+
 /* The rail drops below the drawing well before the viewport gets narrow, and
  * because the mimic scales as one fixed 1600x900 unit that lands the
  * smallest callout text under 5px — a P&ID you cannot read is worse than one
  * you have to scroll to. */
-@media (max-width: 1400px) {
+@media (max-width: 1399px) {
   .body {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -159,6 +267,28 @@
   .railColCollapsed {
     width: auto;
   }
+
+  .editorWorkspace,
+  .editorWorkspace:has(.editorPaletteRail.editorRailClosed),
+  .editorWorkspace:has(.editorInspectorRail.editorRailClosed),
+  .editorWorkspace:has(.editorPaletteRail.editorRailClosed):has(.editorInspectorRail.editorRailClosed) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .editorPaletteRail,
+  .editorInspectorRail {
+    position: absolute;
+    top: 49px;
+    bottom: 98px;
+    width: min(320px, calc(100% - 24px));
+    box-shadow: var(--shadow-2);
+  }
+
+  .editorPaletteRail { left: 0; }
+  .editorInspectorRail { right: 0; }
+  .editorPaletteRail.editorRailClosed,
+  .editorInspectorRail.editorRailClosed { display: none; }
+  .editorRailToggle { display: none; }
 }
 
 /* Pair to .stage's min-width: past this point the drawing stops shrinking and

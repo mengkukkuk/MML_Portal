@@ -1,0 +1,91 @@
+.toolbar,
+.commandBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: color-mix(in srgb, var(--bg-panel) 94%, transparent);
+  border: 1px solid var(--border-soft);
+  box-shadow: var(--shadow-1);
+}
+
+.toolbar {
+  min-height: 48px;
+  padding: 6px 8px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  border-bottom-color: var(--border);
+  overflow-x: auto;
+}
+
+.toolGroup,
+.commandCluster,
+.saveCluster {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolGroup + .toolGroup,
+.wireSelect + .toolGroup {
+  border-left: 1px solid var(--border-soft);
+  padding-left: var(--space-2);
+}
+
+.toolButton,
+.snapButton,
+.command,
+.cancelButton,
+.saveButton {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg-muted);
+  min-height: 34px;
+  cursor: pointer;
+  font: 600 11px/1 var(--font-display);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.toolButton { width: 36px; display: grid; place-items: center; border-radius: var(--radius-sm); }
+.snapButton { padding: 0 9px; border-radius: var(--radius-sm); }
+.toolButton:hover, .snapButton:hover, .command:hover, .cancelButton:hover { color: var(--fg); background: var(--bg-elev); }
+.toolButtonActive { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.toolButton:focus-visible, .snapButton:focus-visible, .command:focus-visible, .cancelButton:focus-visible, .saveButton:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.wireSelect { display: flex; align-items: center; gap: 8px; color: var(--fg-dim); font: 600 10px var(--font-display); letter-spacing: .12em; text-transform: uppercase; }
+.wireSelect select { width: 150px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-app); color: var(--fg); padding: 7px 26px 7px 8px; font: 12px var(--font-sans); }
+.zoomGroup { margin-left: auto; }
+.zoomValue { width: 48px; color: var(--fg); text-align: center; font: 11px var(--font-mono); }
+.drawerTools { display: none; }
+
+.commandBar {
+  position: sticky;
+  bottom: 0;
+  z-index: 12;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 0 0 var(--radius) var(--radius);
+  border-top-color: var(--border);
+}
+.command { display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border-radius: var(--radius-sm); }
+.toolButton:disabled,
+.command:disabled,
+.cancelButton:disabled,
+.saveButton:disabled { opacity: .35; cursor: not-allowed; }
+.toolButton:disabled:hover { color: var(--fg-muted); background: transparent; }
+.saveCluster { margin-left: auto; }
+.dirtyState { display: inline-flex; align-items: center; gap: 7px; margin-right: 6px; color: var(--fg-dim); font: 11px var(--font-mono); }
+.dirtyState > span { width: 7px; height: 7px; border-radius: 50%; background: var(--fg-dim); }
+.dirtyStateOn { color: var(--warn); }
+.dirtyStateOn > span { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 18%, transparent); }
+.cancelButton, .saveButton { display: inline-flex; align-items: center; gap: 7px; padding: 0 14px; border-radius: var(--radius-sm); }
+.cancelButton { border-color: var(--border); }
+.saveButton { background: var(--ok); color: #07140b; }
+
+@media (max-width: 1399px) {
+  .drawerTools { display: flex; }
+  .wireSelect select { width: 128px; }
+  .commandBar { align-items: flex-start; flex-direction: column; }
+  .commandCluster { width: 100%; overflow-x: auto; }
+  .saveCluster { width: 100%; justify-content: flex-end; }
+}

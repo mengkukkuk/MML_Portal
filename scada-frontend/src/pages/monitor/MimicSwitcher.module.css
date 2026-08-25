@@ -51,9 +51,9 @@
   outline-offset: 1px;
 }
 
-/* Edit mode owns the drawing until Done. Switching away would drop unsaved
- * geometry, so the control goes quiet rather than disappearing — the name is
- * still the page title. */
+/* Edit mode owns the drawing until Save or Cancel. Switching away would drop
+ * unsaved geometry, so the control goes quiet rather than disappearing — the
+ * name is still the page title. */
 .select:disabled {
   cursor: default;
   opacity: 1;

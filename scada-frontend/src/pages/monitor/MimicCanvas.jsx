@@ -1,11 +1,29 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import {
+  forwardRef, useCallback, useImperativeHandle, useMemo, useRef, useState,
+  useEffect,
+} from 'react'
 import {
   symbolDef, portPoint, bubbleSpec,
 } from '@/components/mimic/symbols'
 import InstrumentBubble from '@/components/mimic/InstrumentBubble'
 import { isFlowing } from '@/components/mimic/tagStatus'
 import { NORMAL_WIRE, WirePath, wireType } from '@/components/mimic/wireTypes'
+import { fitToContents, zoomAtPoint } from './editorViewport'
 import styles from './MimicCanvas.module.css'
+
+const SNAPSHOT_STYLE_PROPERTIES = [
+  'color', 'display', 'fill', 'fill-opacity', 'filter', 'font-family', 'font-size',
+  'font-style', 'font-weight', 'letter-spacing', 'opacity', 'paint-order', 'stroke',
+  'stroke-dasharray', 'stroke-dashoffset', 'stroke-linecap', 'stroke-linejoin',
+  'stroke-opacity', 'stroke-width', 'text-anchor', 'visibility',
+]
+
+const blobAsDataUrl = (blob) => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => resolve(reader.result)
+  reader.onerror = () => reject(reader.error)
+  reader.readAsDataURL(blob)
+})
 
 export const VIEW_W = 1600
 export const VIEW_H = 900
@@ -33,7 +51,7 @@ const HANDLES = [
   { id: 'w', fx: 0, fy: 0.5, ex: 'l', ey: null, cursor: 'ew-resize' },
 ]
 
-const snap = (v) => Math.round(v / GRID) * GRID
+const snap = (v, enabled) => (enabled ? Math.round(v / GRID) * GRID : v)
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v)
 
 /** Ports anchored on a left/right edge route horizontally; top/bottom vertically. */
@@ -79,24 +97,24 @@ function routeEdge(fromNode, fromPort, toNode, toPort) {
  * all. Resizing from the left is therefore "drag this edge to a grid line",
  * not "drag this edge and watch the other one drift".
  */
-function resizeBox(drag, dx, dy, lockAspect) {
+function resizeBox(drag, dx, dy, lockAspect, snapEnabled) {
   const {
     x0, y0, w0, h0, handle,
   } = drag
   let { x, y, w, h } = { x: x0, y: y0, w: w0, h: h0 }
 
   if (handle.ex === 'l') {
-    x = clamp(snap(x0 + dx), 0, x0 + w0 - MIN_NODE)
+    x = clamp(snap(x0 + dx, snapEnabled), 0, x0 + w0 - MIN_NODE)
     w = x0 + w0 - x
   } else if (handle.ex === 'r') {
-    w = clamp(snap(w0 + dx), MIN_NODE, VIEW_W - x0)
+    w = clamp(snap(w0 + dx, snapEnabled), MIN_NODE, VIEW_W - x0)
   }
 
   if (handle.ey === 't') {
-    y = clamp(snap(y0 + dy), 0, y0 + h0 - MIN_NODE)
+    y = clamp(snap(y0 + dy, snapEnabled), 0, y0 + h0 - MIN_NODE)
     h = y0 + h0 - y
   } else if (handle.ey === 'b') {
-    h = clamp(snap(h0 + dy), MIN_NODE, VIEW_H - y0)
+    h = clamp(snap(h0 + dy, snapEnabled), MIN_NODE, VIEW_H - y0)
   }
 
   // Shift on a corner keeps the symbol's proportions. Width leads, because the
@@ -155,7 +173,7 @@ function UnknownNode({ node }) {
  * resize it, drag from a port handle to run a new wire, drag a balloon to
  * reposition its readout.
  */
-export default function MimicCanvas({
+const MimicCanvas = forwardRef(function MimicCanvas({
   layout,
   tags,
   selectedId,
@@ -172,9 +190,24 @@ export default function MimicCanvas({
   onDeleteEdge,
   onMoveBubble,
   onOpenBinding,
-}) {
+  toolMode = 'select',
+  gridVisible = true,
+  snapEnabled = true,
+  onViewportChange,
+  onGestureStart,
+  onGestureEnd,
+  onGestureCancel,
+  onDropSymbol,
+}, forwardedRef) {
   const svgRef = useRef(null)
   const dragRef = useRef(null)
+  const spaceHeldRef = useRef(false)
+  const [view, setView] = useState(() => ({
+    x: 0,
+    y: 0,
+    w: layout.viewBox?.w || VIEW_W,
+    h: layout.viewBox?.h || VIEW_H,
+  }))
   const [draggingId, setDraggingId] = useState(null)
   // Which node is being resized, so the size readout only appears on the
   // symbol actually changing — a dimension shown on a symbol at rest is noise.
@@ -182,6 +215,98 @@ export default function MimicCanvas({
   // The in-flight wire: start port, current cursor, and the port it would land
   // on if released now. Never committed until pointerup finds a target.
   const [wire, setWire] = useState(null)
+
+  const baseView = useMemo(() => ({
+    x: 0,
+    y: 0,
+    w: layout.viewBox?.w || VIEW_W,
+    h: layout.viewBox?.h || VIEW_H,
+  }), [layout.viewBox?.h, layout.viewBox?.w])
+  const baseViewKey = `${baseView.w}x${baseView.h}`
+  const previousBaseViewKey = useRef(baseViewKey)
+
+  const updateView = useCallback((next) => {
+    setView(next)
+  }, [])
+
+  useEffect(() => onViewportChange?.(view), [onViewportChange, view])
+
+  useEffect(() => {
+    if (previousBaseViewKey.current === baseViewKey) return
+    previousBaseViewKey.current = baseViewKey
+    updateView(baseView)
+  }, [baseView, baseViewKey, updateView])
+
+  const resetView = useCallback(() => updateView(baseView), [baseView, updateView])
+  const zoom = useCallback((factor, point = null) => {
+    const p = point || { x: view.x + view.w / 2, y: view.y + view.h / 2 }
+    updateView(zoomAtPoint(view, p.x, p.y, factor, baseView.w))
+  }, [baseView.w, updateView, view])
+  const fit = useCallback(() => updateView(
+    fitToContents(layout.nodes, baseView.w / baseView.h, 48, baseView.w),
+  ), [baseView.h, baseView.w, layout.nodes, updateView])
+
+  const snapshot = useCallback(async () => {
+    const svg = svgRef.current
+    if (!svg) return
+    const clone = svg.cloneNode(true)
+    const originalElements = [svg, ...svg.querySelectorAll('*')]
+    const clonedElements = [clone, ...clone.querySelectorAll('*')]
+    originalElements.forEach((element, index) => {
+      const computed = getComputedStyle(element)
+      SNAPSHOT_STYLE_PROPERTIES.forEach((property) => {
+        const value = computed.getPropertyValue(property)
+        if (value) clonedElements[index].style.setProperty(property, value)
+      })
+    })
+    await Promise.all([...clone.querySelectorAll('image')].map(async (element) => {
+      const href = element.getAttribute('href') || element.getAttribute('xlink:href')
+      if (!href || href.startsWith('data:')) return
+      const response = await fetch(href)
+      if (!response.ok) throw new Error(`Snapshot asset request failed (${response.status}).`)
+      element.setAttribute('href', await blobAsDataUrl(await response.blob()))
+      element.removeAttribute('xlink:href')
+    }))
+    clone.querySelectorAll(`.${styles.edgeHit}, .${styles.edgeSelected}, .${styles.hitbox}, .${styles.selection}, .${styles.grip}, .${styles.dimension}, .${styles.port}, .${styles.wire}`)
+      .forEach((element) => element.remove())
+    clone.removeAttribute('tabindex')
+    clone.setAttribute('width', String(baseView.w))
+    clone.setAttribute('height', String(baseView.h))
+    clone.setAttribute('viewBox', `${baseView.x} ${baseView.y} ${baseView.w} ${baseView.h}`)
+    const source = new XMLSerializer().serializeToString(clone)
+    const svgUrl = URL.createObjectURL(new Blob([source], { type: 'image/svg+xml' }))
+    try {
+      const image = new Image()
+      image.decoding = 'async'
+      image.src = svgUrl
+      await image.decode()
+      const canvas = document.createElement('canvas')
+      canvas.width = baseView.w
+      canvas.height = baseView.h
+      const context = canvas.getContext('2d')
+      context.fillStyle = getComputedStyle(svg).backgroundColor || '#07101d'
+      context.fillRect(0, 0, baseView.w, baseView.h)
+      context.drawImage(image, 0, 0, baseView.w, baseView.h)
+      const url = canvas.toDataURL('image/png')
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${(layout.name || 'mml-mimic').replace(/[^a-z0-9_-]+/gi, '-')}.png`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+    } finally {
+      URL.revokeObjectURL(svgUrl)
+    }
+  }, [baseView, layout.name])
+
+  useImperativeHandle(forwardedRef, () => ({
+    zoomIn: () => zoom(1.25),
+    zoomOut: () => zoom(0.8),
+    resetView,
+    fitContents: fit,
+    fullscreen: () => svgRef.current?.requestFullscreen?.(),
+    snapshot,
+  }), [fit, resetView, snapshot, zoom])
 
   const penWire = wireType(wirePen)
 
@@ -234,19 +359,23 @@ export default function MimicCanvas({
   const handleNodePointerDown = useCallback((evt, node) => {
     onSelect(node.id)
     if (!editMode) return
+    if (toolMode === 'pan' || spaceHeldRef.current || evt.button !== 0) return
     const p = toLogical(evt)
     if (!p) return
     dragRef.current = {
       kind: 'node', id: node.id, ox: p.x - node.x, oy: p.y - node.y,
     }
+    onGestureStart?.()
     setDraggingId(node.id)
     capture(evt)
-  }, [capture, editMode, onSelect, toLogical])
+  }, [capture, editMode, onGestureStart, onSelect, toLogical, toolMode])
 
   const handleResizePointerDown = useCallback((evt, node, handle) => {
+    if (evt.button !== 0 || toolMode === 'pan' || spaceHeldRef.current) return
     // The grips sit on top of the symbol; without this the gesture would also
     // start a move drag on the node underneath.
     evt.stopPropagation()
+    focusStage()
     const p = toLogical(evt)
     if (!p) return
     dragRef.current = {
@@ -261,14 +390,17 @@ export default function MimicCanvas({
       h0: node.h,
       rot: node.rot || 0,
     }
+    onGestureStart?.()
     setResizingId(node.id)
     capture(evt)
-  }, [capture, toLogical])
+  }, [capture, focusStage, onGestureStart, toLogical, toolMode])
 
   const handlePortPointerDown = useCallback((evt, node, port) => {
+    if (evt.button !== 0 || toolMode === 'pan' || spaceHeldRef.current) return
     // Ports sit on top of the symbol; without this the gesture would also
     // start a move drag on the node underneath.
     evt.stopPropagation()
+    focusStage()
     const p = toLogical(evt)
     if (!p) return
     dragRef.current = { kind: 'wire', node: node.id, port }
@@ -276,10 +408,12 @@ export default function MimicCanvas({
       node: node.id, port, x: p.x, y: p.y, target: null,
     })
     capture(evt)
-  }, [capture, toLogical])
+  }, [capture, focusStage, toLogical, toolMode])
 
   const handleBubblePointerDown = useCallback((evt, node, anchor, centre) => {
+    if (evt.button !== 0 || toolMode === 'pan' || spaceHeldRef.current) return
     evt.stopPropagation()
+    focusStage()
     onSelect(node.id)
     if (!editMode) return
     const p = toLogical(evt)
@@ -292,8 +426,18 @@ export default function MimicCanvas({
       ox: p.x - centre.x,
       oy: p.y - centre.y,
     }
+    onGestureStart?.()
     capture(evt)
-  }, [capture, editMode, onSelect, toLogical])
+  }, [capture, editMode, focusStage, onGestureStart, onSelect, toLogical, toolMode])
+
+  useEffect(() => {
+    const stage = svgRef.current
+    return () => {
+      if (stage && document.fullscreenElement === stage) {
+        document.exitFullscreen?.().catch(() => {})
+      }
+    }
+  }, [])
 
   const handlePointerMove = useCallback((evt) => {
     const drag = dragRef.current
@@ -308,6 +452,17 @@ export default function MimicCanvas({
       return
     }
 
+    if (drag.kind === 'pan') {
+      const rect = svgRef.current?.getBoundingClientRect()
+      if (!rect) return
+      updateView({
+        ...drag.view,
+        x: drag.view.x - (evt.clientX - drag.clientX) * drag.view.w / rect.width,
+        y: drag.view.y - (evt.clientY - drag.clientY) * drag.view.h / rect.height,
+      })
+      return
+    }
+
     if (drag.kind === 'resize') {
       // The grips ride inside the node's own rotate transform, so the pointer
       // delta has to come back out of it before it can be read as "the left
@@ -318,7 +473,7 @@ export default function MimicCanvas({
       const dyg = p.y - drag.py
       const dx = dxg * Math.cos(th) - dyg * Math.sin(th)
       const dy = dxg * Math.sin(th) + dyg * Math.cos(th)
-      onResizeNode(drag.id, resizeBox(drag, dx, dy, evt.shiftKey))
+      onResizeNode(drag.id, resizeBox(drag, dx, dy, evt.shiftKey, snapEnabled))
       return
     }
 
@@ -335,29 +490,45 @@ export default function MimicCanvas({
     const node = nodeById(drag.id)
     if (!node) return
     onMoveNode(drag.id, {
-      x: clamp(snap(p.x - drag.ox), 0, VIEW_W - node.w),
-      y: clamp(snap(p.y - drag.oy), 0, VIEW_H - node.h),
+      x: clamp(snap(p.x - drag.ox, snapEnabled), 0, VIEW_W - node.w),
+      y: clamp(snap(p.y - drag.oy, snapEnabled), 0, VIEW_H - node.h),
     })
-  }, [findPort, nodeById, onMoveBubble, onMoveNode, onResizeNode, toLogical])
+  }, [findPort, nodeById, onMoveBubble, onMoveNode, onResizeNode, snapEnabled, toLogical, updateView])
 
   const endDrag = useCallback((evt) => {
     const drag = dragRef.current
     if (!drag) return
     dragRef.current = null
     if (drag.kind === 'wire') {
-      if (wire?.target) onAddEdge({ node: drag.node, port: drag.port }, wire.target)
+      const point = toLogical(evt)
+      const target = point ? findPort(point, drag.node) : wire?.target
+      if (target) onAddEdge({ node: drag.node, port: drag.port }, target)
       setWire(null)
     } else {
       setDraggingId(null)
       setResizingId(null)
+      if (drag.kind !== 'pan') onGestureEnd?.()
     }
     if (svgRef.current?.hasPointerCapture(evt.pointerId)) {
       svgRef.current.releasePointerCapture(evt.pointerId)
     }
-  }, [onAddEdge, wire])
+  }, [findPort, onAddEdge, onGestureEnd, toLogical, wire])
+
+  const cancelDrag = useCallback((evt) => {
+    const drag = dragRef.current
+    if (!drag) return
+    dragRef.current = null
+    setWire(null)
+    setDraggingId(null)
+    setResizingId(null)
+    if (drag.kind !== 'wire' && drag.kind !== 'pan') onGestureCancel?.()
+    if (Number.isInteger(evt.pointerId) && svgRef.current?.hasPointerCapture(evt.pointerId)) {
+      svgRef.current.releasePointerCapture(evt.pointerId)
+    }
+  }, [onGestureCancel])
 
   const handleKeyDown = useCallback((evt) => {
-    if (!editMode) return
+    if (!editMode || evt.defaultPrevented) return
     const del = evt.key === 'Delete' || evt.key === 'Backspace'
 
     if (selectedEdgeId) {
@@ -385,6 +556,48 @@ export default function MimicCanvas({
     onNudgeNode(selectedId, delta[0], delta[1])
   }, [editMode, onDeleteEdge, onDeleteNode, onNudgeNode, selectedEdgeId, selectedId])
 
+  useEffect(() => {
+    if (!editMode) return undefined
+    const isField = (event) => event.target instanceof Element
+      && event.target.closest('input, textarea, select, button, a, [contenteditable="true"], [role="button"], [role="dialog"]')
+    const keyDown = (event) => {
+      if (isField(event)) return
+      if (event.code === 'Space') {
+        spaceHeldRef.current = true
+        event.preventDefault()
+      } else if (event.key === 'Escape' && dragRef.current) {
+        event.preventDefault()
+        cancelDrag(event)
+      }
+    }
+    const keyUp = (event) => {
+      if (event.code === 'Space') spaceHeldRef.current = false
+    }
+    const releaseSpace = () => { spaceHeldRef.current = false }
+    window.addEventListener('keydown', keyDown)
+    window.addEventListener('keyup', keyUp)
+    window.addEventListener('blur', releaseSpace)
+    return () => {
+      spaceHeldRef.current = false
+      window.removeEventListener('keydown', keyDown)
+      window.removeEventListener('keyup', keyUp)
+      window.removeEventListener('blur', releaseSpace)
+    }
+  }, [cancelDrag, editMode])
+
+  useEffect(() => {
+    const stage = svgRef.current
+    if (!stage) return undefined
+    const wheel = (event) => {
+      if (!(event.ctrlKey || event.metaKey)) return
+      event.preventDefault()
+      const p = toLogical(event)
+      if (p) zoom(event.deltaY < 0 ? 1.12 : 0.89, p)
+    }
+    stage.addEventListener('wheel', wheel, { passive: false })
+    return () => stage.removeEventListener('wheel', wheel)
+  }, [toLogical, zoom])
+
   const wireFromNode = wire ? nodeById(wire.node) : null
   const wireFrom = wireFromNode ? portPoint(wireFromNode, wire.port) : null
   const wireTo = wire?.target
@@ -406,7 +619,7 @@ export default function MimicCanvas({
     <svg
       ref={svgRef}
       className={`${styles.stage} ${editMode ? styles.stageEditing : ''}`}
-      viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+      viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
       preserveAspectRatio="xMidYMid meet"
       role="group"
       aria-label={`${layout.name || 'Plant'} process mimic`}
@@ -414,10 +627,25 @@ export default function MimicCanvas({
       onKeyDown={handleKeyDown}
       onPointerMove={handlePointerMove}
       onPointerUp={endDrag}
-      onPointerCancel={endDrag}
+      onPointerCancel={cancelDrag}
+      onDragOver={(event) => { if (editMode) event.preventDefault() }}
+      onDrop={(event) => {
+        if (!editMode || !onDropSymbol) return
+        event.preventDefault()
+        try {
+          const payload = JSON.parse(event.dataTransfer.getData('application/x-mml-symbol'))
+          const p = toLogical(event)
+          if (p) onDropSymbol(payload, p)
+        } catch { /* a non-palette drop is ignored */ }
+      }}
       onPointerDown={(e) => {
         focusStage()
-        if (e.target === svgRef.current) onSelect(null)
+        if (e.button === 1 || toolMode === 'pan' || spaceHeldRef.current) {
+          dragRef.current = { kind: 'pan', clientX: e.clientX, clientY: e.clientY, view }
+          capture(e)
+          return
+        }
+        if (e.target === svgRef.current || e.target.dataset.canvasBackground === 'true') onSelect(null)
       }}
     >
       <defs>
@@ -426,7 +654,16 @@ export default function MimicCanvas({
         </pattern>
       </defs>
 
-      {editMode && <rect x={0} y={0} width={VIEW_W} height={VIEW_H} fill="url(#mimic-grid)" />}
+      {editMode && gridVisible && (
+        <rect
+          data-canvas-background="true"
+          x={baseView.x}
+          y={baseView.y}
+          width={baseView.w}
+          height={baseView.h}
+          fill="url(#mimic-grid)"
+        />
+      )}
 
       {/* --- pipes: drawn first so equipment always sits on top ---------- */}
       <g>
@@ -657,4 +894,6 @@ export default function MimicCanvas({
       )}
     </svg>
   )
-}
+})
+
+export default MimicCanvas

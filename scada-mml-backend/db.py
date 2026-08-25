@@ -1858,20 +1858,48 @@ def get_mimic_layout(slug: str) -> dict[str, Any] | None:
     return row
 
 
-def upsert_mimic_layout(slug: str, name: str, doc: dict[str, Any]) -> dict[str, Any]:
-    """Create or replace a drawing. The document is stored whole — a partial
-    save would leave the drawing and its bindings out of step."""
+def upsert_mimic_layout(
+    slug: str,
+    name: str,
+    doc: dict[str, Any],
+    *,
+    base_updated_at=None,
+    enforce_revision: bool = False,
+) -> dict[str, Any] | None:
+    """Create or replace a drawing, optionally guarded by its last revision.
+
+    An omitted revision keeps the historical unconditional-upsert contract.
+    Explicit ``None`` is insert-only; a timestamp updates only the exact row
+    the editor started from. ``None`` is returned for either conflict shape.
+    """
     with get_connection() as conn:
-        row = conn.execute(
-            """INSERT INTO mimic_layouts (slug, name, doc)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (slug) DO UPDATE
-                SET name = EXCLUDED.name,
-                    doc = EXCLUDED.doc,
-                    updated_at = now()
-            RETURNING slug, name, doc, updated_at""",
-            (slug, name, Json(doc)),
-        ).fetchone()
+        if not enforce_revision:
+            row = conn.execute(
+                """INSERT INTO mimic_layouts (slug, name, doc)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (slug) DO UPDATE
+                    SET name = EXCLUDED.name,
+                        doc = EXCLUDED.doc,
+                        updated_at = now()
+                RETURNING slug, name, doc, updated_at""",
+                (slug, name, Json(doc)),
+            ).fetchone()
+        elif base_updated_at is None:
+            row = conn.execute(
+                """INSERT INTO mimic_layouts (slug, name, doc)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (slug) DO NOTHING
+                RETURNING slug, name, doc, updated_at""",
+                (slug, name, Json(doc)),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """UPDATE mimic_layouts
+                SET name = %s, doc = %s, updated_at = now()
+                WHERE slug = %s AND updated_at = %s
+                RETURNING slug, name, doc, updated_at""",
+                (name, Json(doc), slug, base_updated_at),
+            ).fetchone()
         conn.commit()
     return row
 

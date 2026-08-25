@@ -14,7 +14,7 @@ import styles from './MonitorPage.module.css'
  * built-in one through the same path: whatever the canvas would render for that
  * descriptor is what appears here.
  */
-function PaletteItem({ def, label, onAdd }) {
+function PaletteItem({ def, label, onAdd, payload }) {
   const { Component, defaultSize } = def
   const node = {
     id: `palette-${label}`, type: 'palette', label: '', x: 0, y: 0, ...defaultSize, rot: 0,
@@ -26,6 +26,11 @@ function PaletteItem({ def, label, onAdd }) {
       className={styles.paletteItem}
       onClick={onAdd}
       title={`Add ${label}`}
+      draggable
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = 'copy'
+        event.dataTransfer.setData('application/x-mml-symbol', JSON.stringify(payload))
+      }}
     >
       <svg
         className={styles.paletteSvg}
@@ -80,6 +85,7 @@ export default function SymbolPalette({ onAdd, customSymbols = [], onAuthorSymbo
           key: type,
           label: SYMBOLS[type].label,
           def: SYMBOLS[type],
+          payload: { type, symbolId: null },
           add: () => onAdd(type),
         })),
       }))
@@ -91,6 +97,7 @@ export default function SymbolPalette({ onAdd, customSymbols = [], onAuthorSymbo
         key: `custom-${row.id}`,
         label: row.name,
         def: customDescriptor(row),
+        payload: { type: 'custom', symbolId: row.id },
         add: () => onAdd('custom', row.id),
       })),
     }
@@ -163,6 +170,7 @@ export default function SymbolPalette({ onAdd, customSymbols = [], onAuthorSymbo
                         def={entry.def}
                         label={entry.label}
                         onAdd={entry.add}
+                        payload={entry.payload}
                       />
                     ))}
                   </div>

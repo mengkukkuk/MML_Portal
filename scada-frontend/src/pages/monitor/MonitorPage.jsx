@@ -2,7 +2,7 @@ import {
   useCallback, useEffect, useMemo, useRef, useState,
 } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
+import { useBlocker, useSearchParams } from 'react-router-dom'
 import Button from '@mui/material/Button'
 import IconButton from '@mui/material/IconButton'
 import Alert from '@mui/material/Alert'
@@ -10,7 +10,6 @@ import Snackbar from '@mui/material/Snackbar'
 import FormControlLabel from '@mui/material/FormControlLabel'
 import Switch from '@mui/material/Switch'
 import BoltOutlined from '@mui/icons-material/BoltOutlined'
-import RestartAltOutlined from '@mui/icons-material/RestartAltOutlined'
 import ChevronLeft from '@mui/icons-material/ChevronLeft'
 import ChevronRight from '@mui/icons-material/ChevronRight'
 import { useAuthStore } from '@/stores/auth'
@@ -28,10 +27,16 @@ import DetailRail from './DetailRail'
 import SymbolPalette from './SymbolPalette'
 import NodeInspector from './NodeInspector'
 import EdgeInspector from './EdgeInspector'
-import WirePicker from './WirePicker'
 import SymbolBindingDialog from './SymbolBindingDialog'
 import MimicSwitcher from './MimicSwitcher'
 import CustomSymbolDialog from './CustomSymbolDialog'
+import MimicEditorToolbar from './MimicEditorToolbar'
+import MimicCommandBar from './MimicCommandBar'
+import {
+  ImportLayoutDialog, RevisionConflictDialog, UnsavedChangesDialog,
+} from './EditorDialogs'
+import useMimicEditorSession from './useMimicEditorSession'
+import { createMimicExport, downloadJson, parseMimicImport } from './editorFiles'
 import {
   migrateLayout, readLegacyLayout, clearLegacyLayout, seedLayout, emptyLayout, editLock,
 } from './layoutDoc'
@@ -146,7 +151,20 @@ export default function MonitorPage() {
     retry: (count, err) => err?.response?.status !== 404 && count < 2,
   })
 
-  const [layout, setLayout] = useState(null)
+  const {
+    session: editorSession,
+    document: layout,
+    load: loadLayout,
+    preview: previewLayout,
+    commit: commitLayout,
+    beginGesture,
+    endGesture,
+    abortGesture,
+    undo: undoLayout,
+    redo: redoLayout,
+    cancel: cancelLayout,
+    saved: savedLayout,
+  } = useMimicEditorSession()
   const legacyPendingRef = useRef(false)
   // Which slug the drawing on screen belongs to. Without this the seed guard
   // below would read "have I seeded anything?" and a switch would keep showing
@@ -157,7 +175,7 @@ export default function MonitorPage() {
     if (!activeSlug || seededSlugRef.current === activeSlug || layoutQuery.isPending) return
     const server = layoutQuery.data?.doc ? migrateLayout(layoutQuery.data.doc) : null
     seededSlugRef.current = activeSlug
-    if (server) { setLayout(server); return }
+    if (server) { loadLayout(server, layoutQuery.data?.updated_at ?? null); return }
     // Nothing on the server. An admin may still have a hand-arranged drawing
     // in this browser from before /monitor had a backend — carry its geometry
     // into the first save rather than replacing it with the seed. It belongs
@@ -166,15 +184,15 @@ export default function MonitorPage() {
       const legacy = readLegacyLayout()
       if (legacy) {
         legacyPendingRef.current = true
-        setLayout(legacy)
+        loadLayout(legacy, null)
         return
       }
-      setLayout(seedLayout())
+      loadLayout(seedLayout(), null)
       return
     }
-    setLayout(emptyLayout(layouts.find((l) => l.slug === activeSlug)?.name ?? activeSlug))
+    loadLayout(emptyLayout(layouts.find((l) => l.slug === activeSlug)?.name ?? activeSlug), null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSlug, layoutQuery.isPending, layoutQuery.data])
+  }, [activeSlug, layoutQuery.isPending, layoutQuery.data, layouts, loadLayout])
 
   // The document's own name wins: it is what the last save wrote, so it is
   // right even in the moment before the list query catches up with a rename.
@@ -269,10 +287,71 @@ export default function MonitorPage() {
    * declared with the rest of the selection state below it.
    */
   const editing = editMode && canEdit && !lock
+  const dirty = !!editorSession?.dirty
+  const canvasRef = useRef(null)
+  const [toolMode, setToolMode] = useState('select')
+  const [gridVisible, setGridVisible] = useState(true)
+  const [snapEnabled, setSnapEnabled] = useState(true)
+  const [viewport, setViewport] = useState({ x: 0, y: 0, w: VIEW_W, h: VIEW_H })
+  const [paletteOpen, setPaletteOpen] = useState(true)
+  const [inspectorOpen, setInspectorOpen] = useState(true)
+  const [compactEditor, setCompactEditor] = useState(() => (
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 1399px)').matches
+  ))
+  const [importOpen, setImportOpen] = useState(false)
+  const [unsavedOpen, setUnsavedOpen] = useState(false)
+  const [conflictOpen, setConflictOpen] = useState(false)
   const [bindingNode, setBindingNode] = useState(null)
   // The upload/author flow. Not per-node: a library symbol is authored once
   // and then placed, so this is a property of the session, not of a selection.
   const [authoring, setAuthoring] = useState(false)
+
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => (
+    dirty && (
+      currentLocation.pathname !== nextLocation.pathname
+      || currentLocation.search !== nextLocation.search
+    )
+  ))
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 1399px)')
+    const syncBreakpoint = () => {
+      setCompactEditor(media.matches)
+      if (media.matches) {
+        setPaletteOpen(true)
+        setInspectorOpen(false)
+      } else {
+        setPaletteOpen(true)
+        setInspectorOpen(true)
+      }
+    }
+    syncBreakpoint()
+    media.addEventListener('change', syncBreakpoint)
+    return () => media.removeEventListener('change', syncBreakpoint)
+  }, [])
+
+  const togglePalette = useCallback(() => {
+    const nextOpen = !paletteOpen
+    setPaletteOpen(nextOpen)
+    if (nextOpen && compactEditor) setInspectorOpen(false)
+  }, [compactEditor, paletteOpen])
+
+  const toggleInspector = useCallback(() => {
+    const nextOpen = !inspectorOpen
+    setInspectorOpen(nextOpen)
+    if (nextOpen && compactEditor) setPaletteOpen(false)
+  }, [compactEditor, inspectorOpen])
+
+  useEffect(() => {
+    if (blocker.state === 'blocked') setUnsavedOpen(true)
+  }, [blocker.state])
+
+  useEffect(() => {
+    if (!dirty) return undefined
+    const guard = (event) => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload', guard)
+    return () => window.removeEventListener('beforeunload', guard)
+  }, [dirty])
 
   // Switching drawings: nothing from the old one survives. Every id here names
   // a node or pipe that is about to stop existing, and the binding dialog in
@@ -280,11 +359,11 @@ export default function MonitorPage() {
   useEffect(() => {
     if (seededSlugRef.current === null || seededSlugRef.current === activeSlug) return
     seededSlugRef.current = null
-    setLayout(null)
+    loadLayout(null)
     setSelectedId(null)
     setSelectedEdgeId(null)
     setBindingNode(null)
-  }, [activeSlug])
+  }, [activeSlug, loadLayout])
 
   const selectMimic = useCallback((slug) => {
     if (!slug || slug === activeSlug) return
@@ -308,16 +387,16 @@ export default function MonitorPage() {
 
   // --- geometry edits ------------------------------------------------------
   const moveNode = useCallback((id, pos) => {
-    setLayout((prev) => ({
+    previewLayout((prev) => ({
       ...prev,
       nodes: prev.nodes.map((n) => (n.id === id ? { ...n, ...pos } : n)),
     }))
-  }, [])
+  }, [previewLayout])
 
   // Resolved against the node in `prev` rather than the rendered one so a
   // burst of key repeats accumulates instead of collapsing to the last one.
   const nudgeNode = useCallback((id, dx, dy) => {
-    setLayout((prev) => ({
+    commitLayout((prev) => ({
       ...prev,
       nodes: prev.nodes.map((n) => (n.id === id
         ? {
@@ -327,45 +406,45 @@ export default function MonitorPage() {
         }
         : n)),
     }))
-  }, [])
+  }, [commitLayout])
 
   // Ports are fractions of the node box and edge geometry is never stored, so
   // a resize re-routes every wire on the symbol for free. The canvas has
   // already snapped and clamped the box.
   const resizeNode = useCallback((id, box) => {
-    setLayout((prev) => ({
+    previewLayout((prev) => ({
       ...prev,
       nodes: prev.nodes.map((n) => (n.id === id ? { ...n, ...box } : n)),
     }))
-  }, [])
+  }, [previewLayout])
 
   // Rotation was already wired end to end on the canvas — the transform is
   // applied and resizeBox un-rotates pointer deltas — with nothing to set it.
   // Stored in degrees, normalised so a rotated symbol reports 15° rather than 375°.
   const rotateNode = useCallback((id, deg) => {
-    setLayout((prev) => ({
+    commitLayout((prev) => ({
       ...prev,
       nodes: prev.nodes.map((n) => (n.id === id
         ? { ...n, rot: ((Math.round(deg) % 360) + 360) % 360 }
         : n)),
     }))
-  }, [])
+  }, [commitLayout])
 
   // Back to the size the symbol was drawn at. Position is left alone: the
   // symbol is where the engineer put it, and only its size was in question.
   const resetNodeSize = useCallback((id) => {
-    setLayout((prev) => ({
+    commitLayout((prev) => ({
       ...prev,
       nodes: prev.nodes.map((n) => (n.id === id
         ? { ...n, ...(symbolDef(n)?.defaultSize ?? { w: n.w, h: n.h }) }
         : n)),
     }))
-  }, [])
+  }, [commitLayout])
 
   // Deleting a node takes its wires with it — an edge whose endpoint is gone
   // has no geometry to derive.
   const deleteNode = useCallback((id) => {
-    setLayout((prev) => ({
+    commitLayout((prev) => ({
       ...prev,
       nodes: prev.nodes.filter((n) => n.id !== id),
       edges: prev.edges.filter((e) => e.from.node !== id && e.to.node !== id),
@@ -373,24 +452,24 @@ export default function MonitorPage() {
     setSelectedId(null)
     // One of the pipes that just went with it may have been the selection.
     setSelectedEdgeId(null)
-  }, [])
+  }, [commitLayout])
 
   // --- balloon placement ---------------------------------------------------
   // Stored as an offset from the symbol's own anchor, so a repositioned
   // reading follows its equipment the next time that equipment is dragged.
   const moveBubble = useCallback((id, offset) => {
-    setLayout((prev) => ({
+    previewLayout((prev) => ({
       ...prev,
       nodes: prev.nodes.map((n) => (n.id === id ? { ...n, bubble: { offset } } : n)),
     }))
-  }, [])
+  }, [previewLayout])
 
   const resetBubble = useCallback((id) => {
-    setLayout((prev) => ({
+    commitLayout((prev) => ({
       ...prev,
       nodes: prev.nodes.map((n) => (n.id === id ? { ...n, bubble: null } : n)),
     }))
-  }, [])
+  }, [commitLayout])
 
   // --- wiring --------------------------------------------------------------
   // The pen: which line the next wire is drawn in. Held here rather than
@@ -421,30 +500,30 @@ export default function MonitorPage() {
     }
     addCounter += 1
     const id = `e-new-${Date.now().toString(36)}-${addCounter}`
-    setLayout((prev) => ({
+    commitLayout((prev) => ({
       ...prev,
       edges: [...prev.edges, {
         id, ...ends, service: wirePen, flowNode: null,
       }],
     }))
     selectEdge(id)
-  }, [layout, notify, selectEdge, wirePen])
+  }, [commitLayout, layout, notify, selectEdge, wirePen])
 
   // Correcting one wire's type in the inspector also picks up the pen: you
   // reached for that line because it was the one you meant, and the next
   // segment of the same run almost always wants it too.
   const updateEdge = useCallback((id, patch) => {
     if (patch.service) setWirePen(patch.service)
-    setLayout((prev) => ({
+    commitLayout((prev) => ({
       ...prev,
       edges: prev.edges.map((e) => (e.id === id ? { ...e, ...patch } : e)),
     }))
-  }, [])
+  }, [commitLayout])
 
   const deleteEdge = useCallback((id) => {
-    setLayout((prev) => ({ ...prev, edges: prev.edges.filter((e) => e.id !== id) }))
+    commitLayout((prev) => ({ ...prev, edges: prev.edges.filter((e) => e.id !== id) }))
     setSelectedEdgeId(null)
-  }, [])
+  }, [commitLayout])
 
   /**
    * Drop a new symbol at the centre of the sheet.
@@ -454,10 +533,13 @@ export default function MonitorPage() {
    * that entry, so a custom node without one would be placed at the generic
    * fallback size and then jump when it resolved.
    */
-  const addSymbol = useCallback((type, symbolId = null) => {
+  const addSymbol = useCallback((type, symbolId = null, point = null) => {
     const def = symbolDef({ type, symbolId }) ?? SYMBOLS[type]
     addCounter += 1
     const id = `n-new-${Date.now().toString(36)}-${addCounter}`
+    const rawX = (point?.x ?? VIEW_W / 2) - def.defaultSize.w / 2
+    const rawY = (point?.y ?? VIEW_H / 2) - def.defaultSize.h / 2
+    const place = (value) => (snapEnabled ? Math.round(value / 8) * 8 : Math.round(value))
     const node = {
       id,
       type,
@@ -465,15 +547,15 @@ export default function MonitorPage() {
       tagId: null,
       binding: null,
       label: def.label,
-      x: Math.round((VIEW_W - def.defaultSize.w) / 2),
-      y: Math.round((VIEW_H - def.defaultSize.h) / 2),
+      x: clamp(place(rawX), 0, VIEW_W - def.defaultSize.w),
+      y: clamp(place(rawY), 0, VIEW_H - def.defaultSize.h),
       w: def.defaultSize.w,
       h: def.defaultSize.h,
       rot: 0,
     }
-    setLayout((prev) => ({ ...prev, nodes: [...prev.nodes, node] }))
+    commitLayout((prev) => ({ ...prev, nodes: [...prev.nodes, node] }))
     selectNode(id)
-  }, [selectNode])
+  }, [commitLayout, selectNode, snapEnabled])
 
   // --- persistence ---------------------------------------------------------
   const [saving, setSaving] = useState(false)
@@ -481,48 +563,41 @@ export default function MonitorPage() {
   const persist = useCallback(async (doc) => {
     setSaving(true)
     try {
-      await saveMimicLayout(activeSlug, doc.name || activeName, doc)
+      const row = await saveMimicLayout(
+        activeSlug,
+        doc.name || activeName,
+        doc,
+        editorSession?.revision ?? null,
+      )
       if (legacyPendingRef.current) {
         clearLegacyLayout()
         legacyPendingRef.current = false
       }
       // On a fresh install this PUT is what puts the fallback plant in the
       // table for the first time, so the switcher's list is now out of date.
+      queryClient.setQueryData(['mimic-layout', activeSlug], row)
       queryClient.invalidateQueries({ queryKey: ['mimic-layouts'] })
       notify('Layout saved.')
-      return true
+      return row
     } catch (e) {
+      if (e?.response?.status === 409) {
+        setConflictOpen(true)
+        return null
+      }
       notify(apiErrorMessage(e, 'Failed to save the layout.'), 'error')
-      return false
+      return null
     } finally {
       setSaving(false)
     }
-  }, [activeName, activeSlug, notify, queryClient])
+  }, [activeName, activeSlug, editorSession?.revision, notify, queryClient])
 
-  // The rail's Remove buttons defer to Done like any other edit (drag,
-  // resize, wiring) — geometry is provisional until you let go of the whole
-  // session. The keyboard shortcut has no such session to leave: Delete is a
-  // one-shot action with nothing else on screen to say "not saved yet", so it
-  // writes through immediately or a refresh (or switching drawings) silently
-  // brings the symbol back.
   const deleteNodeKey = useCallback((id) => {
-    const next = {
-      ...layout,
-      nodes: layout.nodes.filter((n) => n.id !== id),
-      edges: layout.edges.filter((e) => e.from.node !== id && e.to.node !== id),
-    }
-    setLayout(next)
-    setSelectedId(null)
-    setSelectedEdgeId(null)
-    persist(next)
-  }, [layout, persist])
+    deleteNode(id)
+  }, [deleteNode])
 
   const deleteEdgeKey = useCallback((id) => {
-    const next = { ...layout, edges: layout.edges.filter((e) => e.id !== id) }
-    setLayout(next)
-    setSelectedEdgeId(null)
-    persist(next)
-  }, [layout, persist])
+    deleteEdge(id)
+  }, [deleteEdge])
 
   // --- binding dialog ------------------------------------------------------
   const openBinding = useCallback((node) => setBindingNode(node), [])
@@ -534,38 +609,162 @@ export default function MonitorPage() {
         ? { ...n, tagId, label, binding }
         : n)),
     }
-    setLayout(next)
+    commitLayout(next)
     setBindingNode(null)
-    // Commissioning a loop publishes straight away. Geometry waits for Done
-    // because a drag is provisional until you let go of it, but a binding is a
-    // decision — and an admin who rebinds from the read-only rail never enters
-    // edit mode at all, so there would otherwise be nothing to save it with.
-    if (editMode) {
-      notify(binding ? 'Binding set. Saved when you leave edit mode.' : 'Symbol disconnected.')
-    } else {
-      persist(next)
-    }
-  }, [bindingNode, editMode, layout, notify, persist])
+    notify(binding ? 'Binding updated in the draft.' : 'Symbol disconnected in the draft.')
+  }, [bindingNode, commitLayout, layout, notify])
 
   const toggleEdit = useCallback(() => {
-    if (editMode) {
-      persist(layout)
-      setEditMode(false)
-      // The read-only rail has no inspector for a pipe, so a pipe left
-      // selected on the way out would simply vanish from the page.
-      setSelectedEdgeId(null)
-    } else {
-      setEditMode(true)
-    }
-  }, [editMode, layout, persist])
+    if (!editMode) setEditMode(true)
+  }, [editMode])
+
+  const handleSave = useCallback(async () => {
+    const row = await persist(layout)
+    if (!row) return
+    savedLayout(migrateLayout(row.doc), row.updated_at)
+    setEditMode(false)
+    setSelectedEdgeId(null)
+  }, [layout, persist, savedLayout])
+
+  const finishCancel = useCallback(() => {
+    cancelLayout()
+    setEditMode(false)
+    setSelectedId(null)
+    setSelectedEdgeId(null)
+    setBindingNode(null)
+    setUnsavedOpen(false)
+  }, [cancelLayout])
+
+  const requestCancel = useCallback(() => {
+    if (dirty) setUnsavedOpen(true)
+    else finishCancel()
+  }, [dirty, finishCancel])
 
   // "Back to how this drawing started" — which is the seeded steam skid for
   // the plant /monitor shipped with, and a blank sheet for one an admin drew.
   const handleReset = useCallback(() => {
-    setLayout(activeSlug === FALLBACK_SLUG ? seedLayout() : emptyLayout(activeName))
+    commitLayout(activeSlug === FALLBACK_SLUG ? seedLayout() : emptyLayout(activeName))
     setSelectedId(null)
     setSelectedEdgeId(null)
-  }, [activeName, activeSlug])
+  }, [activeName, activeSlug, commitLayout])
+
+  const exportDraft = useCallback(() => {
+    const envelope = createMimicExport({ slug: activeSlug, name: activeName }, layout)
+    downloadJson(`${activeSlug || 'mimic'}.mml.json`, envelope)
+  }, [activeName, activeSlug, layout])
+
+  const importDraft = useCallback(async (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    try {
+      const parsed = parseMimicImport(JSON.parse(await file.text()), { slug: activeSlug, name: activeName })
+      const migrated = migrateLayout(parsed)
+      if (!migrated) throw new Error('The selected file is not a supported MML layout document.')
+      const imported = {
+        ...layout,
+        viewBox: migrated.viewBox,
+        nodes: migrated.nodes,
+        edges: migrated.edges,
+        name: activeName,
+      }
+      const importLock = editLock(imported)
+      if (importLock) throw new Error(importLock)
+      const importedNodes = new Map(imported.nodes.map((node) => [node.id, node]))
+      const customIds = new Set(customSymbols.map((symbol) => symbol.id))
+      const missingCustom = imported.nodes.find((node) => (
+        node.type === 'custom'
+        && (!Number.isInteger(node.symbolId) || !customIds.has(node.symbolId))
+      ))
+      if (missingCustom) {
+        throw new Error('The selected layout references a custom symbol that is not installed on this server.')
+      }
+      const badPort = imported.edges.some((edge) => (
+        !symbolDef(importedNodes.get(edge.from.node))?.ports?.[edge.from.port]
+        || !symbolDef(importedNodes.get(edge.to.node))?.ports?.[edge.to.port]
+      ))
+      if (badPort) throw new Error('The selected layout contains a wire attached to an unsupported symbol port.')
+      commitLayout(imported)
+      setSelectedId(null)
+      setSelectedEdgeId(null)
+      setImportOpen(false)
+      notify('Layout imported into the draft.', 'success')
+    } catch (error) {
+      notify(error.message || 'The selected file could not be imported.', 'error')
+    } finally {
+      event.target.value = ''
+    }
+  }, [activeName, activeSlug, commitLayout, customSymbols, layout, notify])
+
+  const reloadServerRevision = useCallback(async () => {
+    try {
+      const result = await layoutQuery.refetch({ throwOnError: true })
+      if (!result.data?.doc) throw new Error('The server revision could not be loaded.')
+      loadLayout(migrateLayout(result.data.doc), result.data.updated_at)
+      setSelectedId(null)
+      setSelectedEdgeId(null)
+      setBindingNode(null)
+      setConflictOpen(false)
+    } catch (error) {
+      notify(apiErrorMessage(error, 'The server revision could not be loaded. Your draft is still intact.'), 'error')
+    }
+  }, [layoutQuery, loadLayout, notify])
+
+  const deleteSelection = useCallback(() => {
+    if (selectedEdgeId) deleteEdge(selectedEdgeId)
+    else if (selectedId) deleteNode(selectedId)
+  }, [deleteEdge, deleteNode, selectedEdgeId, selectedId])
+
+  const rotateSelection = useCallback(() => {
+    if (selectedNode) rotateNode(selectedNode.id, (selectedNode.rot || 0) + 90)
+  }, [rotateNode, selectedNode])
+
+  const keepEditing = useCallback(() => {
+    setUnsavedOpen(false)
+    if (blocker.state === 'blocked') blocker.reset()
+  }, [blocker])
+
+  const discardUnsaved = useCallback(() => {
+    const navigating = blocker.state === 'blocked'
+    finishCancel()
+    if (navigating) blocker.proceed()
+  }, [blocker, finishCancel])
+
+  useEffect(() => {
+    if (!editing) return undefined
+    const shortcut = (event) => {
+      if (saving) return
+      if (event.defaultPrevented) return
+      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return
+      const mod = event.ctrlKey || event.metaKey
+      if (mod && event.key.toLowerCase() === 's') {
+        event.preventDefault()
+        if (dirty && !saving) handleSave()
+      } else if (mod && event.key.toLowerCase() === 'z') {
+        event.preventDefault()
+        if (event.shiftKey) redoLayout()
+        else undoLayout()
+      } else if (mod && event.key.toLowerCase() === 'y') {
+        event.preventDefault()
+        redoLayout()
+      } else if (event.key === 'Delete' || event.key === 'Backspace') {
+        if (!selectedId && !selectedEdgeId) return
+        event.preventDefault()
+        deleteSelection()
+      } else if (selectedId && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+        event.preventDefault()
+        const step = event.shiftKey ? 1 : 8
+        const [dx, dy] = {
+          ArrowLeft: [-step, 0],
+          ArrowRight: [step, 0],
+          ArrowUp: [0, -step],
+          ArrowDown: [0, step],
+        }[event.key]
+        nudgeNode(selectedId, dx, dy)
+      }
+    }
+    window.addEventListener('keydown', shortcut)
+    return () => window.removeEventListener('keydown', shortcut)
+  }, [deleteSelection, dirty, editing, handleSave, nudgeNode, redoLayout, saving, selectedEdgeId, selectedId, undoLayout])
 
   const dotClass = plantStatus === 'crit' ? styles.dotCrit
     : plantStatus === 'warn' ? styles.dotWarn : ''
@@ -618,8 +817,8 @@ export default function MonitorPage() {
             activeSlug={activeSlug}
             activeName={activeName}
             canManage={canEdit}
-            // Geometry is provisional until Done, so it lives only in local
-            // state. Switching away would throw it out with no way back.
+            // A draft belongs to one server revision. Switching drawings is
+            // disabled until the administrator saves or cancels the session.
             disabled={editMode}
             onSelect={selectMimic}
           />
@@ -653,21 +852,15 @@ export default function MonitorPage() {
           )}
 
           {canEdit && !!layout && !lock && (
-            <>
-              {editMode && (
-                <Button startIcon={<RestartAltOutlined />} color="inherit" onClick={handleReset}>
-                  Reset layout
-                </Button>
-              )}
+            !editMode && (
               <Button
-                variant={editMode ? 'contained' : 'outlined'}
-                color={editMode ? 'success' : 'inherit'}
-                loading={saving}
+                variant="outlined"
+                color="inherit"
                 onClick={toggleEdit}
               >
-                {editMode ? 'Done' : 'Edit layout'}
+                Edit layout
               </Button>
-            </>
+            )
           )}
         </div>
       </header>
@@ -687,96 +880,165 @@ export default function MonitorPage() {
         * so the control you just used does not vanish under your cursor. */}
       {!layout && <p className={styles.loading}>Loading the plant drawing…</p>}
 
-      {layout && (
-      <div className={styles.body}>
-        <MimicCanvas
-          layout={layout}
-          tags={tags}
-          selectedId={selectedId}
-          onSelect={selectNode}
-          selectedEdgeId={selectedEdgeId}
-          onSelectEdge={selectEdge}
-          editMode={editing}
-          wirePen={wirePen}
-          onMoveNode={moveNode}
-          onNudgeNode={nudgeNode}
-          onResizeNode={resizeNode}
-          onDeleteNode={deleteNodeKey}
-          onAddEdge={addEdge}
-          onDeleteEdge={deleteEdgeKey}
-          onMoveBubble={moveBubble}
-          onOpenBinding={canEdit && !lock ? openBinding : undefined}
-        />
-
-        {/* Collapsible so the mimic can claim the rail's width back — a wide
-          * P&ID benefits more from that space than from a rail sitting idle
-          * behind a closed inspector. The toggle stays put in both states so
-          * it is always the same click to get the rail back. */}
+      {layout && editing && (
         <div
-          className={`${styles.railCol} ${railCollapsed ? styles.railColCollapsed : ''}`}
+          className={`${styles.editorWorkspace} ${saving ? styles.editorWorkspaceSaving : ''}`}
+          aria-busy={saving}
+          inert={saving ? true : undefined}
         >
-          <IconButton
-            className={styles.railToggle}
-            size="small"
-            aria-label={railCollapsed ? 'Expand details panel' : 'Collapse details panel'}
-            title={railCollapsed ? 'Expand details panel' : 'Collapse details panel'}
-            onClick={() => setRailCollapsed((c) => !c)}
-          >
-            {railCollapsed ? <ChevronLeft fontSize="small" /> : <ChevronRight fontSize="small" />}
-          </IconButton>
+          <aside className={`${styles.editorPaletteRail} ${paletteOpen ? '' : styles.editorRailClosed}`}>
+            <button
+              type="button"
+              className={styles.editorRailToggle}
+              aria-expanded={paletteOpen}
+              onClick={togglePalette}
+            >
+              {paletteOpen ? 'Hide symbols' : 'Symbols'}
+            </button>
+            {paletteOpen && (
+              <SymbolPalette
+                onAdd={addSymbol}
+                customSymbols={customSymbols}
+                onAuthorSymbol={() => setAuthoring(true)}
+              />
+            )}
+          </aside>
 
-          {/* The rail stacks the pen above whatever the selection calls for.
-            * The pen stays put for the whole edit session because it is state
-            * you draw *in*, not a property of the thing you have selected. */}
-          {!railCollapsed && (
-            <div className={styles.rail}>
-              {editing && <WirePicker value={wirePen} onChange={setWirePen} />}
-
-              {editing
-                ? (selectedEdge
-                  ? (
-                    <EdgeInspector
-                      edge={selectedEdge}
-                      nodes={nodes}
-                      onChange={(patch) => updateEdge(selectedEdge.id, patch)}
-                      onDelete={deleteEdge}
-                      onBack={() => setSelectedEdgeId(null)}
-                    />
-                  )
-                  : selectedNode
-                    ? (
-                      <NodeInspector
-                        node={selectedNode}
-                        datasources={datasourcesQuery.data || []}
-                        onConnect={() => openBinding(selectedNode)}
-                        onDelete={deleteNode}
-                        onResetBubble={resetBubble}
-                        onResetSize={resetNodeSize}
-                        onRotate={rotateNode}
-                        onBack={() => setSelectedId(null)}
-                      />
-                    )
-                    : (
-                      <SymbolPalette
-                        onAdd={addSymbol}
-                        customSymbols={customSymbols}
-                        onAuthorSymbol={() => setAuthoring(true)}
-                      />
-                    ))
-                : (
-                  <DetailRail
-                    tag={selectedTag}
-                    node={selectedNode}
-                    history={selectedId ? history[selectedId] : null}
-                    events={events}
-                    canBind={canEdit && !lock}
-                    onConnect={openBinding}
-                  />
-                )}
+          <main className={styles.editorCenter}>
+            <MimicEditorToolbar
+              toolMode={toolMode}
+              onToolMode={setToolMode}
+              wirePen={wirePen}
+              onWirePen={setWirePen}
+              gridVisible={gridVisible}
+              onGridVisible={setGridVisible}
+              snapEnabled={snapEnabled}
+              onSnapEnabled={setSnapEnabled}
+              zoomPercent={Math.round(((layout.viewBox?.w || VIEW_W) / viewport.w) * 100)}
+              onZoomOut={() => canvasRef.current?.zoomOut()}
+              onZoomIn={() => canvasRef.current?.zoomIn()}
+              onResetView={() => canvasRef.current?.resetView()}
+              onFit={() => canvasRef.current?.fitContents()}
+              onFullscreen={() => canvasRef.current?.fullscreen()}
+              onSnapshot={() => canvasRef.current?.snapshot()}
+              onTogglePalette={togglePalette}
+              onToggleInspector={toggleInspector}
+            />
+            <div className={styles.editorCanvas}>
+              <MimicCanvas
+                ref={canvasRef}
+                layout={layout}
+                tags={tags}
+                selectedId={selectedId}
+                onSelect={selectNode}
+                selectedEdgeId={selectedEdgeId}
+                onSelectEdge={selectEdge}
+                editMode={!saving}
+                wirePen={wirePen}
+                toolMode={toolMode}
+                gridVisible={gridVisible}
+                snapEnabled={snapEnabled}
+                onViewportChange={setViewport}
+                onGestureStart={beginGesture}
+                onGestureEnd={endGesture}
+                onGestureCancel={abortGesture}
+                onMoveNode={moveNode}
+                onNudgeNode={nudgeNode}
+                onResizeNode={resizeNode}
+                onDeleteNode={deleteNodeKey}
+                onAddEdge={addEdge}
+                onDeleteEdge={deleteEdgeKey}
+                onMoveBubble={moveBubble}
+                onOpenBinding={openBinding}
+                onDropSymbol={({ type, symbolId }, point) => addSymbol(type, symbolId, point)}
+              />
             </div>
-          )}
+            <MimicCommandBar
+              canUndo={editorSession.past.length > 0}
+              canRedo={editorSession.future.length > 0}
+              hasSelection={!!selectedNode || !!selectedEdge}
+              canRotate={!!selectedNode}
+              dirty={dirty}
+              saving={saving}
+              onUndo={undoLayout}
+              onRedo={redoLayout}
+              onRotate={rotateSelection}
+              onDelete={deleteSelection}
+              onReset={handleReset}
+              onImport={() => setImportOpen(true)}
+              onExport={exportDraft}
+              onCancel={requestCancel}
+              onSave={handleSave}
+            />
+          </main>
+
+          <aside className={`${styles.editorInspectorRail} ${inspectorOpen ? '' : styles.editorRailClosed}`}>
+            <button
+              type="button"
+              className={styles.editorRailToggle}
+              aria-expanded={inspectorOpen}
+              onClick={toggleInspector}
+            >
+              {inspectorOpen ? 'Hide inspector' : 'Inspector'}
+            </button>
+            {inspectorOpen && (selectedEdge ? (
+              <EdgeInspector
+                edge={selectedEdge}
+                nodes={nodes}
+                onChange={(patch) => updateEdge(selectedEdge.id, patch)}
+                onDelete={deleteEdge}
+                onBack={() => setSelectedEdgeId(null)}
+              />
+            ) : selectedNode ? (
+              <NodeInspector
+                node={selectedNode}
+                datasources={datasourcesQuery.data || []}
+                onConnect={() => openBinding(selectedNode)}
+                onDelete={deleteNode}
+                onResetBubble={resetBubble}
+                onResetSize={resetNodeSize}
+                onRotate={rotateNode}
+                onBack={() => setSelectedId(null)}
+              />
+            ) : (
+              <div className={styles.editorHelp}>
+                <span>Inspector</span>
+                <h3>Select a symbol or wire</h3>
+                <p>Properties, datasource bindings, rotation, size, and flow rules appear here. Drag from a symbol port to create a connection.</p>
+                <kbd>Space + drag</kbd><small>Pan canvas</small>
+                <kbd>Ctrl/Cmd + wheel</kbd><small>Zoom at pointer</small>
+              </div>
+            ))}
+          </aside>
         </div>
-      </div>
+      )}
+
+      {layout && !editing && (
+        <div className={styles.body}>
+          <MimicCanvas
+            layout={layout}
+            tags={tags}
+            selectedId={selectedId}
+            onSelect={selectNode}
+            selectedEdgeId={selectedEdgeId}
+            onSelectEdge={selectEdge}
+            onMoveNode={moveNode}
+            onNudgeNode={nudgeNode}
+            onResizeNode={resizeNode}
+            onDeleteNode={deleteNodeKey}
+            onAddEdge={addEdge}
+            onDeleteEdge={deleteEdgeKey}
+            onMoveBubble={moveBubble}
+          />
+          <div className={`${styles.railCol} ${railCollapsed ? styles.railColCollapsed : ''}`}>
+            <IconButton className={styles.railToggle} size="small" onClick={() => setRailCollapsed((c) => !c)}>
+              {railCollapsed ? <ChevronLeft fontSize="small" /> : <ChevronRight fontSize="small" />}
+            </IconButton>
+            {!railCollapsed && (
+              <DetailRail tag={selectedTag} node={selectedNode} history={selectedId ? history[selectedId] : null} events={events} canBind={false} />
+            )}
+          </div>
+        </div>
       )}
 
       {/* An empty drawing has no ticker to show; the bare strip would just be
@@ -820,6 +1082,15 @@ export default function MonitorPage() {
           setAuthoring(false)
           notify(`“${row.name}” added to the symbol library.`)
         }}
+      />
+
+      <ImportLayoutDialog open={importOpen} onClose={() => setImportOpen(false)} onImport={importDraft} />
+      <UnsavedChangesDialog open={unsavedOpen} onStay={keepEditing} onDiscard={discardUnsaved} />
+      <RevisionConflictDialog
+        open={conflictOpen}
+        onContinue={() => setConflictOpen(false)}
+        onExport={exportDraft}
+        onReload={reloadServerRevision}
       />
 
       <Snackbar
