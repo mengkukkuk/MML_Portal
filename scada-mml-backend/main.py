@@ -15,6 +15,7 @@ import dashboards
 import datasources
 import db
 import events
+import licensing
 import mimic
 import panels
 import readings
@@ -86,6 +87,7 @@ def _create_tables() -> bool:
     global _schema_ready
     try:
         db.init_users_table()
+        db.init_license_events_table()
         db.init_panels_table()
         db.init_dashboards_table()
         db.init_datasources_table()
@@ -120,6 +122,24 @@ _schema_ready = False
 @app.on_event("startup")
 def _ensure_tables() -> None:
     _create_tables()
+
+
+@app.on_event("startup")
+def _load_license() -> None:
+    """Must never raise — same contract as _create_tables above: an exception
+    from a startup handler aborts Starlette's lifespan and uvicorn never binds,
+    taking /health down with it. A missing or corrupt license degrades to
+    state='missing', logged once, not a crash.
+    """
+    try:
+        status = licensing.refresh()
+        logger.info(
+            "License state: %s (tier=%s)",
+            status.state,
+            (status.payload or {}).get("tier"),
+        )
+    except Exception:
+        logger.exception("License check failed at startup - serving in unlicensed mode")
 
 
 _tag_buffer_task: asyncio.Task | None = None
@@ -276,6 +296,10 @@ async def _db_watch_loop() -> None:
         if healthy and not _schema_ready:
             if await asyncio.to_thread(_create_tables):
                 logger.info("Database reachable again - schema initialised")
+        try:
+            await asyncio.to_thread(licensing.refresh)
+        except Exception:
+            logger.exception("Periodic license re-check failed")
         delay = _DB_RETRY_MIN_S if healthy else min(delay * 2, _DB_RETRY_MAX_S)
         await asyncio.sleep(_DB_POLL_S if healthy else delay)
 

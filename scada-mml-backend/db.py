@@ -512,6 +512,14 @@ def count_admins() -> int:
     return int(row["n"])
 
 
+def count_users() -> int:
+    """Every row in `users` counts toward the license's max_users seat cap,
+    including the seeded/initial admin — there is no free/excluded seat."""
+    with get_connection() as conn:
+        row = conn.execute("SELECT count(*) AS n FROM users").fetchone()
+    return int(row["n"])
+
+
 # --- Live sensor readings (real-time charts) --------------------------------
 # Plant data. Every function here takes a `datasource_id` and reaches the
 # database through _table_source_conn, which also supplies that source's
@@ -1551,6 +1559,12 @@ def init_datasources_table() -> None:
         conn.commit()
 
 
+def count_datasources() -> int:
+    with get_connection() as conn:
+        row = conn.execute("SELECT count(*) AS n FROM datasources").fetchone()
+    return int(row["n"])
+
+
 # Public projection — everything the frontend needs minus the secret.
 _DS_PUBLIC_COLS = (
     "id, name, type, host, port, dbname AS database, username, sslmode, "
@@ -2469,3 +2483,46 @@ def fetch_event_log_page(start, end, locations=None, tag_names=None, search=None
             ).format(events=sql.Identifier(schema, "event_logs")),
             (start, end, *params, limit, offset),
         ).fetchall()
+
+
+# --- License activation audit log --------------------------------------------
+# Log only, not the source of truth — the .lic file on disk (see licensing.py)
+# is authoritative. This table exists purely so support can answer "who
+# activated what, when" without SSH-ing in to read a log file. Must run after
+# init_users_table (FK to actor_user_id).
+def init_license_events_table() -> None:
+    """Create the license_events table if it doesn't exist. Idempotent."""
+    with get_connection() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS license_events (
+                id            SERIAL PRIMARY KEY,
+                event_type    TEXT NOT NULL,
+                state         TEXT NOT NULL,
+                license_id    TEXT,
+                tier          TEXT,
+                expires_at    TIMESTAMPTZ,
+                actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                detail        TEXT,
+                created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+            )"""
+        )
+        conn.commit()
+
+
+def insert_license_event(
+    event_type: str,
+    state: str,
+    license_id: str | None = None,
+    tier: str | None = None,
+    expires_at: datetime | None = None,
+    actor_user_id: int | None = None,
+    detail: str | None = None,
+) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """INSERT INTO license_events
+                   (event_type, state, license_id, tier, expires_at, actor_user_id, detail)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+            (event_type, state, license_id, tier, expires_at, actor_user_id, detail),
+        )
+        conn.commit()
