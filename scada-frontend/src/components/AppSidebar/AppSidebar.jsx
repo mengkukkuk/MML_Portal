@@ -19,7 +19,7 @@ import styles from './AppSidebar.module.css'
 // removed — Grafana/trends are gone from this branch). Accounts is
 // appended only for admin users, same as the Vue version.
 const BASE_ITEMS = [
-  { path: '/', title: 'Overview', Icon: SpeedOutlined },
+  { path: '/', title: 'A&P', Icon: SpeedOutlined },
   { path: '/live', title: 'Live', Icon: PlayCircleOutlined },
   { path: '/monitor', title: 'Monitor', Icon: AccountTreeOutlined },
   { path: '/events', title: 'Events', Icon: ListAltOutlined },

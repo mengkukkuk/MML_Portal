@@ -21,7 +21,7 @@ import AssessmentOutlined from '@mui/icons-material/AssessmentOutlined'
 
 const LoginPage = lazy(() => import('../pages/LoginPage.jsx'))
 const ResetPasswordPage = lazy(() => import('../pages/ResetPasswordPage.jsx'))
-const OverviewPage = lazy(() => import('../pages/OverviewPage.jsx'))
+const APPage = lazy(() => import('../pages/ap/APPage.jsx'))
 const DevicesPage = lazy(() => import('../pages/DevicesPage.jsx'))
 const AlarmsPage = lazy(() => import('../pages/AlarmsPage.jsx'))
 const LivePage = lazy(() => import('../pages/live/LivePage.jsx'))
@@ -60,8 +60,8 @@ export const router = createBrowserRouter(
           children: [
             {
               index: true,
-              element: page(OverviewPage),
-              handle: { title: 'Overview', icon: SpeedOutlined },
+              element: page(APPage),
+              handle: { title: 'A&P', icon: SpeedOutlined },
             },
             {
               path: 'devices',
