@@ -234,11 +234,22 @@ def test_layout_does_not_read_the_library_for_a_drawing_with_no_custom_nodes(mon
     mimic._validate({"nodes": [node(type="pump", symbolId=None)], "edges": []})
 
 
-def test_every_dcim_type_is_allowlisted():
-    """The frontend registry and this allowlist have to be deployed in step; this
-    is the half that can be checked from here."""
-    for t in ("ats", "generator", "ups", "pdu", "rack", "crah", "coldaisle", "custom"):
-        assert t in mimic.VALID_NODE_TYPES
+def test_a_symbol_type_this_build_has_never_heard_of_is_stored():
+    """The point of dropping the allowlist: a frontend can grow a symbol without
+    a backend deploy. The client reports what it cannot draw and shows the
+    drawing read-only, which is a better answer than a 400 on save."""
+    mimic._validate({"nodes": [node(type="counter", symbolId=None)], "edges": []})
+    mimic._validate({"nodes": [node(type="not-invented-yet", symbolId=None)], "edges": []})
+
+
+@pytest.mark.parametrize("bad", ["", "Counter", "co unter", "1counter", "a" * 41, 7, None])
+def test_a_malformed_symbol_type_is_still_rejected(bad):
+    """Shape is still pinned. Anything that is not a lowercase slug is a broken
+    document, not a newer frontend."""
+    with pytest.raises(HTTPException) as exc:
+        mimic._validate({"nodes": [node(type=bad, symbolId=None)], "edges": []})
+    assert exc.value.status_code == 400
+    assert "symbol slug" in exc.value.detail
 
 
 def test_symbol_rejects_a_dynamic_map_pointing_at_a_missing_asset(asset):

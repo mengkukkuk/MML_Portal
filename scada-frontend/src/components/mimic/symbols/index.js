@@ -55,6 +55,11 @@ import IpCamera from './IpCamera'
 import Lighting from './Lighting'
 import PcBased from './PcBased'
 
+import Counter from './Counter'
+import DisplayBox from './DisplayBox'
+import Led from './Led'
+import AlertBadge from './AlertBadge'
+
 import CustomSymbol from './CustomSymbol'
 
 /**
@@ -76,11 +81,16 @@ import CustomSymbol from './CustomSymbol'
  *                sits and where its lead line lands. null = no instrument.
  *                A node may override this per-drawing; see bubbleSpec().
  *
- * Adding a type here is only half the job: scada-mml-backend/mimic.py keeps
- * its own VALID_NODE_TYPES allowlist and will 400 a layout containing a type
- * it does not know. Ship the backend first — layoutDoc.isRenderable() rejects
- * a whole doc whose types this bundle cannot draw, so the ordering is load-
- * bearing on a live deploy.
+ * Adding a type here is the whole job. The server stores any well-formed
+ * symbol slug and never checks it against a list of known symbols, so a new
+ * symbol needs no backend change and no deploy ordering — this registry is the
+ * only place the vocabulary lives. Keep the key a lowercase slug (`[a-z]` then
+ * `[a-z0-9_-]`, 40 max); that shape is the one thing mimic.py still enforces.
+ *
+ * The reverse direction still matters: an *older* bundle opening a drawing
+ * that uses a symbol it lacks reports it via layoutDoc.unknownTypes(), draws
+ * placeholders and holds the drawing read-only, so saving from that build
+ * cannot silently discard what it could not render.
  */
 export const SYMBOLS = {
   tank: {
@@ -578,6 +588,52 @@ export const SYMBOLS = {
     bubble: { anchor: [0.5, 0], offset: [0, -70] },
   },
 
+  // --- utility annotations -----------------------------------------------
+  // These draw a reading, not a piece of plant. Each carries a single `signal`
+  // port on one edge so it can be tethered by a dotted line to the equipment it
+  // reports on — the ISA convention for an instrument signal — and none of them
+  // take a balloon, because the face already is the readout.
+  counter: {
+    label: 'Number counter',
+    category: 'utility',
+    Component: Counter,
+    defaultSize: { w: 176, h: 82 },
+    ports: { signal: [0, 0.5] },
+    binding: 'analog',
+    bubble: null,
+  },
+  displaybox: {
+    label: 'Display box',
+    category: 'utility',
+    Component: DisplayBox,
+    defaultSize: { w: 176, h: 74 },
+    ports: { signal: [0, 0.5] },
+    // `both`: the box prints a mapped state as a word when one is configured
+    // and the formatted number otherwise, so it needs to read either.
+    binding: 'both',
+    bubble: null,
+  },
+  led: {
+    label: 'LED indicator',
+    category: 'utility',
+    Component: Led,
+    defaultSize: { w: 64, h: 64 },
+    ports: { signal: [0.5, 1] },
+    binding: 'both',
+    bubble: null,
+  },
+  alertbadge: {
+    label: 'Alarm annunciator',
+    category: 'utility',
+    Component: AlertBadge,
+    defaultSize: { w: 156, h: 68 },
+    ports: { signal: [0.5, 1] },
+    binding: 'both',
+    // The tile's own legend is the label, drawn inside the window, so it is the
+    // one symbol here that prints nothing beneath itself.
+    bubble: null,
+  },
+
   // --- admin-authored ----------------------------------------------------
   /**
    * The one type that is not a drawing in this folder.
@@ -585,8 +641,9 @@ export const SYMBOLS = {
    * A `custom` node's picture, size, ports and motion come from a row in
    * `mimic_symbols` that an admin authored from an uploaded image, resolved by
    * `symbolDef()` below. One registry entry covers the whole library, which is
-   * what keeps this catalogue — and the backend's VALID_NODE_TYPES allowlist —
-   * finite no matter how many symbols get uploaded.
+   * what keeps this catalogue finite no matter how many symbols get uploaded,
+   * and why `custom` is the one type the server knows by name: it is the only
+   * one carrying a reference it has to check.
    *
    * The fields here are only the fallbacks used before the library resolves, or
    * if a node points at an entry that has been deleted.
@@ -619,6 +676,10 @@ export const SYMBOL_CATEGORIES = [
   { id: 'water', label: 'Water treatment' },
   { id: 'tobacco', label: 'Cigarette line' },
   { id: 'dcim', label: 'Data centre' },
+  // After the disciplines, because these annotate a drawing rather than build
+  // one: you reach for a counter once the plant it counts is already on the
+  // sheet.
+  { id: 'utility', label: 'Utility' },
   // Last on purpose: the uploaded library grows without bound, and it should
   // never push the drawn catalogue off the bottom of the palette.
   { id: 'custom', label: 'Custom' },

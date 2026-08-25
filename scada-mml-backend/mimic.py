@@ -40,79 +40,32 @@ MAX_EDGES = 512
 # pin the shape rather than letting arbitrary text create a row per typo.
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
-# Symbol types the frontend registry (src/components/mimic/symbols/index.js)
-# can render. A node whose type is unknown would draw as a hole in the mimic,
-# so reject it at save time rather than storing an unrenderable document.
+# A node's symbol type is checked for *shape*, not against a list of known
+# symbols.
 #
-# Grouped by the registry's own categories so the two lists stay diffable.
-# This set must be deployed *before* a frontend that can draw new types,
-# otherwise an admin saves a layout the server rejects. It is also safe for it
-# to run ahead of the frontend: a type nobody can draw is simply never saved.
-VALID_NODE_TYPES = {
-    # process
-    "tank",
-    "pump",
-    "valve",
-    "motor",
-    "heatexchanger",
-    "flowmeter",
-    "gauge",
-    "pipetee",
-    "conveyor",
-    "stacklight",
-    "sensoreye",
-    "actuator",
-    # electrical
-    "busbar",
-    "breaker",
-    "disconnector",
-    "transformer",
-    "mccstarter",
-    "vfd",
-    "capbank",
-    # automation
-    "plc",
-    "remoteio",
-    "networkswitch",
-    "hmipanel",
-    "controlloop",
-    "safetyrelay",
-    "edgegateway",
-    # vision inspection
-    "ipcamera",
-    "lighting",
-    "pcbased",
-    # water treatment
-    "clarifier",
-    "sandfilter",
-    "dosingpump",
-    "uvreactor",
-    "membrane",
-    "blower",
-    "weir",
-    # cigarette production line
-    "tobaccofeed",
-    "rodmaker",
-    "tipper",
-    "packer",
-    "cellophaner",
-    "cartoner",
-    "rejectstation",
-    # data centre infrastructure (power chain, then cooling)
-    "ats",
-    "generator",
-    "ups",
-    "pdu",
-    "rack",
-    "crah",
-    "coldaisle",
-    # An admin-authored symbol from an uploaded image. One type covers the whole
-    # custom library: which picture it draws and how it moves live in
-    # `mimic_symbols`, referenced by the node's `symbolId`. That is what keeps
-    # this allowlist finite — without it, every upload would need a redeploy
-    # before a drawing could use it.
-    "custom",
-}
+# This used to be a VALID_NODE_TYPES allowlist mirroring the frontend registry
+# (src/components/mimic/symbols/index.js), on the theory that an unknown type
+# would draw as a hole in the mimic. It does not: the client already handles a
+# type it cannot draw, and handles it better than a 400 can. `unknownTypes()`
+# names the offenders, the canvas draws them as labelled placeholders, and the
+# drawing goes read-only so an older bundle cannot silently save them away.
+#
+# What the allowlist did instead was couple every new symbol to a backend
+# deploy, in a strict order — ship the server first, or an admin who adds the
+# symbol gets "unknown symbol type 'counter'" on save. That is the same
+# two-places-one-vocabulary coupling the dynamics kinds below are deliberately
+# free of, and it cost more than it caught: the only failure it could prevent
+# was one the client already degrades gracefully on.
+#
+# So the server now stores any well-formed slug and lets the renderer decide
+# what it can draw. Adding a symbol is a pure frontend change.
+NODE_TYPE_RE = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
+
+# The one type whose meaning the server does need to know: an admin-authored
+# symbol from an uploaded image. Which picture it draws and how it moves live
+# in `mimic_symbols`, referenced by the node's `symbolId`, so this type alone
+# carries a referential check (below).
+CUSTOM_NODE_TYPE = "custom"
 
 # How a binding turns a number into a run/stop state.
 VALID_STATE_MODES = {"threshold", "map"}
@@ -247,7 +200,7 @@ def _validate(doc: dict) -> None:
     # is only touched by the branch that needs it.
     symbol_ids: set[int] = (
         {r["id"] for r in db.list_mimic_symbols()}
-        if any(isinstance(n, dict) and n.get("type") == "custom" for n in nodes)
+        if any(isinstance(n, dict) and n.get("type") == CUSTOM_NODE_TYPE for n in nodes)
         else set()
     )
 
@@ -261,12 +214,12 @@ def _validate(doc: dict) -> None:
         if node_id in seen_ids:
             raise _bad(f"{where}: duplicate node id {node_id!r}")
         seen_ids.add(node_id)
-        if node.get("type") not in VALID_NODE_TYPES:
-            # Naming the offender beats listing forty valid slugs: the client
-            # picked this type from a palette, so the useful fact is which one
-            # this server build cannot draw.
-            raise _bad(f"{where}: unknown symbol type {node.get('type')!r}")
-        if node.get("type") == "custom":
+        node_type = node.get("type")
+        if not isinstance(node_type, str) or not NODE_TYPE_RE.match(node_type):
+            # Shape only. A slug this server has never heard of is fine — it is
+            # a frontend that has grown a symbol, not a malformed document.
+            raise _bad(f"{where}: type must be a lowercase symbol slug, got {node_type!r}")
+        if node_type == CUSTOM_NODE_TYPE:
             # A custom node is only as good as the library entry behind it. Let a
             # dangling symbolId through and the drawing saves clean, then renders
             # a placeholder for every operator with nothing to say why — so this
@@ -537,7 +490,7 @@ def delete_asset(
 # Dynamics kinds are not validated against a list here. The renderer skips a kind
 # it does not recognise, and pinning the vocabulary in two places would mean a
 # frontend that grows a new dynamic cannot use it until the backend is redeployed
-# — the exact coupling VALID_NODE_TYPES already imposes on symbol types, and the
+# — the same reasoning that retired the symbol-type allowlist above, and the
 # reason authoring a symbol has to stay a pure frontend concern.
 #
 # Their *pointers* are another matter: a dynamic that names an asset id gets the

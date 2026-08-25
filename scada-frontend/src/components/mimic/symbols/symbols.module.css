@@ -180,6 +180,124 @@
   opacity: 0.9;
 }
 
+/* --- utility annotations ----------------------------------------------
+ * Counter, display box, lamp and annunciator tile. These four draw a *reading*
+ * rather than a piece of plant, so they deliberately borrow nothing from the
+ * process vocabulary above: no vessel fills, no flow, no needles. What they
+ * share instead is a recessed well — the panel cut-out an instrument is set
+ * into — which is what keeps them reading as instrumentation mounted on the
+ * sheet rather than as equipment in the process.
+ */
+
+.well {
+  fill: var(--bg-app);
+  stroke: var(--fg-dim);
+  stroke-width: 1;
+}
+
+/* Sized inline by the symbol, which measures its own box; everything else about
+   a totaliser's figures is fixed here. Tabular is not cosmetic: a digit that
+   changes width makes the whole number appear to shift. */
+.counterValue {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  fill: var(--fg);
+  pointer-events: none;
+  user-select: none;
+}
+
+.counterFault {
+  fill: var(--crit);
+  letter-spacing: 0.1em;
+}
+
+.counterUnit {
+  font-weight: 400;
+  font-size: 0.5em;
+  fill: var(--fg-dim);
+}
+
+.boxValue {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  fill: var(--fg);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Which way the last change went, then gone. It fades rather than persisting
+   because it describes a moment, not a state — a caret still sitting there a
+   minute later would be read as "currently rising". */
+.delta {
+  stroke: none;
+  animation: mimic-delta 1.6s ease-out forwards;
+  pointer-events: none;
+}
+
+.deltaUp { fill: var(--accent); }
+.deltaDown { fill: var(--fg-muted); }
+
+@keyframes mimic-delta {
+  0%   { opacity: 0.95; }
+  55%  { opacity: 0.95; }
+  100% { opacity: 0; }
+}
+
+/* The display box's notifier. Small on purpose: it is an add-on to a text
+   readout, and anything larger would compete with the words it annotates. */
+.pip {
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+
+/* --- indicator lamp ---------------------------------------------------- */
+
+.lampFace {
+  stroke-width: 2;
+}
+
+/* Fixed opacity, no animation: this is a glass highlight, and glass does not
+   pulse. It only exists so a filled circle reads as a lens. */
+.lampGlint {
+  fill: var(--bg-app);
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* --- annunciator tile -------------------------------------------------- */
+
+.tileFace {
+  stroke-width: 1.5;
+}
+
+/* Engraved, not printed: the legend sits at low contrast against a dark lens
+   and flips to the lens's own backing colour when lit, so the words never move
+   between states. */
+.tileLegend {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  fill: var(--fg-dim);
+  pointer-events: none;
+  user-select: none;
+}
+
+.tileLegendLit {
+  fill: var(--bg-app);
+}
+
+.tileStale {
+  fill: none;
+  stroke: var(--fg-dim);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+  pointer-events: none;
+}
+
 /* --- level fill (tanks, drums) ---------------------------------------- */
 
 .liquid {
@@ -461,8 +579,15 @@
   .beam,
   .recip,
   .roll,
-  .ring {
+  .ring,
+  .delta {
     animation: none;
+  }
+
+  /* The caret has no resting state of its own — with the fade removed it would
+     stay on screen for good, so it is dropped rather than frozen. */
+  .delta {
+    display: none;
   }
 
   .ring {
