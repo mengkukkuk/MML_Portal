@@ -60,6 +60,7 @@ app.include_router(events.router)
 app.include_router(alarms.router)
 app.include_router(reports.router)
 app.include_router(system.router)
+app.include_router(licensing.router)
 
 
 def _create_tables() -> bool:

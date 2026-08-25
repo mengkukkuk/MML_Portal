@@ -27,6 +27,8 @@ from datetime import datetime, timedelta, timezone
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from fastapi import APIRouter
+from pydantic import BaseModel
 
 import config
 
@@ -199,3 +201,52 @@ def refresh() -> LicenseStatus:
 def current_status() -> LicenseStatus:
     """Cheap cached accessor — does not touch disk. Call refresh() to update it."""
     return _current
+
+
+# --- HTTP surface -------------------------------------------------------------
+router = APIRouter(prefix="/api/license", tags=["license"])
+
+
+class LicenseStatusOut(BaseModel):
+    state: str                              # "missing" | "valid" | "grace" | "blocked"
+    tier: str | None = None
+    site_name: str | None = None
+    customer_name: str | None = None
+    expires_at: datetime | None = None
+    days_to_expiry: int | None = None
+    grace_period_days: int | None = None
+    days_until_hard_block: int | None = None
+    entitlements: dict | None = None        # limits/features only — no license_id/notes
+    warn: bool = False
+
+
+def _to_status_out(status: LicenseStatus) -> LicenseStatusOut:
+    payload = status.payload or {}
+    within_warning_window = (
+        status.state == "valid"
+        and status.days_to_expiry is not None
+        and status.days_to_expiry <= config.LICENSE_WARNING_WINDOW_DAYS
+    )
+    return LicenseStatusOut(
+        state=status.state,
+        tier=payload.get("tier"),
+        site_name=payload.get("site_name"),
+        customer_name=payload.get("customer_name"),
+        expires_at=status.expires_at,
+        days_to_expiry=status.days_to_expiry,
+        grace_period_days=payload.get("grace_period_days"),
+        days_until_hard_block=status.days_until_hard_block,
+        entitlements=payload.get("entitlements"),
+        warn=within_warning_window or status.state == "grace",
+    )
+
+
+@router.get("/status", response_model=LicenseStatusOut)
+def get_status() -> LicenseStatusOut:
+    """Unauthenticated, mirrors /health (main.py) — the frontend boot gate and
+    the persistent banner both need this before a user can log in, since a
+    hard-blocked install must still be able to reach /login and then the
+    activation screen. No secrets in the response: license_id, install_id and
+    notes stay server-side / for admin-only surfaces added later.
+    """
+    return _to_status_out(current_status())
