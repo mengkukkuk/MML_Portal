@@ -7,6 +7,7 @@ import ZoomOutOutlined from '@mui/icons-material/ZoomOutOutlined'
 import CenterFocusStrongOutlined from '@mui/icons-material/CenterFocusStrongOutlined'
 import RestartAltOutlined from '@mui/icons-material/RestartAltOutlined'
 import FullscreenOutlined from '@mui/icons-material/FullscreenOutlined'
+import FullscreenExitOutlined from '@mui/icons-material/FullscreenExitOutlined'
 import PhotoCameraOutlined from '@mui/icons-material/PhotoCameraOutlined'
 import ViewSidebarOutlined from '@mui/icons-material/ViewSidebarOutlined'
 import { WIRE_GROUPED, WIRE_TYPES } from '@/components/mimic/wireTypes'
@@ -30,7 +31,7 @@ function ToolButton({ active = false, label, children, ...props }) {
 export default function MimicEditorToolbar({
   toolMode, onToolMode, wirePen, onWirePen, gridVisible, onGridVisible,
   snapEnabled, onSnapEnabled, zoomPercent, onZoomOut, onZoomIn, onResetView,
-  onFit, onFullscreen, onSnapshot, onTogglePalette, onToggleInspector,
+  onFit, fullscreen, onFullscreen, onSnapshot, onTogglePalette, onToggleInspector,
 }) {
   return (
     <div className={styles.toolbar} role="toolbar" aria-label="Drafting tools">
@@ -75,7 +76,13 @@ export default function MimicEditorToolbar({
         <ToolButton label="Zoom in" disabled={zoomPercent >= 400} onClick={onZoomIn}><ZoomInOutlined fontSize="small" /></ToolButton>
         <ToolButton label="Reset view" onClick={onResetView}><RestartAltOutlined fontSize="small" /></ToolButton>
         <ToolButton label="Fit contents" onClick={onFit}><CenterFocusStrongOutlined fontSize="small" /></ToolButton>
-        <ToolButton label="Fullscreen" onClick={onFullscreen}><FullscreenOutlined fontSize="small" /></ToolButton>
+        <ToolButton
+          label={fullscreen ? 'Leave full screen (F)' : 'Full screen (F)'}
+          active={fullscreen}
+          onClick={onFullscreen}
+        >
+          {fullscreen ? <FullscreenExitOutlined fontSize="small" /> : <FullscreenOutlined fontSize="small" />}
+        </ToolButton>
         <ToolButton label="Download PNG snapshot" onClick={onSnapshot}><PhotoCameraOutlined fontSize="small" /></ToolButton>
       </div>
 

@@ -12,6 +12,13 @@ import Switch from '@mui/material/Switch'
 import BoltOutlined from '@mui/icons-material/BoltOutlined'
 import ChevronLeft from '@mui/icons-material/ChevronLeft'
 import ChevronRight from '@mui/icons-material/ChevronRight'
+import PanToolOutlined from '@mui/icons-material/PanToolOutlined'
+import ZoomInOutlined from '@mui/icons-material/ZoomInOutlined'
+import ZoomOutOutlined from '@mui/icons-material/ZoomOutOutlined'
+import CenterFocusStrongOutlined from '@mui/icons-material/CenterFocusStrongOutlined'
+import RestartAltOutlined from '@mui/icons-material/RestartAltOutlined'
+import FullscreenOutlined from '@mui/icons-material/FullscreenOutlined'
+import FullscreenExitOutlined from '@mui/icons-material/FullscreenExitOutlined'
 import { useAuthStore } from '@/stores/auth'
 import ConnectionAlarmStrip from '@/components/ConnectionAlarm/ConnectionAlarmStrip'
 import usePlantData from '@/components/mimic/usePlantData'
@@ -281,6 +288,9 @@ export default function MonitorPage() {
   // Local to this page, like AppShell's sidebar collapse — the rail is a
   // viewing preference for this drawing, not something worth persisting.
   const [railCollapsed, setRailCollapsed] = useState(false)
+  // The hand tool, in view mode. Edit mode has `toolMode` and a toolbar to set
+  // it; a running mimic has neither, so the mode lives here and on one key.
+  const [viewPan, setViewPan] = useState(false)
   /**
    * Edit mode is only real when this admin is allowed to write this drawing.
    * Derived here rather than beside `lock` because it reads `editMode`, which is
@@ -289,6 +299,11 @@ export default function MonitorPage() {
   const editing = editMode && canEdit && !lock
   const dirty = !!editorSession?.dirty
   const canvasRef = useRef(null)
+  // The element that goes full screen: the sheet *and* its controls, not the
+  // bare <svg>. A wall display that loses the pan tool and the zoom readout the
+  // moment it fills the screen is a picture, not a mimic.
+  const stageRef = useRef(null)
+  const [fullscreen, setFullscreen] = useState(false)
   const [toolMode, setToolMode] = useState('select')
   const [gridVisible, setGridVisible] = useState(true)
   const [snapEnabled, setSnapEnabled] = useState(true)
@@ -766,8 +781,87 @@ export default function MonitorPage() {
     return () => window.removeEventListener('keydown', shortcut)
   }, [deleteSelection, dirty, editing, handleSave, nudgeNode, redoLayout, saving, selectedEdgeId, selectedId, undoLayout])
 
+  /**
+   * H — the hand tool, in view mode.
+   *
+   * The drawing is scaled to fit the panel, so the common case needs no
+   * panning at all. The moment an operator zooms in on one skid it does, and
+   * view mode has no toolbar to put a button on: H is the drafting convention
+   * for the hand, and it is printed on the control it toggles.
+   */
+  useEffect(() => {
+    if (!layout || editing) return undefined
+    const shortcut = (event) => {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return
+      if (event.key.toLowerCase() !== 'h') return
+      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return
+      event.preventDefault()
+      setViewPan((on) => !on)
+    }
+    window.addEventListener('keydown', shortcut)
+    return () => window.removeEventListener('keydown', shortcut)
+  }, [editing, layout])
+
+  // Entering the editor hands panning to its own tool picker, so the view-mode
+  // mode must not survive — otherwise the toolbar would read "select" while
+  // the canvas still behaves like a hand.
+  useEffect(() => {
+    if (editing) setViewPan(false)
+  }, [editing])
+
+  /**
+   * Full screen — the drawing on its own, for a control-room wall.
+   *
+   * The browser owns this state: Esc, F11 and the window manager can all leave
+   * it without asking us. So this mirrors `document.fullscreenElement` from the
+   * event rather than keeping a second opinion that could go stale. Switching
+   * modes unmounts the fullscreen element, which the browser answers by exiting
+   * and firing the same event, so that case needs no cleanup of its own.
+   */
+  useEffect(() => {
+    // The null guard is load-bearing: the drawing has not mounted on the first
+    // render, so an unguarded identity test compares null to null and reports
+    // full screen before there is anything to show full screen.
+    const sync = () => setFullscreen(
+      !!stageRef.current && document.fullscreenElement === stageRef.current,
+    )
+    document.addEventListener('fullscreenchange', sync)
+    return () => document.removeEventListener('fullscreenchange', sync)
+  }, [])
+
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.().catch(() => {})
+      return
+    }
+    stageRef.current?.requestFullscreen?.().catch(() => {})
+  }, [])
+
+  // F, in both modes. Esc leaves — the browser insists on that and says so, so
+  // there is nothing here to hold it open.
+  useEffect(() => {
+    if (!layout) return undefined
+    const shortcut = (event) => {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return
+      if (event.key.toLowerCase() !== 'f') return
+      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return
+      event.preventDefault()
+      toggleFullscreen()
+    }
+    window.addEventListener('keydown', shortcut)
+    return () => window.removeEventListener('keydown', shortcut)
+  }, [layout, toggleFullscreen])
+
   const dotClass = plantStatus === 'crit' ? styles.dotCrit
     : plantStatus === 'warn' ? styles.dotWarn : ''
+  // One word for the whole plant, derived once. The page header and the full
+  // screen banner are two readings of the same thing and must never differ.
+  const statusLabel = plantStatus === 'crit' ? 'Alarm'
+    : plantStatus === 'warn' ? 'Off normal' : 'Running'
+
+  // The sheet's width against the window onto it. Shared by both modes so the
+  // reading does not change meaning when an admin clicks Edit layout.
+  const viewZoom = Math.round(((layout?.viewBox?.w || VIEW_W) / viewport.w) * 100)
 
 
   const cadence = demo ? (
@@ -800,6 +894,28 @@ export default function MonitorPage() {
     </div>
   )
 
+  /**
+   * The banner full screen adds back.
+   *
+   * Going full screen drops the page header, and with it the first two things
+   * anyone reading a mimic from across a control room needs: which plant this
+   * is, and whether it is running. The demo badge rides along for the same
+   * reason — at wall size, simulated numbers must never pass for the plant.
+   */
+  const fullscreenHead = fullscreen ? (
+    <header className={styles.fsHead}>
+      <div className={styles.fsTitle}>
+        <span className={styles.fsEyebrow}>Process mimic</span>
+        <h2 className={styles.fsName}>{activeName}</h2>
+      </div>
+      {demo && <span className={styles.fsDemo}>Demo data</span>}
+      <span className={styles.fsState}>
+        <span className={`${styles.dot} ${dotClass}`} />
+        {statusLabel}
+      </span>
+    </header>
+  ) : null
+
   const subtitle = demo
     ? 'Simulated process · no datasource'
     : nodes.length === 0
@@ -827,7 +943,7 @@ export default function MonitorPage() {
 
         <span className={styles.plantState}>
           <span className={`${styles.dot} ${dotClass}`} />
-          {plantStatus === 'crit' ? 'Alarm' : plantStatus === 'warn' ? 'Off normal' : 'Running'}
+          {statusLabel}
         </span>
 
         <div className={styles.actions}>
@@ -896,15 +1012,18 @@ export default function MonitorPage() {
               {paletteOpen ? 'Hide symbols' : 'Symbols'}
             </button>
             {paletteOpen && (
-              <SymbolPalette
-                onAdd={addSymbol}
-                customSymbols={customSymbols}
-                onAuthorSymbol={() => setAuthoring(true)}
-              />
+              <div className={styles.editorRailBody}>
+                <SymbolPalette
+                  onAdd={addSymbol}
+                  customSymbols={customSymbols}
+                  onAuthorSymbol={() => setAuthoring(true)}
+                />
+              </div>
             )}
           </aside>
 
-          <main className={styles.editorCenter}>
+          <main className={styles.editorCenter} ref={stageRef}>
+            {fullscreenHead}
             <MimicEditorToolbar
               toolMode={toolMode}
               onToolMode={setToolMode}
@@ -914,12 +1033,13 @@ export default function MonitorPage() {
               onGridVisible={setGridVisible}
               snapEnabled={snapEnabled}
               onSnapEnabled={setSnapEnabled}
-              zoomPercent={Math.round(((layout.viewBox?.w || VIEW_W) / viewport.w) * 100)}
+              zoomPercent={viewZoom}
               onZoomOut={() => canvasRef.current?.zoomOut()}
               onZoomIn={() => canvasRef.current?.zoomIn()}
               onResetView={() => canvasRef.current?.resetView()}
               onFit={() => canvasRef.current?.fitContents()}
-              onFullscreen={() => canvasRef.current?.fullscreen()}
+              fullscreen={fullscreen}
+              onFullscreen={toggleFullscreen}
               onSnapshot={() => canvasRef.current?.snapshot()}
               onTogglePalette={togglePalette}
               onToggleInspector={toggleInspector}
@@ -981,55 +1101,139 @@ export default function MonitorPage() {
             >
               {inspectorOpen ? 'Hide inspector' : 'Inspector'}
             </button>
-            {inspectorOpen && (selectedEdge ? (
-              <EdgeInspector
-                edge={selectedEdge}
-                nodes={nodes}
-                onChange={(patch) => updateEdge(selectedEdge.id, patch)}
-                onDelete={deleteEdge}
-                onBack={() => setSelectedEdgeId(null)}
-              />
-            ) : selectedNode ? (
-              <NodeInspector
-                node={selectedNode}
-                datasources={datasourcesQuery.data || []}
-                onConnect={() => openBinding(selectedNode)}
-                onDelete={deleteNode}
-                onResetBubble={resetBubble}
-                onResetSize={resetNodeSize}
-                onRotate={rotateNode}
-                onBack={() => setSelectedId(null)}
-              />
-            ) : (
-              <div className={styles.editorHelp}>
-                <span>Inspector</span>
-                <h3>Select a symbol or wire</h3>
-                <p>Properties, datasource bindings, rotation, size, and flow rules appear here. Drag from a symbol port to create a connection.</p>
-                <kbd>Space + drag</kbd><small>Pan canvas</small>
-                <kbd>Ctrl/Cmd + wheel</kbd><small>Zoom at pointer</small>
+            {inspectorOpen && (
+              <div className={styles.editorRailBody}>
+                {selectedEdge ? (
+                  <EdgeInspector
+                    edge={selectedEdge}
+                    nodes={nodes}
+                    onChange={(patch) => updateEdge(selectedEdge.id, patch)}
+                    onDelete={deleteEdge}
+                    onBack={() => setSelectedEdgeId(null)}
+                  />
+                ) : selectedNode ? (
+                  <NodeInspector
+                    node={selectedNode}
+                    datasources={datasourcesQuery.data || []}
+                    onConnect={() => openBinding(selectedNode)}
+                    onDelete={deleteNode}
+                    onResetBubble={resetBubble}
+                    onResetSize={resetNodeSize}
+                    onRotate={rotateNode}
+                    onBack={() => setSelectedId(null)}
+                  />
+                ) : (
+                  <div className={styles.editorHelp}>
+                    <span>Inspector</span>
+                    <h3>Select a symbol or wire</h3>
+                    <p>Properties, datasource bindings, rotation, size, and flow rules appear here. Drag from a symbol port to create a connection.</p>
+                    <kbd>Space + drag</kbd><small>Pan canvas</small>
+                    <kbd>Ctrl/Cmd + wheel</kbd><small>Zoom at pointer</small>
+                  </div>
+                )}
               </div>
-            ))}
+            )}
           </aside>
         </div>
       )}
 
       {layout && !editing && (
         <div className={styles.body}>
-          <MimicCanvas
-            layout={layout}
-            tags={tags}
-            selectedId={selectedId}
-            onSelect={selectNode}
-            selectedEdgeId={selectedEdgeId}
-            onSelectEdge={selectEdge}
-            onMoveNode={moveNode}
-            onNudgeNode={nudgeNode}
-            onResizeNode={resizeNode}
-            onDeleteNode={deleteNodeKey}
-            onAddEdge={addEdge}
-            onDeleteEdge={deleteEdgeKey}
-            onMoveBubble={moveBubble}
-          />
+          <div className={styles.stageWrap} ref={stageRef}>
+            {fullscreenHead}
+            <MimicCanvas
+              ref={canvasRef}
+              layout={layout}
+              tags={tags}
+              selectedId={selectedId}
+              onSelect={selectNode}
+              selectedEdgeId={selectedEdgeId}
+              onSelectEdge={selectEdge}
+              toolMode={viewPan ? 'pan' : 'select'}
+              onViewportChange={setViewport}
+              onMoveNode={moveNode}
+              onNudgeNode={nudgeNode}
+              onResizeNode={resizeNode}
+              onDeleteNode={deleteNodeKey}
+              onAddEdge={addEdge}
+              onDeleteEdge={deleteEdgeKey}
+              onMoveBubble={moveBubble}
+            />
+
+            <div className={styles.viewTools} role="group" aria-label="View controls">
+              <button
+                type="button"
+                className={`${styles.viewTool} ${viewPan ? styles.viewToolOn : ''}`}
+                aria-pressed={viewPan}
+                aria-keyshortcuts="h"
+                title="Hand tool — drag to move the drawing inside the panel (H)"
+                onClick={() => setViewPan((on) => !on)}
+              >
+                <PanToolOutlined fontSize="small" />
+                <kbd className={styles.viewKey}>H</kbd>
+              </button>
+
+              <span className={styles.viewDivider} />
+
+              <button
+                type="button"
+                className={styles.viewTool}
+                title="Zoom out"
+                aria-label="Zoom out"
+                disabled={viewZoom <= 25}
+                onClick={() => canvasRef.current?.zoomOut()}
+              >
+                <ZoomOutOutlined fontSize="small" />
+              </button>
+              <output className={styles.viewZoom} aria-label="Drawing zoom">{viewZoom}%</output>
+              <button
+                type="button"
+                className={styles.viewTool}
+                title="Zoom in"
+                aria-label="Zoom in"
+                disabled={viewZoom >= 400}
+                onClick={() => canvasRef.current?.zoomIn()}
+              >
+                <ZoomInOutlined fontSize="small" />
+              </button>
+
+              <span className={styles.viewDivider} />
+
+              <button
+                type="button"
+                className={styles.viewTool}
+                title="Fit the drawn area to the panel"
+                aria-label="Fit contents"
+                onClick={() => canvasRef.current?.fitContents()}
+              >
+                <CenterFocusStrongOutlined fontSize="small" />
+              </button>
+              <button
+                type="button"
+                className={styles.viewTool}
+                title="Reset view"
+                aria-label="Reset view"
+                onClick={() => canvasRef.current?.resetView()}
+              >
+                <RestartAltOutlined fontSize="small" />
+              </button>
+
+              <span className={styles.viewDivider} />
+
+              <button
+                type="button"
+                className={`${styles.viewTool} ${fullscreen ? styles.viewToolOn : ''}`}
+                aria-pressed={fullscreen}
+                aria-keyshortcuts="f"
+                title={fullscreen ? 'Leave full screen (F or Esc)' : 'Show this mimic full screen (F)'}
+                onClick={toggleFullscreen}
+              >
+                {fullscreen ? <FullscreenExitOutlined fontSize="small" /> : <FullscreenOutlined fontSize="small" />}
+                <kbd className={styles.viewKey}>F</kbd>
+              </button>
+            </div>
+          </div>
+
           <div className={`${styles.railCol} ${railCollapsed ? styles.railColCollapsed : ''}`}>
             <IconButton className={styles.railToggle} size="small" onClick={() => setRailCollapsed((c) => !c)}>
               {railCollapsed ? <ChevronLeft fontSize="small" /> : <ChevronRight fontSize="small" />}

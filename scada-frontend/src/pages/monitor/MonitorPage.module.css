@@ -1,7 +1,20 @@
+/* The mimic is a fixed 1600x900 sheet, so the page is a viewport, not a
+ * document: it takes the height the shell gives it and the drawing scales into
+ * whatever is left after the bar, the banners and the tag strip. Nothing here
+ * scrolls — an operator should never have to hunt for a symbol below the fold.
+ */
 .page {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-3);
+  height: 100%;
+  min-height: 0;
+}
+
+/* Chrome keeps its natural height; only the drawing gives and takes. */
+.page > * {
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 /* --- header bar --------------------------------------------------------- */
@@ -100,8 +113,226 @@
 .body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The drawing's own box. Positioned so the view controls can sit on the sheet
+ * rather than in a strip above it — in view mode the mimic is the page, and a
+ * toolbar would take height away from the only thing worth looking at. */
+.stageWrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* --- full screen --------------------------------------------------------
+ * The sheet on its own, for a control-room wall. The browser paints the
+ * backdrop black by default, which would put the drawing in a different
+ * theme from the app it belongs to, so both containers restate the surface
+ * they already sit on and stack a banner above the sheet.
+ */
+.stageWrap:fullscreen,
+.editorCenter:fullscreen {
+  padding: var(--space-4) var(--space-5);
+  background: var(--bg-app);
+}
+
+.stageWrap:fullscreen {
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* The sheet takes the rest. `height: 100%` would resolve against the whole
+ * screen and push the banner off the top of it. */
+.stageWrap:fullscreen > svg {
+  flex: 1 1 0;
+  height: auto;
+  min-height: 0;
+}
+
+/* Full screen takes the whole editor column, not the bare sheet: a drafting
+ * canvas with no toolbar and no Save is not somewhere to be left. The toolbar,
+ * canvas and command bar are drawn as one joined frame, so no gap here — the
+ * banner carries its own rule instead. */
+.editorCenter:fullscreen .fsHead {
+  margin-bottom: var(--space-3);
+}
+
+/* The controls sit over the sheet, and in full screen the banner has taken the
+ * top-right corner, so they move to the bottom one. Absolute offsets resolve
+ * against the padding box rather than the sheet, so the container's own padding
+ * is added back — without it the overlay hangs off the edge of the drawing. */
+.stageWrap:fullscreen .viewTools {
+  top: auto;
+  right: calc(var(--space-5) + var(--space-3));
+  bottom: calc(var(--space-4) + var(--space-3));
+}
+
+.fsHead {
+  display: flex;
+  align-items: center;
   gap: var(--space-4);
-  align-items: start;
+  flex: 0 0 auto;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.fsTitle {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.fsEyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+/* Sized to be read from the far side of a room, which is the only reason
+ * this mode exists. */
+.fsName {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(20px, 2.2vw, 34px);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.1;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.fsState {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  flex-shrink: 0;
+  font-family: var(--font-display);
+  font-size: clamp(13px, 1.1vw, 18px);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.fsState .dot {
+  width: 12px;
+  height: 12px;
+}
+
+/* At wall size a simulated reading looks exactly like a real one, so the
+ * only thing that keeps them apart is saying so. */
+.fsDemo {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* --- view-mode canvas controls -----------------------------------------
+ * The hand tool, zoom and fit, as an overlay on the sheet. Deliberately the
+ * same order and the same icons as the drafting toolbar, so an admin who
+ * learns them in edit mode already knows them here.
+ */
+.viewTools {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  /* It floats over the sheet, so it must never be what makes the sheet wider
+   * than the panel it sits in. */
+  max-width: calc(100% - var(--space-5));
+  padding: 3px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-panel) 88%, transparent);
+  backdrop-filter: blur(6px);
+  box-shadow: var(--shadow-1);
+}
+
+.viewTool {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.viewTool:hover {
+  color: var(--fg);
+  background: var(--bg-elev);
+}
+
+.viewTool:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.viewTool:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.viewTool:disabled:hover {
+  color: var(--fg-muted);
+  background: transparent;
+}
+
+.viewToolOn {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* The shortcut is printed on the control it fires, because a key nobody can
+ * see is a key nobody presses. */
+.viewKey {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font: 9px/1.4 var(--font-mono);
+  color: inherit;
+}
+
+.viewDivider {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 3px;
+  background: var(--border-soft);
+}
+
+.viewZoom {
+  width: 42px;
+  text-align: center;
+  color: var(--fg-dim);
+  font: 11px var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 /* The rail's own column: its width drives the grid track (auto), so
@@ -111,9 +342,10 @@
 .railCol {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-2);
   width: 320px;
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
   transition: width 0.18s ease;
 }
@@ -148,23 +380,41 @@
   position: relative;
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr) 320px;
+  grid-template-rows: minmax(0, 1fr);
   align-items: stretch;
-  min-height: 640px;
+  flex: 1 1 auto;
+  min-height: 0;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
   overflow: clip;
   background: var(--bg-app);
 }
 
+/* Each rail is a fixed frame with one scrolling body, so the toggle that
+ * closes it never scrolls out of reach and the panel itself never grows the
+ * page. */
 .editorPaletteRail,
 .editorInspectorRail {
   position: relative;
   z-index: 8;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
   padding: var(--space-2);
   background: var(--bg-panel);
-  overflow-y: auto;
+  overflow: hidden;
   transition: width 160ms ease, transform 160ms ease;
+}
+
+.editorRailBody {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .editorPaletteRail { border-right: 1px solid var(--border); }
@@ -190,6 +440,7 @@
 
 .editorRailToggle {
   appearance: none;
+  flex: 0 0 auto;
   width: 100%;
   min-height: 30px;
   margin-bottom: var(--space-2);
@@ -216,14 +467,19 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   background: var(--bg-app);
 }
 
+/* The sheet takes whatever the toolbar and command bar leave. The svg's own
+ * preserveAspectRatio does the letterboxing, so the drawing is always whole
+ * and always centred, at any panel size. */
 .editorCanvas {
   flex: 1 1 auto;
   display: grid;
-  place-items: center;
-  min-height: 540px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
   overflow: hidden;
   padding: var(--space-2);
 }
@@ -231,8 +487,10 @@
 .editorHelp {
   display: grid;
   grid-template-columns: auto 1fr;
+  flex: 0 0 auto;
+  align-content: start;
   gap: var(--space-2) var(--space-3);
-  padding: var(--space-4);
+  padding: var(--space-3);
   color: var(--fg-muted);
 }
 
@@ -251,17 +509,26 @@
   pointer-events: none;
 }
 
-/* The rail drops below the drawing well before the viewport gets narrow, and
- * because the mimic scales as one fixed 1600x900 unit that lands the
- * smallest callout text under 5px — a P&ID you cannot read is worse than one
- * you have to scroll to. */
+/* The rail drops below the drawing before the viewport gets narrow: a 320px
+ * column beside a 1600-unit sheet costs more legibility than it buys. It keeps
+ * a share of the height rather than pushing the drawing off the bottom, and
+ * scrolls inside itself. */
 @media (max-width: 1399px) {
+  /* The rail's share of the height is set by the track, not by what happens to
+   * be in it: a band that changed depth as you clicked between symbols would
+   * resize the drawing under your cursor. */
   .body {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) min(38%, 300px);
+  }
+
+  .body:has(.railColCollapsed) {
+    grid-template-rows: minmax(0, 1fr) 40px;
   }
 
   .railCol {
     width: auto;
+    height: 100%;
   }
 
   .railColCollapsed {
@@ -275,6 +542,9 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* Drawers over the sheet, clear of the toolbar above and the command bar
+   * below, which stacks to two rows here — Save must stay reachable while a
+   * drawer is open. */
   .editorPaletteRail,
   .editorInspectorRail {
     position: absolute;
@@ -289,14 +559,6 @@
   .editorPaletteRail.editorRailClosed,
   .editorInspectorRail.editorRailClosed { display: none; }
   .editorRailToggle { display: none; }
-}
-
-/* Pair to .stage's min-width: past this point the drawing stops shrinking and
- * this becomes the thing that scrolls. */
-@media (max-width: 1000px) {
-  .body {
-    overflow-x: auto;
-  }
 }
 
 /* --- tag strip ----------------------------------------------------------
@@ -366,14 +628,14 @@
 
 /* --- symbol palette (replaces the rail in edit mode) -------------------- */
 
+/* No box of its own: the rail around it already is one, and two nested panels
+ * read as a bug rather than as structure. */
 .palette {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  background: var(--bg-panel);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius);
-  padding: var(--space-4);
+  flex: 0 0 auto;
+  padding: var(--space-2) var(--space-1) var(--space-3);
 }
 
 .paletteHead {
@@ -392,15 +654,12 @@
   color: var(--fg-muted);
 }
 
-/* Forty symbols will not sit on the page at once, so the groups scroll inside
- * the rail — the canvas beside them must not move as sections open and close. */
+/* Forty symbols will not sit in the rail at once. The rail body is the one
+ * scroller, so the canvas beside it never moves as sections open and close. */
 .paletteGroups {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  max-height: 58vh;
-  overflow-y: auto;
-  scrollbar-width: thin;
 }
 
 .paletteGroupHead {

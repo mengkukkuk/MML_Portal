@@ -1,12 +1,24 @@
+/* The page no longer scrolls, so the rail scrolls inside itself — a long list
+ * of state changes must not be what decides how tall the drawing gets. */
 .rail {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  flex: 1 1 auto;
   background: var(--bg-panel);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
   padding: var(--space-4);
   min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+/* Sections keep their own height and the rail scrolls past them — a squashed
+ * sparkline or a half-height ladder is worse than one more scroll. */
+.rail > * {
+  flex: 0 0 auto;
 }
 
 .empty {

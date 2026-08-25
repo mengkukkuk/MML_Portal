@@ -1,25 +1,16 @@
-/* EdgeInspector — the edit-mode rail for one selected pipe. Sized and spaced
- * to match NodeInspector and DetailRail so switching between them doesn't move
- * the canvas. Tokens only. */
+/* EdgeInspector — the edit-mode rail for one selected pipe. Spaced to match
+ * NodeInspector so switching between them doesn't move anything, and sized to
+ * fill the inspector rail rather than nest a second panel inside it.
+ * Tokens only. */
 
 .rail {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
-  width: 320px;
-  flex: 0 0 320px;
-  padding: var(--space-4);
-  background: var(--bg-panel);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius);
-  overflow-y: auto;
-}
-
-@media (max-width: 1180px) {
-  .rail {
-    width: auto;
-    flex: 1 1 auto;
-  }
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-2) var(--space-1) var(--space-4);
 }
 
 .head {

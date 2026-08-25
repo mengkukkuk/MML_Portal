@@ -4,22 +4,19 @@
  * faceplates (cobalt / graphite / carbon) with no second palette.
  */
 
+/* The sheet fills the box it is given and letterboxes itself inside it
+ * (preserveAspectRatio="xMidYMid meet"), so the whole drawing is on screen at
+ * every panel size and the page never scrolls to reach a symbol. Anything too
+ * small to read is what the hand tool and zoom are for. */
 .stage {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   background: var(--bg-panel);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-}
-
-/* Below this, scaling the drawing to fit would put the instrument readouts
- * under 6px. A mimic is a technical drawing, so it holds its size and the
- * operator pans it — see .body's overflow rule in MonitorPage.module.css. */
-@media (max-width: 1000px) {
-  .stage {
-    min-width: 940px;
-  }
 }
 
 .stage:focus-visible {
@@ -27,19 +24,21 @@
   outline-offset: 2px;
 }
 
-/* Only edit mode captures the pointer, so only edit mode may take touch away
- * from the scroll container. */
+/* Both of these capture the pointer, so both take touch away from the page. */
 .stageEditing {
   cursor: crosshair;
   touch-action: none;
 }
 
-.stage:fullscreen {
-  width: 100vw;
-  height: 100vh;
-  border: 0;
-  border-radius: 0;
-  background: var(--bg-panel);
+/* The hand tool, in view mode. Grab, not crosshair: nothing here is being
+ * placed — the sheet itself is what moves. */
+.stagePanning {
+  cursor: grab;
+  touch-action: none;
+}
+
+.stagePanning:active {
+  cursor: grabbing;
 }
 
 /* --- wire-coded lines --------------------------------------------------

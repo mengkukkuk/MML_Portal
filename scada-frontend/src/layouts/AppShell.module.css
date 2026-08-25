@@ -36,7 +36,12 @@
   flex: 1;
 }
 
+/* A definite height, so a route that wants to fill the shell (the /monitor
+ * mimic) can say `height: 100%` and size its canvas to what is left. Content
+ * taller than this still overflows and .content still scrolls, so pages that
+ * grow down the page are unaffected. */
 .fade {
+  height: 100%;
   animation: fadeIn 0.12s ease;
 }
 

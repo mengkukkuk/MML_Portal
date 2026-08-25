@@ -304,7 +304,6 @@ const MimicCanvas = forwardRef(function MimicCanvas({
     zoomOut: () => zoom(0.8),
     resetView,
     fitContents: fit,
-    fullscreen: () => svgRef.current?.requestFullscreen?.(),
     snapshot,
   }), [fit, resetView, snapshot, zoom])
 
@@ -429,15 +428,6 @@ const MimicCanvas = forwardRef(function MimicCanvas({
     onGestureStart?.()
     capture(evt)
   }, [capture, editMode, focusStage, onGestureStart, onSelect, toLogical, toolMode])
-
-  useEffect(() => {
-    const stage = svgRef.current
-    return () => {
-      if (stage && document.fullscreenElement === stage) {
-        document.exitFullscreen?.().catch(() => {})
-      }
-    }
-  }, [])
 
   const handlePointerMove = useCallback((evt) => {
     const drag = dragRef.current
@@ -618,7 +608,7 @@ const MimicCanvas = forwardRef(function MimicCanvas({
   return (
     <svg
       ref={svgRef}
-      className={`${styles.stage} ${editMode ? styles.stageEditing : ''}`}
+      className={`${styles.stage} ${editMode ? styles.stageEditing : ''} ${toolMode === 'pan' ? styles.stagePanning : ''}`}
       viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
       preserveAspectRatio="xMidYMid meet"
       role="group"

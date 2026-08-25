@@ -220,10 +220,13 @@
 
 /* --- steady-state animations ------------------------------------------ */
 
+/* The period is a variable so a symbol that knows its own speed can say so
+   (Conveyor sets it from the belt reading). Everything else keeps 1.4s, which
+   is what it has always been. */
 .spin {
   transform-box: fill-box;
   transform-origin: center;
-  animation: mimic-spin 1.4s linear infinite;
+  animation: mimic-spin var(--mimic-spin-tick, 1.4s) linear infinite;
 }
 
 .spinSlow {
@@ -237,8 +240,18 @@
   animation: mimic-march 1.1s linear infinite;
 }
 
+/* The belt texture and the product riding it share one clock, set by the
+   drive's own speed reading — see Conveyor.jsx. Without that every belt in a
+   drawing runs at the same rate and a crawling one looks healthy. */
 .belt {
-  animation: mimic-belt 1.6s linear infinite;
+  animation: mimic-belt var(--mimic-belt-tick, 1.6s) linear infinite;
+}
+
+/* Product on the belt. Spaced twice as far apart as the chevrons and
+   travelling twice as far over twice the period, so the two loop together
+   instead of drifting out of step. */
+.load {
+  animation: mimic-load calc(var(--mimic-belt-tick, 1.6s) * 2) linear infinite;
 }
 
 .beacon {
@@ -261,6 +274,7 @@
 .stopped .spinSlow,
 .stopped .march,
 .stopped .belt,
+.stopped .load,
 .stopped .beacon,
 .stopped .beam,
 .stopped .recip {
@@ -281,6 +295,10 @@
 
 @keyframes mimic-belt {
   to { transform: translateX(24px); }
+}
+
+@keyframes mimic-load {
+  to { transform: translateX(48px); }
 }
 
 @keyframes mimic-beacon {
@@ -438,6 +456,7 @@
   .spinSlow,
   .march,
   .belt,
+  .load,
   .beacon,
   .beam,
   .recip,
