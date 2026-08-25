@@ -521,7 +521,7 @@ export default function SymbolBindingDialog({ open, node, onClose, onSave }) {
                     className={styles.mono}
                     value={form.expr}
                     onChange={(e) => set({ expr: e.target.value })}
-                    placeholder="value / 10"
+                    placeholder="a / 10"
                   />
                 </label>
                 {exprError && <p className={styles.error}>{exprError}</p>}

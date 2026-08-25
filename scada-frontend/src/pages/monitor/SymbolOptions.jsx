@@ -86,8 +86,8 @@ function ColourCases({ cases, onChange }) {
         The first rule that holds picks the colour. Anything below a rule that is
         already true never runs, so put the most serious one at the top. With no
         rules the lamp is coloured by its limits, as before. A rule can test a
-        number (<code>value &gt; 80</code>) or a word
-        (<code>value == &apos;FAULT&apos;</code>).
+        number (<code>a &gt; 80</code>) or a word
+        (<code>a == &apos;FAULT&apos;</code>).
       </p>
 
       <ol className={styles.cases}>
@@ -108,7 +108,7 @@ function ColourCases({ cases, onChange }) {
               />
               <ConditionInput
                 value={c.when}
-                placeholder="value > 80"
+                placeholder="a > 80"
                 onChange={(when) => patch(i, { when })}
               />
               <button
@@ -214,7 +214,7 @@ export default function SymbolOptions({ node, onChange }) {
           <span>Raise when</span>
           <ConditionInput
             value={o.when}
-            placeholder="value > 80"
+            placeholder="a > 80"
             onChange={(when) => onChange({ when })}
           />
         </label>
@@ -231,9 +231,9 @@ export default function SymbolOptions({ node, onChange }) {
         </label>
         <p className={styles.hint}>
           Compare with <code>&gt; &lt; &gt;= &lt;= == !=</code>, join with{' '}
-          <code>and</code> / <code>or</code> / <code>not</code>. <code>value</code> is the
+          <code>and</code> / <code>or</code> / <code>not</code>. <code>a</code> is the
           reading after its expression has been applied. On a text column compare
-          against a quoted word — <code>value == &apos;FAULT&apos;</code> — which
+          against a quoted word — <code>a == &apos;FAULT&apos;</code> — which
           ignores case and surrounding spaces.
         </p>
       </div>

@@ -623,10 +623,10 @@ export default function PanelEditorDialog({
                   <TextField
                     fullWidth
                     size="small"
-                    placeholder="e.g. value * 1.8 + 32, sqrt(value)"
+                    placeholder="e.g. a * 1.8 + 32, sqrt(a)"
                     {...register('mathExpr')}
                   />
-                  <p className={styles.hint}>Variable: <code>value</code> — <code>abs sqrt pow min max floor ceil round</code></p>
+                  <p className={styles.hint}>Variable: <code>a</code> — <code>abs sqrt pow min max floor ceil round</code></p>
                 </AccordionDetails>
               </Accordion>
 

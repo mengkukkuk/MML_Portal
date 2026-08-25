@@ -413,15 +413,22 @@ export default function MonitorPage() {
   const selectedEdge = (layout?.edges ?? []).find((e) => e.id === selectedEdgeId) ?? null
   const selectedTag = selectedId ? tags[selectedId] ?? null : null
 
+  // Below the palette/inspector breakpoint the two rails are mutually
+  // exclusive (see the toggle handlers above), so a click that selects
+  // something on the canvas has to swap them itself — otherwise the
+  // properties panel a symbol was just clicked *for* stays hidden behind
+  // the palette, and every option in it looks like it went missing.
   const selectNode = useCallback((id) => {
     setSelectedId(id)
     setSelectedEdgeId(null)
-  }, [])
+    if (compactEditor) { setInspectorOpen(true); setPaletteOpen(false) }
+  }, [compactEditor])
 
   const selectEdge = useCallback((id) => {
     setSelectedEdgeId(id)
     setSelectedId(null)
-  }, [])
+    if (compactEditor) { setInspectorOpen(true); setPaletteOpen(false) }
+  }, [compactEditor])
 
   // --- geometry edits ------------------------------------------------------
   const moveNode = useCallback((id, pos) => {

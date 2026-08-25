@@ -23,8 +23,8 @@ export const MAX_CASES = 5
  *
  * First-match-wins, not most-severe-wins: the cases are an ordered list the
  * admin wrote, and re-ranking them would mean a lamp ignoring the order it was
- * configured in. It also makes overlapping ranges usable — `value > 90` above
- * `value > 80` reads exactly as it looks.
+ * configured in. It also makes overlapping ranges usable — `a > 90` above
+ * `a > 80` reads exactly as it looks.
  *
  * Returns the case *and* its index, so a caller can tell "matched the first
  * case" from "matched nothing" without comparing objects.

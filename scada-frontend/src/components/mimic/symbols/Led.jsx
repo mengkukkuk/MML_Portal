@@ -50,7 +50,7 @@ export const LED_PALETTE = [
  * an admin's own legend ("PURGE") should still light.
  *
  * A matched case also *lights* the lamp, overriding the dark states at step 2.
- * Without that, `value == 0 → white` could never show: the lamp would be told
+ * Without that, `a == 0 → white` could never show: the lamp would be told
  * to be white and simultaneously told it was off.
  *
  * ## Blink

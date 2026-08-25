@@ -18,17 +18,25 @@
  *            | IDENT
  *            | '(' expr ')'
  *
- * Recognises the variable `value` and a small set of functions.
- * No `eval`, no `Function`, no DOM / prototype access — input strings cannot
- * execute arbitrary code.
+ * Recognises the single-letter variables `a`..`z` and a small set of
+ * functions. No `eval`, no `Function`, no DOM / prototype access — input
+ * strings cannot execute arbitrary code.
+ *
+ * There is no fixed "the" variable: a symbol bound to one reading writes
+ * `a`, and one bound to several writes `a`, `b`, `c`… — one letter per
+ * reading, assigned in the order the readings were selected. A 26-letter cap
+ * falls out of the alphabet itself rather than needing its own check. Callers
+ * pass readings as an array in that same selection order (or a bare scalar,
+ * which is shorthand for a one-element array — `a` alone); see
+ * `testCondition` / `applyExpr`.
  *
  * The two entry points share one grammar on purpose: an engineer who has
- * learned `value / 10` for a Live panel transform can write `value > 80` for an
+ * learned `a / 10` for a Live panel transform can write `a > 80` for an
  * annunciator without learning a second language. They are separate entry
  * points rather than one because the *types* differ — a transform must yield a
  * number and a condition must yield a boolean, and each is a nonsense answer to
  * the other's question. Comparison sits above `expr`, so `compileExpr` still
- * rejects `value > 80` exactly as it did before this was added.
+ * rejects `a > 80` exactly as it did before this was added.
  */
 
 const FUNCS = {
@@ -41,6 +49,24 @@ const FUNCS = {
   ceil: Math.ceil,
   round: Math.round,
 }
+
+/** A single lower-case letter — the whole variable vocabulary, `a` to `z`. */
+const VAR_LETTER = /^[a-z]$/
+
+/**
+ * Readings, as the scope an expression runs against — always an array, `a`
+ * at index 0, `b` at index 1, and so on in selection order.
+ *
+ * Every call site still has the common case of exactly one reading, and
+ * making each of them build a one-element array would be the same line
+ * repeated everywhere, so a bare scalar is accepted here as shorthand for it.
+ */
+function toScope(values) {
+  return Array.isArray(values) ? values : [values]
+}
+
+/** Probe scope: one neutral, finite value for every letter an expression could reference. */
+const PROBE_SCOPE = Array(26).fill(1)
 
 function tokenize(src) {
   const tokens = []
@@ -101,7 +127,7 @@ function tokenize(src) {
 /**
  * Equality, with text compared as a *word* rather than as bytes.
  *
- * `value == 'fault'` holds for a column storing `'FAULT'` or `'Fault '`. Strict
+ * `a == 'fault'` holds for a column storing `'FAULT'` or `'Fault '`. Strict
  * equality is the obvious implementation and the wrong one here: the author of
  * the rule is reading the column in a picker or a spreadsheet, not in a hex
  * dump, and the failure it produces is the worst kind — a lamp that never
@@ -165,7 +191,7 @@ function parse(tokens, mode = 'number') {
   }
 
   /**
-   * The operator is required. A bare `value` as a condition would have to invent
+   * The operator is required. A bare `a` as a condition would have to invent
    * a truthiness rule for numbers — and "is 0 false?" is a question a plant
    * engineer should never be asked to answer to get a lamp to light.
    */
@@ -173,7 +199,7 @@ function parse(tokens, mode = 'number') {
     const left = parseExpr()
     const t = peek()
     if (!t || t.type !== 'cmp') {
-      throw new Error("A condition needs a comparison, e.g. 'value > 80'")
+      throw new Error("A condition needs a comparison, e.g. 'a > 80'")
     }
     pos++
     const right = parseExpr()
@@ -255,9 +281,13 @@ function parse(tokens, mode = 'number') {
         eat(')')
         return (s) => fn(...args.map((a) => a(s)))
       }
-      // Bare identifier — only `value` is supported.
-      if (t.value !== 'value') throw new Error(`Unknown variable: ${t.value} (use 'value')`)
-      return (s) => s.value
+      // Bare identifier — a single letter `a`..`z` names the reading at that
+      // position in the selection order (`a` first, `b` second, …).
+      if (!VAR_LETTER.test(t.value)) {
+        throw new Error(`Unknown variable: ${t.value} (use 'a', 'b', 'c', … in the order the readings were selected)`)
+      }
+      const idx = t.value.charCodeAt(0) - 97
+      return (s) => s[idx]
     }
     throw new Error(`Unexpected token ${t.type}`)
   }
@@ -272,19 +302,21 @@ function parse(tokens, mode = 'number') {
 
 /**
  * Compile a math expression string.
- *   compileExpr('')           -> { ok: true,  fn: null }   // passthrough
- *   compileExpr('value * 2')  -> { ok: true,  fn: (v)=>... }
- *   compileExpr('value +')    -> { ok: false, error: '...' }
+ *   compileExpr('')       -> { ok: true,  fn: null }   // passthrough
+ *   compileExpr('a * 2')  -> { ok: true,  fn: (vals)=>... }
+ *   compileExpr('a +')    -> { ok: false, error: '...' }
  *
- * Probes with value=1; rejects expressions that don't yield a finite number.
+ * Probes every letter at once (each set to 1); rejects expressions that
+ * don't yield a finite number. `fn` takes the readings array described at
+ * the top of this file, or a bare scalar for the common one-reading case.
  */
 export function compileExpr(src) {
   if (!src || !src.trim()) return { ok: true, fn: null }
   try {
     const node = parse(tokenize(src))
-    const probe = node({ value: 1 })
+    const probe = node(PROBE_SCOPE)
     if (!Number.isFinite(probe)) return { ok: false, error: 'Expression must return a number' }
-    return { ok: true, fn: (v) => node({ value: v }) }
+    return { ok: true, fn: (values) => node(toScope(values)) }
   } catch (e) {
     return { ok: false, error: e?.message || 'Invalid expression' }
   }
@@ -293,55 +325,61 @@ export function compileExpr(src) {
 /**
  * Compile a condition string — the test behind a coloured lamp or a lit
  * annunciator tile.
- *   compileCondition('')            -> { ok: true,  fn: null }   // no condition
- *   compileCondition('value > 80')  -> { ok: true,  fn: (v)=>bool }
- *   compileCondition('value')       -> { ok: false, error: '...' }
+ *   compileCondition('')       -> { ok: true,  fn: null }   // no condition
+ *   compileCondition('a > 80') -> { ok: true,  fn: (vals)=>bool }
+ *   compileCondition('a')      -> { ok: false, error: '...' }
  *
- * Probes with value=1 to catch a parse that only fails on evaluation.
+ * Probes every letter at once to catch a parse that only fails on evaluation.
  */
 export function compileCondition(src) {
   if (!src || !src.trim()) return { ok: true, fn: null }
   try {
     const node = parse(tokenize(src), 'condition')
-    node({ value: 1 })
-    return { ok: true, fn: (v) => node({ value: v }) === true }
+    node(PROBE_SCOPE)
+    return { ok: true, fn: (values) => node(toScope(values)) === true }
   } catch (e) {
     return { ok: false, error: e?.message || 'Invalid condition' }
   }
 }
 
 /**
- * Test a compiled condition against a reading.
+ * Test a compiled condition against one or more readings (`a`, `b`, `c`… in
+ * selection order — a bare scalar is shorthand for a single reading, `a`).
  *
  * A reading is a finite number *or* a string — a symbol may be bound to a
- * status column, and `value == 'FAULT'` is the most direct rule anyone will
+ * status column, and `a == 'FAULT'` is the most direct rule anyone will
  * ever write for one. Anything else (null, NaN, a reading that never arrived)
- * answers **false**, never true: an unbound symbol and a symbol whose condition
- * is met must not look alike, and of the two possible mistakes, a lamp that
- * stays dark is the one an operator will investigate. A lamp that lights on
- * nothing is the one they learn to ignore.
+ * answers **false**, never true, and so does a reading *missing* from the
+ * selection — a condition naming `b` cannot hold while `b` never arrived: an
+ * unbound symbol and a symbol whose condition is met must not look alike, and
+ * of the two possible mistakes, a lamp that stays dark is the one an operator
+ * will investigate. A lamp that lights on nothing is the one they learn to
+ * ignore.
  */
-export function testCondition(fn, v) {
+export function testCondition(fn, values) {
   if (fn == null) return false
-  const usable = typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v))
+  const scope = toScope(values)
+  const usable = scope.length > 0
+    && scope.every((v) => typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v)))
   if (!usable) return false
   try {
-    return fn(v)
+    return fn(scope)
   } catch {
     return false
   }
 }
 
 /**
- * Apply a compiled expression to a value. Silently falls back to the raw
- * value on runtime failure (per product decision — panels never go blank).
+ * Apply a compiled expression to one or more readings. Silently falls back
+ * to the raw input on runtime failure (per product decision — panels never
+ * go blank).
  */
-export function applyExpr(fn, v) {
-  if (fn == null || v == null) return v
+export function applyExpr(fn, values) {
+  if (fn == null || values == null) return values
   try {
-    const out = fn(v)
-    return Number.isFinite(out) ? out : v
+    const out = fn(toScope(values))
+    return Number.isFinite(out) ? out : values
   } catch {
-    return v
+    return values
   }
 }

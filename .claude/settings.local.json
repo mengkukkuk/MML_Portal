@@ -98,7 +98,9 @@
       "Bash(curl -s -w \"\\\\nHTTP:%{http_code}\\\\n\" http://localhost:5173/api/health)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5173/)",
       "Bash(./venv/Scripts/python.exe -m pytest tests/test_mimic_symbols.py -q)",
-      "Bash(wmic process:*)"
+      "Bash(wmic process:*)",
+      "Bash(tasklist //FI 'IMAGENAME eq python.exe')",
+      "Bash(grep -rn \"value > \\\\|value < \\\\|value == \\\\|value >= \\\\|value <= \\\\|''value''\\\\|\\\\`value\\\\`\\\\|placeholder=\"\"value\" G:/Code/DEV/scada-frontend/src --include=*.js --include=*.jsx)"
     ]
   }
 }

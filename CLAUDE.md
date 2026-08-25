@@ -156,9 +156,9 @@ and each tile self-polls at one of the whitelisted intervals (5s, 30s, 1m, 10m,
   Multi-tag panels (`panel.options.tags`) overlay several tags as separate
   coloured series in one tile.
 
-Per-panel `options.transform` accepts a tiny expression (`value`, `+ - * / ^`,
+Per-panel `options.transform` accepts a tiny expression (`a`, `+ - * / ^`,
 `abs/sqrt/pow/min/max/floor/ceil/round`) so a raw count can be displayed as
-e.g. `value/10`.
+e.g. `a/10`.
 
 ### Monitor / mimic page
 `/monitor` is the interactive SCADA mimic diagram: `MimicCanvas.jsx` renders draggable/resizable

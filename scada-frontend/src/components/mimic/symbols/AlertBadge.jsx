@@ -45,8 +45,8 @@ function wrap(text, chars) {
  * the binding dialog, or a `state.map` naming an alarm state. Nothing to
  * configure, and the tile and the gauge beside it can never disagree.
  *
- * `options.when` replaces that with a condition the admin wrote — `value > 80`,
- * `value < 2 or value > 90`. It **replaces** rather than adds to it, which is
+ * `options.when` replaces that with a condition the admin wrote — `a > 80`,
+ * `a < 2 or a > 90`. It **replaces** rather than adds to it, which is
  * the important decision here. An annunciator answers one question, and a tile
  * lit by either of two rules cannot answer it: an operator looking at a lit tile
  * next to a gauge reading 60 has no way to tell whether the limits fired or the
