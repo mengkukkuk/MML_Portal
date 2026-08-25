@@ -67,11 +67,14 @@ def _create_tables() -> bool:
     """Create every app/config table so users, the Live grid, saved connections
     and the /monitor drawing can persist on the local database.
 
-    Order is load-bearing in three places: dashboards must run after panels (it
-    alters dashboard_panels), mimic_symbols must run after mimic_assets (it
-    carries a foreign key to it), and user_datasource_selection must run after
-    both users and datasources (it has a cascading FK to each). mimic_layouts
-    stands alone.
+    Order is load-bearing in four places: `ensure_app_schema` must run before
+    every `init_*_table()` call, since those all use unqualified table names
+    that resolve against the configured schema via `search_path` -- a schema
+    that doesn't exist yet fails the first CREATE TABLE, not the connection.
+    dashboards must run after panels (it alters dashboard_panels), mimic_symbols
+    must run after mimic_assets (it carries a foreign key to it), and
+    user_datasource_selection must run after both users and datasources (it has
+    a cascading FK to each). mimic_layouts stands alone.
 
     `users` is created here as well as by seed_users.py: a table the app cannot
     log in without has no business being create-on-demand from a seeding script,
@@ -82,11 +85,12 @@ def _create_tables() -> bool:
     lifespan, so uvicorn exits before binding a single route -- taking /health
     with it and leaving NSSM to restart-loop for the length of the outage. The
     whole body is guarded as one unit rather than per call: if the first DDL
-    cannot reach the database, all seven will fail the same way, and seven
-    separate connect timeouts would add half a minute to every boot.
+    cannot reach the database, every later call will fail the same way, and
+    each paying its own connect timeout would add half a minute to every boot.
     """
     global _schema_ready
     try:
+        db.ensure_app_schema()
         db.init_users_table()
         db.init_license_events_table()
         db.init_panels_table()

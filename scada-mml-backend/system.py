@@ -5,7 +5,7 @@ while these routes expose hostnames and connection error text and so are gated o
 an admin token, matching the pattern used for datasource writes.
 """
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import db
 from auth import require_admin
@@ -27,7 +27,13 @@ class DbStatusOut(BaseModel):
     checked_at: str | None = None
     host: str
     database: str
+    # Aliased: `schema` shadows a deprecated BaseModel.schema() method in
+    # Pydantic v2, which only warns rather than breaking, but the alias avoids
+    # the warning while keeping the wire field named "schema".
+    db_schema: str = Field(serialization_alias="schema")
     datasources: list[DatasourceHealthOut]
+
+    model_config = {"populate_by_name": True}
 
 
 @router.get("/db", response_model=DbStatusOut)
@@ -47,5 +53,6 @@ def db_status(_admin=Depends(require_admin)) -> DbStatusOut:
         checked_at=state["checked_at"],
         host=state["host"],
         database=state["database"],
+        db_schema=state["schema"],
         datasources=[DatasourceHealthOut(**d) for d in db.datasource_health()],
     )

@@ -31,7 +31,7 @@ SCHEMA_READY = False
 # fan-out reads below hit every selected datasource on a 1-5s cadence, and a
 # fresh TCP+TLS+auth handshake per poll per source does not fit in the budget.
 _pools: dict[int | None, "ConnectionPool"] = {}
-_pool_schemas: dict[int | None, str] = {None: "public"}
+_pool_schemas: dict[int | None, str] = {None: config.APP_DB_SCHEMA}
 _pool_lock = threading.Lock()
 
 # Cached app-DB health served by /health. Only ever describes localhost --
@@ -125,6 +125,7 @@ def db_state() -> dict[str, Any]:
         "schema_ready": SCHEMA_READY,
         "host": config.APP_DB_HOST,
         "database": config.APP_DB_NAME,
+        "schema": config.APP_DB_SCHEMA,
     }
 
 
@@ -139,7 +140,7 @@ def _build_pool(datasource_id: int | None) -> tuple["ConnectionPool", str]:
     if datasource_id is None:
         kwargs = dict(config.APP_DB_KWARGS)
         min_size, max_size, schema = (
-            config.APP_DB_POOL_MIN, config.APP_DB_POOL_MAX, "public",
+            config.APP_DB_POOL_MIN, config.APP_DB_POOL_MAX, config.APP_DB_SCHEMA,
         )
     else:
         ds = get_datasource_secret(datasource_id)
@@ -211,7 +212,7 @@ def close_all_pools() -> None:
         pools = list(_pools.values())
         _pools.clear()
         _pool_schemas.clear()
-        _pool_schemas[None] = "public"
+        _pool_schemas[None] = config.APP_DB_SCHEMA
     for pool in pools:
         try:
             pool.close()
@@ -250,6 +251,25 @@ def get_connection():
         if None in _outage_logged:
             logger.info("App database reachable again")
             _outage_logged.discard(None)
+
+
+def ensure_app_schema() -> None:
+    """Create the configured app-DB schema if it doesn't exist yet.
+
+    Must run before every ``init_*_table()`` call: those all use unqualified
+    table names and rely on ``search_path`` (baked into ``APP_DB_KWARGS``)
+    resolving to ``config.APP_DB_SCHEMA``. A schema that doesn't exist yet
+    doesn't fail at connect time -- only on the first unqualified CREATE TABLE,
+    with a confusing "no schema has been selected to create in" -- so this has
+    to run first, and explicitly, rather than relying on Postgres to fall
+    through to another schema.
+    """
+    with get_connection() as conn:
+        conn.execute(
+            sql.SQL("CREATE SCHEMA IF NOT EXISTS {}")
+            .format(sql.Identifier(config.APP_DB_SCHEMA))
+        )
+        conn.commit()
 
 
 def probe() -> bool:
@@ -1268,7 +1288,7 @@ def _table_source_conn(datasource_id: int | None):
     """
     if datasource_id is None:
         with get_connection() as conn:
-            yield conn, "public"
+            yield conn, config.APP_DB_SCHEMA
         return
     # Resolve the pool *before* claiming the probe. _pool_for raises ValueError
     # for an unknown id, and a claim made above it would never be released --
@@ -2228,8 +2248,10 @@ def init_report_tables() -> None:
     try:
         with get_connection() as conn:
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS event_logs_loc_tag_time_idx "
-                "ON public.event_logs (location, tag_name, at_date_time DESC)"
+                sql.SQL(
+                    "CREATE INDEX IF NOT EXISTS event_logs_loc_tag_time_idx "
+                    "ON {} (location, tag_name, at_date_time DESC)"
+                ).format(sql.Identifier(config.APP_DB_SCHEMA, "event_logs"))
             )
             conn.commit()
     except psycopg.Error:

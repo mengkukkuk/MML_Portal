@@ -89,7 +89,9 @@
       "Bash(powershell -NoProfile -Command \"Get-Process -Id 53380 | Select-Object Id,ProcessName,Path,StartTime\")",
       "Bash(powershell -NoProfile -Command \"Stop-Process -Id 53380 -Force\")",
       "Bash(powershell -NoProfile -Command \"Get-NetTCPConnection -LocalPort 8088 -State Listen -ErrorAction SilentlyContinue\")",
-      "Bash(./venv/Scripts/python.exe -m pytest tests/ -q)"
+      "Bash(./venv/Scripts/python.exe -m pytest tests/ -q)",
+      "Bash(venv/Scripts/python.exe -c \"import ast:*)",
+      "Bash(powershell -NoProfile -Command \"Get-CimInstance Win32_Process -Filter ''ProcessId=61744'' | Select-Object ProcessId, CommandLine\")"
     ]
   }
 }

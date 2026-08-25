@@ -20,24 +20,38 @@ def _get(name: str, default: str | None = None) -> str:
 DB_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
 
 # --- Application / configuration database ----------------------------------
-# Deliberately hardcoded and deliberately local. This database holds *only*
-# MMLPortal's own configuration: users, dashboards, panels, mimic layouts and
-# assets, report templates, saved datasources, and each user's source selection.
+# Host, user, and password are deliberately hardcoded and always local. This
+# database holds *only* MMLPortal's own configuration: users, dashboards,
+# panels, mimic layouts and assets, report templates, saved datasources, and
+# each user's source selection. Keeping it on localhost with fixed credentials
+# is what lets the app boot and log in even when every plant is unreachable —
+# the failure this separation exists to survive, and it must not itself depend
+# on a value that could be wrong or missing at a customer site.
 #
-# Plant data never comes from here. It comes from the rows in `datasources` that
-# the operator selects in the header. Keeping config on localhost is what lets
-# the app boot and log in even when every plant is unreachable — the failure this
-# separation exists to survive.
+# The database *name* and *schema* are the one exception: a customer's DBA may
+# already have provisioned e.g. "mmllocal"/"localbase" instead of the default
+# "postgres"/"public", so those two are read from .env with today's values as
+# the default — nothing changes for an existing install that leaves them unset.
+#
+# Plant data never comes from here. It comes from the rows in `datasources`
+# that the operator selects in the header.
 APP_DB_HOST = "localhost"
 APP_DB_PORT = 5432
-APP_DB_NAME = "postgres"
+APP_DB_NAME = os.getenv("APP_DB_NAME", "postgres")
 APP_DB_USER = "postgres"
 APP_DB_PASSWORD = "P@ssw0rd"
+APP_DB_SCHEMA = os.getenv("APP_DB_SCHEMA", "public")
 
 APP_DB_KWARGS = dict(
     host=APP_DB_HOST, port=APP_DB_PORT, dbname=APP_DB_NAME,
     user=APP_DB_USER, password=APP_DB_PASSWORD,
     connect_timeout=DB_CONNECT_TIMEOUT,
+    # Every app-config table is queried with an unqualified name (db.py relies
+    # on this), so the configured schema has to be resolved by the connection
+    # itself. No "public" fallback appended: if APP_DB_SCHEMA doesn't exist yet,
+    # an unqualified CREATE TABLE must fail loudly rather than silently landing
+    # in "public" — see db.ensure_app_schema, which creates it up front.
+    options=f"-c search_path={APP_DB_SCHEMA}",
 )
 
 # --- Connection pooling -----------------------------------------------------

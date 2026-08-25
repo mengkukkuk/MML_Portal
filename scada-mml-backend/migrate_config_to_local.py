@@ -78,16 +78,16 @@ def source_kwargs() -> dict[str, object]:
     )
 
 
-def _columns(conn: psycopg.Connection, table: str) -> list[tuple[str, str]]:
+def _columns(conn: psycopg.Connection, table: str, schema: str) -> list[tuple[str, str]]:
     """(name, data_type) in the table's own column order, or [] if absent."""
     return [
         (r[0], r[1])
         for r in conn.execute(
             """SELECT column_name, data_type
                  FROM information_schema.columns
-                WHERE table_schema = 'public' AND table_name = %s
+                WHERE table_schema = %s AND table_name = %s
                 ORDER BY ordinal_position""",
-            (table,),
+            (schema, table),
         ).fetchall()
     ]
 
@@ -99,9 +99,13 @@ def _shared_columns(src: psycopg.Connection, dst: psycopg.Connection, table: str
     exists on only one side would otherwise abort the whole table. Returning the
     target's order also means the INSERT column list and the SELECT agree without
     a second lookup.
+
+    The source is always `public` -- it predates the config/plant split, back
+    when everything lived in one schema. The target is whatever this deploy's
+    `APP_DB_SCHEMA` is configured to.
     """
-    source_names = {name for name, _ in _columns(src, table)}
-    return [(n, t) for n, t in _columns(dst, table) if n in source_names]
+    source_names = {name for name, _ in _columns(src, table, "public")}
+    return [(n, t) for n, t in _columns(dst, table, config.APP_DB_SCHEMA) if n in source_names]
 
 
 def _adapt(value, data_type: str):
@@ -135,9 +139,9 @@ def _reset_sequence(conn: psycopg.Connection, table: str) -> str | None:
     """
     row = conn.execute(
         sql.SQL(
-            "SELECT pg_get_serial_sequence('public.{}', 'id'), COALESCE(MAX(id), 0) "
-            "FROM {}"
-        ).format(sql.SQL(table), sql.Identifier(table))
+            "SELECT pg_get_serial_sequence(%s, 'id'), COALESCE(MAX(id), 0) FROM {}"
+        ).format(sql.Identifier(config.APP_DB_SCHEMA, table)),
+        (f"{config.APP_DB_SCHEMA}.{table}",),
     ).fetchone()
     seq, high = row[0], row[1]
     if not seq:
@@ -157,15 +161,15 @@ def _collisions(src, dst, table: str) -> list[int]:
     and attach themselves to the wrong parent. The result looks like a successful
     migration and is wrong, so refuse instead.
     """
-    def ids(conn):
-        if not any(n == "id" for n, _ in _columns(conn, table)):
+    def ids(conn, schema):
+        if not any(n == "id" for n, _ in _columns(conn, table, schema)):
             return set()
         return {
             r[0] for r in conn.execute(
-                sql.SQL("SELECT id FROM {}").format(sql.Identifier("public", table))
+                sql.SQL("SELECT id FROM {}").format(sql.Identifier(schema, table))
             ).fetchall()
         }
-    return sorted(ids(src) & ids(dst))
+    return sorted(ids(src, "public") & ids(dst, config.APP_DB_SCHEMA))
 
 
 def _copy_table(src, dst, table: str, apply: bool) -> dict:
@@ -183,7 +187,7 @@ def _copy_table(src, dst, table: str, apply: bool) -> dict:
     )
     rows = src.execute(select).fetchall()
     before = dst.execute(
-        sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier("public", table))
+        sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(config.APP_DB_SCHEMA, table))
     ).fetchone()[0]
 
     if not apply or not rows:
@@ -191,7 +195,7 @@ def _copy_table(src, dst, table: str, apply: bool) -> dict:
                 "inserted": 0, "columns": names}
 
     insert = sql.SQL("INSERT INTO {} ({}) VALUES ({}) ON CONFLICT DO NOTHING").format(
-        sql.Identifier("public", table),
+        sql.Identifier(config.APP_DB_SCHEMA, table),
         sql.SQL(", ").join(sql.Identifier(n) for n in names),
         sql.SQL(", ").join(sql.Placeholder() * len(names)),
     )
@@ -206,7 +210,7 @@ def _copy_table(src, dst, table: str, apply: bool) -> dict:
             )
         note = _reset_sequence(dst, table)
     after = dst.execute(
-        sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier("public", table))
+        sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(config.APP_DB_SCHEMA, table))
     ).fetchone()[0]
     dst.commit()
     return {"table": table, "read": len(rows), "before": before,
@@ -269,8 +273,10 @@ def main() -> int:
     if not args.apply:
         print("DRY RUN -- nothing will be written. Re-run with --apply.\n")
 
-    # The target must already have its schema: the app creates it on startup, and
-    # inventing it here would mean two definitions of every table to keep in sync.
+    # Mirrors main._create_tables(): ensure_app_schema must run first, since every
+    # init_*_table() below uses an unqualified name that resolves against
+    # APP_DB_SCHEMA via the target connection's search_path.
+    db.ensure_app_schema()
     db.init_users_table()
     db.init_panels_table()
     db.init_dashboards_table()
