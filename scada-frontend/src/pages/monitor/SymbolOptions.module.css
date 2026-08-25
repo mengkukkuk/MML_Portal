@@ -1,0 +1,300 @@
+/* SymbolOptions — appearance controls for the selected symbol.
+ *
+ * Carries its own copy of the rail's section/hint/field idiom rather than
+ * importing NodeInspector.module.css: CSS Modules have no cross-file
+ * inheritance, and `composes` across files duplicates the rules into this
+ * bundle anyway. Tokens only, so the two stay in step through the theme rather
+ * than through a shared class. */
+
+.section {
+  /* One height for every control in this panel, named because the rule rows
+     line a hexagon and an icon button up against a text field and all three
+     have to agree. 32 = 13px text + 7px padding + 1px border, doubled. */
+  --ctl-h: 32px;
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.sectionTitle {
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-soft);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--fg-dim);
+}
+
+.hint code {
+  padding: 0 3px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-muted);
+  background: var(--bg-elev);
+  border-radius: var(--radius-sm);
+}
+
+/* One control metric for the whole rail. NodeInspector's other sections and
+   both dialogs draw their fields at 13px on 7px/9px padding against --bg-app;
+   these matched neither until it was seen at production density, where a
+   control a size smaller than the one above it reads as a different *kind* of
+   control rather than as a smaller one. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field > span {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.field select {
+  width: 100%;
+  height: var(--ctl-h);
+  padding: 7px 9px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.field select:focus-visible,
+.cond:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.field select:disabled {
+  color: var(--fg-dim);
+  background: var(--bg-panel);
+}
+
+/* --- conditions ------------------------------------------------------- */
+
+/* Holds the field and its message as one column, so the message can never
+   compete with the input for room in the rule row beside it. */
+.condWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.cond {
+  width: 100%;
+  height: var(--ctl-h);
+  padding: 7px 9px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.cond::placeholder {
+  color: var(--fg-dim);
+  opacity: 0.7;
+}
+
+/* The border alone carries the error state, and the message sits below. A
+   condition half-typed is invalid for most of the time it is being written, so
+   this must not be loud enough to punish someone mid-keystroke. */
+.condBad {
+  border-color: var(--crit);
+}
+
+.error {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--crit);
+}
+
+/* --- colour rules ----------------------------------------------------- */
+
+.cases {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: rule;
+}
+
+.case {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Top-aligned, not centred: the condition field can grow a message under it,
+   and a swatch that slid down to the middle of a three-line error would no
+   longer be next to the field it belongs to. Everything on this line is given
+   the same height instead, so the row reads straight whether or not the rule
+   below it parses. */
+.caseRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* The rule's number, drawn from the list rather than typed, so removing a rule
+   cannot leave the numbering wrong. Priority order is the whole semantics of
+   this list — it has to be visible. */
+.caseRow::before {
+  counter-increment: rule;
+  content: counter(rule);
+  flex: 0 0 auto;
+  width: 12px;
+  height: var(--ctl-h);
+  line-height: var(--ctl-h);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  text-align: right;
+}
+
+/* 28 × 32 is the regular pointy-top ratio (2/√3) at the row's control height,
+   so the lens is a true hexagon rather than one squashed to fit a leftover
+   gap — the same shape, and the same argument, as the palette cells below. */
+.swatch {
+  flex: 0 0 auto;
+  width: 28px;
+  height: var(--ctl-h);
+  padding: 0;
+  border: 1px solid var(--border-soft);
+  cursor: pointer;
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+}
+
+.swatch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.remove {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: var(--ctl-h);
+  padding: 0;
+  font-size: 15px;
+  color: var(--fg-dim);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.remove:hover {
+  color: var(--crit);
+  background: var(--bg-elev);
+}
+
+.add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--ctl-h);
+  padding: 0 9px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--fg-muted);
+  background: var(--bg-elev);
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.add:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.add:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* --- the honeycomb ----------------------------------------------------
+ * Rows of 3·4·5·4·3 pointy-top hexagons. A cell is 26 wide and 30 tall, which
+ * is the regular ratio (2/√3); rows overlap by a quarter of that height so the
+ * points nest, and the odd/even row widths produce the half-step offset on
+ * their own once each row is centred.
+ */
+.comb {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-3) 0 var(--space-2);
+  background: var(--bg-app);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+
+.combRow {
+  display: flex;
+  gap: 3px;
+  margin-bottom: -7px;
+}
+
+.combRow:last-child {
+  margin-bottom: 0;
+}
+
+.cell {
+  width: 26px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+}
+
+.cell:hover {
+  transform: scale(1.12);
+}
+
+.cell:focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: -4px;
+}
+
+/* The selected cell is marked by a hole punched through its middle rather than
+   a ring around it: a hexagon's outline is already its neighbour's outline, so
+   an added border reads as belonging to the wrong cell. */
+.cellOn {
+  clip-path: polygon(
+    50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%, 50% 0%,
+    38% 43%, 62% 43%, 62% 57%, 38% 57%, 38% 43%
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cell:hover {
+    transform: none;
+  }
+}

@@ -4,6 +4,7 @@ import DeleteOutlineOutlined from '@mui/icons-material/DeleteOutlineOutlined'
 import RestartAltOutlined from '@mui/icons-material/RestartAltOutlined'
 import Rotate90DegreesCwOutlined from '@mui/icons-material/Rotate90DegreesCwOutlined'
 import { symbolDef, bubbleSpec, bubbleMoved } from '@/components/mimic/symbols'
+import SymbolOptions from './SymbolOptions'
 import styles from './NodeInspector.module.css'
 
 /**
@@ -15,7 +16,8 @@ import styles from './NodeInspector.module.css'
  * now shows the palette when nothing is selected and this when something is.
  */
 export default function NodeInspector({
-  node, datasources = [], onConnect, onDelete, onResetBubble, onResetSize, onRotate, onBack,
+  node, datasources = [], onConnect, onDelete, onResetBubble, onResetSize, onRotate,
+  onOptions, onBack,
 }) {
   const def = symbolDef(node)
   const b = node.binding
@@ -78,6 +80,11 @@ export default function NodeInspector({
           {b ? 'Edit connection' : 'Connect data source'}
         </Button>
       </div>
+
+      {/* Directly under the data source, because every option here is a rule
+          about the reading above it — a colour rule reads nothing until that
+          says which column, and the two are edited in one sitting. */}
+      <SymbolOptions node={node} onChange={(patch) => onOptions(node.id, patch)} />
 
       {bubble && (
         <div className={styles.section}>

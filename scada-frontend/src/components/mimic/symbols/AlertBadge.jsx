@@ -1,4 +1,5 @@
-import { stateColor, statusColor } from '../tagStatus'
+import { stateColor } from '../tagStatus'
+import { useConditionMet } from '../conditions'
 import s from './symbols.module.css'
 
 const CHAR_W = 0.58
@@ -40,10 +41,21 @@ function wrap(text, chars) {
  *
  * ## The condition
  *
- * Whatever already makes a tag warn or crit — the four limits from the binding
- * dialog, or a `state.map` naming an alarm state. Nothing new to configure: the
- * tile lights on exactly the condition the rest of the drawing already agrees
- * is off normal, so a tile and the gauge beside it can never disagree.
+ * By default: whatever already makes a tag warn or crit — the four limits from
+ * the binding dialog, or a `state.map` naming an alarm state. Nothing to
+ * configure, and the tile and the gauge beside it can never disagree.
+ *
+ * `options.when` replaces that with a condition the admin wrote — `value > 80`,
+ * `value < 2 or value > 90`. It **replaces** rather than adds to it, which is
+ * the important decision here. An annunciator answers one question, and a tile
+ * lit by either of two rules cannot answer it: an operator looking at a lit tile
+ * next to a gauge reading 60 has no way to tell whether the limits fired or the
+ * expression did, and no way to know which one to go and fix. One tile, one
+ * rule, stated in one place.
+ *
+ * `options.severity` says whether that condition is a warning or an alarm,
+ * because an expression can only report that it is true — it cannot know how
+ * much the plant should care.
  *
  * Crit flashes, warn holds steady. There is no acknowledge here — this is a
  * mimic, and the Alarms page owns that action.
@@ -59,8 +71,17 @@ export default function AlertBadge({ node, tag }) {
   const alarmByState = named === 'var(--crit)'
   const warnByState = named === 'var(--warn)'
 
-  const crit = !stale && (status === 'crit' || alarmByState)
-  const warn = !stale && !crit && (status === 'warn' || warnByState)
+  // null when no expression is configured, which is what keeps "no rule" from
+  // being read as "rule not met" and silencing the limits below.
+  const met = useConditionMet(node.options?.when, tag?.value)
+  const authored = met !== null
+
+  const crit = !stale && (authored
+    ? met && node.options?.severity !== 'warning'
+    : status === 'crit' || alarmByState)
+  const warn = !stale && !crit && (authored
+    ? met && node.options?.severity === 'warning'
+    : status === 'warn' || warnByState)
   const lit = crit || warn
   const color = crit ? 'var(--crit)' : 'var(--warn)'
 

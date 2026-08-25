@@ -150,7 +150,10 @@ async function seedGroup(items, minutes) {
       if (row?.value == null) return
       const value = applyExpr(exprFor(b.expr), row.value)
       const t = row.ts ? new Date(row.ts).getTime() : Date.now()
-      points[nodeId] = [[t, value]]
+      // A text reading is the current word, not a point on a trend — it goes to
+      // `latest` only. Pushing 'RUN' into the history array would hand a y-value
+      // of NaN to anything that later drew this node's sparkline.
+      if (typeof value === 'number') points[nodeId] = [[t, value]]
       latest[nodeId] = { value, ts: t, okAt: Date.now() }
     })
   }
@@ -191,7 +194,10 @@ async function pollGroup(items, prev, minutes) {
     const t = b.ts_col && row.ts ? new Date(row.ts).getTime() : sampleT
     const arr = points[nodeId] || []
     const lastT = arr.length ? arr[arr.length - 1][0] : -1
-    if (t > lastT) points[nodeId] = trimWindow([...arr, [t, value]], minutes)
+    // Same rule as the seed: only numbers go into the trend.
+    if (typeof value === 'number' && t > lastT) {
+      points[nodeId] = trimWindow([...arr, [t, value]], minutes)
+    }
     // `okAt` is the wall-clock of the last *successful* fetch, distinct from
     // `ts` (the row's own timestamp). A failed poll deliberately leaves the
     // previous reading in place so the drawing keeps its last known numbers —

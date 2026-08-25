@@ -23,7 +23,9 @@ export async function fetchSchemaColumns(table, datasourceId) {
   const { data } = await apiClient.get('/schema/columns', {
     params: { table, datasource_id: datasourceId ?? undefined },
   })
-  return data // { value_columns, ts_columns, filter_columns }
+  // value_columns is numeric; text_columns is the printable-but-not-plottable
+  // set, offered only to symbols that render a word.
+  return data // { value_columns, ts_columns, text_columns, filter_columns }
 }
 
 export async function fetchSchemaValues(table, column, limit = 500, datasourceId) {

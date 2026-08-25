@@ -146,8 +146,13 @@ def _validate_binding(
         first = str(e).strip().splitlines()[0] if str(e).strip() else "connection error"
         raise _bad(f"{where}: could not reach the selected connection: {first}")
 
-    if value_col not in cols["value_columns"]:
-        raise _bad(f"{where}: value_col must be a numeric column of {table!r}")
+    # Numeric *or* text. This validator's job is "the column exists and can be
+    # read", not "this symbol can draw it" — the same line the symbol-type
+    # allowlist was removed along. A display box or an annunciator legend binds
+    # to a status column holding 'RUN'/'FAULT', and which symbols offer that is
+    # decided in symbols/index.js, where adding a symbol already lives.
+    if value_col not in cols["value_columns"] and value_col not in cols["text_columns"]:
+        raise _bad(f"{where}: value_col must be a numeric or text column of {table!r}")
 
     ts_col = binding.get("ts_col")
     if ts_col and ts_col not in cols["ts_columns"]:

@@ -468,6 +468,26 @@ export default function MonitorPage() {
     }))
   }, [commitLayout])
 
+  /**
+   * Merge a patch into one symbol's appearance options.
+   *
+   * Merged rather than replaced so each control in the inspector can send only
+   * the key it owns — the alarm tile's severity select must not have to
+   * remember and resend the condition beside it.
+   *
+   * The bag itself is untyped here on purpose. `mimic.py` stores unknown node
+   * keys as-is, so a symbol growing an option stays a pure frontend change, the
+   * same way a symbol growing a *type* already is.
+   */
+  const setNodeOptions = useCallback((id, patch) => {
+    commitLayout((prev) => ({
+      ...prev,
+      nodes: prev.nodes.map((n) => (n.id === id
+        ? { ...n, options: { ...n.options, ...patch } }
+        : n)),
+    }))
+  }, [commitLayout])
+
   // Back to the size the symbol was drawn at. Position is left alone: the
   // symbol is where the engineer put it, and only its size was in question.
   const resetNodeSize = useCallback((id) => {
@@ -1174,6 +1194,7 @@ export default function MonitorPage() {
                     onResetBubble={resetBubble}
                     onResetSize={resetNodeSize}
                     onRotate={rotateNode}
+                    onOptions={setNodeOptions}
                     onBack={() => setSelectedId(null)}
                   />
                 ) : (

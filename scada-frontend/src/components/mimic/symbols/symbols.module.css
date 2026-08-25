@@ -474,6 +474,24 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* --- steady-state: the display-box ticker -----------------------------
+ * One cycle travels exactly one period, where the period is the legend plus its
+ * trailing gap. The component sets the period and computes the duration from
+ * its chosen speed, so this rule owns the loop and nothing else.
+ *
+ * Deliberately outside the `.stopped` freeze group: the ticker reports the
+ * *legend*, not motion in the plant, so a stopped drive must not leave its text
+ * frozen mid-word where it reads as a rendering fault.
+ */
+.marquee {
+  animation: mimic-marquee 6s linear infinite;
+}
+
+@keyframes mimic-marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(calc(var(--mimic-marquee-period, 100) * -1px)); }
+}
+
 /* --- ISA instrument bubble -------------------------------------------
  * The signature element. A conventional ISA-5.1 balloon is a circle split
  * by a hairline with the function letters over the loop number. Here the
@@ -580,9 +598,15 @@
   .recip,
   .roll,
   .ring,
+  .marquee,
   .delta {
     animation: none;
   }
+
+  /* The ticker is parked at its start rather than hidden: the first copy of the
+     legend sits left-aligned in the window, which is the most of the message
+     that can be shown without moving. That needs no rule — translateX(0) is
+     where it already sits once the animation is off. */
 
   /* The caret has no resting state of its own — with the fade removed it would
      stay on screen for good, so it is dropped rather than frozen. */

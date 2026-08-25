@@ -1265,6 +1265,18 @@ SENSITIVE_TABLES = {
     "mimic_assets", "mimic_symbols",
 }
 
+# Postgres text data_types a symbol may *print* rather than plot.
+#
+# Separate from _NUMERIC_TYPES rather than folded into it: a chart, a gauge and
+# a threshold all need a number, so widening the one list every picker reads
+# would offer a status column to a trend panel that cannot draw it. These are
+# reported alongside instead, and each caller decides whether it can render one.
+_TEXT_TYPES = (
+    "text",
+    "character varying",
+    "character",
+)
+
 # Postgres date/time data_types usable as a panel's timestamp/x-axis column.
 _TS_TYPES = (
     "timestamp without time zone",
@@ -1406,11 +1418,18 @@ def describe_table(table: str, datasource_id: int | None = None) -> dict[str, li
         skip = _primary_key_columns(conn, schema, table) | {"id"}
     value_columns = [c for c, t in columns.items() if t in _NUMERIC_TYPES and c not in skip]
     ts_columns = [c for c, t in columns.items() if t in _TS_TYPES]
+    # A status/description column: readable by symbols that print words, useless
+    # to anything that scales or plots. `skip` applies here too — a text primary
+    # key names the row rather than reporting anything about it.
+    text_columns = [c for c, t in columns.items() if t in _TEXT_TYPES and c not in skip]
     return {
         "value_columns": value_columns,
         "ts_columns": ts_columns,
+        "text_columns": text_columns,
         # Any column may identify a series; numeric value columns are the least
-        # useful as a filter so they're excluded to keep the list focused.
+        # useful as a filter so they're excluded to keep the list focused. Text
+        # columns stay in: naming the device is what they are usually for, and a
+        # column being printable somewhere else does not stop it identifying a row.
         "filter_columns": [c for c in columns if c not in value_columns],
     }
 

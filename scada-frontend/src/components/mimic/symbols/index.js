@@ -77,6 +77,11 @@ import CustomSymbol from './CustomSymbol'
  *                resolves these against the node's *current* x/y/w/h every
  *                render, which is why edge geometry is never stored.
  *   binding      which fields the symbol reads off its tag entry
+ *   text         true if the symbol can render a *word*, so the binding dialog
+ *                offers text columns beside the numeric ones. Absent means
+ *                numeric only, which is the honest default: a gauge, a level or
+ *                a trend has nothing to do with 'FAULT'. Only the symbols that
+ *                print their reading set it.
  *   bubble       { anchor: [fx,fy], offset: [dx,dy] } — where the ISA balloon
  *                sits and where its lead line lands. null = no instrument.
  *                A node may override this per-drawing; see bubbleSpec().
@@ -611,6 +616,7 @@ export const SYMBOLS = {
     // `both`: the box prints a mapped state as a word when one is configured
     // and the formatted number otherwise, so it needs to read either.
     binding: 'both',
+    text: true,
     bubble: null,
   },
   led: {
@@ -629,6 +635,10 @@ export const SYMBOLS = {
     defaultSize: { w: 156, h: 68 },
     ports: { signal: [0.5, 1] },
     binding: 'both',
+    // Text-capable because the most direct way to annunciate is to read the
+    // column that already says so — `status == 'FAULT'` rather than a numeric
+    // code the operator has to translate.
+    text: true,
     // The tile's own legend is the label, drawn inside the window, so it is the
     // one symbol here that prints nothing beneath itself.
     bubble: null,

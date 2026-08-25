@@ -19,6 +19,9 @@ import styles from './SymbolBindingDialog.module.css'
 /** Beacon-style symbols map a coded number onto a named state. */
 const DEFAULT_MAP = { 0: 'green', 1: 'amber', 2: 'red' }
 
+/** Six is where a float's honest precision runs out for plant instrumentation. */
+const DECIMAL_CHOICES = [0, 1, 2, 3, 4, 5, 6]
+
 const num = (v) => (v === '' || v == null ? null : Number(v))
 const str = (v) => (v === '' || v == null ? null : v)
 
@@ -78,8 +81,17 @@ function formFromNode(node) {
   }
 }
 
-function bindingFromForm(f) {
-  const hasRange = f.rangeLo !== '' && f.rangeHi !== ''
+/**
+ * Form → the `binding` object the server stores.
+ *
+ * `isText` is passed in rather than inferred, because only the dialog knows the
+ * catalogue. Everything numeric is written out empty for a text column instead
+ * of being carried along unused: a stored `critHi: 80` against a status column
+ * is a rule that will never fire, and the next person to open the drawing would
+ * have to work out for themselves that it was dead.
+ */
+function bindingFromForm(f, isText = false) {
+  const hasRange = !isText && f.rangeLo !== '' && f.rangeHi !== ''
   return {
     datasource_id: f.datasourceId === '' ? null : Number(f.datasourceId),
     table: f.table,
@@ -87,15 +99,17 @@ function bindingFromForm(f) {
     ts_col: str(f.tsCol),
     filter_col: str(f.filterCol),
     filter_val: f.filterCol ? str(f.filterVal) : null,
-    expr: f.expr || '',
-    unit: f.unit || '',
-    decimals: Number(f.decimals) || 0,
+    expr: isText ? '' : (f.expr || ''),
+    unit: isText ? '' : (f.unit || ''),
+    decimals: isText ? 0 : (Number(f.decimals) || 0),
     range: hasRange ? [Number(f.rangeLo), Number(f.rangeHi)] : null,
-    limits: {
+    limits: isText ? {} : {
       warnLo: num(f.warnLo), warnHi: num(f.warnHi),
       critLo: num(f.critLo), critHi: num(f.critHi),
     },
-    state: f.stateMode === 'none' ? null : {
+    // A text column *is* the state — deriving one from a number it does not
+    // have would be a mode that cannot run.
+    state: isText || f.stateMode === 'none' ? null : {
       mode: f.stateMode,
       runAbove: Number(f.runAbove) || 0,
       invert: !!f.invert,
@@ -130,6 +144,10 @@ export default function SymbolBindingDialog({ open, node, onClose, onSave }) {
 
   const def = node ? symbolDef(node) : null
   const supportsState = def?.binding === 'both' || def?.binding === 'discrete'
+  // Only the symbols that *print* their reading may bind to a status column.
+  // Offering one to a gauge would let an operator commission a loop that can
+  // only ever draw '––'.
+  const allowsText = !!def?.text
 
   const dsId = form.datasourceId === '' ? undefined : Number(form.datasourceId)
   const selectionKey = useDatasourceSelectionStore((s) => s.selectionKey)
@@ -160,16 +178,28 @@ export default function SymbolBindingDialog({ open, node, onClose, onSave }) {
 
   const cols = columnsQuery.data
   const tables = tablesQuery.data || []
+  const textCols = allowsText ? (cols?.text_columns || []) : []
+
+  // Which kind of reading is bound *right now*. Everything downstream of the
+  // value picker asks this rather than asking the symbol: a display box may
+  // legitimately be pointed at a number, and then decimals and limits are as
+  // meaningful for it as for anything else.
+  const isText = !!form.valueCol && textCols.includes(form.valueCol)
 
   // Clamp every downstream field to what the newly loaded level actually
   // offers. Without this a table switch leaves the previous table's column
   // selected and the save 400s with a column that isn't there.
   useEffect(() => {
     if (!cols) return
+    const pickable = allowsText
+      ? [...cols.value_columns, ...(cols.text_columns || [])]
+      : cols.value_columns
     setForm((f) => {
       const next = { ...f }
-      if (f.valueCol && !cols.value_columns.includes(f.valueCol)) next.valueCol = ''
-      if (!next.valueCol) next.valueCol = cols.value_columns[0] ?? ''
+      if (f.valueCol && !pickable.includes(f.valueCol)) next.valueCol = ''
+      // Numeric first even for a text-capable symbol: a table that has both is
+      // overwhelmingly a reading table with a name column beside it.
+      if (!next.valueCol) next.valueCol = pickable[0] ?? ''
       if (f.tsCol && !cols.ts_columns.includes(f.tsCol)) next.tsCol = ''
       if (f.filterCol && !cols.filter_columns.includes(f.filterCol)) {
         next.filterCol = ''
@@ -177,7 +207,7 @@ export default function SymbolBindingDialog({ open, node, onClose, onSave }) {
       }
       return next
     })
-  }, [cols])
+  }, [cols, allowsText])
 
   const exprError = useMemo(() => {
     const r = compileExpr(form.expr)
@@ -222,8 +252,8 @@ export default function SymbolBindingDialog({ open, node, onClose, onSave }) {
     y: 0,
     tagId: form.tagId || node.tagId,
     label: form.label || node.label,
-    binding: bindingFromForm(form),
-  } : null), [node, form])
+    binding: bindingFromForm(form, isText),
+  } : null), [node, form, isText])
 
   const previewTag = useMemo(() => {
     if (!previewNode || previewQuery.data?.value == null) return null
@@ -244,7 +274,7 @@ export default function SymbolBindingDialog({ open, node, onClose, onSave }) {
     onSave({
       tagId: form.tagId.trim() || null,
       label: form.label.trim() || node.label,
-      binding: bindingFromForm(form),
+      binding: bindingFromForm(form, isText),
     })
   }
 
@@ -308,15 +338,39 @@ export default function SymbolBindingDialog({ open, node, onClose, onSave }) {
 
             <label className={styles.field}>
               <span>Value column</span>
+              {/* Grouped, not merged, when both kinds are on offer. The choice
+                  changes what half this dialog can do — decimals, limits and the
+                  expression all go away for a word — so the list has to say
+                  which kind a column is before it is picked, not after. */}
               <select
                 value={form.valueCol}
                 disabled={!cols}
                 onChange={(e) => set({ valueCol: e.target.value })}
               >
                 <option value="">—</option>
-                {(cols?.value_columns || []).map((c) => <option key={c} value={c}>{c}</option>)}
+                {textCols.length === 0
+                  ? (cols?.value_columns || []).map((c) => <option key={c} value={c}>{c}</option>)
+                  : (
+                    <>
+                      <optgroup label="Numeric — measured">
+                        {(cols?.value_columns || []).map((c) => <option key={c} value={c}>{c}</option>)}
+                      </optgroup>
+                      <optgroup label="Text — printed as written">
+                        {textCols.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </optgroup>
+                    </>
+                  )}
               </select>
             </label>
+
+            {isText && (
+              <p className={styles.note}>
+                A text column is shown exactly as it is stored. It has no trend,
+                no scale and no limits, so the numeric presentation fields are
+                off — colour and alarm rules compare the word itself, in this
+                symbol&rsquo;s own options.
+              </p>
+            )}
 
             <label className={styles.field}>
               <span>Timestamp column</span>
@@ -387,106 +441,137 @@ export default function SymbolBindingDialog({ open, node, onClose, onSave }) {
               />
             </label>
 
-            <label className={styles.field}>
-              <span>Unit</span>
-              <select value={form.unit} onChange={(e) => set({ unit: e.target.value })}>
-                <option value="">None</option>
-                {UNIT_GROUPS.map((g) => (
-                  <optgroup key={g.category} label={g.category}>
-                    {g.units.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
-                  </optgroup>
-                ))}
-              </select>
-            </label>
-
-            <div className={styles.row}>
-              <label className={styles.field}>
-                <span>Decimals</span>
-                <input className={styles.mono} type="number" min="0" max="6" value={form.decimals} onChange={(e) => set({ decimals: e.target.value })} />
-              </label>
-              <label className={styles.field}>
-                <span>Range min</span>
-                <input className={styles.mono} type="number" value={form.rangeLo} onChange={(e) => set({ rangeLo: e.target.value })} />
-              </label>
-              <label className={styles.field}>
-                <span>Range max</span>
-                <input className={styles.mono} type="number" value={form.rangeHi} onChange={(e) => set({ rangeHi: e.target.value })} />
-              </label>
-            </div>
-
-            <div className={styles.row}>
-              <label className={styles.field}>
-                <span>Warn lo</span>
-                <input className={styles.mono} type="number" value={form.warnLo} onChange={(e) => set({ warnLo: e.target.value })} />
-              </label>
-              <label className={styles.field}>
-                <span>Warn hi</span>
-                <input className={styles.mono} type="number" value={form.warnHi} onChange={(e) => set({ warnHi: e.target.value })} />
-              </label>
-              <label className={styles.field}>
-                <span>Crit lo</span>
-                <input className={styles.mono} type="number" value={form.critLo} onChange={(e) => set({ critLo: e.target.value })} />
-              </label>
-              <label className={styles.field}>
-                <span>Crit hi</span>
-                <input className={styles.mono} type="number" value={form.critHi} onChange={(e) => set({ critHi: e.target.value })} />
-              </label>
-            </div>
-
-            <label className={styles.field}>
-              <span>Expression</span>
-              <input
-                className={styles.mono}
-                value={form.expr}
-                onChange={(e) => set({ expr: e.target.value })}
-                placeholder="value / 10"
-              />
-            </label>
-            {exprError && <p className={styles.error}>{exprError}</p>}
-
-            {supportsState && (
+            {/* Everything below is arithmetic on the reading — a unit to suffix
+                it with, a resolution to round it to, limits to compare it
+                against. A word has none of that, so for a text column they are
+                not disabled but absent: a greyed-out row of four limit boxes
+                reads as "fill these in later", which is never. */}
+            {isText ? (
+              <p className={styles.note}>
+                <span className={styles.mono}>{form.valueCol}</span> is text, so
+                there is nothing to scale, round or compare numerically. The
+                symbol prints the word and its own colour or alarm rules decide
+                the rest.
+              </p>
+            ) : (
               <>
-                <h4 className={styles.colTitle}>State</h4>
                 <label className={styles.field}>
-                  <span>Derived from</span>
-                  <select value={form.stateMode} onChange={(e) => set({ stateMode: e.target.value })}>
-                    <option value="none">Nothing — analog only</option>
-                    <option value="threshold">Threshold — running above a value</option>
-                    <option value="map">Map — coded value to state</option>
+                  <span>Unit</span>
+                  <select value={form.unit} onChange={(e) => set({ unit: e.target.value })}>
+                    <option value="">None</option>
+                    {UNIT_GROUPS.map((g) => (
+                      <optgroup key={g.category} label={g.category}>
+                        {g.units.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+                      </optgroup>
+                    ))}
                   </select>
                 </label>
 
-                {form.stateMode === 'threshold' && (
-                  <div className={styles.row}>
-                    <label className={styles.field}>
-                      <span>Running above</span>
-                      <input className={styles.mono} type="number" value={form.runAbove} onChange={(e) => set({ runAbove: e.target.value })} />
-                    </label>
-                    <label className={styles.check}>
-                      <input type="checkbox" checked={form.invert} onChange={(e) => set({ invert: e.target.checked })} />
-                      <span>Invert (running below)</span>
-                    </label>
-                  </div>
-                )}
+                <div className={styles.row}>
+                  {/* A selector rather than a number input, because this is a
+                      digit *limit* and a spinner's min/max are advisory —
+                      nothing stopped a typed 12 from reaching the readout.
+                      Seven fixed choices also show the resolution as a worked
+                      example, which "0–6" does not: picking the right one is a
+                      question about the instrument, not about arithmetic. */}
+                  <label className={styles.field}>
+                    <span>Decimals</span>
+                    <select
+                      className={styles.mono}
+                      value={form.decimals}
+                      onChange={(e) => set({ decimals: e.target.value })}
+                    >
+                      {DECIMAL_CHOICES.map((d) => (
+                        <option key={d} value={d}>{d} · {(1234.56789).toFixed(d)}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className={styles.field}>
+                    <span>Range min</span>
+                    <input className={styles.mono} type="number" value={form.rangeLo} onChange={(e) => set({ rangeLo: e.target.value })} />
+                  </label>
+                  <label className={styles.field}>
+                    <span>Range max</span>
+                    <input className={styles.mono} type="number" value={form.rangeHi} onChange={(e) => set({ rangeHi: e.target.value })} />
+                  </label>
+                </div>
 
-                {form.stateMode === 'map' && (
-                  <div className={styles.row}>
-                    {Object.keys(form.map).map((k) => (
-                      <label className={styles.field} key={k}>
-                        <span>{`Value ${k}`}</span>
-                        <input
-                          className={styles.mono}
-                          value={form.map[k]}
-                          onChange={(e) => set({ map: { ...form.map, [k]: e.target.value } })}
-                        />
-                      </label>
-                    ))}
-                  </div>
+                <div className={styles.row}>
+                  <label className={styles.field}>
+                    <span>Warn lo</span>
+                    <input className={styles.mono} type="number" value={form.warnLo} onChange={(e) => set({ warnLo: e.target.value })} />
+                  </label>
+                  <label className={styles.field}>
+                    <span>Warn hi</span>
+                    <input className={styles.mono} type="number" value={form.warnHi} onChange={(e) => set({ warnHi: e.target.value })} />
+                  </label>
+                  <label className={styles.field}>
+                    <span>Crit lo</span>
+                    <input className={styles.mono} type="number" value={form.critLo} onChange={(e) => set({ critLo: e.target.value })} />
+                  </label>
+                  <label className={styles.field}>
+                    <span>Crit hi</span>
+                    <input className={styles.mono} type="number" value={form.critHi} onChange={(e) => set({ critHi: e.target.value })} />
+                  </label>
+                </div>
+
+                <label className={styles.field}>
+                  <span>Expression</span>
+                  <input
+                    className={styles.mono}
+                    value={form.expr}
+                    onChange={(e) => set({ expr: e.target.value })}
+                    placeholder="value / 10"
+                  />
+                </label>
+                {exprError && <p className={styles.error}>{exprError}</p>}
+
+                {supportsState && (
+                  <>
+                    <h4 className={styles.colTitle}>State</h4>
+                    <label className={styles.field}>
+                      <span>Derived from</span>
+                      <select value={form.stateMode} onChange={(e) => set({ stateMode: e.target.value })}>
+                        <option value="none">Nothing — analog only</option>
+                        <option value="threshold">Threshold — running above a value</option>
+                        <option value="map">Map — coded value to state</option>
+                      </select>
+                    </label>
+
+                    {form.stateMode === 'threshold' && (
+                      <div className={styles.row}>
+                        <label className={styles.field}>
+                          <span>Running above</span>
+                          <input className={styles.mono} type="number" value={form.runAbove} onChange={(e) => set({ runAbove: e.target.value })} />
+                        </label>
+                        <label className={styles.check}>
+                          <input type="checkbox" checked={form.invert} onChange={(e) => set({ invert: e.target.checked })} />
+                          <span>Invert (running below)</span>
+                        </label>
+                      </div>
+                    )}
+
+                    {form.stateMode === 'map' && (
+                      <div className={styles.row}>
+                        {Object.keys(form.map).map((k) => (
+                          <label className={styles.field} key={k}>
+                            <span>{`Value ${k}`}</span>
+                            <input
+                              className={styles.mono}
+                              value={form.map[k]}
+                              onChange={(e) => set({ map: { ...form.map, [k]: e.target.value } })}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    <p className={styles.note}>
+                      This column is numeric, so a run/stop state is derived from the
+                      reading. Bind a text column instead and the stored word becomes
+                      the state directly.
+                    </p>
+                  </>
                 )}
-                <p className={styles.note}>
-                  /api/schema/latest returns a number, so a run/stop state is derived from the
-                  reading rather than read from a text column.
-                </p>
               </>
             )}
           </section>

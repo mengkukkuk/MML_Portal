@@ -22,6 +22,7 @@ catalogue governs what may be read from it (sensitive tables are denylisted
 there); filter values are always parameterized.
 """
 from datetime import datetime
+from decimal import Decimal
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -53,11 +54,21 @@ class TableOut(BaseModel):
 class ColumnsOut(BaseModel):
     value_columns: list[str]
     ts_columns: list[str]
+    text_columns: list[str] = []
     filter_columns: list[str]
 
 
 class LatestOut(BaseModel):
-    value: float | None = None
+    # A reading is a number *or* a word. Mimic symbols that print rather than
+    # plot — a display box, an annunciator legend — bind to status columns that
+    # hold 'RUN'/'FAULT', and typing this as `float` alone did not merely
+    # inconvenience them: it made a text column a 500 rather than a rejection.
+    #
+    # `float` is listed first so lax coercion still resolves a Decimal to a
+    # number. Under smart-union an actual `str` matches exactly and stays a
+    # string, so a text column reading "12.5" is *not* quietly turned into a
+    # float — the column's type decides, not the row's contents.
+    value: float | str | None = None
     ts: datetime | None = None
     datasource_id: int | None = None
     datasource_name: str | None = None
@@ -183,12 +194,23 @@ def get_series(
     _user: dict = Depends(get_current_user),
     datasource_ids: list[int | None] = Depends(active_datasources),
 ):
-    """One time-series window per source — seeds real history on load."""
+    """One time-series window per source — seeds real history on load.
+
+    Non-numeric readings are dropped rather than 400ing the request. A text
+    column has no trend to draw, but it is a legitimate binding for a symbol
+    that prints words, and those symbols share this seed path with the ones that
+    plot. Answering "no points" lets the caller fall through to its existing
+    empty-window fallback and read the latest row, where a rejection here would
+    have to be special-cased by every caller instead.
+    """
+    def plottable(v):
+        return isinstance(v, (int, float, Decimal)) and not isinstance(v, bool)
+
     def one(ds):
         rows = db.table_series(table, value_col, filter_col, filter_val, ts_col,
                                minutes, ds)
         return [{"points": [{"ts": r["ts"], "value": r["value"]}
-                            for r in rows if r["value"] is not None]}]
+                            for r in rows if plottable(r["value"])]}]
 
     series, reports = db.fan_out_rows(datasource_ids, one, label="table series")
     if not series:

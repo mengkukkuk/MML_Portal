@@ -44,13 +44,12 @@ function round(v, decimals) {
 }
 
 /**
- * Run/stop (or a mapped beacon colour) from a numeric reading.
+ * Run/stop (or a mapped beacon colour) from a *numeric* reading.
  *
- * /api/schema/latest returns a float, so a state column has to be *derived*
- * from a number rather than read as text — that is the deliberate limit of
- * this pass, not an oversight. `threshold` covers drives (running above a
- * setpoint, invertible for fail-closed signals); `map` covers coded values
- * like a beacon's 0/1/2.
+ * Only for numeric columns. A text column needs none of this — it already says
+ * 'RUN' or 'FAULT', and is carried straight into `state` below. `threshold`
+ * covers drives (running above a setpoint, invertible for fail-closed signals);
+ * `map` covers coded values like a beacon's 0/1/2.
  */
 export function deriveState(cfg, value) {
   if (!cfg || value == null) return null
@@ -83,8 +82,20 @@ export function deriveTag({
 
   const value = reading?.value ?? prev?.value ?? null
   const ts = reading?.ts ?? prev?.ts ?? now
-  const display = round(value, decimals)
-  const state = deriveState(b.state, value)
+
+  // A reading can be a word. `/api/schema/latest` types its value as
+  // `float | str`, and a display box or an annunciator may be bound to a status
+  // column, so this branch is on the *reading*, not on the binding: whatever
+  // Postgres said the column was is what arrives here.
+  //
+  // The word becomes `state`, not `display`, and that is the whole trick —
+  // `state` is the existing channel for "this tag is a name rather than a
+  // number", already understood by formatValue, stateColor and isFlowing. So a
+  // text column joins the drawing through machinery that was there for mapped
+  // beacons, instead of every symbol growing a second way to be a word.
+  const isText = typeof value === 'string'
+  const display = isText ? null : round(value, decimals)
+  const state = isText ? value : deriveState(b.state, value)
 
   // Two ways to go stale: the poll returned nothing, or the row it returned is
   // older than the reader expects. The second is the one that catches a
