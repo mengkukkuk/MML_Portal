@@ -11,10 +11,12 @@ Two kinds of route live here, and they treat `datasource_id` differently:
   the operator has not selected. Omitting it now means *the first active source*
   rather than the app database — the config database has no plant tables to
   offer, so the old default could only ever produce an empty picker.
-* **Data** (`/latest`, `/series`) ignores `datasource_id` entirely and fans out
-  over the header selection. That is the whole point of the header: a dashboard
-  becomes portable, and the same layout can be pointed at another plant without
-  editing every panel.
+* **Data** (`/latest`, `/series`) honours an explicit `datasource_id` too, the same
+  existence-only way the catalogue routes do — a symbol pinned to one plant has to
+  keep reading it regardless of what else is in the header. Omitting it keeps the
+  original point of the header: a dashboard becomes portable, fanning out over the
+  selection so the same layout can be pointed at another plant without editing
+  every panel.
 
 Security: table/column names are SQL identifiers validated against an
 information_schema allowlist in db.py, per connection, so a plant database's own
@@ -157,6 +159,7 @@ def get_latest(
     filter_col: str | None = Query(None),
     filter_val: str | None = Query(None),
     ts_col: str | None = Query(None),
+    datasource_id: int | None = Query(None),
     _user: dict = Depends(get_current_user),
     datasource_ids: list[int | None] = Depends(active_datasources),
 ):
@@ -165,9 +168,13 @@ def get_latest(
     A bad table/column name is a 400 from every source at once, so it is
     reported as one: `fan_out` would otherwise reduce a genuine
     misconfiguration to N identical per-source warnings and a 200 with no rows.
+
+    An explicit `datasource_id` bypasses the header selection entirely — a
+    symbol pinned to one plant, same as `_catalogue_source` above.
     """
+    targets = [datasource_id] if datasource_id is not None else datasource_ids
     readings, reports = db.fan_out_rows(
-        datasource_ids,
+        targets,
         lambda ds: (
             [row] if (row := db.table_latest(
                 table, value_col, filter_col, filter_val, ts_col, ds)) else []
@@ -191,6 +198,7 @@ def get_series(
     filter_col: str | None = Query(None),
     filter_val: str | None = Query(None),
     minutes: int = Query(15, ge=1, le=10080),
+    datasource_id: int | None = Query(None),
     _user: dict = Depends(get_current_user),
     datasource_ids: list[int | None] = Depends(active_datasources),
 ):
@@ -202,6 +210,9 @@ def get_series(
     plot. Answering "no points" lets the caller fall through to its existing
     empty-window fallback and read the latest row, where a rejection here would
     have to be special-cased by every caller instead.
+
+    An explicit `datasource_id` bypasses the header selection entirely, same as
+    `/latest` above.
     """
     def plottable(v):
         return isinstance(v, (int, float, Decimal)) and not isinstance(v, bool)
@@ -212,7 +223,8 @@ def get_series(
         return [{"points": [{"ts": r["ts"], "value": r["value"]}
                             for r in rows if plottable(r["value"])]}]
 
-    series, reports = db.fan_out_rows(datasource_ids, one, label="table series")
+    targets = [datasource_id] if datasource_id is not None else datasource_ids
+    series, reports = db.fan_out_rows(targets, one, label="table series")
     if not series:
         _raise_if_all_failed(reports)
     return {"series": series, "sources": reports}

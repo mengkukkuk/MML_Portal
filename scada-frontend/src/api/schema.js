@@ -4,12 +4,13 @@ import { apiClient } from './client'
  * Schema-introspection API — backs the generic table data source.
  * Mirrors the /api/schema router in scada-mml-backend/schema.py.
  *
- * The three catalogue calls take an optional `datasourceId` so the panel editor
- * can browse a connection the operator has not selected. The two data calls
- * (`latest`, `series`) don't: they answer for the datasources selected in the
- * header, returning one entry per source alongside a `sources` report. That is
- * what makes a dashboard portable — the same panel follows the header instead
- * of being pinned to the connection it was authored against.
+ * All five calls take an optional `datasourceId`. The three catalogue calls use
+ * it so the panel editor can browse a connection the operator has not selected.
+ * The two data calls (`latest`, `series`) bypass the header entirely when it's
+ * given — a symbol pinned to one plant keeps reading it — and otherwise fan out
+ * over the datasources selected in the header, returning one entry per source
+ * alongside a `sources` report. Omitting it is what makes a binding portable —
+ * it follows the header instead of being pinned to one connection.
  */
 
 export async function fetchSchemaTables(datasourceId) {
@@ -35,7 +36,9 @@ export async function fetchSchemaValues(table, column, limit = 500, datasourceId
   return data // [string]
 }
 
-export async function fetchSchemaLatest({ table, valueCol, filterCol, filterVal, tsCol }) {
+export async function fetchSchemaLatest({
+  table, valueCol, filterCol, filterVal, tsCol, datasourceId,
+}) {
   const { data } = await apiClient.get('/schema/latest', {
     params: {
       table,
@@ -43,12 +46,15 @@ export async function fetchSchemaLatest({ table, valueCol, filterCol, filterVal,
       filter_col: filterCol || undefined,
       filter_val: filterVal ?? undefined,
       ts_col: tsCol || undefined,
+      datasource_id: datasourceId ?? undefined,
     },
   })
   return data // { readings: [{ value, ts, datasource_id, datasource_name }], sources }
 }
 
-export async function fetchSchemaSeries({ table, valueCol, tsCol, filterCol, filterVal, minutes = 15 }) {
+export async function fetchSchemaSeries({
+  table, valueCol, tsCol, filterCol, filterVal, minutes = 15, datasourceId,
+}) {
   const { data } = await apiClient.get('/schema/series', {
     params: {
       table,
@@ -57,6 +63,7 @@ export async function fetchSchemaSeries({ table, valueCol, tsCol, filterCol, fil
       filter_col: filterCol || undefined,
       filter_val: filterVal ?? undefined,
       minutes,
+      datasource_id: datasourceId ?? undefined,
     },
   })
   return data // { series: [{ points: [{ ts, value }], datasource_id, datasource_name }], sources }

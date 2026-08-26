@@ -223,17 +223,18 @@ export default function SymbolBindingDialog({ open, node, onClose, onSave }) {
   const valid = !!form.table && !!form.valueCol && !exprError && !filterMissing
 
   // --- live preview ---------------------------------------------------------
-  // The connection picker above only decides which catalogue the table/column
-  // dropdowns browse. Reads come from the header selection, so the preview
-  // deliberately drops `datasourceId` and shows the primary source's value —
-  // which is exactly what the drawing will render once saved. Previewing the
-  // browsed connection instead would show a number the symbol never displays.
+  // The connection picker above now decides more than the catalogue: it's the
+  // same `datasourceId` the binding saves as `datasource_id` and the drawing
+  // reads from at runtime, so the preview has to pass it through — showing the
+  // header's primary source here while the symbol reads from something else
+  // once saved would make this preview a lie.
   const previewArgs = valid ? {
     table: form.table,
     valueCol: form.valueCol,
     tsCol: form.tsCol || undefined,
     filterCol: form.filterCol || undefined,
     filterVal: form.filterVal || undefined,
+    datasourceId: dsId,
   } : null
 
   const previewQuery = useQuery({
@@ -314,12 +315,18 @@ export default function SymbolBindingDialog({ open, node, onClose, onSave }) {
                   datasourceId: e.target.value, table: '', valueCol: '', tsCol: '', filterCol: '', filterVal: '',
                 })}
               >
-                <option value="">Default (app database)</option>
+                <option value="">Follow header selection</option>
                 {(datasourcesQuery.data || []).map((d) => (
                   <option key={d.id} value={d.id}>{d.name}</option>
                 ))}
               </select>
             </label>
+            <p className={styles.note}>
+              This is where the symbol reads from, not just what it browses.
+              Leave it on the header and this symbol tracks whichever source is
+              primary there; pick one and it reads that plant regardless of what
+              the header selects.
+            </p>
 
             <label className={styles.field}>
               <span>Table</span>

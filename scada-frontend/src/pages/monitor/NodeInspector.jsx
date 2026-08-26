@@ -25,7 +25,7 @@ export default function NodeInspector({
   const resized = node.w !== def?.defaultSize.w || node.h !== def?.defaultSize.h
   const rot = ((Math.round(node.rot || 0) % 360) + 360) % 360
   const connection = b?.datasource_id == null
-    ? 'Default (app database)'
+    ? 'Follow header selection'
     : datasources.find((d) => d.id === b.datasource_id)?.name
       ?? `Connection ${b.datasource_id} (missing)`
 

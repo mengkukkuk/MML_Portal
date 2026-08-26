@@ -194,22 +194,28 @@ def test_schema_series_is_one_entry_per_source(monkeypatch):
     monkeypatch.setattr(db, "table_series", lambda *a: [
         {"ts": now, "value": 1.0}, {"ts": now, "value": 2.0}])
     body = schema_router.get_series("variables_tag", "current_value", "ts",
-                                    None, None, 15, USER, SOURCES)
+                                    None, None, 15, None, USER, SOURCES)
     assert [s["datasource_id"] for s in body["series"]] == [1, 2]
     assert len(body["series"][0]["points"]) == 2
 
 
-def test_schema_series_uses_the_header_not_a_panel_binding(monkeypatch):
-    """`/series` takes no datasource_id at all — the header wins, which is what
-    makes one dashboard layout portable between plants."""
-    import inspect
-    params = inspect.signature(schema_router.get_series).parameters
-    assert "datasource_id" not in params
-
+def test_schema_series_defaults_to_the_header_when_no_datasource_is_pinned(monkeypatch):
+    """Omitting datasource_id keeps `/series` portable across the header
+    selection — a dashboard can still be pointed at another plant without
+    editing every panel."""
     seen = []
     monkeypatch.setattr(db, "table_series", lambda *a: seen.append(a[-1]) or [])
-    schema_router.get_series("t", "v", "ts", None, None, 15, USER, SOURCES)
+    schema_router.get_series("t", "v", "ts", None, None, 15, None, USER, SOURCES)
     assert sorted(seen) == [1, 2]
+
+
+def test_schema_series_honours_an_explicit_pinned_datasource(monkeypatch):
+    """A symbol pinned to one plant keeps reading it, bypassing the header
+    selection entirely — the same existence-only rule the catalogue routes use."""
+    seen = []
+    monkeypatch.setattr(db, "table_series", lambda *a: seen.append(a[-1]) or [])
+    schema_router.get_series("t", "v", "ts", None, None, 15, 2, USER, SOURCES)
+    assert seen == [2]
 
 
 def test_schema_latest_reports_a_bad_column_as_400(monkeypatch):
@@ -221,15 +227,36 @@ def test_schema_latest_reports_a_bad_column_as_400(monkeypatch):
 
     monkeypatch.setattr(db, "table_latest", bad)
     with pytest.raises(HTTPException) as e:
-        schema_router.get_latest("t", "nope", None, None, None, USER, SOURCES)
-    assert e.value.status_code == 400 and "nope" in e.value.detail
+        schema_router.get_latest("t", "nope", None, None, None, None, USER, SOURCES)
+    assert e.value.status_code == 400 and "nope" in e.value.detail["error"]
 
 
 def test_schema_latest_is_404_only_when_sources_answered_but_had_nothing(monkeypatch):
     monkeypatch.setattr(db, "table_latest", lambda *a: None)
     with pytest.raises(HTTPException) as e:
-        schema_router.get_latest("t", "v", None, None, None, USER, SOURCES)
+        schema_router.get_latest("t", "v", None, None, None, None, USER, SOURCES)
     assert e.value.status_code == 404
+
+
+def test_schema_latest_honours_an_explicit_pinned_datasource(monkeypatch):
+    """Same bypass as `/series`, for the poll every mimic symbol actually uses."""
+    seen = []
+    monkeypatch.setattr(
+        db, "table_latest", lambda *a: seen.append(a[-1]) or {"value": 1})
+    schema_router.get_latest("t", "v", None, None, None, 2, USER, SOURCES)
+    assert seen == [2]
+
+
+def test_schema_latest_pinned_source_failure_is_a_400(monkeypatch):
+    """One pinned source is the whole request — its failure is "all sources
+    failed" the same way an unreachable header selection would be."""
+    def boom(*a):
+        raise psycopg.OperationalError("down")
+
+    monkeypatch.setattr(db, "table_latest", boom)
+    with pytest.raises(HTTPException) as e:
+        schema_router.get_latest("t", "v", None, None, None, 2, USER, SOURCES)
+    assert e.value.status_code == 400
 
 
 def test_schema_catalogue_still_honours_an_explicit_datasource(monkeypatch):

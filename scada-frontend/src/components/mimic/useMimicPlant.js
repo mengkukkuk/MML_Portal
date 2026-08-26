@@ -30,19 +30,21 @@ function unreachableAfterMs(pollSeconds) {
  * tag, and the rail filters one shared event list. Independent per-symbol
  * queries can't produce either without a coordinating layer on top.
  *
- * This used to be one query per `binding.datasource_id`, so that an unreachable
- * historian couldn't add its connect timeout to every other symbol's tick. That
- * bucketing no longer routes anywhere: every read now goes to the datasources
- * selected in the header, so all bindings share one destination and the backend
- * absorbs a dead host on its own fan-out workers.
+ * Every binding still gets its own request, coordinated within one round so the
+ * whole drawing's pulses/events land together, and an unreachable historian
+ * behind one binding can't add its connect timeout to every other symbol's
+ * tick — the backend absorbs a dead host on its own fan-out workers regardless
+ * of how many bindings are asking about it this tick.
  *
- * ## Symbols read the primary source only
+ * ## A symbol reads its own source, or the header's primary
  *
  * A symbol is one physical asset — a specific generator in a specific building
- * — so fanning it out across plants would draw several plants' numbers onto one
- * piece of equipment. Every reading is therefore taken from the first selected
- * source; selecting more sources enriches Live/Events/Alarms and leaves the
- * drawing alone.
+ * — so it must never quietly draw a *different* plant's number onto that asset.
+ * `binding.datasource_id`, set via the Connection picker in
+ * SymbolBindingDialog, decides which: pinned, the binding reads exactly that
+ * source regardless of the header; left unset, it falls back to the header's
+ * first selected source (fanning out across the rest only enriches
+ * Live/Events/Alarms, and leaves this drawing alone either way).
  */
 
 /** Sparkline window. A view preference, so it lives here, not in the doc. */
@@ -80,6 +82,10 @@ function argsOf(b) {
     tsCol: b.ts_col || undefined,
     filterCol: b.filter_col || undefined,
     filterVal: b.filter_val ?? undefined,
+    // Pinned bypasses the header selection entirely; omitted, this binding
+    // fans out across it same as before -- see SymbolBindingDialog's
+    // Connection picker, the only place datasource_id is ever set.
+    datasourceId: b.datasource_id ?? undefined,
   }
 }
 
@@ -92,6 +98,7 @@ function signatureOf(items) {
   return items
     .map(({ nodeId, b }) => [
       nodeId, b.table, b.value_col, b.ts_col, b.filter_col, b.filter_val, b.expr,
+      b.datasource_id,
     ].join(''))
     .join('')
 }
@@ -158,9 +165,11 @@ async function seedGroup(items, minutes) {
     })
   }
 
-  // Every binding fans out over the identical selection, so a source any one
-  // of these concurrent requests caught mid-failure is really down — a
-  // luckier sibling request's "ok" must not hide it.
+  // An unpinned binding fans out over the identical header selection as every
+  // other unpinned one, so a source any one of those concurrent requests caught
+  // mid-failure is really down — a luckier sibling's "ok" must not hide it. A
+  // pinned binding's request only ever touches its own source, so it merges in
+  // cleanly without disturbing anyone else's report.
   return { points, latest, sources: mergeSources(sourceLists) || [] }
 }
 
