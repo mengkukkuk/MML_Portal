@@ -369,9 +369,13 @@
   opacity: 0.7;
 }
 
+/* Align · Width · Decimals-or-Time. The middle is a fixed 54px because it holds
+   one small number and nothing else, and the outer two share what is left —
+   unevenly, since the third slot may be showing a timestamp sample, which is the
+   longest thing any control in this panel has to say. */
 .colGrid {
   display: grid;
-  grid-template-columns: 1fr 62px 1fr;
+  grid-template-columns: 1fr 54px 1.3fr;
   gap: var(--space-2);
   min-width: 0;
 }

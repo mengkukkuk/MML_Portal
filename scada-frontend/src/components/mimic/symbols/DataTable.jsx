@@ -43,11 +43,48 @@ const CHAR_W = 0.62
 const MIN_ROW_H = 13
 
 /**
- * The column list an admin configured, normalised, or the bound column alone.
+ * How a timestamp column prints.
+ *
+ * A historian is read against the clock on the wall of the room it is in, so the
+ * default prints the clock alone. The date is identical on every row but one a
+ * day, and repeating it twenty times spends the column's whole width saying
+ * nothing — so `time` prints the date only on the rows where the day actually
+ * turns over. That is what a logbook does, and for the same reason.
+ */
+export const TIME_FORMATS = {
+  time: '14:22:05',
+  datetime: '06 Aug 14:22:05',
+  date: '2026-08-06',
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const pad2 = (n) => String(n).padStart(2, '0')
+
+/* Strings only. A Postgres timestamp arrives as ISO text through JSON, whereas
+ * `new Date(number)` would happily turn a perfectly good counter reading into a
+ * date in 1970 if a format were ever set on the wrong column. */
+function asDate(value) {
+  if (value instanceof Date) return value
+  if (typeof value !== 'string' || !value) return null
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+const clock = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+const dayLabel = (d) => `${pad2(d.getDate())} ${MONTHS[d.getMonth()]}`
+const isoDay = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+
+/**
+ * The column list an admin configured, normalised, or the log the binding
+ * already describes.
  *
  * A table with no structure yet is not broken — it is a table someone has just
- * dropped on the sheet — so it falls back to the one column the binding already
- * names and draws something real immediately.
+ * dropped on the sheet — so it falls back to what the binding names. A binding
+ * that names both a timestamp and a value *is* a log historian: stamp then
+ * reading, newest at the top, which is the shape those two columns already have
+ * and the only useful thing to draw from them. Bound to a value alone it falls
+ * back to that one column, because a list of readings with nothing to place them
+ * in time is all there is to show.
  */
 export function tableColumns(node) {
   const configured = node?.options?.columns
@@ -55,8 +92,16 @@ export function tableColumns(node) {
     ? configured.filter((c) => c && typeof c.col === 'string' && c.col)
     : []
   if (list.length) return list.slice(0, MAX_TABLE_COLUMNS)
-  const anchor = node?.binding?.value_col
-  return anchor ? [{ col: anchor }] : []
+
+  // The stamp is the wider of the two and gets the wider share: it is up to
+  // fifteen characters on the rows that carry a date, where a reading is three
+  // or four. Split evenly, the stamp truncates while the value sits in a column
+  // half of which is empty — the one proportion a log must not have.
+  const b = node?.binding ?? {}
+  const seed = []
+  if (b.ts_col) seed.push({ col: b.ts_col, format: 'time', weight: 1.5 })
+  if (b.value_col) seed.push({ col: b.value_col, weight: 1 })
+  return seed
 }
 
 /** How many rows this table asks for. */
@@ -66,9 +111,25 @@ export function tableRowLimit(node) {
   return Math.min(MAX_TABLE_ROWS, Math.max(1, Math.round(n)))
 }
 
-/** One cell, as text. Nulls print as a dash rather than the word "null". */
-function cellText(value, spec) {
+/**
+ * One cell, as text. Nulls print as a dash rather than the word "null".
+ *
+ * `above` is the same column's value in the row drawn above this one, which the
+ * clock format needs and nothing else does: rows run newest first, so the day
+ * turns over as you read *down*, and the date is written on the row where it
+ * turns. The topmost row always carries it — that is the date this page of the
+ * log is for.
+ */
+function cellText(value, spec, above) {
   if (value === null || value === undefined) return '–'
+  if (spec.format) {
+    const d = asDate(value)
+    if (!d) return String(value)
+    if (spec.format === 'date') return isoDay(d)
+    if (spec.format === 'datetime') return `${dayLabel(d)} ${clock(d)}`
+    const prev = asDate(above)
+    return !prev || isoDay(prev) !== isoDay(d) ? `${dayLabel(d)} ${clock(d)}` : clock(d)
+  }
   if (typeof value === 'number') {
     return spec.decimals == null ? String(value) : value.toFixed(spec.decimals)
   }
@@ -100,9 +161,17 @@ export default function DataTable({ node, tag }) {
   // Fewer, legible rows beat every row rendered as a hairline. The limit is
   // asked for in SQL; this is what the box can honour of it.
   const capacity = Math.max(1, Math.floor(bodyH / MIN_ROW_H))
-  const shown = rows.slice(0, capacity)
-  const hidden = rows.length - shown.length
-  const rowH = shown.length ? bodyH / Math.max(shown.length, 1) : bodyH
+  const visible = Math.min(rows.length, capacity)
+  const hidden = rows.length - visible
+  const rowH = visible ? bodyH / visible : bodyH
+
+  // Ordered by a time column means newest first, which means new rows land at
+  // the top and push the rest down. One row past what fits is drawn too, so the
+  // one being pushed off has somewhere to go: it slides out under the well's
+  // bottom edge instead of blinking out of a list it is still part of.
+  const tape = !!node.binding?.ts_col
+  const drawn = rows.slice(0, tape ? Math.min(rows.length, capacity + 1) : visible)
+  const clipId = `mimic-clip-${node.id}`
 
   const cellPad = 5
   const gridW = wellW - cellPad * 2
@@ -152,7 +221,7 @@ export default function DataTable({ node, tag }) {
           y={wellY - 5}
           textAnchor="end"
         >
-          {hidden > 0 ? `${shown.length} of ${rows.length}` : `${rows.length} rows`}
+          {hidden > 0 ? `${visible} of ${rows.length}` : `${rows.length} rows`}
         </text>
       )}
 
@@ -178,9 +247,26 @@ export default function DataTable({ node, tag }) {
         y2={wellY + headH}
       />
 
-      {shown.map((row, i) => (
-        <g key={keyFor(row)} transform={`translate(0 ${wellY + headH + i * rowH})`}>
-          <g className={s.roll}>
+      <clipPath id={clipId}>
+        <rect
+          x={wellX}
+          y={wellY + headH}
+          width={wellW}
+          height={Math.max(0, wellH - headH)}
+        />
+      </clipPath>
+
+      <g clipPath={`url(#${clipId})`}>
+        {drawn.map((row, i) => (
+          /* Position is a CSS transform, not the SVG attribute, so it is a
+             property that can be transitioned. The enter animation touches only
+             opacity for the same reason — the two would fight over `transform`
+             and the row would jump to its place before fading in. */
+          <g
+            key={keyFor(row)}
+            className={tape ? `${s.tapeRow} ${s.tapeEnter}` : s.roll}
+            style={{ transform: `translateY(${wellY + headH + i * rowH}px)` }}
+          >
             {i > 0 && (
               <line
                 className={s.tableRule}
@@ -192,8 +278,10 @@ export default function DataTable({ node, tag }) {
             )}
             {geometry.map(({ spec, x, w: cw }) => {
               const raw = row[spec.col]
+              // A stamp is a label, not a quantity — it stays left however the
+              // auto rule would read the string it happens to be stored as.
               const right = spec.align === 'right'
-                || (spec.align !== 'left' && typeof raw === 'number')
+                || (spec.align !== 'left' && !spec.format && typeof raw === 'number')
               return (
                 <text
                   key={spec.col}
@@ -203,13 +291,13 @@ export default function DataTable({ node, tag }) {
                   textAnchor={right ? 'end' : 'start'}
                   style={{ fontSize: `${fontPx}px` }}
                 >
-                  {fit(cellText(raw, spec), cw - cellPad, fontPx)}
+                  {fit(cellText(raw, spec, drawn[i - 1]?.[spec.col]), cw - cellPad, fontPx)}
                 </text>
               )
             })}
           </g>
-        </g>
-      ))}
+        ))}
+      </g>
 
       {/* The three states that are not rows, each said plainly rather than
           drawn as an empty grid the operator has to interpret. */}

@@ -5,7 +5,7 @@ import CloseOutlined from '@mui/icons-material/CloseOutlined'
 import { LED_PALETTE } from '@/components/mimic/symbols/Led'
 import { MARQUEE_SPEEDS } from '@/components/mimic/symbols/DisplayBox'
 import {
-  MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, tableColumns, tableRowLimit,
+  MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, TIME_FORMATS, tableColumns, tableRowLimit,
 } from '@/components/mimic/symbols/DataTable'
 import { MAX_CASES } from '@/components/mimic/conditions'
 import { fetchSchemaColumns } from '@/api/schema'
@@ -223,6 +223,14 @@ function TableStructure({ node, onChange }) {
     ])]
   }, [catalogue.data])
 
+  // Which of them are stamps. A timestamp cell is formatted, not rounded, so
+  // this decides which of the two third fields a column row gets — the one
+  // question that has no sensible answer for the other kind of column.
+  const stamps = useMemo(
+    () => new Set(catalogue.data?.ts_columns ?? []),
+    [catalogue.data],
+  )
+
   if (!binding?.table) {
     return (
       <div className={styles.section}>
@@ -270,7 +278,12 @@ function TableStructure({ node, onChange }) {
                   className={styles.colPick}
                   value={c.col}
                   aria-label={`Column ${i + 1} source`}
-                  onChange={(e) => patch(i, { col: e.target.value })}
+                  onChange={(e) => patch(i, {
+                    col: e.target.value,
+                    // Switching a column onto or off a stamp switches what its
+                    // third field means, so the value behind it has to follow.
+                    format: stamps.has(e.target.value) ? (c.format ?? 'time') : null,
+                  })}
                 >
                   {/* A column the table no longer has still has to be shown, or
                       the select would silently re-point the symbol at whatever
@@ -342,20 +355,34 @@ function TableStructure({ node, onChange }) {
                     onChange={(e) => patch(i, { weight: Number(e.target.value) })}
                   />
                 </label>
-                <label className={styles.field}>
-                  <span>Decimals</span>
-                  <select
-                    value={c.decimals ?? ''}
-                    onChange={(e) => patch(i, {
-                      decimals: e.target.value === '' ? null : Number(e.target.value),
-                    })}
-                  >
-                    <option value="">As stored</option>
-                    {[0, 1, 2, 3, 4, 5, 6].map((d) => (
-                      <option key={d} value={d}>{d}</option>
-                    ))}
-                  </select>
-                </label>
+                {stamps.has(c.col) || c.format ? (
+                  <label className={styles.field}>
+                    <span>Time</span>
+                    <select
+                      value={c.format ?? 'time'}
+                      onChange={(e) => patch(i, { format: e.target.value })}
+                    >
+                      {Object.entries(TIME_FORMATS).map(([value, label]) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <label className={styles.field}>
+                    <span>Decimals</span>
+                    <select
+                      value={c.decimals ?? ''}
+                      onChange={(e) => patch(i, {
+                        decimals: e.target.value === '' ? null : Number(e.target.value),
+                      })}
+                    >
+                      <option value="">As stored</option>
+                      {[0, 1, 2, 3, 4, 5, 6].map((d) => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
               </div>
             </li>
           ))}
@@ -365,7 +392,11 @@ function TableStructure({ node, onChange }) {
           type="button"
           className={styles.add}
           disabled={columns.length >= MAX_TABLE_COLUMNS || unused.length === 0}
-          onClick={() => commit([...columns, { col: unused[0], weight: 1 }])}
+          onClick={() => commit([...columns, {
+            col: unused[0],
+            weight: 1,
+            ...(stamps.has(unused[0]) ? { format: 'time' } : {}),
+          }])}
         >
           <AddOutlined fontSize="small" />
           {columns.length >= MAX_TABLE_COLUMNS
@@ -386,8 +417,8 @@ function TableStructure({ node, onChange }) {
         <div className={styles.sectionTitle}>Rows</div>
         <p className={styles.hint}>
           {binding.ts_col
-            ? `Newest first, by ${binding.ts_col}.`
-            : 'This binding has no time column, so rows arrive in the order the plant stores them. Set one in the connection to show the newest first.'}
+            ? `Newest first, by ${binding.ts_col} — the top row is the most recent, and on a clock column the date is written only where the day turns over.`
+            : 'This binding has no time column, so rows arrive in the order the plant stores them. Set one in the connection to read it as a log, newest first.'}
           {' '}The symbol draws as many as fit and says so when it is showing
           fewer than it fetched.
         </p>
