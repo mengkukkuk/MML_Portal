@@ -216,15 +216,22 @@
  * theme from the app it belongs to, so both containers restate the surface
  * they already sit on and stack a banner above the sheet.
  */
-.stageWrap:fullscreen,
-.editorCenter:fullscreen {
+.stageWrap:fullscreen {
   padding: var(--space-4) var(--space-5);
   background: var(--bg-app);
-}
-
-.stageWrap:fullscreen {
   flex-direction: column;
   gap: var(--space-3);
+}
+
+/* Editing full screen sends the *whole* workspace, rails included — a drafting
+ * table with no palette and no inspector is somewhere you can look but not
+ * work. The grid already fills its track, so the only thing to undo is the
+ * frame it wears inside the page: on a wall display the screen edge is the
+ * border. */
+.editorWorkspace:fullscreen {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
 }
 
 /* The sheet takes the rest. `height: 100%` would resolve against the whole
@@ -235,12 +242,13 @@
   min-height: 0;
 }
 
-/* Full screen takes the whole editor column, not the bare sheet: a drafting
- * canvas with no toolbar and no Save is not somewhere to be left. The toolbar,
- * canvas and command bar are drawn as one joined frame, so no gap here — the
- * banner carries its own rule instead. */
-.editorCenter:fullscreen .fsHead {
-  margin-bottom: var(--space-3);
+/* The banner sits inside the centre column, above the toolbar, so it needs the
+ * horizontal padding the column itself does not have — otherwise the plant name
+ * starts hard against the palette rail. The toolbar, canvas and command bar are
+ * drawn as one joined frame, so the banner's own rule is the separator and there
+ * is no gap below it. */
+.editorWorkspace:fullscreen .fsHead {
+  padding: var(--space-3) var(--space-4);
 }
 
 /* The controls sit over the sheet, and in full screen the banner has taken the

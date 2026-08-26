@@ -75,7 +75,7 @@ function usePreviewTag(alarm) {
  * renders it, driven by a fake ticking tag, through the same CustomSymbol the
  * canvas uses.
  */
-export default function CustomSymbolDialog({ open, onClose, onSaved }) {
+export default function CustomSymbolDialog({ open, container, onClose, onSaved }) {
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState(null)
   const [name, setName] = useState('')
@@ -168,7 +168,7 @@ export default function CustomSymbolDialog({ open, onClose, onSaved }) {
   const canSave = !!file && name.trim().length > 0 && !saving
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+    <Dialog open={open} container={container} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>Add a symbol from an image</DialogTitle>
 
       <DialogContent dividers>

@@ -104,7 +104,7 @@ The single most important split in this codebase.
 | `readings.py` | `/api/readings/*` — devices, metrics, latest reading, sliding-window series (reads `public.sensor_readings`) |
 | `tags.py` | `/api/tags/*` — distinct tag names, dynamic numeric fields, latest row from `public.variables_tag` |
 | `panels.py` | `/api/panels/*` — CRUD for the admin-managed Live dashboard (`dashboard_panels` table); admin token gates writes |
-| `schema.py` | `/api/schema/*` — table/column introspection for generic data source bindings in Live panels |
+| `schema.py` | `/api/schema/*` — table/column introspection for generic data source bindings in Live panels, plus `/rows` (newest N rows projected onto chosen columns, backing the Monitor `table` symbol) |
 | `dashboards.py` | `/api/dashboards/*` — multi-board grouping for Live panels (admin token gates writes) |
 | `datasources.py` | `/api/datasources/*` — plant connection CRUD (admin gates writes; test endpoint probes real connections) **and** `/selection` GET/PUT/DELETE, the per-user header choice (any role, max 8) |
 | `sources.py` | `SourceReport` — the per-source `ok`/`error` block every fanned-out response carries, plus a tz-safe sort key for merging plants |

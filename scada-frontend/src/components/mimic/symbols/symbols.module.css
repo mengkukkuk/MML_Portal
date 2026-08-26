@@ -228,6 +228,39 @@
   user-select: none;
 }
 
+/* The table is the counter's plural, so its figures are set the same way:
+   mono, tabular, sized inline by the symbol against its own box. Weight drops
+   one step from the counter's 600 because a grid of bold figures is a wall —
+   a single totaliser has nothing to compete with, a column of twenty does. */
+.tableCell {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  fill: var(--fg);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Headers are the drawing's own voice rather than the plant's, so they take the
+   display face and the caps treatment every other legend on the sheet uses. */
+.tableHead {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  fill: var(--fg-dim);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Between rows only, and fainter than the header rule: the grid should be felt,
+   not read. */
+.tableRule {
+  fill: none;
+  stroke: var(--border-soft);
+  stroke-width: 1;
+}
+
 /* Which way the last change went, then gone. It fades rather than persisting
    because it describes a moment, not a state — a caret still sitting there a
    minute later would be read as "currently rising". */

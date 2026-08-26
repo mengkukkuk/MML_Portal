@@ -1,9 +1,14 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import AddOutlined from '@mui/icons-material/AddOutlined'
 import CloseOutlined from '@mui/icons-material/CloseOutlined'
 import { LED_PALETTE } from '@/components/mimic/symbols/Led'
 import { MARQUEE_SPEEDS } from '@/components/mimic/symbols/DisplayBox'
+import {
+  MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, tableColumns, tableRowLimit,
+} from '@/components/mimic/symbols/DataTable'
 import { MAX_CASES } from '@/components/mimic/conditions'
+import { fetchSchemaColumns } from '@/api/schema'
 import { compileCondition } from '@/utils/mathExpr'
 import styles from './SymbolOptions.module.css'
 
@@ -149,6 +154,260 @@ function ColourCases({ cases, onChange }) {
   )
 }
 
+/** Alignment is inferred from the value's type unless an admin overrides it. */
+const ALIGNS = [
+  ['auto', 'Auto — numbers right'],
+  ['left', 'Left'],
+  ['right', 'Right'],
+]
+
+/**
+ * The layout, drawn as the strip of proportions it actually is.
+ *
+ * Width weights are unreadable as a column of numbers — 1, 1, 2.5, 0.75 tells
+ * you nothing about the table you are designing, because a width only means
+ * anything relative to its neighbours. This is the same arithmetic the symbol
+ * does, shown at the top of the editor, so the structure is visible while it is
+ * being built rather than only after clicking back to the drawing.
+ */
+function ProportionBar({ columns }) {
+  const weights = columns.map((c) => Math.max(0.25, Number(c.weight) || 1))
+  const total = weights.reduce((a, b) => a + b, 0)
+  return (
+    <div className={styles.proportions} aria-hidden="true">
+      {columns.map((c, i) => (
+        <span
+          key={`${c.col}-${i}`}
+          className={styles.proportion}
+          style={{ flexGrow: weights[i], flexBasis: 0 }}
+          title={`${c.title || c.col} — ${Math.round((weights[i] / total) * 100)}%`}
+        >
+          {c.title || c.col}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * The table symbol's structure editor — which columns, in what order, how wide.
+ *
+ * The one symbol whose *shape* is configuration rather than a property of its
+ * type, so this is the only options panel that edits a list of things rather
+ * than a handful of switches. Order is left-to-right on the drawing, which is
+ * why the reorder controls are ‹ and › rather than the up/down a vertical list
+ * would suggest — the list runs down the rail, but the thing it describes runs
+ * across the sheet.
+ */
+function TableStructure({ node, onChange }) {
+  const binding = node.binding
+  const columns = tableColumns(node)
+  const rows = tableRowLimit(node)
+
+  const catalogue = useQuery({
+    queryKey: ['schema-columns', binding?.table, binding?.datasource_id ?? null],
+    queryFn: () => fetchSchemaColumns(binding.table, binding.datasource_id ?? undefined),
+    enabled: !!binding?.table,
+    staleTime: 5 * 60_000,
+  })
+
+  // Every column of the bound table, in one list. The catalogue splits them by
+  // what they are good for — plotting, printing, filtering — and a table cell
+  // will happily draw any of them, so the split is not a distinction here.
+  const available = useMemo(() => {
+    const d = catalogue.data
+    if (!d) return []
+    return [...new Set([
+      ...(d.value_columns ?? []), ...(d.text_columns ?? []),
+      ...(d.ts_columns ?? []), ...(d.filter_columns ?? []),
+    ])]
+  }, [catalogue.data])
+
+  if (!binding?.table) {
+    return (
+      <div className={styles.section}>
+        <div className={styles.sectionTitle}>Columns</div>
+        <p className={styles.hint}>
+          Connect a data source first. The table it points at is the one whose
+          columns you choose from here.
+        </p>
+      </div>
+    )
+  }
+
+  const commit = (next) => onChange({ columns: next })
+  const patch = (i, fields) => commit(columns.map((c, j) => (j === i ? { ...c, ...fields } : c)))
+  const move = (i, delta) => {
+    const next = [...columns]
+    const [moved] = next.splice(i, 1)
+    next.splice(i + delta, 0, moved)
+    commit(next)
+  }
+
+  const unused = available.filter((c) => !columns.some((chosen) => chosen.col === c))
+
+  return (
+    <>
+      <div className={styles.section}>
+        <div className={styles.sectionTitle}>Columns</div>
+        <p className={styles.hint}>
+          Left to right, as they will be drawn. Width is a share of the symbol,
+          not a pixel count, so the table keeps its proportions when it is
+          resized on the sheet.
+        </p>
+
+        {columns.length > 0 && <ProportionBar columns={columns} />}
+
+        <ol className={styles.cols}>
+          {columns.map((c, i) => (
+            // Position is identity here in the same way it is for colour rules:
+            // "the third column" is what this row means, and every field on it
+            // is controlled, so a removal redraws the reused row from new data.
+            // eslint-disable-next-line react/no-array-index-key
+            <li className={styles.col} key={i}>
+              <div className={styles.colRow}>
+                <select
+                  className={styles.colPick}
+                  value={c.col}
+                  aria-label={`Column ${i + 1} source`}
+                  onChange={(e) => patch(i, { col: e.target.value })}
+                >
+                  {/* A column the table no longer has still has to be shown, or
+                      the select would silently re-point the symbol at whatever
+                      happens to be first in the list. */}
+                  {!available.includes(c.col) && (
+                    <option value={c.col}>{c.col} (not in table)</option>
+                  )}
+                  {available.map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className={styles.nudge}
+                  disabled={i === 0}
+                  aria-label={`Move ${c.title || c.col} left`}
+                  onClick={() => move(i, -1)}
+                >
+                  ‹
+                </button>
+                <button
+                  type="button"
+                  className={styles.nudge}
+                  disabled={i === columns.length - 1}
+                  aria-label={`Move ${c.title || c.col} right`}
+                  onClick={() => move(i, 1)}
+                >
+                  ›
+                </button>
+                <button
+                  type="button"
+                  className={styles.remove}
+                  aria-label={`Remove column ${i + 1}`}
+                  onClick={() => commit(columns.filter((_, j) => j !== i))}
+                >
+                  <CloseOutlined fontSize="inherit" />
+                </button>
+              </div>
+
+              <input
+                className={styles.colTitle}
+                value={c.title ?? ''}
+                placeholder={c.col}
+                aria-label={`Heading for ${c.col}`}
+                onChange={(e) => patch(i, { title: e.target.value })}
+              />
+
+              <div className={styles.colGrid}>
+                <label className={styles.field}>
+                  <span>Align</span>
+                  <select
+                    value={c.align ?? 'auto'}
+                    onChange={(e) => patch(i, { align: e.target.value })}
+                  >
+                    {ALIGNS.map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className={styles.field}>
+                  <span>Width</span>
+                  <input
+                    className={styles.colNum}
+                    type="number"
+                    min="0.25"
+                    max="6"
+                    step="0.25"
+                    value={c.weight ?? 1}
+                    onChange={(e) => patch(i, { weight: Number(e.target.value) })}
+                  />
+                </label>
+                <label className={styles.field}>
+                  <span>Decimals</span>
+                  <select
+                    value={c.decimals ?? ''}
+                    onChange={(e) => patch(i, {
+                      decimals: e.target.value === '' ? null : Number(e.target.value),
+                    })}
+                  >
+                    <option value="">As stored</option>
+                    {[0, 1, 2, 3, 4, 5, 6].map((d) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </li>
+          ))}
+        </ol>
+
+        <button
+          type="button"
+          className={styles.add}
+          disabled={columns.length >= MAX_TABLE_COLUMNS || unused.length === 0}
+          onClick={() => commit([...columns, { col: unused[0], weight: 1 }])}
+        >
+          <AddOutlined fontSize="small" />
+          {columns.length >= MAX_TABLE_COLUMNS
+            ? `${MAX_TABLE_COLUMNS} columns is the limit`
+            : unused.length === 0
+              ? catalogue.isPending ? 'Reading the table…' : 'Every column is already shown'
+              : 'Add column'}
+        </button>
+
+        {catalogue.isError && (
+          <p className={styles.error}>
+            Could not read the columns of {binding.table}. The connection may be down.
+          </p>
+        )}
+      </div>
+
+      <div className={styles.section}>
+        <div className={styles.sectionTitle}>Rows</div>
+        <p className={styles.hint}>
+          {binding.ts_col
+            ? `Newest first, by ${binding.ts_col}.`
+            : 'This binding has no time column, so rows arrive in the order the plant stores them. Set one in the connection to show the newest first.'}
+          {' '}The symbol draws as many as fit and says so when it is showing
+          fewer than it fetched.
+        </p>
+        <label className={styles.field}>
+          <span>Fetch</span>
+          <input
+            className={styles.colNum}
+            type="number"
+            min="1"
+            max={MAX_TABLE_ROWS}
+            step="1"
+            value={rows}
+            onChange={(e) => onChange({ rows: Number(e.target.value) })}
+          />
+        </label>
+      </div>
+    </>
+  )
+}
+
 /**
  * SymbolOptions — the per-symbol appearance controls on the inspector rail.
  *
@@ -192,6 +451,10 @@ export default function SymbolOptions({ node, onChange }) {
         </label>
       </div>
     )
+  }
+
+  if (node.type === 'table') {
+    return <TableStructure node={node} onChange={onChange} />
   }
 
   if (node.type === 'led') {

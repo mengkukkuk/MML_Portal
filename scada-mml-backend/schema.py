@@ -25,6 +25,7 @@ there); filter values are always parameterized.
 """
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -40,6 +41,13 @@ router = APIRouter(
     tags=["schema"],
     dependencies=[Depends(require_valid_license)],
 )
+
+
+# How wide one table symbol may be. A mimic table is read across a control
+# room, not scrolled, and past about eight columns the figures are too narrow to
+# resolve at that distance — so the ceiling is a legibility limit that happens to
+# also bound the projection.
+MAX_TABLE_COLUMNS = 8
 
 
 def _detail(e: Exception) -> str:
@@ -94,6 +102,21 @@ class SeriesOut(BaseModel):
 
 class SeriesListOut(BaseModel):
     series: list[SeriesOut]
+    sources: list[SourceReport]
+
+
+class RowsOut(BaseModel):
+    # `columns` rides alongside the rows rather than being inferred from their
+    # keys: a projection that hit only NULLs still has to draw its headers, and
+    # dict key order is not something a renderer should be asked to trust.
+    columns: list[str]
+    rows: list[dict[str, Any]]
+    datasource_id: int | None = None
+    datasource_name: str | None = None
+
+
+class RowsListOut(BaseModel):
+    tables: list[RowsOut]
     sources: list[SourceReport]
 
 
@@ -228,6 +251,51 @@ def get_series(
     if not series:
         _raise_if_all_failed(reports)
     return {"series": series, "sources": reports}
+
+
+@router.get("/rows", response_model=RowsListOut)
+def get_rows(
+    table: str = Query(..., min_length=1),
+    cols: str = Query(..., min_length=1, description="Comma-separated column names"),
+    filter_col: str | None = Query(None),
+    filter_val: str | None = Query(None),
+    ts_col: str | None = Query(None),
+    limit: int = Query(10, ge=1, le=200),
+    datasource_id: int | None = Query(None),
+    _user: dict = Depends(get_current_user),
+    datasource_ids: list[int | None] = Depends(active_datasources),
+):
+    """The newest `limit` rows, projected onto `cols` — backs the table symbol.
+
+    `cols` is a comma-separated list rather than a repeated query parameter so a
+    binding is one readable URL, and it is de-duplicated before it reaches SQL:
+    the same column twice would collapse into one dict key anyway, and silently
+    returning fewer columns than were asked for is the sort of thing an admin
+    discovers in production.
+
+    An explicit `datasource_id` bypasses the header selection entirely, same as
+    `/latest` and `/series` above.
+    """
+    wanted = list(dict.fromkeys(c.strip() for c in cols.split(",") if c.strip()))
+    if not wanted:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No columns requested"
+        )
+    if len(wanted) > MAX_TABLE_COLUMNS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"At most {MAX_TABLE_COLUMNS} columns",
+        )
+
+    def one(ds):
+        rows = db.table_rows(table, wanted, filter_col, filter_val, ts_col, limit, ds)
+        return [{"columns": wanted, "rows": rows}]
+
+    targets = [datasource_id] if datasource_id is not None else datasource_ids
+    tables, reports = db.fan_out_rows(targets, one, label="table rows")
+    if not tables:
+        _raise_if_all_failed(reports)
+    return {"tables": tables, "sources": reports}
 
 
 def _raise_if_all_failed(reports: list[dict]) -> None:

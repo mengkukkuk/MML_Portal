@@ -56,6 +56,7 @@ import Lighting from './Lighting'
 import PcBased from './PcBased'
 
 import Counter from './Counter'
+import DataTable from './DataTable'
 import DisplayBox from './DisplayBox'
 import Led from './Led'
 import AlertBadge from './AlertBadge'
@@ -605,6 +606,22 @@ export const SYMBOLS = {
     defaultSize: { w: 176, h: 82 },
     ports: { signal: [0, 0.5] },
     binding: 'analog',
+    bubble: null,
+  },
+  table: {
+    label: 'Table',
+    category: 'utility',
+    Component: DataTable,
+    // Wider and deeper than anything else in this group: the others report one
+    // reading, this one reports a projection, and a table that arrives too
+    // small to show its own headers is a table nobody will configure.
+    defaultSize: { w: 340, h: 180 },
+    ports: { signal: [0, 0.5] },
+    // The anchor column may be a word — a batch id, a state, an operator name —
+    // and it is the column the table falls back to before an admin has designed
+    // any structure, so it must be pickable from the text list too.
+    binding: 'both',
+    text: true,
     bubble: null,
   },
   displaybox: {
