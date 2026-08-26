@@ -626,6 +626,11 @@ export const SYMBOLS = {
     defaultSize: { w: 64, h: 64 },
     ports: { signal: [0.5, 1] },
     binding: 'both',
+    // Text-capable for the same reason alertbadge is: a colour rule can test
+    // a word (`a == 'FAULT'`), and state.map names a beacon by word too — the
+    // binding dialog has to offer a status column for either to ever be
+    // reachable, the same way it already does for the tile beside it.
+    text: true,
     bubble: null,
   },
   alertbadge: {

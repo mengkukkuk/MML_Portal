@@ -97,6 +97,20 @@ export function deriveTag({
   const display = isText ? null : round(value, decimals)
   const state = isText ? value : deriveState(b.state, value)
 
+  // What a case rule or an alarm condition's `a` actually tests. Usually the
+  // reading itself — but two situations put the meaningful word in `state`
+  // instead, and a rule written against the word an admin can see (`a ==
+  // 'FAULT'`, `a == 'red'`) has to reach it there:
+  //   - `state.map` names a *coded* column (a beacon's 0/1/2), so the code
+  //     itself is not what the rule means to compare — `state` is.
+  //   - a purely discrete tag has no reading at all (`value` is null), so the
+  //     word is the only thing there is to test.
+  // A threshold-derived run/stop is deliberately excluded: that tag's number
+  // is still the more likely thing a rule wants (`a > 20` on a pump's amps),
+  // and 'run'/'stop' already has its own drawing convention Led reads directly.
+  const mapped = !isText && b.state?.mode === 'map'
+  const condValue = value == null || mapped ? (state ?? value) : value
+
   // Two ways to go stale: the poll returned nothing, or the row it returned is
   // older than the reader expects. The second is the one that catches a
   // historian that is up but no longer being written to — the failure mode a
@@ -128,6 +142,7 @@ export function deriveTag({
     display,
     prevDisplay: prev ? prev.display : display,
     state,
+    condValue,
     status,
     prevStatus: prev ? prev.status : status,
     pulse: nextPulse,

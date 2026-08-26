@@ -87,7 +87,9 @@ function ColourCases({ cases, onChange }) {
         already true never runs, so put the most serious one at the top. With no
         rules the lamp is coloured by its limits, as before. A rule can test a
         number (<code>a &gt; 80</code>) or a word
-        (<code>a == &apos;FAULT&apos;</code>).
+        (<code>a == &apos;FAULT&apos;</code>) — on a coded column mapped to
+        names, the word is what a rule compares against, not the code
+        underneath it.
       </p>
 
       <ol className={styles.cases}>
@@ -232,7 +234,8 @@ export default function SymbolOptions({ node, onChange }) {
         <p className={styles.hint}>
           Compare with <code>&gt; &lt; &gt;= &lt;= == !=</code>, join with{' '}
           <code>and</code> / <code>or</code> / <code>not</code>. <code>a</code> is the
-          reading after its expression has been applied. On a text column compare
+          reading after its expression has been applied — or, on a column
+          mapped to named states, the name itself. On a text column compare
           against a quoted word — <code>a == &apos;FAULT&apos;</code> — which
           ignores case and surrounding spaces.
         </p>

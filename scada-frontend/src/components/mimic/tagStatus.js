@@ -11,7 +11,7 @@
  *
  *   { id, label, value, prevValue, display, prevDisplay, state, status,
  *     prevStatus, unit, decimals, kind, range: [lo, hi] | null,
- *     limits: { warnLo, warnHi, critLo, critHi }, pulse, ts }
+ *     limits: { warnLo, warnHi, critLo, critHi }, pulse, ts, condValue }
  *
  * Analog tags leave `state` null, discrete tags leave `value` null, and a pump
  * carries both.

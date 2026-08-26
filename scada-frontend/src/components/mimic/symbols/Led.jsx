@@ -66,7 +66,7 @@ export default function Led({ node, tag }) {
   const stale = !tag || status === 'stale'
   const state = tag?.state ? String(tag.state).toLowerCase() : null
 
-  const matched = useMatchedCase(node.options?.cases, tag?.value)
+  const matched = useMatchedCase(node.options?.cases, tag?.condValue)
 
   // Explicitly dark states are the one case where "no colour" is the reading,
   // not a gap to fill — an off lamp is information.

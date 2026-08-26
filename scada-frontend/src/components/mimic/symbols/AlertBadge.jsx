@@ -73,7 +73,7 @@ export default function AlertBadge({ node, tag }) {
 
   // null when no expression is configured, which is what keeps "no rule" from
   // being read as "rule not met" and silencing the limits below.
-  const met = useConditionMet(node.options?.when, tag?.value)
+  const met = useConditionMet(node.options?.when, tag?.condValue)
   const authored = met !== null
 
   const crit = !stale && (authored

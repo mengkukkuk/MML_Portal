@@ -7,9 +7,6 @@ import Button from '@mui/material/Button'
 import IconButton from '@mui/material/IconButton'
 import Alert from '@mui/material/Alert'
 import Snackbar from '@mui/material/Snackbar'
-import FormControlLabel from '@mui/material/FormControlLabel'
-import Switch from '@mui/material/Switch'
-import BoltOutlined from '@mui/icons-material/BoltOutlined'
 import ChevronLeft from '@mui/icons-material/ChevronLeft'
 import ChevronRight from '@mui/icons-material/ChevronRight'
 import PanToolOutlined from '@mui/icons-material/PanToolOutlined'
@@ -58,9 +55,7 @@ const FALLBACK_SLUG = 'boiler-1'
 const FALLBACK_NAME = 'Boiler House 1'
 
 /**
- * How often the drawing asks for new numbers. Demo and live offer the same
- * rates so the control means one thing, but each mode remembers its own choice:
- * a simulator left at 1m is useless, and a plant left at 100ms is expensive.
+ * How often the drawing asks for new numbers.
  *
  * Unlike /live panels — whose interval is stored per panel and checked against
  * `VALID_POLL_INTERVALS` in panels.py — the mimic reads through /api/schema and
@@ -90,9 +85,6 @@ const GUARDED_FLOOR_MS = 1000
 
 const CADENCE_NOTE_ID = 'mimic-cadence-note'
 
-/** The tag "Simulate excursion" pushes over its high-high limit (demo only). */
-const EXCURSION_TAG = 'TT-202'
-
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v)
 
 let addCounter = 0
@@ -108,8 +100,7 @@ let addCounter = 0
  * Each symbol is bound to a real column on a real connection
  * (SymbolBindingDialog), and a mimic may span several backends — one boiler
  * on a historian, a conveyor on another. Bindings and geometry are saved
- * server-side so every operator sees the same commissioned plant; the
- * simulator survives behind the Demo data toggle.
+ * server-side so every operator sees the same commissioned plant.
  */
 export default function MonitorPage() {
   const role = useAuthStore((s) => s.user?.role ?? null)
@@ -237,20 +228,18 @@ export default function MonitorPage() {
   const lock = useMemo(() => editLock(layout), [layout])
 
   // --- data ----------------------------------------------------------------
-  const [demo, setDemo] = useState(false)
-  const [demoMs, setDemoMs] = useState(1000)
   const [liveMs, setLiveMs] = useState(5000)
   // The cover over the sub-second rates. Closed on every page load: an elevated
   // rate is something you choose for a job in hand, not something you inherit.
   const [fastOpen, setFastOpen] = useState(false)
 
-  const intervalMs = demo ? demoMs : liveMs
-  const setIntervalMs = demo ? setDemoMs : setLiveMs
+  const intervalMs = liveMs
+  const setIntervalMs = setLiveMs
 
   const {
-    tags, history, events, error: dataError, sources: connSources, simulateExcursion, excursionTag,
+    tags, history, events, error: dataError, sources: connSources,
   } = usePlantData({
-    nodes, demo, tickMs: demoMs, pollSeconds: liveMs / 1000,
+    nodes, pollSeconds: liveMs / 1000,
   })
   const anySourceFailed = connSources.some((s) => !s.ok)
 
@@ -940,7 +929,7 @@ export default function MonitorPage() {
       <div
         className={`${styles.cadence} ${fastActive ? styles.cadenceElevated : ''}`}
         role="group"
-        aria-label={demo ? 'Update interval' : 'Poll interval'}
+        aria-label="Poll interval"
       >
         {CADENCES.map((c) => cadenceBtn(c, false))}
         {fastShown && FAST_CADENCES.map((c) => cadenceBtn(c, true))}
@@ -967,9 +956,8 @@ export default function MonitorPage() {
       {/* Anchored, so opening the guard cannot shove the page header taller. */}
       {fastShown && (
         <p className={styles.cadenceNote} id={CADENCE_NOTE_ID} role="note">
-          {demo
-            ? 'The simulator runs in this browser. Sub-second rates cost nothing but this tab.'
-            : 'Each poll opens one database connection per bound symbol. Use sub-second rates to commission a loop, then step back down.'}
+          Each poll opens one database connection per bound symbol. Use sub-second
+          rates to commission a loop, then step back down.
         </p>
       )}
     </div>
@@ -980,8 +968,7 @@ export default function MonitorPage() {
    *
    * Going full screen drops the page header, and with it the first two things
    * anyone reading a mimic from across a control room needs: which plant this
-   * is, and whether it is running. The demo badge rides along for the same
-   * reason — at wall size, simulated numbers must never pass for the plant.
+   * is, and whether it is running.
    */
   const fullscreenHead = fullscreen ? (
     <header className={styles.fsHead}>
@@ -989,7 +976,6 @@ export default function MonitorPage() {
         <span className={styles.fsEyebrow}>Process mimic</span>
         <h2 className={styles.fsName}>{activeName}</h2>
       </div>
-      {demo && <span className={styles.fsDemo}>Demo data</span>}
       <span className={styles.fsState}>
         <span className={`${styles.dot} ${dotClass}`} />
         {statusLabel}
@@ -997,13 +983,11 @@ export default function MonitorPage() {
     </header>
   ) : null
 
-  const subtitle = demo
-    ? 'Simulated process · no datasource'
-    : nodes.length === 0
-      ? 'Empty drawing · add symbols from the palette in edit mode'
-      : connected === 0
-        ? 'No symbols connected yet'
-        : `${connected} of ${nodes.length} symbols connected · ${backendCount} ${backendCount === 1 ? 'connection' : 'connections'}`
+  const subtitle = nodes.length === 0
+    ? 'Empty drawing · add symbols from the palette in edit mode'
+    : connected === 0
+      ? 'No symbols connected yet'
+      : `${connected} of ${nodes.length} symbols connected · ${backendCount} ${backendCount === 1 ? 'connection' : 'connections'}`
 
   return (
     <div className={styles.page}>
@@ -1028,25 +1012,7 @@ export default function MonitorPage() {
         </span>
 
         <div className={styles.actions}>
-          <FormControlLabel
-            className={styles.demoToggle}
-            control={<Switch size="small" checked={demo} onChange={(e) => setDemo(e.target.checked)} />}
-            label="Demo data"
-          />
-
           {cadence}
-
-          {/* Outside demo mode this drives a simulator nothing is reading. */}
-          {demo && (
-            <Button
-              startIcon={<BoltOutlined />}
-              color={excursionTag ? 'warning' : 'inherit'}
-              onClick={() => simulateExcursion(EXCURSION_TAG)}
-              title={`Drive ${EXCURSION_TAG} past its high-high limit for 15 seconds`}
-            >
-              Simulate excursion
-            </Button>
-          )}
 
           {canEdit && !!layout && !lock && (
             !editMode && (

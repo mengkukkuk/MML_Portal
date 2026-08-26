@@ -309,21 +309,6 @@
   height: 12px;
 }
 
-/* At wall size a simulated reading looks exactly like a real one, so the
- * only thing that keeps them apart is saying so. */
-.fsDemo {
-  flex-shrink: 0;
-  padding: 4px 10px;
-  border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
-  color: var(--warn);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
 /* --- view-mode canvas controls -----------------------------------------
  * The hand tool, zoom and fit, as an overlay on the sheet. Deliberately the
  * same order and the same icons as the drafting toolbar, so an admin who
@@ -881,16 +866,6 @@
   text-align: center;
   color: var(--fg-muted);
   font-size: 14px;
-}
-
-.demoToggle {
-  margin: 0 var(--space-2) 0 0;
-}
-
-.demoToggle :global(.MuiFormControlLabel-label) {
-  font-size: 12px;
-  color: var(--fg-muted);
-  letter-spacing: 0.04em;
 }
 
 /* An unconnected symbol reads as an uncommissioned loop in the strip too —

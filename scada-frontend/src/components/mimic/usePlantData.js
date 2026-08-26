@@ -38,7 +38,15 @@ function remapDemo(snapshot, nodes) {
     if (!tag) return
     // The node's own label wins: on the drawing the asset is named by what it
     // is ("D-200 steam drum"), not by what the simulator calls its loop.
-    tags[node.id] = { ...tag, label: node.label ?? tag.label }
+    //
+    // condValue mirrors deriveTag's own rule so a case/alarm rule behaves
+    // identically against demo data: the simulator has no state.map to
+    // detect, but a purely discrete tag (the stack light, the belt switch)
+    // has no `value` either, and a rule testing its word has to land on
+    // `state` the same way it does against a live-polled tag.
+    tags[node.id] = {
+      ...tag, label: node.label ?? tag.label, condValue: tag.value ?? tag.state,
+    }
     const points = snapshot.history[node.tagId]
     if (points) history[node.id] = points
     if (!nodesByTag.has(node.tagId)) nodesByTag.set(node.tagId, [])
