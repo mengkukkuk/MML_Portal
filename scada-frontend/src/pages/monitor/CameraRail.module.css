@@ -1,0 +1,375 @@
+/* CameraRail — same shell contract as DetailRail (scrolls inside itself,
+ * lives in MonitorPage's 320px .railCol), but Thai copy throughout, so it
+ * carries its own font stack rather than the app's default sans. */
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  flex: 1 1 auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  font-family: var(--font-thai);
+}
+
+.rail > * {
+  flex: 0 0 auto;
+}
+
+.quiet {
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* --- head --------------------------------------------------------------- */
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.headRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.eyebrow {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  color: var(--fg-dim);
+}
+
+.tagId {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--fg);
+}
+
+.tagLabel {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg-muted);
+}
+
+.unboundTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  margin: 0;
+}
+
+.codeList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  color: var(--fg-muted);
+}
+
+/* --- status pill ---------------------------------------------------------- */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.pillOk { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+.pillWarn { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+.pillFault { background: color-mix(in srgb, var(--crit) 16%, transparent); color: var(--crit); }
+.pillStale { background: var(--bg-elev); color: var(--fg-dim); }
+
+/* --- NG count ------------------------------------------------------------- */
+
+.ngBlock {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.ngValue {
+  font-family: var(--font-mono);
+  font-size: 32px;
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+
+.ngLabel {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+/* --- sections --------------------------------------------------------------- */
+
+.sectionTitle {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: var(--space-2);
+}
+
+.sectionTitleInline {
+  font-family: var(--font-thai);
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+/* --- cause bars --------------------------------------------------------- */
+
+.causes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.cause {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  cursor: pointer;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  color: inherit;
+}
+
+.cause:hover {
+  background: var(--bg-elev);
+}
+
+.causeOn {
+  background: var(--accent-soft);
+}
+
+.causeRow {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: 12.5px;
+  margin-bottom: 4px;
+}
+
+.causeOn .causeName {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.causeCount {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+.track {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-elev);
+  overflow: hidden;
+}
+
+.trackFill {
+  display: block;
+  height: 100%;
+  background: var(--fg-dim);
+  transition: width 0.3s ease;
+}
+
+.causeOn .trackFill {
+  background: var(--accent);
+}
+
+/* --- the contact sheet ---------------------------------------------------
+ * The one signature element: stored NG evidence sits in a well visibly
+ * recessed below the live numbers above it, bounded top and bottom by a
+ * sprocket-perforation rail — the vernacular for a strip of stored frames,
+ * and a structural cue that this is archive, not a live reading.
+ */
+
+.stripHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.stripNav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--fg-muted);
+}
+
+.clearBtn {
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.clearBtn:hover {
+  background: var(--bg-elev);
+  color: var(--fg);
+}
+
+.filmWell {
+  background: color-mix(in srgb, var(--bg-app) 70%, black);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 6px 0;
+}
+
+.sprocket {
+  height: 4px;
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--fg) 22%, transparent) 1.1px, transparent 1.2px);
+  background-size: 10px 4px;
+  background-position: center;
+}
+
+.strip {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding: var(--space-2) var(--space-2) 4px;
+  scrollbar-width: thin;
+}
+
+.frame {
+  flex: 0 0 calc((100% - var(--space-2)) / 2);
+  min-width: 0;
+  margin: 0;
+  scroll-snap-align: start;
+}
+
+.frameImg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: color-mix(in srgb, var(--crit) 14%, var(--bg-elev));
+  border: 1px solid color-mix(in srgb, var(--crit) 35%, var(--border));
+}
+
+.frameImg img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.frameLoading {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--crit);
+}
+
+.frame figcaption {
+  font-family: var(--font-thai);
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.frame figcaption em {
+  display: block;
+  font-style: normal;
+  font-family: var(--font-mono);
+  color: var(--fg-dim);
+}
+
+.stripEmpty {
+  margin: 0;
+  padding: var(--space-4) var(--space-2);
+  text-align: center;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+/* --- stream link ---------------------------------------------------------- */
+
+.streamRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.streamLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--accent);
+  text-decoration: none;
+  width: fit-content;
+}
+
+.streamLink:hover {
+  text-decoration: underline;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .strip {
+    scroll-behavior: auto;
+  }
+  .trackFill {
+    transition: none;
+  }
+}

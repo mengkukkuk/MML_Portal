@@ -1262,7 +1262,7 @@ def delete_panel(panel_id: int) -> bool:
 # text filter column could leak secrets via distinct_column_values.
 SENSITIVE_TABLES = {
     "users", "dashboard_panels", "mmldatabuffer", "datasources", "mimic_layouts",
-    "mimic_assets", "mimic_symbols",
+    "mimic_assets", "mimic_symbols", "cameras", "camera_snapshots",
 }
 
 # Postgres text data_types a symbol may *print* rather than plot.
@@ -2215,6 +2215,272 @@ def delete_mimic_symbol(symbol_id: int) -> bool:
         cur = conn.execute("DELETE FROM mimic_symbols WHERE id = %s", (symbol_id,))
         conn.commit()
     return cur.rowcount > 0
+
+
+# --- Cameras (/monitor vision-inspection panel) -----------------------------
+# Two app tables behind the camera detail rail. `cameras` is config — an admin
+# names a station's camera once and a mimic node reaches it by loop id, the
+# same way any other symbol reaches its tag, so binding needs no new dialog.
+# `camera_snapshots` holds the stored NG frames plus the cause each one was
+# tagged with — the cause histogram the rail renders is a GROUP BY over this
+# table, not a plant read, because no plant table in this system carries a
+# per-part verdict/cause column.
+def init_cameras_table() -> None:
+    """Create the cameras table if it doesn't exist. Idempotent."""
+    with get_connection() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS cameras (
+                id            SERIAL PRIMARY KEY,
+                code          TEXT NOT NULL UNIQUE,
+                name          TEXT NOT NULL,
+                station_code  TEXT,
+                station_label TEXT,
+                location      TEXT,
+                stream_url    TEXT,
+                notes         TEXT,
+                binding       JSONB,
+                enabled       BOOLEAN NOT NULL DEFAULT true,
+                created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+            )"""
+        )
+        conn.commit()
+
+
+def init_camera_snapshots_table() -> None:
+    """Create the camera_snapshots table if it doesn't exist. Idempotent.
+
+    Must run after init_cameras_table (FK). CASCADE, unlike mimic_symbols'
+    RESTRICT on its asset: a frame has no meaning without its camera, so
+    deleting a camera should take its stored evidence with it.
+    """
+    with get_connection() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS camera_snapshots (
+                id          SERIAL PRIMARY KEY,
+                camera_id   INTEGER NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
+                captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                cause       TEXT,
+                verdict     TEXT NOT NULL DEFAULT 'ng',
+                mime        TEXT NOT NULL,
+                bytes       BYTEA NOT NULL,
+                size_bytes  INTEGER NOT NULL,
+                sha256      TEXT NOT NULL,
+                meta        JSONB NOT NULL DEFAULT '{}'::jsonb,
+                uploaded_by INTEGER,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE (camera_id, sha256)
+            )"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS camera_snapshots_recent
+               ON camera_snapshots (camera_id, captured_at DESC)"""
+        )
+        conn.commit()
+
+
+_CAMERA_COLS = (
+    "id, code, name, station_code, station_label, location, stream_url, "
+    "notes, binding, enabled, updated_at"
+)
+
+
+def list_cameras() -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"SELECT {_CAMERA_COLS} FROM cameras ORDER BY code"
+        ).fetchall()
+    return rows
+
+
+def get_camera(camera_id: int) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            f"SELECT {_CAMERA_COLS} FROM cameras WHERE id = %s", (camera_id,)
+        ).fetchone()
+    return row
+
+
+def get_camera_by_code(code: str) -> dict[str, Any] | None:
+    """Case-insensitive: a mimic node's loop id and a camera's code are typed
+    by different admins on different screens and should not have to match case."""
+    with get_connection() as conn:
+        row = conn.execute(
+            f"SELECT {_CAMERA_COLS} FROM cameras WHERE lower(code) = lower(%s)", (code,)
+        ).fetchone()
+    return row
+
+
+def insert_camera(fields: dict[str, Any]) -> dict[str, Any]:
+    with get_connection() as conn:
+        row = conn.execute(
+            f"""INSERT INTO cameras
+                (code, name, station_code, station_label, location, stream_url,
+                 notes, binding, enabled)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING {_CAMERA_COLS}""",
+            (
+                fields["code"], fields["name"], fields.get("station_code"),
+                fields.get("station_label"), fields.get("location"),
+                fields.get("stream_url"), fields.get("notes"),
+                Json(fields["binding"]) if fields.get("binding") else None,
+                fields.get("enabled", True),
+            ),
+        ).fetchone()
+        conn.commit()
+    return row
+
+
+def update_camera(camera_id: int, fields: dict[str, Any]) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            f"""UPDATE cameras SET
+                code = %s, name = %s, station_code = %s, station_label = %s,
+                location = %s, stream_url = %s, notes = %s, binding = %s,
+                enabled = %s, updated_at = now()
+            WHERE id = %s
+            RETURNING {_CAMERA_COLS}""",
+            (
+                fields["code"], fields["name"], fields.get("station_code"),
+                fields.get("station_label"), fields.get("location"),
+                fields.get("stream_url"), fields.get("notes"),
+                Json(fields["binding"]) if fields.get("binding") else None,
+                fields.get("enabled", True), camera_id,
+            ),
+        ).fetchone()
+        conn.commit()
+    return row
+
+
+def delete_camera(camera_id: int) -> bool:
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM cameras WHERE id = %s", (camera_id,))
+        conn.commit()
+    return cur.rowcount > 0
+
+
+def list_camera_snapshots(
+    camera_id: int, limit: int = 30, cause: str | None = None
+) -> list[dict[str, Any]]:
+    """Metadata only — bytes are fetched one at a time through the image route."""
+    with get_connection() as conn:
+        if cause:
+            rows = conn.execute(
+                """SELECT id, camera_id, captured_at, cause, verdict, mime, size_bytes
+                FROM camera_snapshots
+                WHERE camera_id = %s AND cause = %s
+                ORDER BY captured_at DESC LIMIT %s""",
+                (camera_id, cause, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT id, camera_id, captured_at, cause, verdict, mime, size_bytes
+                FROM camera_snapshots
+                WHERE camera_id = %s
+                ORDER BY captured_at DESC LIMIT %s""",
+                (camera_id, limit),
+            ).fetchall()
+    return rows
+
+
+def camera_cause_counts(camera_id: int) -> list[dict[str, Any]]:
+    """Cause histogram for the rail's filter bars — NG frames only, most first."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT cause, count(*)::int AS n
+            FROM camera_snapshots
+            WHERE camera_id = %s AND verdict = 'ng' AND cause IS NOT NULL
+            GROUP BY cause
+            ORDER BY n DESC""",
+            (camera_id,),
+        ).fetchall()
+    return rows
+
+
+def get_camera_snapshot_bytes(camera_id: int, snapshot_id: int) -> dict[str, Any] | None:
+    """One frame *with* its bytes — the read behind the image endpoint."""
+    with get_connection() as conn:
+        row = conn.execute(
+            """SELECT id, mime, bytes FROM camera_snapshots
+            WHERE id = %s AND camera_id = %s""",
+            (snapshot_id, camera_id),
+        ).fetchone()
+    return row
+
+
+def find_camera_snapshot_by_hash(camera_id: int, sha256: str) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            """SELECT id, camera_id, captured_at, cause, verdict, mime, size_bytes
+            FROM camera_snapshots WHERE camera_id = %s AND sha256 = %s""",
+            (camera_id, sha256),
+        ).fetchone()
+    return row
+
+
+def insert_camera_snapshot(
+    camera_id: int,
+    mime: str,
+    data: bytes,
+    sha256: str,
+    cause: str | None,
+    verdict: str,
+    uploaded_by: int | None,
+) -> dict[str, Any]:
+    with get_connection() as conn:
+        row = conn.execute(
+            """INSERT INTO camera_snapshots
+                (camera_id, cause, verdict, mime, bytes, size_bytes, sha256, uploaded_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, camera_id, captured_at, cause, verdict, mime, size_bytes""",
+            (camera_id, cause, verdict, mime, data, len(data), sha256, uploaded_by),
+        ).fetchone()
+        conn.commit()
+    return row
+
+
+def delete_camera_snapshot(camera_id: int, snapshot_id: int) -> bool:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "DELETE FROM camera_snapshots WHERE id = %s AND camera_id = %s",
+            (snapshot_id, camera_id),
+        )
+        conn.commit()
+    return cur.rowcount > 0
+
+
+def camera_plant_summary(
+    datasource_id: int | None,
+    table: str,
+    filter_col: str,
+    filter_val: str,
+    ts_col: str,
+    hours: int = 24,
+) -> dict[str, int]:
+    """Total inspected + NG count for one camera, read from its bound plant
+    table over the trailing window. One call per source under db.fan_out —
+    a bad or stale binding raises ValueError from _safe_identifiers, which
+    fan_out reduces to that source's ok=False rather than a 500, the same as
+    an unreachable host.
+
+    NG is a row where `filter_col` equals `filter_val` (a verdict column and
+    its "ng" value, in the same vocabulary as a mimic tag binding's
+    filter_col/filter_val) — not a distinct table, so a plant that already
+    logs one row per inspection needs no schema change to support this.
+    """
+    with _table_source_conn(datasource_id) as (conn, schema):
+        _safe_identifiers(conn, schema, table, filter_col, ts_col)
+        query = sql.SQL(
+            "SELECT count(*) AS total, "
+            "count(*) FILTER (WHERE {filt}::text = %s) AS ng "
+            "FROM {tbl} WHERE {ts} >= now() - make_interval(hours => %s)"
+        ).format(
+            filt=sql.Identifier(filter_col),
+            tbl=sql.Identifier(schema, table),
+            ts=sql.Identifier(ts_col),
+        )
+        row = conn.execute(query, (filter_val, hours)).fetchone()
+    return {"total": row["total"], "ng": row["ng"]}
 
 
 # ============================================================================

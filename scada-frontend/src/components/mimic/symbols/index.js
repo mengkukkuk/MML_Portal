@@ -819,6 +819,16 @@ export function symbolDef(node) {
   return SYMBOLS[node.type]
 }
 
+/**
+ * True for an IP-camera symbol — the one type whose view-mode rail is not the
+ * generic tag readout but the camera detail panel (see MonitorPage.jsx and
+ * CameraRail.jsx). A function rather than an inline `type === 'ipcamera'`
+ * check so a future custom-authored camera symbol is one edit away.
+ */
+export function isCameraNode(node) {
+  return node?.type === 'ipcamera'
+}
+
 /** Absolute logical coordinates of one port on one node. */
 export function portPoint(node, portName) {
   const def = symbolDef(node)

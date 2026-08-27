@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 import alarms
 import auth
+import cameras
 import config
 import dashboards
 import datasources
@@ -59,6 +60,7 @@ app.include_router(mimic.router)
 app.include_router(events.router)
 app.include_router(alarms.router)
 app.include_router(reports.router)
+app.include_router(cameras.router)
 app.include_router(system.router)
 app.include_router(licensing.router)
 
@@ -101,6 +103,8 @@ def _create_tables() -> bool:
         db.init_mimic_assets_table()
         db.init_mimic_symbols_table()
         db.init_report_tables()
+        db.init_cameras_table()
+        db.init_camera_snapshots_table()
     except psycopg.Error as e:
         # psycopg.Error, not just OperationalError: an unreachable host is only
         # one way this fails. DDL against a *live* server can raise

@@ -39,6 +39,9 @@
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font-display: "IBM Plex Sans Condensed", "IBM Plex Mono", ui-sans-serif, system-ui, sans-serif;
+  /* Thai UI copy (camera rail). Falls back to the system sans stack so a
+     face that hasn't loaded yet renders Thai via the OS, not tofu. */
+  --font-thai: "IBM Plex Sans Thai", var(--font-sans);
 }
 
 /* ---------------------------------------------------------------------------

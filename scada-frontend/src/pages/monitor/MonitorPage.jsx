@@ -21,7 +21,7 @@ import { useAuthStore } from '@/stores/auth'
 import ConnectionAlarmStrip from '@/components/ConnectionAlarm/ConnectionAlarmStrip'
 import usePlantData from '@/components/mimic/usePlantData'
 import useMimicTables from '@/components/mimic/useMimicTables'
-import { SYMBOLS, symbolDef, setCustomDefs } from '@/components/mimic/symbols'
+import { SYMBOLS, symbolDef, setCustomDefs, isCameraNode } from '@/components/mimic/symbols'
 import { NORMAL_WIRE } from '@/components/mimic/wireTypes'
 import { formatValue, worseStatus } from '@/components/mimic/tagStatus'
 import { fetchMimicLayout, fetchMimicLayouts, saveMimicLayout } from '@/api/mimic'
@@ -30,6 +30,7 @@ import { fetchMimicSymbols } from '@/api/mimicAssets'
 import { apiErrorMessage } from '@/api/client'
 import MimicCanvas, { VIEW_W, VIEW_H } from './MimicCanvas'
 import DetailRail from './DetailRail'
+import CameraRail from './CameraRail'
 import SymbolPalette from './SymbolPalette'
 import NodeInspector from './NodeInspector'
 import EdgeInspector from './EdgeInspector'
@@ -1321,7 +1322,9 @@ export default function MonitorPage() {
               {railCollapsed ? <ChevronLeft fontSize="small" /> : <ChevronRight fontSize="small" />}
             </IconButton>
             {!railCollapsed && (
-              <DetailRail tag={selectedTag} node={selectedNode} history={selectedId ? history[selectedId] : null} events={events} canBind={false} />
+              isCameraNode(selectedNode)
+                ? <CameraRail node={selectedNode} tag={selectedTag} />
+                : <DetailRail tag={selectedTag} node={selectedNode} history={selectedId ? history[selectedId] : null} events={events} canBind={false} />
             )}
           </div>
         </div>
