@@ -133,7 +133,7 @@ function bindingFromForm(f, isText = false) {
  * not a form you hope you filled in correctly. It is laid out as an instrument
  * datasheet rather than a stack of MUI fields for the same reason.
  */
-export default function SymbolBindingDialog({ open, node, onClose, onSave }) {
+export default function SymbolBindingDialog({ open, node, container, onClose, onSave }) {
   const [form, setForm] = useState(() => formFromNode(node))
   const set = (patch) => setForm((f) => ({ ...f, ...patch }))
 
@@ -295,7 +295,7 @@ export default function SymbolBindingDialog({ open, node, onClose, onSave }) {
   const ay = pad + (bubble ? bubble.anchor[1] * node.h : 0)
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="lg">
+    <Dialog open={open} container={container} onClose={onClose} fullWidth maxWidth="lg">
       <DialogTitle className={styles.title}>
         <span className={styles.titleMain}>Connect data source</span>
         <span className={styles.titleSub}>{def?.label} · {node.id}</span>

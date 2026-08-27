@@ -1538,6 +1538,46 @@ def table_series(
     return rows
 
 
+def table_rows(
+    table: str,
+    columns: list[str],
+    filter_col: str | None,
+    filter_val: str | None,
+    ts_col: str | None,
+    limit: int,
+    datasource_id: int | None = None,
+) -> list[dict[str, Any]]:
+    """The newest `limit` rows of a table, projected onto `columns`.
+
+    The wide sibling of `table_latest`: that answers "what does this one column
+    read now", this answers "what do the last few rows say", which is what a
+    mimic's table symbol draws. Every column goes through the same
+    `_safe_identifiers` allowlist gate as a single-column read, so widening the
+    projection widens nothing about what may be reached.
+
+    Ordering needs a timestamp column. Without one the table has no newest row
+    to speak of, so the rows arrive in whatever order the plant's storage hands
+    them over — which is the honest answer for a current-state table that holds
+    one row per device.
+    """
+    with _table_source_conn(datasource_id) as (conn, schema):
+        _safe_identifiers(conn, schema, table, *columns, filter_col, ts_col)
+        query = sql.SQL("SELECT {cols} FROM {tbl}").format(
+            cols=sql.SQL(", ").join(sql.Identifier(c) for c in columns),
+            tbl=sql.Identifier(schema, table),
+        )
+        params: list[Any] = []
+        if filter_col and filter_val is not None:
+            query += sql.SQL(" WHERE {}::text = %s").format(sql.Identifier(filter_col))
+            params.append(filter_val)
+        if ts_col:
+            query += sql.SQL(" ORDER BY {} DESC NULLS LAST").format(sql.Identifier(ts_col))
+        query += sql.SQL(" LIMIT %s")
+        params.append(limit)
+        rows = conn.execute(query, params).fetchall()
+    return rows
+
+
 def init_users_table() -> None:
     """Create the users table if it doesn't exist. Idempotent.
 

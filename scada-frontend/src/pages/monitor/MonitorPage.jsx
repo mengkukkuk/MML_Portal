@@ -7,6 +7,7 @@ import Button from '@mui/material/Button'
 import IconButton from '@mui/material/IconButton'
 import Alert from '@mui/material/Alert'
 import Snackbar from '@mui/material/Snackbar'
+import Portal from '@mui/material/Portal'
 import ChevronLeft from '@mui/icons-material/ChevronLeft'
 import ChevronRight from '@mui/icons-material/ChevronRight'
 import PanToolOutlined from '@mui/icons-material/PanToolOutlined'
@@ -19,6 +20,7 @@ import FullscreenExitOutlined from '@mui/icons-material/FullscreenExitOutlined'
 import { useAuthStore } from '@/stores/auth'
 import ConnectionAlarmStrip from '@/components/ConnectionAlarm/ConnectionAlarmStrip'
 import usePlantData from '@/components/mimic/usePlantData'
+import useMimicTables from '@/components/mimic/useMimicTables'
 import { SYMBOLS, symbolDef, setCustomDefs } from '@/components/mimic/symbols'
 import { NORMAL_WIRE } from '@/components/mimic/wireTypes'
 import { formatValue, worseStatus } from '@/components/mimic/tagStatus'
@@ -237,11 +239,24 @@ export default function MonitorPage() {
   const setIntervalMs = setLiveMs
 
   const {
-    tags, history, events, error: dataError, sources: connSources,
+    tags: plantTags, history, events, error: dataError, sources: connSources,
   } = usePlantData({
     nodes, pollSeconds: liveMs / 1000,
   })
   const anySourceFailed = connSources.some((s) => !s.ok)
+
+  // Table symbols read rows, not a reading, so they poll on their own — see
+  // useMimicTables for why that is a sibling rather than a branch inside the
+  // value poller. The result is folded back into the same tag entries so the
+  // canvas keeps one map to look things up in.
+  const tableData = useMimicTables({ nodes, pollSeconds: liveMs / 1000 })
+  const tags = useMemo(() => {
+    const ids = Object.keys(tableData)
+    if (!ids.length) return plantTags
+    const merged = { ...plantTags }
+    ids.forEach((id) => { merged[id] = { ...merged[id], table: tableData[id] } })
+    return merged
+  }, [plantTags, tableData])
 
   const datasourcesQuery = useQuery({ queryKey: ['datasources'], queryFn: fetchDatasources })
 
@@ -849,7 +864,14 @@ export default function MonitorPage() {
   }, [editing])
 
   /**
-   * Full screen — the drawing on its own, for a control-room wall.
+   * Full screen — the drawing on its own, for a control-room wall, and in edit
+   * mode the whole workspace: palette, sheet and inspector.
+   *
+   * The editor used to send only the centre column, which put an administrator
+   * on a wall display with a canvas and no way to add a symbol to it or bind
+   * the one they had selected. `stageRef` therefore lands on the workspace
+   * while editing and on the bare sheet while viewing — one ref, because the
+   * two modes never mount at the same time.
    *
    * The browser owns this state: Esc, F11 and the window manager can all leave
    * it without asking us. So this mirrors `document.fullscreenElement` from the
@@ -890,6 +912,17 @@ export default function MonitorPage() {
     window.addEventListener('keydown', shortcut)
     return () => window.removeEventListener('keydown', shortcut)
   }, [layout, toggleFullscreen])
+
+  /**
+   * Where overlays open.
+   *
+   * A full-screen element is the only subtree the browser paints, and every
+   * dialog here portals to `<body>` by default — which is outside it. Left
+   * alone, "Connect data source" on a wall display opens a dialog nobody can
+   * see and traps focus in it. Re-homing them into whichever element is
+   * currently full screen is what makes the editor genuinely usable there.
+   */
+  const overlayHost = fullscreen ? stageRef.current : undefined
 
   const dotClass = plantStatus === 'crit' ? styles.dotCrit
     : plantStatus === 'warn' ? styles.dotWarn : ''
@@ -1048,6 +1081,7 @@ export default function MonitorPage() {
           className={`${styles.editorWorkspace} ${saving ? styles.editorWorkspaceSaving : ''}`}
           aria-busy={saving}
           inert={saving ? true : undefined}
+          ref={stageRef}
         >
           <aside className={`${styles.editorPaletteRail} ${paletteOpen ? '' : styles.editorRailClosed}`}>
             <button
@@ -1069,7 +1103,7 @@ export default function MonitorPage() {
             )}
           </aside>
 
-          <main className={styles.editorCenter} ref={stageRef}>
+          <main className={styles.editorCenter}>
             {fullscreenHead}
             <MimicEditorToolbar
               toolMode={toolMode}
@@ -1322,12 +1356,14 @@ export default function MonitorPage() {
       <SymbolBindingDialog
         open={!!bindingNode}
         node={bindingNode}
+        container={overlayHost}
         onClose={() => setBindingNode(null)}
         onSave={applyBinding}
       />
 
       <CustomSymbolDialog
         open={authoring}
+        container={overlayHost}
         onClose={() => setAuthoring(false)}
         onSaved={(row) => {
           queryClient.invalidateQueries({ queryKey: ['mimic-symbols'] })
@@ -1336,15 +1372,30 @@ export default function MonitorPage() {
         }}
       />
 
-      <ImportLayoutDialog open={importOpen} onClose={() => setImportOpen(false)} onImport={importDraft} />
-      <UnsavedChangesDialog open={unsavedOpen} onStay={keepEditing} onDiscard={discardUnsaved} />
+      <ImportLayoutDialog
+        open={importOpen}
+        container={overlayHost}
+        onClose={() => setImportOpen(false)}
+        onImport={importDraft}
+      />
+      <UnsavedChangesDialog
+        open={unsavedOpen}
+        container={overlayHost}
+        onStay={keepEditing}
+        onDiscard={discardUnsaved}
+      />
       <RevisionConflictDialog
         open={conflictOpen}
+        container={overlayHost}
         onContinue={() => setConflictOpen(false)}
         onExport={exportDraft}
         onReload={reloadServerRevision}
       />
 
+      {/* Snackbar is the one overlay here that is not a modal, so it has no
+        * container of its own to redirect — it is portalled explicitly for the
+        * same reason the dialogs are. */}
+      <Portal container={overlayHost}>
       <Snackbar
         open={snackbar.open}
         autoHideDuration={4000}
@@ -1359,6 +1410,7 @@ export default function MonitorPage() {
           {snackbar.message}
         </Alert>
       </Snackbar>
+      </Portal>
     </div>
   )
 }

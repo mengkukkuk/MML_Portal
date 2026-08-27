@@ -70,6 +70,31 @@ export async function fetchSchemaSeries({
 }
 
 /**
+ * The newest `limit` rows of a table, narrowed to `columns`.
+ *
+ * The wide read: `latest` answers "what does this column say now", this answers
+ * "what do the last few rows say", which is what the mimic's table symbol
+ * draws. Column names travel as one comma-joined string because that is the
+ * shape the endpoint validates and de-duplicates.
+ */
+export async function fetchSchemaRows({
+  table, columns, filterCol, filterVal, tsCol, limit = 10, datasourceId,
+}) {
+  const { data } = await apiClient.get('/schema/rows', {
+    params: {
+      table,
+      cols: (columns || []).join(','),
+      filter_col: filterCol || undefined,
+      filter_val: filterVal ?? undefined,
+      ts_col: tsCol || undefined,
+      limit,
+      datasource_id: datasourceId ?? undefined,
+    },
+  })
+  return data // { tables: [{ columns, rows, datasource_id, datasource_name }], sources }
+}
+
+/**
  * Pick the entry belonging to the *primary* (first-selected) source.
  *
  * Some callers can't fan out: a mimic symbol is one physical asset, and a

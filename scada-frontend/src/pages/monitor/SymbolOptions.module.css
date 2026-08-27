@@ -239,6 +239,168 @@
   cursor: default;
 }
 
+/* --- table structure --------------------------------------------------
+ * The list below runs down the rail; the table it describes runs across the
+ * sheet. This strip is the reconciliation — the layout drawn at the layout's
+ * own orientation, segments flex-grown by the weights, so an admin reads the
+ * proportions they are designing instead of the column of numbers that
+ * encodes them. It is deliberately the only wide thing in the panel.
+ */
+.proportions {
+  display: flex;
+  height: 26px;
+  overflow: hidden;
+  background: var(--bg-app);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+
+.proportion {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0 6px;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--fg-dim);
+}
+
+/* The divider belongs to the boundary, not to either column, so it is drawn
+   between segments rather than as a border on each. */
+.proportion + .proportion {
+  border-left: 1px solid var(--border-soft);
+}
+
+.cols {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Each column gets a rule down its left edge rather than a box around it: the
+   entries are a sequence, and a stack of boxes reads as unrelated cards. */
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--border-soft);
+}
+
+.colRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.colPick {
+  flex: 1 1 0;
+  min-width: 0;
+  height: var(--ctl-h);
+  padding: 7px 9px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* ‹ › rather than ▲ ▼ — the move is sideways on the drawing, and an arrow that
+   disagrees with the result is worse than no arrow. */
+.nudge {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: var(--ctl-h);
+  padding: 0;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1;
+  color: var(--fg-dim);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.nudge:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--border);
+}
+
+.nudge:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* The heading, set the way it will be drawn on the symbol, so the field is a
+   small preview of itself. Empty means "use the column name", which is what
+   the placeholder shows. */
+.colTitle {
+  width: 100%;
+  height: var(--ctl-h);
+  padding: 7px 9px;
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg);
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.colTitle::placeholder {
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim);
+  opacity: 0.7;
+}
+
+/* Align · Width · Decimals-or-Time. The middle is a fixed 54px because it holds
+   one small number and nothing else, and the outer two share what is left —
+   unevenly, since the third slot may be showing a timestamp sample, which is the
+   longest thing any control in this panel has to say. */
+.colGrid {
+  display: grid;
+  grid-template-columns: 1fr 54px 1.3fr;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.colNum {
+  width: 100%;
+  height: var(--ctl-h);
+  padding: 7px 9px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.colPick:focus-visible,
+.colTitle:focus-visible,
+.colNum:focus-visible,
+.nudge:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* --- the honeycomb ----------------------------------------------------
  * Rows of 3·4·5·4·3 pointy-top hexagons. A cell is 26 wide and 30 tall, which
  * is the regular ratio (2/√3); rows overlap by a quarter of that height so the

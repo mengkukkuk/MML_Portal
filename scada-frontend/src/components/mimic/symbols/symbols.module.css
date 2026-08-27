@@ -228,6 +228,66 @@
   user-select: none;
 }
 
+/* The table is the counter's plural, so its figures are set the same way:
+   mono, tabular, sized inline by the symbol against its own box. Weight drops
+   one step from the counter's 600 because a grid of bold figures is a wall —
+   a single totaliser has nothing to compete with, a column of twenty does. */
+.tableCell {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  fill: var(--fg);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Headers are the drawing's own voice rather than the plant's, so they take the
+   display face and the caps treatment every other legend on the sheet uses. */
+.tableHead {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  fill: var(--fg-dim);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Between rows only, and fainter than the header rule: the grid should be felt,
+   not read. */
+.tableRule {
+  fill: none;
+  stroke: var(--border-soft);
+  stroke-width: 1;
+}
+
+/* --- the tape ---------------------------------------------------------
+ * A time-series table is a paper tape. Rows are written at the top and the ones
+ * already there move down to make room, until the oldest goes off the bottom
+ * edge. The movement is the point: it is the only thing separating a reading
+ * that has just landed from one that has been sitting there since the drawing
+ * loaded, and on a historian that is exactly what an operator is watching for.
+ *
+ * Only a table ordered by a time column gets it. Without one the plant returns
+ * rows in whatever order it stores them, and a tape rolling for an unordered
+ * list would be claiming an arrival that never happened.
+ */
+.tapeRow {
+  transition: transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* The arrival waits for the space to be made for it. Fading in at once would
+   have it come up through the row still sliding out of that same place, and the
+   two would read as one smudge instead of as a row moving and a row landing. */
+.tapeEnter {
+  animation: mimic-tape-in 180ms ease-out 140ms backwards;
+}
+
+@keyframes mimic-tape-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
 /* Which way the last change went, then gone. It fades rather than persisting
    because it describes a moment, not a state — a caret still sitting there a
    minute later would be read as "currently rising". */
@@ -599,8 +659,15 @@
   .roll,
   .ring,
   .marquee,
+  .tapeEnter,
   .delta {
     animation: none;
+  }
+
+  /* The tape keeps its order and loses its travel: rows still appear at the top,
+     they just arrive there rather than sliding. */
+  .tapeRow {
+    transition: none;
   }
 
   /* The ticker is parked at its start rather than hidden: the first copy of the
