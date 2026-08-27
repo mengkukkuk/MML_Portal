@@ -80,7 +80,8 @@ export default function Gauge({ node, tag }) {
         x={cx}
         y={h + 18}
         textAnchor="middle"
-        transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}
+        style={{ fontSize: node.options?.labelSize }}
+        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
       >
         {node.label}
       </text>

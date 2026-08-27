@@ -19,10 +19,16 @@ const R = 34
  *   tag               one entry from the plant snapshot, or null when the
  *                     symbol has no datasource bound yet
  *   tagId             the loop id to print when there is no tag to read it off
+ *   radius            circle radius, logical units — an admin's per-node
+ *                     override (node.options.bubbleSize) or the default R.
+ *                     Every offset below was hand-tuned around R=34, so the
+ *                     whole glyph scales from that ratio rather than just the
+ *                     circle growing around fixed-size text.
  */
 export default function InstrumentBubble({
-  cx, cy, anchorX, anchorY, tag, tagId = null,
+  cx, cy, anchorX, anchorY, tag, tagId = null, radius = R,
 }) {
+  const scale = radius / R
   const { pulse, dir, crossed } = useValueTransition(tag)
 
   // The loop id is free text an admin types into the binding dialog, not the
@@ -45,8 +51,8 @@ export default function InstrumentBubble({
   const dx = cx - anchorX
   const dy = cy - anchorY
   const dist = Math.hypot(dx, dy) || 1
-  const edgeX = cx - (dx / dist) * R
-  const edgeY = cy - (dy / dist) * R
+  const edgeX = cx - (dx / dist) * radius
+  const edgeY = cy - (dy / dist) * radius
 
   const ringTint = crossed && status === 'crit' ? s.ringCrit
     : crossed && status === 'warn' ? s.ringWarn
@@ -58,18 +64,30 @@ export default function InstrumentBubble({
     <g className={`${statusClass} ${tag ? '' : s.bubbleUnbound}`}>
       <path className={s.bubbleLead} d={`M ${anchorX} ${anchorY} L ${edgeX} ${edgeY}`} />
       {/* key={pulse} is what makes this fire once per *displayed* change */}
-      <circle key={pulse} className={`${s.ring} ${ringTint}`} cx={cx} cy={cy} r={R} />
-      <circle className={s.bubbleFace} cx={cx} cy={cy} r={R} />
-      <line className={s.bubbleSplit} x1={cx - R + 3} y1={cy - 6} x2={cx + R - 3} y2={cy - 6} />
-      <text className={s.bubbleTag} x={cx} y={cy - 13}>
+      <circle key={pulse} className={`${s.ring} ${ringTint}`} cx={cx} cy={cy} r={radius} />
+      <circle className={s.bubbleFace} cx={cx} cy={cy} r={radius} />
+      <line
+        className={s.bubbleSplit}
+        x1={cx - radius + 3 * scale}
+        y1={cy - 6 * scale}
+        x2={cx + radius - 3 * scale}
+        y2={cy - 6 * scale}
+      />
+      <text className={s.bubbleTag} x={cx} y={cy - 13 * scale} style={{ fontSize: 11 * scale }}>
         {fn}
         {loop ? `\u2009${loop}` : ''}
       </text>
-      <text key={`v${pulse}`} className={`${s.bubbleValue} ${s.roll}`} x={cx} y={cy + 12}>
+      <text
+        key={`v${pulse}`}
+        className={`${s.bubbleValue} ${s.roll}`}
+        x={cx}
+        y={cy + 12 * scale}
+        style={{ fontSize: 15 * scale }}
+      >
         {formatValue(tag)}
       </text>
       {tag?.unit && (
-        <text className={s.bubbleUnit} x={cx} y={cy + 24}>
+        <text className={s.bubbleUnit} x={cx} y={cy + 24 * scale} style={{ fontSize: 9 * scale }}>
           {tag.unit}
         </text>
       )}

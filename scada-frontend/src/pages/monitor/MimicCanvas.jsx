@@ -424,6 +424,10 @@ const MimicCanvas = forwardRef(function MimicCanvas({
       ay: anchor.y,
       ox: p.x - centre.x,
       oy: p.y - centre.y,
+      // An admin's balloon-size override changes the drag bounds below, so
+      // the clamp always matches the balloon actually being dragged rather
+      // than assuming every balloon is the default radius.
+      radius: node.options?.bubbleSize ?? BUBBLE_R,
     }
     onGestureStart?.()
     capture(evt)
@@ -471,8 +475,8 @@ const MimicCanvas = forwardRef(function MimicCanvas({
       // Stored as an offset from the anchor, so the balloon keeps its relative
       // placement when the symbol itself is moved afterwards.
       onMoveBubble(drag.id, [
-        Math.round(clamp(p.x - drag.ox, BUBBLE_R + 4, VIEW_W - BUBBLE_R - 4) - drag.ax),
-        Math.round(clamp(p.y - drag.oy, BUBBLE_R + 16, VIEW_H - BUBBLE_R - 4) - drag.ay),
+        Math.round(clamp(p.x - drag.ox, drag.radius + 4, VIEW_W - drag.radius - 4) - drag.ax),
+        Math.round(clamp(p.y - drag.oy, drag.radius + 16, VIEW_H - drag.radius - 4) - drag.ay),
       ])
       return
     }
@@ -839,6 +843,9 @@ const MimicCanvas = forwardRef(function MimicCanvas({
             y: node.y + spec.anchor[1] * node.h,
           }
           const centre = { x: anchor.x + spec.offset[0], y: anchor.y + spec.offset[1] }
+          // An admin's per-node override (NodeInspector's Balloon size
+          // stepper), or the ISA-standard default.
+          const bubbleRadius = node.options?.bubbleSize ?? BUBBLE_R
           return (
             <g
               key={`b-${node.id}`}
@@ -854,13 +861,14 @@ const MimicCanvas = forwardRef(function MimicCanvas({
                 anchorY={anchor.y}
                 cx={centre.x}
                 cy={centre.y}
+                radius={bubbleRadius}
               />
               {editMode && (
                 <circle
                   className={styles.bubbleHandle}
                   cx={centre.x}
                   cy={centre.y}
-                  r={BUBBLE_R}
+                  r={bubbleRadius}
                 />
               )}
             </g>

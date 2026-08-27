@@ -24,6 +24,14 @@ export default function NodeInspector({
   const bubble = bubbleSpec(node)
   const resized = node.w !== def?.defaultSize.w || node.h !== def?.defaultSize.h
   const rot = ((Math.round(node.rot || 0) % 360) + 360) % 360
+
+  // Undefined means "use the drawing's default" — resolved here so both the
+  // stepper's readout and its disabled-reset state agree on what "default"
+  // means, the same way `resized`/`rot` above resolve their own defaults.
+  const labelSize = node.options?.labelSize ?? 12
+  const bubbleSize = node.options?.bubbleSize ?? 34
+  const setLabelSize = (v) => onOptions(node.id, { labelSize: Math.max(8, Math.min(20, v)) })
+  const setBubbleSize = (v) => onOptions(node.id, { bubbleSize: Math.max(24, Math.min(50, v)) })
   const connection = b?.datasource_id == null
     ? 'Follow header selection'
     : datasources.find((d) => d.id === b.datasource_id)?.name
@@ -86,6 +94,41 @@ export default function NodeInspector({
           says which column, and the two are edited in one sitting. */}
       <SymbolOptions node={node} onChange={(patch) => onOptions(node.id, patch)} />
 
+      <div className={styles.section}>
+        <div className={styles.sectionTitle}>Title</div>
+        <p className={styles.hint}>
+          Font size of the name printed under the symbol. Applies once this
+          symbol&rsquo;s drawing has been updated to read the setting — until
+          then the value is saved but the text stays at the default size.
+        </p>
+        <div className={styles.rotRow} role="group" aria-label="Title font size">
+          <button
+            type="button"
+            className={styles.rotBtn}
+            onClick={() => setLabelSize(labelSize - 1)}
+          >
+            −
+          </button>
+          <span className={styles.rotValue}>{labelSize}px</span>
+          <button
+            type="button"
+            className={styles.rotBtn}
+            onClick={() => setLabelSize(labelSize + 1)}
+          >
+            +
+          </button>
+        </div>
+        <Button
+          fullWidth
+          color="inherit"
+          startIcon={<RestartAltOutlined />}
+          disabled={node.options?.labelSize == null}
+          onClick={() => onOptions(node.id, { labelSize: undefined })}
+        >
+          Reset to default
+        </Button>
+      </div>
+
       {bubble && (
         <div className={styles.section}>
           <div className={styles.sectionTitle}>Balloon</div>
@@ -105,6 +148,33 @@ export default function NodeInspector({
             onClick={() => onResetBubble(node.id)}
           >
             Reset balloon position
+          </Button>
+
+          <div className={styles.rotRow} role="group" aria-label="Balloon size">
+            <button
+              type="button"
+              className={styles.rotBtn}
+              onClick={() => setBubbleSize(bubbleSize - 2)}
+            >
+              −
+            </button>
+            <span className={styles.rotValue}>{bubbleSize}px</span>
+            <button
+              type="button"
+              className={styles.rotBtn}
+              onClick={() => setBubbleSize(bubbleSize + 2)}
+            >
+              +
+            </button>
+          </div>
+          <Button
+            fullWidth
+            color="inherit"
+            startIcon={<RestartAltOutlined />}
+            disabled={node.options?.bubbleSize == null}
+            onClick={() => onOptions(node.id, { bubbleSize: undefined })}
+          >
+            Reset balloon size
           </Button>
         </div>
       )}
