@@ -44,10 +44,10 @@ export default function Pdu({ node, tag }) {
         </g>
       ))}
 
-      <text className={s.readout} x={cx} y={h * 0.94} textAnchor="middle">
+      <text className={s.readout} x={cx} y={h * 0.94} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {amps} A
       </text>
-      <text className={s.label} x={cx} y={h + 18} textAnchor="middle">
+      <text className={s.label} x={cx} y={h + 18} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
     </g>

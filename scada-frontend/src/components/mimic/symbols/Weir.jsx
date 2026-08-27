@@ -56,7 +56,7 @@ export default function Weir({ node, tag }) {
         <line x1={w * 0.1} y1={levelY} x2={w * 0.9} y2={levelY} />
       </g>
 
-      <text className={s.label} x={cx} y={h + 18} textAnchor="middle">
+      <text className={s.label} x={cx} y={h + 18} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
     </g>

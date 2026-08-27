@@ -27,10 +27,10 @@ export default function SensorEye({ node, tag }) {
         fill={made ? 'var(--warn)' : 'var(--accent)'}
         opacity={made ? 0.9 : undefined}
       />
-      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle">
+      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
-      <text className={s.labelDim} x={w / 2} y={h + 31} textAnchor="middle">
+      <text className={s.labelDim} x={w / 2} y={h + 31} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {made ? 'beam made' : 'beam clear'}
       </text>
     </g>

@@ -35,10 +35,12 @@ export default function BusBar({ node, tag }) {
         )
       })}
 
-      <text className={s.label} x={w / 2} y={y - 12} textAnchor="middle">
+      <text className={s.label} x={w / 2} y={y - 12} textAnchor="middle"
+            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
-      <text className={s.labelDim} x={w / 2} y={h + 14} textAnchor="middle">
+      <text className={s.labelDim} x={w / 2} y={h + 14} textAnchor="middle"
+            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {live ? 'energised' : 'dead'}
       </text>
     </g>

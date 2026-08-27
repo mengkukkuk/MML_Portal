@@ -50,7 +50,8 @@ export default function Cartoner({ node, tag }) {
         d={`M ${w * 0.78} ${h * 0.44} L ${w * 0.94} ${h * 0.44} M ${w * 0.9} ${h * 0.4} L ${w * 0.94} ${h * 0.44} L ${w * 0.9} ${h * 0.48}`}
       />
 
-      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle">
+      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle"
+            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
     </g>

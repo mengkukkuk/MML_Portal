@@ -42,10 +42,12 @@ export default function DosingPump({ node, tag }) {
       {/* suction lance into the tank */}
       <line className={s.hair} x1={cx + headR * 1.3} y1={headY + headR} x2={cx + headR * 1.3} y2={h * 0.88} />
 
-      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle">
+      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle"
+            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
-      <text className={s.labelDim} x={w / 2} y={h + 31} textAnchor="middle">
+      <text className={s.labelDim} x={w / 2} y={h + 31} textAnchor="middle"
+            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {running ? 'dosing' : 'idle'}
       </text>
     </g>

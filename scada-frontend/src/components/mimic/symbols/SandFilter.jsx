@@ -57,10 +57,10 @@ export default function SandFilter({ node, tag }) {
         y2={bedTop + (shellBot - bedTop) * 0.62}
       />
 
-      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle">
+      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
-      <text className={s.labelDim} x={w / 2} y={h + 31} textAnchor="middle">
+      <text className={s.labelDim} x={w / 2} y={h + 31} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {inService ? 'in service' : 'backwash'}
       </text>
     </g>

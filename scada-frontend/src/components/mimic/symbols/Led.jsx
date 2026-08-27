@@ -117,7 +117,8 @@ export default function Led({ node, tag }) {
         </g>
       )}
 
-      <text className={s.label} x={cx} y={h + 18} textAnchor="middle">
+      <text className={s.label} x={cx} y={h + 18} textAnchor="middle"
+            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
     </g>

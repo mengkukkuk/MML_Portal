@@ -49,7 +49,7 @@ export default function StackLight({ node, tag }) {
         )
       })}
       <rect className={s.bodyElev} x={-4} y={h - 12} width={w + 8} height={12} rx={2} />
-      <text className={s.label} x={w / 2} y={h + 20} textAnchor="middle">
+      <text className={s.label} x={w / 2} y={h + 20} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
     </g>

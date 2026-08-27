@@ -41,10 +41,10 @@ export default function Vfd({ node, tag }) {
       <line className={s.hair} x1={w / 2 - 3} y1={midY - 9} x2={w / 2 - 3} y2={midY + 9} />
       <line className={s.hair} x1={w / 2 + 3} y1={midY - 9} x2={w / 2 + 3} y2={midY + 9} />
 
-      <text className={s.readout} x={w / 2} y={h * 0.86} textAnchor="middle">
+      <text className={s.readout} x={w / 2} y={h * 0.86} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {hz} Hz
       </text>
-      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle">
+      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
     </g>

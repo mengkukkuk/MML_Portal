@@ -31,10 +31,12 @@ export default function ControlLoop({ node, tag }) {
         {value}
       </text>
 
-      <text className={s.labelDim} x={cx} y={h - 6} textAnchor="middle">
+      <text className={s.labelDim} x={cx} y={h - 6} textAnchor="middle"
+            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {auto ? 'auto' : 'manual'}
       </text>
-      <text className={s.label} x={cx} y={h + 18} textAnchor="middle">
+      <text className={s.label} x={cx} y={h + 18} textAnchor="middle"
+            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
     </g>

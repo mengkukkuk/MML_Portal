@@ -192,12 +192,14 @@ export default function CustomSymbol({ node, def, tag }) {
           Centred on the picture's own area, not the whole box, so it does not
           drift into the gauge when one is present. */}
       {!url && (
-        <text className={s.labelDim} x={pictureW / 2} y={pictureH / 2 + 4} textAnchor="middle">
+        <text className={s.labelDim} x={pictureW / 2} y={pictureH / 2 + 4} textAnchor="middle"
+              transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
           no image
         </text>
       )}
 
-      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle">
+      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle"
+            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
     </g>

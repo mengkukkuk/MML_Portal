@@ -40,10 +40,10 @@ export default function RemoteIo({ node, tag }) {
       <text className={s.labelDim} x={w / 2} y={bodyH * 0.36} textAnchor="middle">
         I/O
       </text>
-      <text className={s.label} x={w / 2} y={h + 6} textAnchor="middle">
+      <text className={s.label} x={w / 2} y={h + 6} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
-      <text className={s.labelDim} x={w / 2} y={h + 19} textAnchor="middle">
+      <text className={s.labelDim} x={w / 2} y={h + 19} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {online ? 'online' : 'no comms'}
       </text>
     </g>

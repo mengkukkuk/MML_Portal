@@ -50,10 +50,10 @@ export default function SafetyRelay({ node, tag }) {
         </g>
       ))}
 
-      <text className={s.label} x={w / 2} y={h + 2} textAnchor="middle">
+      <text className={s.label} x={w / 2} y={h + 2} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
-      <text className={s.labelDim} x={w / 2} y={h + 15} textAnchor="middle">
+      <text className={s.labelDim} x={w / 2} y={h + 15} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {healthy ? 'guard made' : 'tripped'}
       </text>
     </g>

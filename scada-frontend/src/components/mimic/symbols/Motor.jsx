@@ -22,10 +22,12 @@ export default function Motor({ node, tag }) {
         <circle className={s.accentFill} cx={cx} cy={cy - r * 0.62} r={3} />
       </g>
 
-      <text className={s.readout} x={cx} y={cy + 5} textAnchor="middle">
+      <text className={s.readout} x={cx} y={cy + 5} textAnchor="middle"
+            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         M
       </text>
-      <text className={s.label} x={cx} y={h + 18} textAnchor="middle">
+      <text className={s.label} x={cx} y={h + 18} textAnchor="middle"
+            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
     </g>

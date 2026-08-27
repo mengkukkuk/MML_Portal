@@ -54,10 +54,12 @@ export default function Membrane({ node, tag }) {
         strokeDasharray="5 4"
       />
 
-      <text className={s.labelDim} x={w * 0.5} y={vesselY - 6} textAnchor="middle">
+      <text className={s.labelDim} x={w * 0.5} y={vesselY - 6} textAnchor="middle"
+            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         RO
       </text>
-      <text className={s.label} x={w / 2} y={h + 4} textAnchor="middle">
+      <text className={s.label} x={w / 2} y={h + 4} textAnchor="middle"
+            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
     </g>

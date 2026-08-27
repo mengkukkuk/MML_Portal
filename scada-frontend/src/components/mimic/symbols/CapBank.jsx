@@ -46,10 +46,12 @@ export default function CapBank({ node, tag }) {
       <line className={s.hair} x1={w * 0.16} y1={h * 0.78} x2={w * 0.84} y2={h * 0.78} />
       <line className={s.hair} x1={cx} y1={h * 0.78} x2={cx} y2={h * 0.9} />
 
-      <text className={s.label} x={cx} y={h + 18} textAnchor="middle">
+      <text className={s.label} x={cx} y={h + 18} textAnchor="middle"
+            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
-      <text className={s.labelDim} x={cx} y={h + 31} textAnchor="middle">
+      <text className={s.labelDim} x={cx} y={h + 31} textAnchor="middle"
+            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {inCircuit ? 'in circuit' : 'out'}
       </text>
     </g>

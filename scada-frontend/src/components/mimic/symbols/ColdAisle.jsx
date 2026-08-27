@@ -57,12 +57,14 @@ export default function ColdAisle({ node, tag }) {
       ))}
 
       {temp != null && (
-        <text className={s.readout} x={w / 2} y={h * 0.56} textAnchor="middle">
+        <text className={s.readout} x={w / 2} y={h * 0.56} textAnchor="middle"
+              transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
           {temp}{tag?.unit ? ` ${tag.unit}` : '°'}
         </text>
       )}
 
-      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle">
+      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle"
+            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
     </g>

@@ -29,7 +29,8 @@ export default function HeatExchanger({ node, tag }) {
       <line className={s.hair} x1={w * 0.82} y1={0} x2={w * 0.82} y2={h} />
       <path className={`${s.accentStroke} ${s.march}`} d={d} />
 
-      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle">
+      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle"
+            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {node.label}
       </text>
     </g>
