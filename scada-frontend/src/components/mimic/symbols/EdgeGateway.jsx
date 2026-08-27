@@ -41,10 +41,23 @@ export default function EdgeGateway({ node, tag }) {
         GW
       </text>
 
-      <text className={s.label} x={cx} y={h + 12} textAnchor="middle">
+      <text
+        className={s.label}
+        x={cx}
+        y={h + 12}
+        textAnchor="middle"
+        style={{ fontSize: node.options?.labelSize }}
+        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
+      >
         {node.label}
       </text>
-      <text className={s.labelDim} x={cx} y={h + 25} textAnchor="middle">
+      <text
+        className={s.labelDim}
+        x={cx}
+        y={h + 25}
+        textAnchor="middle"
+        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
+      >
         {connected ? 'publishing' : 'offline'}
       </text>
     </g>

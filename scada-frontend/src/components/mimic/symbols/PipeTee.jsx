@@ -18,7 +18,14 @@ export default function PipeTee({ node }) {
         fill="var(--bg-elev)"
       />
       <circle className={s.hairFill} cx={cx} cy={cy} r={3} />
-      <text className={s.labelDim} x={cx} y={-8} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
+      <text
+        className={s.labelDim}
+        x={cx}
+        y={-8}
+        textAnchor="middle"
+        style={{ fontSize: node.options?.labelSize }}
+        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
+      >
         {node.label}
       </text>
     </g>

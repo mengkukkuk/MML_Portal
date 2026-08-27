@@ -54,8 +54,14 @@ export default function Packer({ node, tag }) {
       />
       <path className={s.accentStroke} d={`M ${w * 0.9} ${h * 0.44} L ${w * 0.94} ${h * 0.48} L ${w * 0.9} ${h * 0.52}`} />
 
-      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle"
-            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
+      <text
+        className={s.label}
+        x={w / 2}
+        y={h + 18}
+        textAnchor="middle"
+        style={{ fontSize: node.options?.labelSize }}
+        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
+      >
         {node.label}
       </text>
       <text className={s.labelDim} x={w / 2} y={h + 31} textAnchor="middle"

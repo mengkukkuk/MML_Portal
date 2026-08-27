@@ -26,8 +26,14 @@ export default function Motor({ node, tag }) {
             transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         M
       </text>
-      <text className={s.label} x={cx} y={h + 18} textAnchor="middle"
-            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
+      <text
+        className={s.label}
+        x={cx}
+        y={h + 18}
+        textAnchor="middle"
+        style={{ fontSize: node.options?.labelSize }}
+        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
+      >
         {node.label}
       </text>
     </g>

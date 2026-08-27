@@ -35,8 +35,14 @@ export default function Lighting({ node, tag }) {
       {/* the aperture the camera sees through */}
       <circle cx={cx} cy={cy} r={rOuter - ringWidth} fill="var(--bg-app)" stroke="var(--fg-dim)" strokeWidth={1} />
 
-      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle"
-            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
+      <text
+        className={s.label}
+        x={w / 2}
+        y={h + 18}
+        textAnchor="middle"
+        style={{ fontSize: node.options?.labelSize }}
+        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
+      >
         {node.label}
       </text>
       <text className={s.labelDim} x={w / 2} y={h + 31} textAnchor="middle"

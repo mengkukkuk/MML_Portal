@@ -50,7 +50,14 @@ export default function RejectStation({ node, tag }) {
       {/* the pack under inspection */}
       <rect className={s.hair} x={w * 0.2} y={laneY + laneH * 0.2} width={w * 0.1} height={laneH * 0.6} rx={1} />
 
-      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
+      <text
+        className={s.label}
+        x={w / 2}
+        y={h + 18}
+        textAnchor="middle"
+        style={{ fontSize: node.options?.labelSize }}
+        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
+      >
         {node.label}
       </text>
       <text className={s.labelDim} x={w / 2} y={h + 31} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>

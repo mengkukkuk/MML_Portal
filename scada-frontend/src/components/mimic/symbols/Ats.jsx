@@ -59,10 +59,23 @@ export default function Ats({ node, tag }) {
       <circle className={s.accentFill} cx={cx} cy={pivotY} r={3} />
       <line className={s.body} x1={cx} y1={pivotY} x2={cx} y2={h} />
 
-      <text className={s.label} x={cx} y={h + 18} textAnchor="middle">
+      <text
+        className={s.label}
+        x={cx}
+        y={h + 18}
+        textAnchor="middle"
+        style={{ fontSize: node.options?.labelSize }}
+        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
+      >
         {node.label}
       </text>
-      <text className={s.labelDim} x={cx} y={h + 31} textAnchor="middle">
+      <text
+        className={s.labelDim}
+        x={cx}
+        y={h + 31}
+        textAnchor="middle"
+        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
+      >
         {onA ? 'source A' : onB ? 'source B' : 'transferring'}
       </text>
     </g>

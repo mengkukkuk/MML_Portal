@@ -44,7 +44,14 @@ export default function Vfd({ node, tag }) {
       <text className={s.readout} x={w / 2} y={h * 0.86} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
         {hz} Hz
       </text>
-      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle" transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
+      <text
+        className={s.label}
+        x={w / 2}
+        y={h + 18}
+        textAnchor="middle"
+        style={{ fontSize: node.options?.labelSize }}
+        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
+      >
         {node.label}
       </text>
     </g>

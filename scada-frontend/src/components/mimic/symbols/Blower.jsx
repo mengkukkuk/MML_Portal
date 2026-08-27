@@ -50,12 +50,23 @@ export default function Blower({ node, tag }) {
       {/* baseplate */}
       <rect className={s.bodyElev} x={w * 0.1} y={h * 0.88} width={w * 0.7} height={h * 0.1} rx={2} />
 
-      <text className={s.label} x={w / 2} y={h + 18} textAnchor="middle"
-            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
+      <text
+        className={s.label}
+        x={w / 2}
+        y={h + 18}
+        textAnchor="middle"
+        style={{ fontSize: node.options?.labelSize }}
+        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
+      >
         {node.label}
       </text>
-      <text className={s.labelDim} x={w / 2} y={h + 31} textAnchor="middle"
-            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
+      <text
+        className={s.labelDim}
+        x={w / 2}
+        y={h + 31}
+        textAnchor="middle"
+        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
+      >
         {running ? 'aerating' : 'stopped'}
       </text>
     </g>

@@ -98,7 +98,14 @@ export default function Conveyor({ node, tag }) {
         </g>
       ))}
 
-      <text className={s.label} x={w / 2} y={h + 20} textAnchor="middle">
+      <text
+        className={s.label}
+        x={w / 2}
+        y={h + 20}
+        textAnchor="middle"
+        style={{ fontSize: node.options?.labelSize }}
+        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
+      >
         {node.label}
       </text>
     </g>

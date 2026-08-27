@@ -30,8 +30,8 @@ export default function NodeInspector({
   // means, the same way `resized`/`rot` above resolve their own defaults.
   const labelSize = node.options?.labelSize ?? 12
   const bubbleSize = node.options?.bubbleSize ?? 34
-  const setLabelSize = (v) => onOptions(node.id, { labelSize: Math.max(8, Math.min(20, v)) })
-  const setBubbleSize = (v) => onOptions(node.id, { bubbleSize: Math.max(24, Math.min(50, v)) })
+  const setLabelSize = (v) => onOptions(node.id, { labelSize: Math.max(8, Math.min(32, v)) })
+  const setBubbleSize = (v) => onOptions(node.id, { bubbleSize: Math.max(16, Math.min(80, v)) })
   const connection = b?.datasource_id == null
     ? 'Follow header selection'
     : datasources.find((d) => d.id === b.datasource_id)?.name
@@ -97,15 +97,13 @@ export default function NodeInspector({
       <div className={styles.section}>
         <div className={styles.sectionTitle}>Title</div>
         <p className={styles.hint}>
-          Font size of the name printed under the symbol. Applies once this
-          symbol&rsquo;s drawing has been updated to read the setting — until
-          then the value is saved but the text stays at the default size.
+          Font size of the name printed under the symbol.
         </p>
         <div className={styles.rotRow} role="group" aria-label="Title font size">
           <button
             type="button"
             className={styles.rotBtn}
-            onClick={() => setLabelSize(labelSize - 1)}
+            onClick={() => setLabelSize(labelSize - 2)}
           >
             −
           </button>
@@ -113,7 +111,7 @@ export default function NodeInspector({
           <button
             type="button"
             className={styles.rotBtn}
-            onClick={() => setLabelSize(labelSize + 1)}
+            onClick={() => setLabelSize(labelSize + 2)}
           >
             +
           </button>
@@ -154,7 +152,7 @@ export default function NodeInspector({
             <button
               type="button"
               className={styles.rotBtn}
-              onClick={() => setBubbleSize(bubbleSize - 2)}
+              onClick={() => setBubbleSize(bubbleSize - 4)}
             >
               −
             </button>
@@ -162,7 +160,7 @@ export default function NodeInspector({
             <button
               type="button"
               className={styles.rotBtn}
-              onClick={() => setBubbleSize(bubbleSize + 2)}
+              onClick={() => setBubbleSize(bubbleSize + 4)}
             >
               +
             </button>

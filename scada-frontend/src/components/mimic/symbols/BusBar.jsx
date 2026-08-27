@@ -35,8 +35,14 @@ export default function BusBar({ node, tag }) {
         )
       })}
 
-      <text className={s.label} x={w / 2} y={y - 12} textAnchor="middle"
-            transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}>
+      <text
+        className={s.label}
+        x={w / 2}
+        y={y - 12}
+        textAnchor="middle"
+        style={{ fontSize: node.options?.labelSize }}
+        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
+      >
         {node.label}
       </text>
       <text className={s.labelDim} x={w / 2} y={h + 14} textAnchor="middle"
