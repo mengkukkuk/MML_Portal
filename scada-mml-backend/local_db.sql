@@ -239,3 +239,65 @@ create table localbase.license_events
 alter table localbase.license_events
     owner to postgres;
 
+create table localbase.cameras
+(
+    id            serial
+        primary key,
+    code          text                                   not null
+        unique,
+    name          text                                   not null,
+    station_code  text,
+    station_label text,
+    location      text,
+    enabled       boolean                  default true  not null,
+    created_at    timestamp with time zone default now() not null,
+    updated_at    timestamp with time zone default now() not null
+);
+
+alter table localbase.cameras
+    owner to postgres;
+
+create table localbase.camera_defect
+(
+    id         serial
+        constraint camera_defect_pk
+            primary key,
+    camera_id  text,
+    updated_at timestamp default now(),
+    defect_1   integer,
+    defect_2   integer,
+    defect_3   integer,
+    defect_4   integer,
+    defect_5   integer
+);
+
+alter table localbase.camera_defect
+    owner to postgres;
+
+create table localbase.camera_snapshots
+(
+    id          serial
+        primary key,
+    camera_id   integer                                      not null
+        references localbase.cameras
+            on delete cascade,
+    captured_at timestamp with time zone default now()       not null,
+    cause       text,
+    verdict     text                     default 'ng'::text  not null,
+    mime        text                                         not null,
+    bytes       bytea                                        not null,
+    size_bytes  integer                                      not null,
+    sha256      text                                         not null,
+    meta        jsonb                    default '{}'::jsonb not null,
+    uploaded_by integer,
+    created_at  timestamp with time zone default now()       not null,
+    unique (camera_id, sha256)
+);
+
+alter table localbase.camera_snapshots
+    owner to postgres;
+
+create index camera_snapshots_recent
+    on localbase.camera_snapshots (camera_id asc, captured_at desc);
+
+
