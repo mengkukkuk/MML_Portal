@@ -868,11 +868,13 @@ export default function MonitorPage() {
    * Full screen — the drawing on its own, for a control-room wall, and in edit
    * mode the whole workspace: palette, sheet and inspector.
    *
-   * The editor used to send only the centre column, which put an administrator
-   * on a wall display with a canvas and no way to add a symbol to it or bind
-   * the one they had selected. `stageRef` therefore lands on the workspace
-   * while editing and on the bare sheet while viewing — one ref, because the
-   * two modes never mount at the same time.
+   * Both modes used to send only the canvas, which put a viewer on a wall
+   * display with a drawing and no way to see what a symbol they clicked was
+   * reporting — same problem the editor had with no way to add or bind a
+   * symbol. `stageRef` therefore lands on the whole workspace in both modes:
+   * the editor's palette/sheet/inspector grid while editing, and the
+   * sheet/rail grid (`.body`) while viewing — one ref, because the two modes
+   * never mount at the same time.
    *
    * The browser owns this state: Esc, F11 and the window manager can all leave
    * it without asking us. So this mirrors `document.fullscreenElement` from the
@@ -1221,8 +1223,8 @@ export default function MonitorPage() {
       )}
 
       {layout && !editing && (
-        <div className={styles.body}>
-          <div className={styles.stageWrap} ref={stageRef}>
+        <div className={styles.body} ref={stageRef}>
+          <div className={styles.stageWrap}>
             {fullscreenHead}
             <MimicCanvas
               ref={canvasRef}
@@ -1317,16 +1319,22 @@ export default function MonitorPage() {
             </div>
           </div>
 
-          <div className={`${styles.railCol} ${railCollapsed ? styles.railColCollapsed : ''}`}>
-            <IconButton className={styles.railToggle} size="small" onClick={() => setRailCollapsed((c) => !c)}>
-              {railCollapsed ? <ChevronLeft fontSize="small" /> : <ChevronRight fontSize="small" />}
-            </IconButton>
-            {!railCollapsed && (
-              isCameraNode(selectedNode)
-                ? <CameraRail node={selectedNode} tag={selectedTag} />
-                : <DetailRail tag={selectedTag} node={selectedNode} history={selectedId ? history[selectedId] : null} events={events} canBind={false} />
-            )}
-          </div>
+          {/* Nothing selected means nothing to show — the rail's only content
+            * is a per-symbol readout, so an empty "no asset selected" panel
+            * just spends half the screen saying so. The canvas takes the
+            * space back until a click gives the rail something to render. */}
+          {selectedId && (
+            <div className={`${styles.railCol} ${railCollapsed ? styles.railColCollapsed : ''}`}>
+              <IconButton className={styles.railToggle} size="small" onClick={() => setRailCollapsed((c) => !c)}>
+                {railCollapsed ? <ChevronLeft fontSize="small" /> : <ChevronRight fontSize="small" />}
+              </IconButton>
+              {!railCollapsed && (
+                isCameraNode(selectedNode)
+                  ? <CameraRail node={selectedNode} tag={selectedTag} />
+                  : <DetailRail tag={selectedTag} node={selectedNode} history={history[selectedId]} events={events} canBind={false} />
+              )}
+            </div>
+          )}
         </div>
       )}
 

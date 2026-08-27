@@ -192,12 +192,26 @@
 
 .body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   gap: var(--space-3);
   align-items: stretch;
   flex: 1 1 auto;
   min-height: 0;
+}
+
+/* Collapsing the rail hands its half back to the canvas — the split is a
+ * choice, not a leftover, so the track goes back to auto-by-content rather
+ * than staying pinned at 50% with nothing to show for it. */
+.body:has(.railCol.railColCollapsed) {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+/* Nothing selected, so the rail isn't in the DOM at all — the second track
+ * would otherwise still reserve its half of the grid for an element that
+ * isn't there. */
+.body:not(:has(.railCol)) {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 /* The drawing's own box. Positioned so the view controls can sit on the sheet
@@ -211,16 +225,17 @@
 }
 
 /* --- full screen --------------------------------------------------------
- * The sheet on its own, for a control-room wall. The browser paints the
- * backdrop black by default, which would put the drawing in a different
- * theme from the app it belongs to, so both containers restate the surface
- * they already sit on and stack a banner above the sheet.
+ * The whole workspace, rails included, for a control-room wall — a viewer
+ * on a wall display needs to see what the symbol they clicked is reporting,
+ * same reasoning as `.editorWorkspace:fullscreen` below. The browser paints
+ * the backdrop black by default, which would put the drawing in a different
+ * theme from the app it belongs to, so the container restates the surface
+ * it already sits on.
  */
-.stageWrap:fullscreen {
+.body:fullscreen {
+  height: 100%;
   padding: var(--space-4) var(--space-5);
   background: var(--bg-app);
-  flex-direction: column;
-  gap: var(--space-3);
 }
 
 /* Editing full screen sends the *whole* workspace, rails included — a drafting
@@ -234,9 +249,17 @@
   border-radius: 0;
 }
 
+/* Stack the banner above the sheet inside its own column — `.body`'s grid
+ * still splits canvas/rail side by side, so only the stage column goes
+ * column-flow. */
+.body:fullscreen .stageWrap {
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
 /* The sheet takes the rest. `height: 100%` would resolve against the whole
  * screen and push the banner off the top of it. */
-.stageWrap:fullscreen > svg {
+.body:fullscreen .stageWrap > svg {
   flex: 1 1 0;
   height: auto;
   min-height: 0;
@@ -255,7 +278,7 @@
  * top-right corner, so they move to the bottom one. Absolute offsets resolve
  * against the padding box rather than the sheet, so the container's own padding
  * is added back — without it the overlay hangs off the edge of the drawing. */
-.stageWrap:fullscreen .viewTools {
+.body:fullscreen .viewTools {
   top: auto;
   right: calc(var(--space-5) + var(--space-3));
   bottom: calc(var(--space-4) + var(--space-3));
@@ -408,15 +431,16 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* The rail's own column: its width drives the grid track (auto), so
- * collapsing it hands that space straight back to the mimic — a 320px rail
- * costs the canvas a fifth of its width, and this is the fastest way to get
- * it back without leaving the drawing. */
+/* The rail's own column: in view mode it takes an even 50/50 split with the
+ * canvas (`.body`'s two `1fr` tracks). Collapsing it switches that sibling
+ * track to `auto`, so `width: 100%` here shrinks to content (40px) and the
+ * canvas gets the freed half back — the fastest way to get it back without
+ * leaving the drawing. */
 .railCol {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  width: 320px;
+  width: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -597,6 +621,10 @@
 
   .body:has(.railColCollapsed) {
     grid-template-rows: minmax(0, 1fr) 40px;
+  }
+
+  .body:not(:has(.railCol)) {
+    grid-template-rows: minmax(0, 1fr);
   }
 
   .railCol {
