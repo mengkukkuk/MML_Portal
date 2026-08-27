@@ -75,7 +75,13 @@ export default function Gauge({ node, tag }) {
       </g>
       <circle className={s.hairFill} cx={cx} cy={cy} r={3.5} />
 
-      <text className={s.label} x={cx} y={h + 18} textAnchor="middle">
+      <text
+        className={s.label}
+        x={cx}
+        y={h + 18}
+        textAnchor="middle"
+        transform={node.rot ? `rotate(${-node.rot} ${w / 2} ${h / 2})` : undefined}
+      >
         {node.label}
       </text>
     </g>
