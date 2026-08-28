@@ -1382,7 +1382,7 @@ export default function MonitorPage() {
               </IconButton>
               {!railCollapsed && (
                 isCameraNode(selectedNode)
-                  ? <CameraRail node={selectedNode} tag={selectedTag} />
+                  ? <CameraRail node={selectedNode} tag={selectedTag} pollMs={intervalMs} />
                   : <DetailRail tag={selectedTag} node={selectedNode} history={history[selectedId]} events={events} canBind={false} />
               )}
             </div>

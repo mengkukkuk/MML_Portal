@@ -145,6 +145,55 @@ def test_bool_is_not_a_valid_slot(image_root):
     assert camera_files.list_slot_frames("CAM-03", True) == []
 
 
+# --- slots_with_frames ---------------------------------------------------------
+# The polled path: /defects runs this on every live tick, so it answers five
+# yes/no questions with one walk instead of five full listings.
+
+def test_slots_with_frames_reports_only_slots_holding_files(image_root):
+    """defect_1 has files, defect_2 is an empty directory, defect_3..5 have no
+    directory at all. All three are different on disk and identical to an
+    operator: nothing to look at."""
+    assert camera_files.slots_with_frames("CAM-03") == {1}
+
+
+def test_slots_with_frames_matches_the_camera_case_insensitively(image_root):
+    assert camera_files.slots_with_frames("cam-03") == {1}
+
+
+def test_slots_with_frames_agrees_with_list_slot_frames(image_root):
+    """The cheap check and the full listing must never disagree — a slot shown
+    as having frames that then renders an empty strip is worse than either."""
+    for slot in range(camera_files.MIN_SLOT, camera_files.MAX_SLOT + 1):
+        cheap = slot in camera_files.slots_with_frames("CAM-03")
+        full = bool(camera_files.list_slot_frames("CAM-03", slot))
+        assert cheap == full, f"slot {slot} disagrees"
+
+
+def test_slots_with_frames_ignores_directories_that_are_not_slots(image_root):
+    (image_root / "cam-03" / "NG" / "defect_9").mkdir()
+    (image_root / "cam-03" / "NG" / "defect_9" / "x.png").write_bytes(PNG)
+    (image_root / "cam-03" / "NG" / "scratch").mkdir()
+    (image_root / "cam-03" / "NG" / "scratch" / "x.png").write_bytes(PNG)
+    assert camera_files.slots_with_frames("CAM-03") == {1}
+
+
+def test_slots_with_frames_is_empty_without_a_root(monkeypatch):
+    monkeypatch.setattr(camera_files.config, "CAMERA_IMAGE_ROOT", "")
+    assert camera_files.slots_with_frames("CAM-03") == set()
+
+
+def test_slots_with_frames_is_empty_for_an_unknown_camera(image_root):
+    assert camera_files.slots_with_frames("CAM-99") == set()
+
+
+@pytest.mark.parametrize("code", ["../../etc", "C:\\Windows", "NUL", ""])
+def test_slots_with_frames_refuses_a_hostile_code(image_root, code):
+    """The fast path takes the same segments as the slow one, so it has to
+    enforce the same containment — an optimisation that skipped the check
+    would be a hole behind a route that is polled continuously."""
+    assert camera_files.slots_with_frames(code) == set()
+
+
 # --- reading -------------------------------------------------------------------
 
 def test_index_past_the_end_is_not_found(image_root):

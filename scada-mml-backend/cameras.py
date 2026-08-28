@@ -243,13 +243,16 @@ def camera_defects(camera_id: int, _user: dict = Depends(get_current_user)):
     """
     camera = _get_camera_or_404(camera_id)
     row = db.camera_defect_latest(camera["code"])
+    # One walk of the folder for all five slots — this route is polled on the
+    # page's live cadence, so it must not re-resolve the path per slot.
+    with_frames = camera_files.slots_with_frames(camera["code"])
 
     slots: list[dict[str, Any]] = []
     total = 0
     for slot in DEFECT_SLOTS:
         count = (row[f"defect_{slot}"] or 0) if row else 0
         label = camera.get(f"defect_{slot}_label")
-        has_frames = bool(camera_files.list_slot_frames(camera["code"], slot))
+        has_frames = slot in with_frames
         total += count
         if label or count or has_frames:
             slots.append(

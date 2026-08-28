@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import IconButton from '@mui/material/IconButton'
@@ -83,13 +83,29 @@ function Frame({ cameraId, slot, frame, label }) {
   )
 }
 
-export default function CameraRail({ node, tag }) {
+/**
+ * Floor for the two live queries.
+ *
+ * The page cadence goes down to 250ms because a gauge needle should track the
+ * plant. Defect counters do not move at that rate — a batch advances every few
+ * minutes — so re-reading them 4x a second would be pure load for an identical
+ * answer. The rail follows the operator's chosen cadence but never polls
+ * faster than this.
+ */
+const MIN_POLL_MS = 2000
+
+export default function CameraRail({ node, tag, pollMs = 5000 }) {
   const [slotFilter, setSlotFilter] = useState(null)
   const stripRef = useRef(null)
+
+  const refetchInterval = Math.max(pollMs, MIN_POLL_MS)
 
   const { data: cameras, isLoading: camerasLoading } = useQuery({
     queryKey: ['cameras'],
     queryFn: fetchCameras,
+    // Identity and labels are admin config, not a reading — they change when
+    // someone edits a camera, not when the line runs. Polling them on the live
+    // cadence would be a request per tick for a row that is the same all shift.
     staleTime: 60_000,
   })
 
@@ -116,16 +132,36 @@ export default function CameraRail({ node, tag }) {
 
   const viaLoopId = !!camera && !linkCode
 
+  /**
+   * The live pair. Both follow the page cadence rather than only loading once,
+   * so a batch that advances while an operator is watching the panel updates
+   * the counts under them instead of waiting for a reload.
+   *
+   * `placeholderData: keepPreviousData` is what makes that readable: without it
+   * every tick would blank the block back to its empty state for the length of
+   * a round trip, and the number would flicker instead of change. Same reason
+   * useMimicPlant sets it.
+   *
+   * Cadence stays out of the query key. Folding it in would make every cadence
+   * change a different cache entry and throw away the counts on screen.
+   */
   const { data: defects } = useQuery({
     queryKey: ['camera-defects', camera?.id],
     queryFn: () => fetchCameraDefects(camera.id),
     enabled: !!camera,
+    refetchInterval,
+    // A SCADA wall display must not freeze in a background tab.
+    refetchIntervalInBackground: true,
+    placeholderData: keepPreviousData,
   })
 
   const { data: frames } = useQuery({
     queryKey: ['camera-frames', camera?.id, slotFilter],
     queryFn: () => fetchCameraDefectFrames(camera.id, slotFilter, { limit: 30 }),
     enabled: !!camera && slotFilter != null,
+    refetchInterval,
+    refetchIntervalInBackground: true,
+    placeholderData: keepPreviousData,
   })
 
   const slots = defects?.slots ?? []

@@ -182,6 +182,59 @@ def _slot_dir(code: str, slot: int) -> Path | None:
     return target if target.is_dir() else None
 
 
+def slots_with_frames(code: str) -> set[int]:
+    """Which of one camera's slots have at least one file behind them.
+
+    Exists because /defects is polled on the operator's live cadence, and the
+    obvious implementation — call list_slot_frames once per slot — walks the
+    camera's path five times over and stats every file in every slot just to
+    answer five yes/no questions. That is fine once on page load and wasteful
+    several times a minute, especially when the image root is a network share.
+
+    So: resolve the camera's NG directory once, then stop at the first file in
+    each slot. Returns an empty set for anything unreadable, same contract as
+    everything else here.
+    """
+    base = root()
+    if base is None:
+        return set()
+    try:
+        ng_dir = _resolve_within(base, code, _VERDICT_DIR)
+    except (FrameNotFound, ValueError):
+        return set()
+
+    found: set[int] = set()
+    try:
+        with os.scandir(ng_dir) as entries:
+            for seen, entry in enumerate(entries):
+                if seen >= _MAX_SCAN_ENTRIES:
+                    break
+                if not entry.is_dir():
+                    continue
+                name = entry.name.lower()
+                for slot in range(MIN_SLOT, MAX_SLOT + 1):
+                    if name == f"defect_{slot}" and _has_any_file(entry.path):
+                        found.add(slot)
+                        break
+    except OSError:
+        return set()
+    return found
+
+
+def _has_any_file(directory: str) -> bool:
+    """True on the first regular file seen — no stat, no sort, no full listing."""
+    try:
+        with os.scandir(directory) as entries:
+            for seen, entry in enumerate(entries):
+                if seen >= _MAX_SCAN_ENTRIES:
+                    break
+                if entry.is_file():
+                    return True
+    except OSError:
+        return False
+    return False
+
+
 def list_slot_frames(code: str, slot: int, limit: int = 30) -> list[FrameMeta]:
     """Frames for one camera and slot, newest first. Empty when there are none.
 
