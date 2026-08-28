@@ -1,0 +1,13 @@
+# Build inputs and outputs — none of this belongs in the repo.
+# The root .gitignore already excludes *.exe, but be explicit here so the
+# intent survives someone loosening that rule.
+
+# Third-party redistributables fetched by fetch-redist.ps1
+redist/
+
+# Assembled payload (Python runtime + venv + SPA), rebuilt by build.ps1
+staging/
+.venv-cache/
+
+# Compiled installers
+Output/

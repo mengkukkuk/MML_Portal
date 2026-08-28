@@ -141,3 +141,13 @@ LICENSE_FILE_PATH = os.getenv(
 # Cosmetic-only pre-expiry heads-up window (NOT part of the signed payload —
 # grace_period_days in the license itself is the trust boundary, see licensing.py).
 LICENSE_WARNING_WINDOW_DAYS = int(os.getenv("LICENSE_WARNING_WINDOW_DAYS", "14"))
+
+# --- Bundled SPA (single-service deployment) -------------------------------
+# When the compiled frontend is present, main.py serves it from the same
+# uvicorn process, so a packaged install needs no IIS/ARR reverse proxy. Left
+# empty in dev (Vite serves the SPA on :5173 and proxies /api here), which is
+# why the mount is conditional on the directory actually existing.
+STATIC_DIR = os.getenv(
+    "STATIC_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "static"),
+)

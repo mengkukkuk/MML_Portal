@@ -375,6 +375,44 @@ async def health() -> dict[str, object]:
         "checked_at": state["checked_at"],
     }
 
+# --- Bundled SPA ------------------------------------------------------------
+# Registered last, on purpose: FastAPI matches routes in declaration order, so
+# every /api router above already wins before the catch-all below is consulted.
+# This is what lets a packaged install drop IIS + ARR entirely — one uvicorn
+# process answers both /api/* and the React app. In dev STATIC_DIR does not
+# exist, nothing is mounted, and Vite keeps serving the SPA on :5173.
+if os.path.isdir(config.STATIC_DIR):
+    from fastapi import HTTPException
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    _INDEX_HTML = os.path.join(config.STATIC_DIR, "index.html")
+    app.mount(
+        "/assets",
+        StaticFiles(directory=os.path.join(config.STATIC_DIR, "assets")),
+        name="assets",
+    )
+    logger.info("Serving bundled SPA from %s", config.STATIC_DIR)
+
+    @app.get("/{spa_path:path}", include_in_schema=False)
+    async def _spa(spa_path: str) -> FileResponse:
+        # An unmatched /api/* path must 404 rather than get index.html back —
+        # otherwise a client typo returns 200 + HTML and looks like a success.
+        if spa_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found")
+
+        # Serve real files (favicon.svg, icons.svg, web.config, …) directly;
+        # anything else is a client-side route and falls back to index.html.
+        # abspath+prefix check keeps `..` segments from escaping STATIC_DIR.
+        candidate = os.path.abspath(os.path.join(config.STATIC_DIR, spa_path))
+        if (
+            candidate.startswith(os.path.abspath(config.STATIC_DIR) + os.sep)
+            and os.path.isfile(candidate)
+        ):
+            return FileResponse(candidate)
+        return FileResponse(_INDEX_HTML)
+
+
 if __name__ == "__main__":
     import uvicorn
 
