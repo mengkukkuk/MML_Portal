@@ -17,6 +17,7 @@ import CenterFocusStrongOutlined from '@mui/icons-material/CenterFocusStrongOutl
 import RestartAltOutlined from '@mui/icons-material/RestartAltOutlined'
 import FullscreenOutlined from '@mui/icons-material/FullscreenOutlined'
 import FullscreenExitOutlined from '@mui/icons-material/FullscreenExitOutlined'
+import BarChartOutlined from '@mui/icons-material/BarChartOutlined'
 import { useAuthStore } from '@/stores/auth'
 import ConnectionAlarmStrip from '@/components/ConnectionAlarm/ConnectionAlarmStrip'
 import usePlantData from '@/components/mimic/usePlantData'
@@ -39,6 +40,8 @@ import MimicSwitcher from './MimicSwitcher'
 import CustomSymbolDialog from './CustomSymbolDialog'
 import MimicEditorToolbar from './MimicEditorToolbar'
 import MimicCommandBar from './MimicCommandBar'
+import ProductionLogDrawer from './ProductionLogDrawer'
+import ProductionLogDialog from './ProductionLogDialog'
 import {
   ImportLayoutDialog, RevisionConflictDialog, UnsavedChangesDialog,
 } from './EditorDialogs'
@@ -319,6 +322,8 @@ export default function MonitorPage() {
   // The hand tool, in view mode. Edit mode has `toolMode` and a toolbar to set
   // it; a running mimic has neither, so the mode lives here and on one key.
   const [viewPan, setViewPan] = useState(false)
+  const [productionLogOpen, setProductionLogOpen] = useState(false)
+  const [productionSettingsOpen, setProductionSettingsOpen] = useState(false)
   /**
    * Edit mode is only real when this admin is allowed to write this drawing.
    * Derived here rather than beside `lock` because it reads `editMode`, which is
@@ -406,6 +411,8 @@ export default function MonitorPage() {
     setSelectedId(null)
     setSelectedEdgeId(null)
     setBindingNode(null)
+    setProductionLogOpen(false)
+    setProductionSettingsOpen(false)
   }, [activeSlug, loadLayout])
 
   const selectMimic = useCallback((slug) => {
@@ -684,6 +691,12 @@ export default function MonitorPage() {
     notify(binding ? 'Binding updated in the draft.' : 'Symbol disconnected in the draft.')
   }, [bindingNode, commitLayout, layout, notify])
 
+  const applyProductionLog = useCallback((binding) => {
+    commitLayout((previous) => ({ ...previous, productionLog: binding }))
+    setProductionSettingsOpen(false)
+    notify(binding ? 'Production log settings updated in the draft.' : 'Production log removed from the draft.')
+  }, [commitLayout, notify])
+
   const toggleEdit = useCallback(() => {
     if (!editMode) setEditMode(true)
   }, [editMode])
@@ -702,6 +715,7 @@ export default function MonitorPage() {
     setSelectedId(null)
     setSelectedEdgeId(null)
     setBindingNode(null)
+    setProductionSettingsOpen(false)
     setUnsavedOpen(false)
   }, [cancelLayout])
 
@@ -861,8 +875,22 @@ export default function MonitorPage() {
   // mode must not survive — otherwise the toolbar would read "select" while
   // the canvas still behaves like a hand.
   useEffect(() => {
-    if (editing) setViewPan(false)
+    if (editing) {
+      setViewPan(false)
+      setProductionLogOpen(false)
+    }
   }, [editing])
+
+  useEffect(() => {
+    if (!productionLogOpen || editing) return undefined
+    const close = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      setProductionLogOpen(false)
+    }
+    window.addEventListener('keydown', close)
+    return () => window.removeEventListener('keydown', close)
+  }, [editing, productionLogOpen])
 
   /**
    * Full screen — the drawing on its own, for a control-room wall, and in edit
@@ -1127,6 +1155,8 @@ export default function MonitorPage() {
               onSnapshot={() => canvasRef.current?.snapshot()}
               onTogglePalette={togglePalette}
               onToggleInspector={toggleInspector}
+              onProductionLog={() => setProductionSettingsOpen(true)}
+              productionLogConfigured={!!layout.productionLog}
             />
             <div className={styles.editorCanvas}>
               <MimicCanvas
@@ -1223,7 +1253,7 @@ export default function MonitorPage() {
       )}
 
       {layout && !editing && (
-        <div className={styles.body} ref={stageRef}>
+        <div className={`${styles.body} ${productionLogOpen ? styles.bodyLogOpen : ''}`} ref={stageRef}>
           <div className={styles.stageWrap}>
             {fullscreenHead}
             <MimicCanvas
@@ -1246,6 +1276,20 @@ export default function MonitorPage() {
             />
 
             <div className={styles.viewTools} role="group" aria-label="View controls">
+              <button
+                type="button"
+                className={`${styles.viewTool} ${productionLogOpen ? styles.viewToolOn : ''}`}
+                aria-expanded={productionLogOpen}
+                aria-controls="mimic-production-log"
+                title="Production log / บันทึกผลผลิต"
+                onClick={() => setProductionLogOpen((shown) => !shown)}
+              >
+                <BarChartOutlined fontSize="small" />
+                <span className={styles.viewLogLabel}>LOG</span>
+              </button>
+
+              <span className={styles.viewDivider} />
+
               <button
                 type="button"
                 className={`${styles.viewTool} ${viewPan ? styles.viewToolOn : ''}`}
@@ -1317,6 +1361,14 @@ export default function MonitorPage() {
                 <kbd className={styles.viewKey}>F</kbd>
               </button>
             </div>
+
+            <ProductionLogDrawer
+              open={productionLogOpen}
+              slug={activeSlug}
+              configured={!!layout.productionLog}
+              canEdit={canEdit}
+              onClose={() => setProductionLogOpen(false)}
+            />
           </div>
 
           {/* Nothing selected means nothing to show — the rail's only content
@@ -1370,6 +1422,14 @@ export default function MonitorPage() {
         container={overlayHost}
         onClose={() => setBindingNode(null)}
         onSave={applyBinding}
+      />
+
+      <ProductionLogDialog
+        open={productionSettingsOpen}
+        binding={layout?.productionLog ?? null}
+        container={overlayHost}
+        onClose={() => setProductionSettingsOpen(false)}
+        onSave={applyProductionLog}
       />
 
       <CustomSymbolDialog

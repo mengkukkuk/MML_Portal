@@ -682,15 +682,18 @@ One row per plant/line/section.
 
 | Method | Path                    | Body / Auth                                   | Success response |
 |--------|-------------------------|-----------------------------------------------|------------------|
-| GET    | `/api/mimic`            | Bearer                                        | `[{slug, name, updated_at}, ...]` ordered by name |
-| GET    | `/api/mimic/{slug}`     | Bearer                                        | `{slug, name, doc, updated_at}` — full document; **404** if missing |
-| POST   | `/api/mimic`            | Bearer admin + `{name, doc?}`                 | `201` + layout object; auto-generates slug |
-| PUT    | `/api/mimic/{slug}`     | Bearer admin + `{name, doc?}`                 | layout object; **404** if slug missing |
-| DELETE | `/api/mimic/{slug}`     | Bearer admin                                  | `204`; **404** if missing |
+| GET    | `/api/mimic/layouts`    | Bearer                                        | `[{slug, name, updated_at}, ...]` ordered by name |
+| GET    | `/api/mimic/layouts/{slug}` | Bearer                                    | `{slug, name, doc, updated_at}` — full document; **404** if missing |
+| GET    | `/api/mimic/layouts/{slug}/production-log` | Bearer                      | Current 08:00–18:00 good/reject buckets plus source status |
+| PUT    | `/api/mimic/layouts/{slug}` | Bearer admin + `{name, doc, base_updated_at?}` | upserted layout object; **409** on revision conflict |
+| DELETE | `/api/mimic/layouts/{slug}` | Bearer admin                               | `204`; **404** if missing |
 
 The document's nodes are validated on save: each node's `binding` must point to an existing
 datasource table/column pair (or omit the binding for static nodes). Custom symbols referenced
-by nodes must exist in `mimic_symbols`.
+by nodes must exist in `mimic_symbols`. Version 3 documents may also carry a `productionLog`
+binding with one timestamp column and two cumulative numeric columns. The hourly endpoint uses
+the primary header-selected datasource. A stored `datasource_id` is accepted only when it matches
+that primary source and cannot redirect Monitor reads to another plant.
 
 **Asset uploads (symbol images):**
 

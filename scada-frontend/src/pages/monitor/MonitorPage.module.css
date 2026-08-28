@@ -431,6 +431,18 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* In full screen the controls normally occupy the bottom corner. When the
+ * production drawer is open, lift them above it so LOG remains a usable toggle
+ * instead of disappearing underneath the panel it opened. */
+.bodyLogOpen:fullscreen .viewTools {
+  bottom: calc(min(280px, 36vh) + var(--space-5));
+}
+
+.viewLogLabel {
+  font: 600 10px var(--font-mono);
+  letter-spacing: 0.08em;
+}
+
 /* The rail's own column: in view mode it takes an even 50/50 split with the
  * canvas (`.body`'s two `1fr` tracks). Collapsing it switches that sibling
  * track to `auto`, so `width: 100%` here shrinks to content (40px) and the

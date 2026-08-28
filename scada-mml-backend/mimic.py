@@ -13,7 +13,7 @@ operator afterwards.
 """
 import hashlib
 import re
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 import psycopg
@@ -22,8 +22,9 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 import db
-from auth import get_current_user, require_admin
+from auth import active_datasources, get_current_user, require_admin
 from licensing import require_entitlement, require_valid_license
+from sources import SourceReport
 
 router = APIRouter(
     prefix="/api/mimic",
@@ -91,6 +92,22 @@ class MimicIn(BaseModel):
     # Optional for backwards compatibility. ``model_fields_set`` below keeps
     # an omitted value distinct from an explicit null used for a new layout.
     base_updated_at: datetime | None = None
+
+
+class ProductionBucketOut(BaseModel):
+    hour: int
+    label: str
+    produced: int
+    rejected: int
+    reject_rate: float
+
+
+class ProductionLogOut(BaseModel):
+    date: date
+    generated_at: datetime
+    current_hour: int | None = None
+    buckets: list[ProductionBucketOut]
+    sources: list[SourceReport]
 
 
 # --- Validation ------------------------------------------------------------
@@ -184,6 +201,55 @@ def _validate_binding(
             )
 
 
+def _validate_production_log(
+    binding: dict[str, Any],
+    cache: dict[tuple[int | None, str], dict[str, list[str]]],
+) -> None:
+    """Validate the two-counter stream behind the hourly stage drawer."""
+    where = "doc.productionLog"
+    if not isinstance(binding, dict):
+        raise _bad(f"{where} must be an object or null")
+
+    ds_id = binding.get("datasource_id")
+    if ds_id is not None:
+        if not isinstance(ds_id, int) or isinstance(ds_id, bool):
+            raise _bad(f"{where}: datasource_id must be an integer or null")
+        if db.get_datasource(ds_id) is None:
+            raise _bad(f"{where}: datasource_id {ds_id} does not exist")
+
+    table = binding.get("table")
+    if not table or not isinstance(table, str):
+        raise _bad(f"{where}: table is required")
+    try:
+        cols = _describe_cached(cache, table, ds_id)
+    except ValueError:
+        raise _bad(f"{where}: table not allowed: {table!r}")
+    except psycopg.Error as e:
+        first = str(e).strip().splitlines()[0] if str(e).strip() else "connection error"
+        raise _bad(f"{where}: could not reach the selected connection: {first}")
+
+    for key in ("produced_col", "rejected_col"):
+        value = binding.get(key)
+        if not value or not isinstance(value, str):
+            raise _bad(f"{where}: {key} is required")
+        if value not in cols["value_columns"]:
+            raise _bad(f"{where}: {key} must be a numeric column of {table!r}")
+    if binding["produced_col"] == binding["rejected_col"]:
+        raise _bad(f"{where}: produced_col and rejected_col must be different")
+
+    ts_col = binding.get("ts_col")
+    datetime_columns = cols.get("datetime_columns", cols["ts_columns"])
+    if not ts_col or ts_col not in datetime_columns:
+        raise _bad(f"{where}: ts_col must be a timestamp column of {table!r}")
+
+    filter_col = binding.get("filter_col")
+    filter_val = binding.get("filter_val")
+    if filter_col and filter_col not in cols["filter_columns"]:
+        raise _bad(f"{where}: filter_col must be a column of {table!r}")
+    if bool(filter_col) != (filter_val is not None and filter_val != ""):
+        raise _bad(f"{where}: filter_col and filter_val must be set together")
+
+
 def _validate(doc: dict) -> None:
     """Reject a document that could not be rendered or could not be polled."""
     nodes = doc.get("nodes")
@@ -198,6 +264,9 @@ def _validate(doc: dict) -> None:
         raise _bad(f"doc.edges may not exceed {MAX_EDGES} pipes")
 
     cache: dict[tuple[int | None, str], dict[str, list[str]]] = {}
+    production_log = doc.get("productionLog")
+    if production_log is not None:
+        _validate_production_log(production_log, cache)
     seen_ids: set[str] = set()
     # Read once for the whole document rather than per node: a drawing built from
     # a custom palette is mostly custom nodes, and each would otherwise be its
@@ -269,6 +338,70 @@ def get_layout(slug: str, _user: dict = Depends(get_current_user)):
     return row
 
 
+@router.get("/layouts/{slug}/production-log", response_model=ProductionLogOut)
+def get_production_log(
+    slug: str,
+    _user: dict = Depends(get_current_user),
+    datasource_ids: list[int | None] = Depends(active_datasources),
+):
+    """The current 08:00–18:00 shift for one commissioned mimic line."""
+    row = db.get_mimic_layout(slug)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Mimic layout not found")
+    binding = row.get("doc", {}).get("productionLog")
+    if not binding:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Production log is not configured for this mimic",
+        )
+
+    # Monitor data always follows the header's primary selection.  The stored
+    # id is retained for document compatibility/editor context, but must never
+    # redirect an operator's read to another plant.
+    target = datasource_ids[0] if datasource_ids else None
+    reports = db.fan_out(
+        [target],
+        lambda ds: db.production_log_hourly(binding, datasource_id=ds),
+        label="mimic production log",
+    )
+    successful = next((report["result"] for report in reports if report["ok"]), None)
+    if successful is None:
+        detail = reports[0].get("error") if reports else "No active datasource"
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Production datasource unavailable: {detail}",
+        )
+
+    by_hour = {bucket["hour"]: bucket for bucket in successful["buckets"]}
+    buckets = []
+    for hour in range(8, 18):
+        bucket = by_hour.get(hour, {})
+        produced = max(0, int(bucket.get("produced", 0) or 0))
+        rejected = max(0, int(bucket.get("rejected", 0) or 0))
+        total = produced + rejected
+        buckets.append({
+            "hour": hour,
+            "label": f"{hour:02d}",
+            "produced": produced,
+            "rejected": rejected,
+            "reject_rate": round((rejected / total) * 100, 2) if total else 0.0,
+        })
+
+    generated_at = successful["generated_at"]
+    current_hour = generated_at.hour if 8 <= generated_at.hour < 18 else None
+    sources = [
+        {k: report[k] for k in ("datasource_id", "datasource_name", "ok", "error")}
+        for report in reports
+    ]
+    return {
+        "date": successful["date"],
+        "generated_at": generated_at,
+        "current_hour": current_hour,
+        "buckets": buckets,
+        "sources": sources,
+    }
+
+
 @router.put("/layouts/{slug}", response_model=MimicOut)
 def save_layout(
     slug: str,
@@ -283,7 +416,26 @@ def save_layout(
         raise _bad(
             "slug must be lowercase letters, digits, dash or underscore (max 64 characters)"
         )
-    _validate(body.doc)
+    validation_doc = body.doc
+    production_log = body.doc.get("productionLog")
+    if production_log:
+        selected_sources = active_datasources(_admin)
+        configured_source = production_log.get("datasource_id")
+        primary_source = selected_sources[0] if selected_sources else None
+        if configured_source is not None and configured_source != primary_source:
+            raise _bad(
+                "doc.productionLog: datasource_id must match the primary header selection"
+            )
+        # Validate against the same primary plant the eventual read will use,
+        # without changing the portable value stored in the document.
+        validation_doc = {
+            **body.doc,
+            "productionLog": {
+                **production_log,
+                "datasource_id": primary_source,
+            },
+        }
+    _validate(validation_doc)
     enforce_revision = "base_updated_at" in body.model_fields_set
     row = db.upsert_mimic_layout(
         slug,

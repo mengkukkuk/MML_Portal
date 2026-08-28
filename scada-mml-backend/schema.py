@@ -64,6 +64,7 @@ class TableOut(BaseModel):
 class ColumnsOut(BaseModel):
     value_columns: list[str]
     ts_columns: list[str]
+    datetime_columns: list[str] = []
     text_columns: list[str] = []
     filter_columns: list[str]
 

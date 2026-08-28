@@ -23,6 +23,13 @@ export async function fetchMimicLayout(slug) {
   return data // { slug, name, doc, updated_at }
 }
 
+export async function fetchMimicProductionLog(slug) {
+  const { data } = await apiClient.get(
+    `/mimic/layouts/${encodeURIComponent(slug)}/production-log`,
+  )
+  return data // { date, generated_at, current_hour, buckets, sources }
+}
+
 /**
  * Upsert. There is no PATCH: the whole document goes every time, so a rename
  * must send the existing `doc` back or it erases the drawing.

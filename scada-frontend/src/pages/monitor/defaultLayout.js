@@ -16,10 +16,11 @@
  * (see SymbolBindingDialog), or the Demo data toggle hands the simulator's
  * matching tag over instead.
  */
-export const LAYOUT_VERSION = 2
+export const LAYOUT_VERSION = 3
 
 export const DEFAULT_LAYOUT = {
   version: LAYOUT_VERSION,
+  productionLog: null,
   plant: 'boiler-1',
   name: 'Boiler House 1',
   viewBox: { w: 1600, h: 900 },

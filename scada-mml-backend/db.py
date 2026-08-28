@@ -18,6 +18,7 @@ from psycopg.types.json import Json
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 import config
+from production_log import aggregate_counter_samples
 
 logger = logging.getLogger("mml-api.db")
 
@@ -1287,6 +1288,15 @@ _TS_TYPES = (
     "time with time zone",
 )
 
+# Production-log shift arithmetic needs a full calendar timestamp.  Keep the
+# broader ``ts_columns`` catalogue for existing panels (which may legitimately
+# chart dates or clock times), and expose this narrower subset to consumers
+# that compare values with concrete shift boundaries.
+_DATETIME_TYPES = (
+    "timestamp without time zone",
+    "timestamp with time zone",
+)
+
 
 @contextmanager
 def _table_source_conn(datasource_id: int | None):
@@ -1419,6 +1429,7 @@ def describe_table(table: str, datasource_id: int | None = None) -> dict[str, li
         skip = _primary_key_columns(conn, schema, table) | {"id"}
     value_columns = [c for c, t in columns.items() if t in _NUMERIC_TYPES and c not in skip]
     ts_columns = [c for c, t in columns.items() if t in _TS_TYPES]
+    datetime_columns = [c for c, t in columns.items() if t in _DATETIME_TYPES]
     # A status/description column: readable by symbols that print words, useless
     # to anything that scales or plots. `skip` applies here too — a text primary
     # key names the row rather than reporting anything about it.
@@ -1426,6 +1437,7 @@ def describe_table(table: str, datasource_id: int | None = None) -> dict[str, li
     return {
         "value_columns": value_columns,
         "ts_columns": ts_columns,
+        "datetime_columns": datetime_columns,
         "text_columns": text_columns,
         # Any column may identify a series; numeric value columns are the least
         # useful as a filter so they're excluded to keep the list focused. Text
@@ -1537,6 +1549,73 @@ def table_series(
         query += sql.SQL(" ORDER BY {} ASC").format(sql.Identifier(ts_col))
         rows = conn.execute(query, params).fetchall()
     return rows
+
+
+def production_log_hourly(
+    binding: dict[str, Any], datasource_id: int | None = None
+) -> dict[str, Any]:
+    """Hourly good/reject counter deltas for the current plant-local shift.
+
+    One sample immediately before 08:00 is included as the baseline. The pure
+    aggregator owns reset semantics; this adapter owns identifier safety and
+    reading from the configured plant connection.
+    """
+    table = binding["table"]
+    ts_col = binding["ts_col"]
+    produced_col = binding["produced_col"]
+    rejected_col = binding["rejected_col"]
+    filter_col = binding.get("filter_col")
+    filter_val = binding.get("filter_val")
+
+    with _table_source_conn(datasource_id) as (conn, schema):
+        # Identifier validation below queries information_schema, so establish
+        # the request snapshot before even that first read.
+        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        _safe_identifiers(
+            conn, schema, table, ts_col, produced_col, rejected_col, filter_col
+        )
+        table_sql = sql.Identifier(schema, table)
+        fields = sql.SQL("{ts} AS ts, {produced} AS produced, {rejected} AS rejected").format(
+            ts=sql.Identifier(ts_col),
+            produced=sql.Identifier(produced_col),
+            rejected=sql.Identifier(rejected_col),
+        )
+        filter_sql = sql.SQL("")
+        params: list[Any] = []
+        if filter_col and filter_val is not None:
+            filter_sql = sql.SQL(" AND {}::text = %s").format(sql.Identifier(filter_col))
+            params.append(filter_val)
+
+        # Keep the three reads on one database snapshot, and use the captured
+        # plant timestamp as the upper bound.  That prevents future-dated rows
+        # (or rows committed halfway through this request) from leaking into a
+        # bucket that the response still describes as a current snapshot.
+        generated_at = conn.execute("SELECT now() AS generated_at").fetchone()["generated_at"]
+        baseline = conn.execute(
+            sql.SQL(
+                "SELECT {fields} FROM {table} "
+                "WHERE {ts} < CURRENT_DATE + time '08:00'{filter} "
+                "ORDER BY {ts} DESC NULLS LAST LIMIT 1"
+            ).format(
+                fields=fields, table=table_sql, ts=sql.Identifier(ts_col), filter=filter_sql,
+            ),
+            params,
+        ).fetchone()
+        rows = conn.execute(
+            sql.SQL(
+                "SELECT {fields} FROM {table} "
+                "WHERE {ts} >= CURRENT_DATE + time '08:00' "
+                "AND {ts} < CURRENT_DATE + time '18:00' "
+                "AND {ts} <= %s{filter} "
+                "ORDER BY {ts} ASC"
+            ).format(
+                fields=fields, table=table_sql, ts=sql.Identifier(ts_col), filter=filter_sql,
+            ),
+            [generated_at, *params],
+        ).fetchall()
+
+    samples = ([baseline] if baseline else []) + list(rows)
+    return aggregate_counter_samples(samples, generated_at)
 
 
 def table_rows(

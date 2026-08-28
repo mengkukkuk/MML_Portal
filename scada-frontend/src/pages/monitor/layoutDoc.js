@@ -121,6 +121,14 @@ export function migrateLayout(doc) {
     }
   }
 
+  if ((out.version ?? 2) < 3) {
+    out = {
+      ...out,
+      version: 3,
+      productionLog: out.productionLog ?? null,
+    }
+  }
+
   return isRenderable(out) ? out : null
 }
 
@@ -168,5 +176,6 @@ export function emptyLayout(name) {
     viewBox: { w: 1600, h: 900 },
     nodes: [],
     edges: [],
+    productionLog: null,
   }
 }

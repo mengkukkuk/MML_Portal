@@ -10,6 +10,7 @@ import FullscreenOutlined from '@mui/icons-material/FullscreenOutlined'
 import FullscreenExitOutlined from '@mui/icons-material/FullscreenExitOutlined'
 import PhotoCameraOutlined from '@mui/icons-material/PhotoCameraOutlined'
 import ViewSidebarOutlined from '@mui/icons-material/ViewSidebarOutlined'
+import BarChartOutlined from '@mui/icons-material/BarChartOutlined'
 import { WIRE_GROUPED, WIRE_TYPES } from '@/components/mimic/wireTypes'
 import styles from './EditorChrome.module.css'
 
@@ -32,6 +33,7 @@ export default function MimicEditorToolbar({
   toolMode, onToolMode, wirePen, onWirePen, gridVisible, onGridVisible,
   snapEnabled, onSnapEnabled, zoomPercent, onZoomOut, onZoomIn, onResetView,
   onFit, fullscreen, onFullscreen, onSnapshot, onTogglePalette, onToggleInspector,
+  onProductionLog, productionLogConfigured,
 }) {
   return (
     <div className={styles.toolbar} role="toolbar" aria-label="Drafting tools">
@@ -87,6 +89,13 @@ export default function MimicEditorToolbar({
       </div>
 
       <div className={`${styles.toolGroup} ${styles.drawerTools}`}>
+        <ToolButton
+          label={productionLogConfigured ? 'Edit production log settings' : 'Configure production log'}
+          active={productionLogConfigured}
+          onClick={onProductionLog}
+        >
+          <BarChartOutlined fontSize="small" />
+        </ToolButton>
         <ToolButton label="Open symbol palette" onClick={onTogglePalette}><ViewSidebarOutlined fontSize="small" /></ToolButton>
         <ToolButton label="Open inspector" onClick={onToggleInspector}><ViewSidebarOutlined fontSize="small" /></ToolButton>
       </div>
