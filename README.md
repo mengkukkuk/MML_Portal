@@ -442,6 +442,57 @@ It checks, in order:
 All sections should print `PASS` / a non-empty payload. If §4 reports the proxy disabled, re-do
 step 3.7 above.
 
+### 5.4 Offline installer (industrial network deployment)
+
+For a plant-floor PC with **no internet access** and no Python/Node/PostgreSQL preinstalled, the
+[`installer/`](installer/) directory produces a single double-clickable
+`MMLPortalSetup-<version>.exe` (Inno Setup) that provisions everything unattended: a bundled
+PostgreSQL 18 (silent install), a self-contained Python + backend deps, the built SPA, IIS + ARR
+reverse proxy, the `mml-api` NSSM service, and a local hostname binding — no manual steps.
+
+> **Before deploying: allowlist with the plant's antivirus/EDR.** The installer is not
+> code-signed (see the comment in `installer/MMLPortal.iss`) and it bundles several binaries
+> that commonly trigger AV/EDR heuristics on first run: `MMLPortalSetup-*.exe` itself, the
+> extracted `nssm.exe`, and the bundled `postgresql-18-windows-x64.exe` /
+> `rewrite_amd64_en-US.msi` / `requestRouter_amd64.msi` under `{app}\redist\`. On a locked-down
+> industrial PC (managed AV, EDR, or AppLocker/WDAC policy) any of these can be silently
+> quarantined *after* Setup extracts them but *before* `postinstall.ps1` uses them, causing a
+> partial install (e.g. the NSSM service registration fails because `tools\nssm.exe` vanished
+> mid-run) with no obvious error dialog. Before running on a production plant PC:
+> 1. Get the target PC's AV/EDR to allowlist/exclude `C:\MMLPortal\` (the install directory) and
+>    the `MMLPortalSetup-<version>.exe` file itself, or temporarily disable real-time protection
+>    for the duration of the install.
+> 2. Expect a Windows SmartScreen "Windows protected your PC" prompt on first launch since the
+>    `.exe` is unsigned — click **More info → Run anyway**.
+> 3. If a step fails partway through, check `C:\ProgramData\MMLPortal\install.log` first — a
+>    missing/quarantined file under `{app}\tools\` or `{app}\redist\` is the most likely cause.
+
+**Build once, on a developer machine with internet** (this is never run on the target PC):
+
+```powershell
+cd C:\dev
+.\installer\scripts\fetch-redist.ps1   # downloads PostgreSQL 18, IIS Rewrite/ARR, Python embeddable
+.\installer\scripts\build.ps1          # npm build, assembles self-contained Python, invokes ISCC.exe
+# -> installer\Output\MMLPortalSetup-<version>.exe
+```
+
+**Run on the target PC** (fully offline, needs admin): double-click the `.exe`. The wizard asks for
+a local hostname (default `mmlportal.local`), a port (default `80`), and whether to install the
+bundled PostgreSQL (auto-unchecked if `postgresql-x64-18` is already running). It installs
+PostgreSQL if requested, registers the `mml-api` NSSM service, enables the IIS roles + ARR proxy,
+creates the IIS site with a host-header binding, and appends the hostname to
+`C:\Windows\System32\drivers\etc\hosts`. A full pass/fail summary is written to
+`C:\ProgramData\MMLPortal\install.log`.
+
+**LAN caveat**: the installer only configures the server it runs on. Every *other* PC on the local
+network that needs to browse to `http://<hostname>/` must get its own `hosts` file entry (pointing
+at this server's real LAN IP, not `127.0.0.1`) or a DNS A record — that step is outside the
+installer's reach.
+
+Uninstalling (Control Panel → Programs, or `installer\scripts\uninstall.ps1` directly) stops and
+removes the NSSM service and IIS site, but deliberately leaves PostgreSQL, `.env`, and `logs\` in
+place — same data-safety stance as `scada-mml-backend\uninstall.ps1`.
+
 ---
 
 ## 6. Troubleshooting

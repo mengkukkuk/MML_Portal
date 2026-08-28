@@ -103,7 +103,14 @@
       "Bash(grep -rn \"value > \\\\|value < \\\\|value == \\\\|value >= \\\\|value <= \\\\|''value''\\\\|\\\\`value\\\\`\\\\|placeholder=\"\"value\" G:/Code/DEV/scada-frontend/src --include=*.js --include=*.jsx)",
       "Bash(tr '{,' '\\\\n\\\\n')",
       "Bash(powershell -NoProfile -Command \"Get-NetTCPConnection -LocalPort 8088 -State Listen | Select-Object -First 3 OwningProcess | ForEach-Object { Get-Process -Id $_OwningProcess | Select-Object Id,ProcessName,Path } | Format-List\")",
-      "Bash(/g/Code/DEV/.venv/Scripts/python.exe -c \":*)"
+      "Bash(/g/Code/DEV/.venv/Scripts/python.exe -c \":*)",
+      "Bash(where powershell.exe)",
+      "Bash(where node:*)",
+      "Bash(where npm:*)",
+      "Bash(powershell.exe -NoProfile -Command \"$PSVersionTable.PSVersion\")",
+      "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"installer\\\\scripts\\\\fetch-redist.ps1\")",
+      "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"scripts\\\\fetch-redist.ps1\")",
+      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File \"G:\\\\Code\\\\DEV\\\\installer\\\\scripts\\\\build.ps1\" -SkipFrontendBuild -SkipPythonBundle)"
     ]
   }
 }
