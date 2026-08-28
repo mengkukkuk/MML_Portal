@@ -155,30 +155,134 @@ def test_get_snapshot_image_404s_for_a_missing_frame(camera):
     assert e.value.status_code == 404
 
 
-# --- plant summary (Phase 3: graceful degrade, no plant table required) -------
+# --- defect counters ------------------------------------------------------------
 
-def test_summary_is_null_not_zero_when_the_camera_has_no_binding(camera):
-    """Null distinguishes "never configured" from "the plant answered zero" —
-    the rail must not draw a 0% NG rate for a camera nobody has wired up yet."""
-    body = cameras.camera_summary(camera["id"], _user=USER, datasource_ids=[None])
-    assert body == {"total": None, "ng": None, "sources": []}
+def _defect_row(code, batch_id, counts, updated_at="now()"):
+    """Insert one camera_defect row. Raw SQL because nothing writes these in
+    production either — the inspection system does, outside this app."""
+    cols = ", ".join(f"defect_{i}" for i in range(1, 6))
+    with db.get_connection() as conn:
+        conn.execute(
+            f"INSERT INTO camera_defect (camera_id, batch_id, updated_at, {cols}) "
+            f"VALUES (%s, %s, {updated_at}, %s, %s, %s, %s, %s)",
+            (code, batch_id, *counts),
+        )
+        conn.commit()
 
 
-def test_summary_survives_one_dead_plant_and_reports_the_healthy_one(monkeypatch, camera):
-    db.update_camera(camera["id"], {
-        "code": camera["code"], "name": camera["name"],
-        "binding": {"table": "inspections", "filter_col": "verdict",
-                    "filter_val": "ng", "ts_col": "ts"},
+@pytest.fixture
+def clean_defects(camera):
+    """camera_defect has no FK, so deleting the camera does not cascade to it."""
+    yield camera
+    with db.get_connection() as conn:
+        conn.execute("DELETE FROM camera_defect WHERE camera_id = %s", (camera["code"],))
+        conn.commit()
+
+
+def test_defect_latest_returns_none_when_nothing_was_ever_recorded(camera):
+    """None is not "a batch of zeros" — the rail shows the two differently,
+    because "nothing reported yet" and "nothing wrong" are different answers."""
+    assert db.camera_defect_latest(camera["code"]) is None
+    body = cameras.camera_defects(camera["id"], _user=USER)
+    assert body["batch_id"] is None
+    assert body["total"] == 0
+
+
+def test_defect_latest_picks_the_highest_batch(clean_defects):
+    code = clean_defects["code"]
+    _defect_row(code, 7, (1, 0, 0, 0, 0))
+    _defect_row(code, 9, (4, 2, 0, 0, 0))
+    _defect_row(code, 8, (9, 9, 9, 9, 9))
+
+    row = db.camera_defect_latest(code)
+    assert row["batch_id"] == 9
+    assert row["defect_1"] == 4
+
+
+def test_defect_latest_still_answers_when_every_batch_id_is_null(clean_defects):
+    """`WHERE batch_id = (SELECT max(batch_id) ...)` returns nothing here,
+    because max() over all-NULL is NULL and `= NULL` matches no row. A camera
+    whose feed never sets a batch would silently show an empty panel."""
+    code = clean_defects["code"]
+    _defect_row(code, None, (3, 0, 0, 0, 0))
+
+    row = db.camera_defect_latest(code)
+    assert row is not None
+    assert row["batch_id"] is None
+    assert row["defect_1"] == 3
+
+
+def test_defect_latest_matches_the_code_case_insensitively(clean_defects):
+    _defect_row(clean_defects["code"].lower(), 1, (5, 0, 0, 0, 0))
+    assert db.camera_defect_latest(clean_defects["code"].upper()) is not None
+
+
+def test_defects_endpoint_labels_slots_and_totals_the_batch(clean_defects):
+    camera_id, code = clean_defects["id"], clean_defects["code"]
+    db.update_camera(camera_id, {
+        "code": code, "name": clean_defects["name"],
+        "defect_1_label": "ระดับต่ำกว่าพิกัด",
+        "defect_2_label": "ระดับสูงกว่าพิกัด",
     })
+    _defect_row(code, 12, (15, 6, 0, 0, 0))
 
-    def flaky(datasource_id, table, filter_col, filter_val, ts_col, hours=24):
-        if datasource_id == 2:
-            raise ValueError("Table not allowed: 'inspections'")
-        return {"total": 100, "ng": 7}
+    body = cameras.camera_defects(camera_id, _user=USER)
+    assert body["batch_id"] == 12
+    assert body["total"] == 21
+    by_slot = {s["slot"]: s for s in body["slots"]}
+    assert by_slot[1]["label"] == "ระดับต่ำกว่าพิกัด"
+    assert by_slot[1]["count"] == 15
+    assert by_slot[2]["count"] == 6
 
-    monkeypatch.setattr(db, "camera_plant_summary", flaky)
-    body = cameras.camera_summary(camera["id"], _user=USER, datasource_ids=[1, 2])
-    assert body["total"] == 100
-    assert body["ng"] == 7
-    assert [s["ok"] for s in body["sources"]] == [True, False]
-    assert "not allowed" in body["sources"][1]["error"]
+
+def test_defects_endpoint_omits_slots_that_are_unnamed_empty_and_frameless(clean_defects):
+    """Five columns exist but a line rarely uses five. An unnamed zero bar with
+    no frames behind it tells an operator nothing, so it is not returned."""
+    camera_id, code = clean_defects["id"], clean_defects["code"]
+    _defect_row(code, 1, (4, 0, 0, 0, 0))
+
+    body = cameras.camera_defects(camera_id, _user=USER)
+    assert [s["slot"] for s in body["slots"]] == [1]
+
+
+def test_defects_endpoint_keeps_a_named_slot_that_counted_zero(clean_defects):
+    """A named slot is a defect this camera is known to look for. Reporting zero
+    of it is a real answer, unlike an anonymous empty slot."""
+    camera_id, code = clean_defects["id"], clean_defects["code"]
+    db.update_camera(camera_id, {
+        "code": code, "name": clean_defects["name"], "defect_3_label": "ฟองอากาศ",
+    })
+    _defect_row(code, 1, (2, 0, 0, 0, 0))
+
+    body = cameras.camera_defects(camera_id, _user=USER)
+    by_slot = {s["slot"]: s for s in body["slots"]}
+    assert by_slot[3]["count"] == 0
+    assert by_slot[3]["label"] == "ฟองอากาศ"
+
+
+def test_defect_routes_404_for_a_missing_camera():
+    for call in (
+        lambda: cameras.camera_defects(-999, _user=USER),
+        lambda: cameras.list_slot_frames(-999, 1, _user=USER),
+        lambda: cameras.get_slot_frame_image(-999, 1, 0, _user=USER),
+    ):
+        with pytest.raises(HTTPException) as e:
+            call()
+        assert e.value.status_code == 404
+
+
+@pytest.mark.parametrize("slot", [0, 6, -1])
+def test_frame_routes_refuse_an_out_of_range_slot(camera, slot):
+    with pytest.raises(HTTPException) as e:
+        cameras.list_slot_frames(camera["id"], slot, _user=USER)
+    assert e.value.status_code == 400
+
+
+def test_frames_are_empty_when_no_image_root_is_configured(monkeypatch, camera):
+    """The panel must survive an install with no image share — an empty contact
+    sheet, not a 500 that takes the whole rail with it."""
+    monkeypatch.setattr(cameras.camera_files.config, "CAMERA_IMAGE_ROOT", "")
+    assert cameras.list_slot_frames(camera["id"], 1, _user=USER) == []
+    with pytest.raises(HTTPException) as e:
+        cameras.get_slot_frame_image(camera["id"], 1, 0, _user=USER)
+    assert e.value.status_code == 404

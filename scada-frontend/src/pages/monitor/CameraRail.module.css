@@ -71,6 +71,20 @@
   margin: 0;
 }
 
+/* This symbol resolved through the old type-the-loop-id convention rather than
+ * the camera picker. Said out loud so an admin editing the picker and seeing no
+ * change knows which of the two links actually fired — a fallback is only a
+ * trap while it is silent. Deliberately quiet: it is provenance, not a warning. */
+.legacyNote {
+  align-self: flex-start;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  background: color-mix(in srgb, var(--fg-dim) 12%, transparent);
+}
+
 .codeList {
   display: flex;
   flex-wrap: wrap;
@@ -117,6 +131,7 @@
 .ngBlock {
   display: flex;
   align-items: baseline;
+  flex-wrap: wrap;
   gap: var(--space-2);
   padding-bottom: var(--space-3);
   border-bottom: 1px solid var(--border-soft);
@@ -129,6 +144,16 @@
   line-height: 1;
   font-variant-numeric: tabular-nums;
   color: var(--fg);
+}
+
+/* "No batch recorded yet" sits in the same slot as the count but must not read
+ * as one — an absent measurement borrowing the weight of a real number is the
+ * one thing this block exists to avoid. Prose size, prose colour. */
+.ngValueQuiet {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--fg-muted);
 }
 
 .ngLabel {
@@ -341,28 +366,6 @@
   text-align: center;
   font-size: 12px;
   color: var(--fg-dim);
-}
-
-/* --- stream link ---------------------------------------------------------- */
-
-.streamRow {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.streamLink {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 13px;
-  color: var(--accent);
-  text-decoration: none;
-  width: fit-content;
-}
-
-.streamLink:hover {
-  text-decoration: underline;
 }
 
 @media (prefers-reduced-motion: reduce) {

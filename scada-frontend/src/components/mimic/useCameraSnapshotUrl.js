@@ -4,6 +4,11 @@ import { apiClient } from '@/api/client'
 /**
  * useCameraSnapshotUrl — a drawable URL for one stored camera frame.
  *
+ * Currently unused by CameraRail, which reads the vision system's image folder
+ * instead (see useCameraFrameUrl.js). Kept deliberately, not dead: uploading to
+ * `POST /api/cameras/{id}/snapshots` is the only way to get a frame *into* this
+ * system, and its stored evidence would be unreachable without a reader.
+ *
  * Same reason as useAssetUrl.js: the access token rides an Axios interceptor,
  * not a cookie, so a browser-issued `<img src="/api/cameras/…/image">` would
  * come back 401. The bytes are fetched through the API client and handed to

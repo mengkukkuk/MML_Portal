@@ -241,17 +241,25 @@ alter table localbase.license_events
 
 create table localbase.cameras
 (
-    id            serial
+    id             serial
         primary key,
-    code          text                                   not null
+    code           text                                   not null
         unique,
-    name          text                                   not null,
-    station_code  text,
-    station_label text,
-    location      text,
-    enabled       boolean                  default true  not null,
-    created_at    timestamp with time zone default now() not null,
-    updated_at    timestamp with time zone default now() not null
+    name           text                                   not null,
+    station_code   text,
+    station_label  text,
+    location       text,
+    enabled        boolean                  default true  not null,
+    -- One name per camera_defect slot: slot N means the same defect on both
+    -- tables and in the image folder's defect_N directory. Null shows as a
+    -- generic numbered bar rather than hiding the slot.
+    defect_1_label text,
+    defect_2_label text,
+    defect_3_label text,
+    defect_4_label text,
+    defect_5_label text,
+    created_at     timestamp with time zone default now() not null,
+    updated_at     timestamp with time zone default now() not null
 );
 
 alter table localbase.cameras
@@ -264,15 +272,24 @@ create table localbase.camera_defect
             primary key,
     camera_id  text,
     updated_at timestamp default now(),
-    defect_1   integer,
-    defect_2   integer,
-    defect_3   integer,
-    defect_4   integer,
-    defect_5   integer
+    batch_id   integer,
+    defect_1   integer   default 0,
+    defect_2   integer   default 0,
+    defect_3   integer   default 0,
+    defect_4   integer   default 0,
+    defect_5   integer   default 0
 );
 
 alter table localbase.camera_defect
     owner to postgres;
+
+-- camera_id holds the camera's printed code, not cameras.id: the inspection
+-- system writes these rows and knows the code. Matched case-insensitively,
+-- which needs an expression index -- a plain btree cannot serve lower(camera_id).
+create index if not exists camera_defect_latest
+    on localbase.camera_defect (lower(camera_id), batch_id desc);
+
+
 
 create table localbase.camera_snapshots
 (

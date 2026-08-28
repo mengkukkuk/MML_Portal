@@ -71,6 +71,17 @@ FANOUT_TIMEOUT_S = int(os.getenv("FANOUT_TIMEOUT_S", "12"))
 # selection can stall the shared threadpool for everyone.
 MAX_SELECTED_DATASOURCES = int(os.getenv("MAX_SELECTED_DATASOURCES", "8"))
 
+# --- Camera image folder ----------------------------------------------------
+# Where the vision system drops categorized inspection frames, laid out as
+# <root>/<camera code>/NG/defect_<slot>/*.png. Read-only to this app; see
+# camera_files.py for the traversal rules that guard it.
+#
+# Empty by default, and an unset or missing root is a supported state rather
+# than a misconfiguration — the camera panel simply shows no frames. Baking in
+# any real path would ship one workstation's layout to every install, and under
+# NSSM the service account often cannot read a user-profile directory anyway.
+CAMERA_IMAGE_ROOT = os.getenv("CAMERA_IMAGE_ROOT", "")
+
 # --- JWT ---
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-insecure-change-me")
 JWT_ALGORITHM = "HS256"

@@ -1,13 +1,10 @@
 import { useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import OpenInNewIcon from '@mui/icons-material/OpenInNew'
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import IconButton from '@mui/material/IconButton'
-import {
-  fetchCameras, fetchCameraCauseCounts, fetchCameraSnapshots, fetchCameraSummary,
-} from '@/api/cameras'
-import useCameraSnapshotUrl from '@/components/mimic/useCameraSnapshotUrl'
+import { fetchCameras, fetchCameraDefects, fetchCameraDefectFrames } from '@/api/cameras'
+import useCameraFrameUrl from '@/components/mimic/useCameraFrameUrl'
 import styles from './CameraRail.module.css'
 
 /**
@@ -21,29 +18,30 @@ import styles from './CameraRail.module.css'
 const T = {
   statusWord: { normal: 'ปกติ', warn: 'เฝ้าระวัง', crit: 'หยุด', stale: 'ไม่มีข้อมูล' },
   unboundTitle: 'ยังไม่ได้ผูกกล้องนี้',
-  unboundNoLoopId:
-    'สัญลักษณ์นี้ยังไม่มีรหัสกล้อง (loop id) ตั้งค่าที่แผงแก้ไข (โหมดแก้ไข → เลือกสัญลักษณ์ → Loop ID) แล้วพิมพ์รหัสให้ตรงกับกล้องที่ลงทะเบียนไว้ด้านล่าง',
+  unboundNoLink:
+    'สัญลักษณ์นี้ยังไม่ได้เลือกกล้อง เข้าโหมดแก้ไข → เลือกสัญลักษณ์ → เลือกกล้องจากรายการในแผงด้านขวา',
   unboundWrongCode: (code) =>
-    `รหัสกล้อง "${code}" ไม่ตรงกับกล้องที่ลงทะเบียนไว้ ตรวจสอบการสะกดที่แผงแก้ไข`,
+    `รหัส "${code}" ไม่ตรงกับกล้องที่ลงทะเบียนไว้ เข้าโหมดแก้ไขแล้วเลือกกล้องจากรายการแทนการพิมพ์รหัส`,
   unboundNoneRegistered: 'ยังไม่มีกล้องลงทะเบียนในระบบ',
   registeredCodes: 'รหัสกล้องที่มีอยู่',
   station: 'จุดติดตั้ง',
-  ngRate: 'อัตราของเสีย',
-  ngRateDetail: (ng, total) => `ไม่ผ่าน ${ng.toLocaleString()} จาก ${total.toLocaleString()} ชิ้น`,
-  ngFrames: 'ภาพเสียที่บันทึกไว้',
-  frames: 'ภาพ',
-  causesTitle: 'สาเหตุที่ไม่ผ่าน · แตะเพื่อกรอง',
-  causesEmpty: 'ยังไม่มีสาเหตุที่บันทึกไว้สำหรับกล้องนี้',
+  linkedByLoopId: 'ผูกด้วยรหัส loop id',
+  defectTotal: 'ของเสียในล็อตล่าสุด',
+  batchLine: (batchId, when) => `ล็อต ${batchId ?? '—'}${when ? ` · ${when}` : ''}`,
+  noBatch: 'ยังไม่มีข้อมูลล็อต',
+  noBatchHint: 'ยังไม่มีการบันทึกของเสียสำหรับกล้องนี้',
+  pieces: 'ชิ้น',
+  slotsTitle: 'สาเหตุที่ไม่ผ่าน · แตะเพื่อกรองภาพ',
+  slotsEmpty: 'ยังไม่มีสาเหตุที่บันทึกไว้สำหรับกล้องนี้',
+  slotFallback: (slot) => `ตำหนิ ${slot}`,
   timesWord: 'ครั้ง',
   stripTitle: 'ภาพ NG ล่าสุด',
-  stripFiltered: (cause) => `ภาพ NG · ${cause}`,
+  stripFiltered: (label) => `ภาพ NG · ${label}`,
   clearFilter: 'แสดงทุกสาเหตุ',
+  stripPickSlot: 'แตะสาเหตุด้านบนเพื่อดูภาพ',
   stripEmpty: 'ยังไม่มีภาพของสาเหตุนี้',
-  stripEmptyAll: 'ยังไม่มีภาพ NG ที่บันทึกไว้',
+  frames: 'ภาพ',
   loading: 'กำลังโหลด…',
-  streamTitle: 'สตรีมสด',
-  streamOpen: 'เปิดสตรีมสด',
-  streamNone: 'ไม่มีลิงก์สตรีมสำหรับกล้องนี้',
   scrollLeft: 'เลื่อนไปทางซ้าย',
   scrollRight: 'เลื่อนไปทางขวา',
 }
@@ -52,27 +50,41 @@ const STATUS_CLASS = {
   normal: styles.pillOk, warn: styles.pillWarn, crit: styles.pillFault, stale: styles.pillStale,
 }
 
-function frameTime(ts) {
-  return new Date(ts).toLocaleTimeString('th-TH', { hour12: false, hour: '2-digit', minute: '2-digit' })
+/**
+ * Wall-clock time, no timezone conversion.
+ *
+ * `camera_defect.updated_at` is a naive `timestamp` and a frame's `captured_at`
+ * comes from a file mtime — both are plant-local already. Rendering them in the
+ * viewer's zone would move a 09:42 reject to a time it did not happen.
+ */
+function clockTime(ts) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleTimeString('th-TH', { hour12: false, hour: '2-digit', minute: '2-digit' })
 }
 
-function Frame({ cameraId, snapshot }) {
-  const url = useCameraSnapshotUrl(cameraId, snapshot.id)
+function slotLabel(slot) {
+  return slot.label || T.slotFallback(slot.slot)
+}
+
+function Frame({ cameraId, slot, frame, label }) {
+  const url = useCameraFrameUrl(cameraId, slot, frame.index, frame.mtime_ns)
   return (
     <figure className={styles.frame}>
       <div className={styles.frameImg}>
         {url ? <img src={url} alt="" /> : <span className={styles.frameLoading}>NG</span>}
       </div>
       <figcaption>
-        {snapshot.cause || '—'}
-        <em>{frameTime(snapshot.captured_at)}</em>
+        {label}
+        <em>{clockTime(frame.captured_at)}</em>
       </figcaption>
     </figure>
   )
 }
 
 export default function CameraRail({ node, tag }) {
-  const [causeFilter, setCauseFilter] = useState(null)
+  const [slotFilter, setSlotFilter] = useState(null)
   const stripRef = useRef(null)
 
   const { data: cameras, isLoading: camerasLoading } = useQuery({
@@ -81,44 +93,53 @@ export default function CameraRail({ node, tag }) {
     staleTime: 60_000,
   })
 
+  /**
+   * Two ways a symbol reaches its camera, and the order matters.
+   *
+   * `options.cameraId` is the explicit link, set from the picker in the
+   * inspector. `tagId` is the older convention — type the loop id and hope it
+   * matches a code — kept working because live layouts still rely on it.
+   *
+   * A silent fallback would be the bad kind: an operator editing one field and
+   * seeing no effect because the other one is what actually resolved. So the
+   * explicit link always wins, and when the legacy path is what matched, the
+   * head says so.
+   */
+  const linkCode = node?.options?.cameraId?.trim() || null
   const loopId = node?.tagId?.trim() || null
+  const wanted = linkCode || loopId
+
   const camera = useMemo(() => {
-    if (!cameras || !loopId) return null
-    return cameras.find((c) => c.code.toLowerCase() === loopId.toLowerCase()) ?? null
-  }, [cameras, loopId])
+    if (!cameras || !wanted) return null
+    return cameras.find((c) => c.code.toLowerCase() === wanted.toLowerCase()) ?? null
+  }, [cameras, wanted])
 
-  const { data: causeCounts } = useQuery({
-    queryKey: ['camera-causes', camera?.id],
-    queryFn: () => fetchCameraCauseCounts(camera.id),
+  const viaLoopId = !!camera && !linkCode
+
+  const { data: defects } = useQuery({
+    queryKey: ['camera-defects', camera?.id],
+    queryFn: () => fetchCameraDefects(camera.id),
     enabled: !!camera,
   })
 
-  const { data: snapshots } = useQuery({
-    queryKey: ['camera-snapshots', camera?.id, causeFilter],
-    queryFn: () => fetchCameraSnapshots(camera.id, { limit: 30, cause: causeFilter }),
-    enabled: !!camera,
+  const { data: frames } = useQuery({
+    queryKey: ['camera-frames', camera?.id, slotFilter],
+    queryFn: () => fetchCameraDefectFrames(camera.id, slotFilter, { limit: 30 }),
+    enabled: !!camera && slotFilter != null,
   })
 
-  // Plant-wide total/NG, over the header's selected sources. Null (not zero)
-  // until the camera has a binding — the app has no seeded plant table this
-  // can read yet, so the block below falls back to the recorded-frame count.
-  const { data: summary } = useQuery({
-    queryKey: ['camera-summary', camera?.id],
-    queryFn: () => fetchCameraSummary(camera.id),
-    enabled: !!camera,
-  })
+  const slots = defects?.slots ?? []
+  const topCount = useMemo(
+    () => slots.reduce((max, s) => Math.max(max, s.count), 0),
+    [slots],
+  )
+  const activeSlot = slots.find((s) => s.slot === slotFilter) ?? null
 
   const statusClass = STATUS_CLASS[tag?.status] || styles.pillStale
   const statusWord = T.statusWord[tag?.status] || T.statusWord.stale
 
-  const totalNg = useMemo(
-    () => (causeCounts ?? []).reduce((sum, c) => sum + c.n, 0),
-    [causeCounts],
-  )
-  const topCount = causeCounts?.[0]?.n || 0
-
-  function toggleCause(cause) {
-    setCauseFilter((cur) => (cur === cause ? null : cause))
+  function toggleSlot(slot) {
+    setSlotFilter((cur) => (cur === slot ? null : slot))
   }
 
   function scrollStrip(dir) {
@@ -136,12 +157,12 @@ export default function CameraRail({ node, tag }) {
       <aside className={styles.rail}>
         <div className={styles.head}>
           <span className={styles.eyebrow}>IP camera</span>
-          <span className={styles.tagId}>{loopId || 'No loop id'}</span>
+          <span className={styles.tagId}>{wanted || 'No camera linked'}</span>
           <span className={styles.tagLabel}>{node?.label}</span>
         </div>
         <p className={styles.unboundTitle}>{T.unboundTitle}</p>
         <p className={styles.quiet}>
-          {loopId ? T.unboundWrongCode(loopId) : T.unboundNoLoopId}
+          {wanted ? T.unboundWrongCode(wanted) : T.unboundNoLink}
         </p>
         {cameras?.length ? (
           <div>
@@ -156,6 +177,8 @@ export default function CameraRail({ node, tag }) {
       </aside>
     )
   }
+
+  const hasBatch = defects?.batch_id != null || (defects?.total ?? 0) > 0
 
   return (
     <aside className={styles.rail} aria-live="polite">
@@ -175,68 +198,73 @@ export default function CameraRail({ node, tag }) {
             {[camera.station_code, camera.station_label].filter(Boolean).join(' · ')}
           </span>
         )}
+        {viaLoopId && <span className={styles.legacyNote}>{T.linkedByLoopId}</span>}
       </div>
 
       <div className={styles.ngBlock}>
-        {summary?.total != null ? (
+        {hasBatch ? (
           <>
             <span className={styles.ngValue}>
-              {(summary.total ? (summary.ng / summary.total) * 100 : 0).toFixed(2)}
-              %
+              {(defects?.total ?? 0).toLocaleString()}
             </span>
-            <span className={styles.ngLabel}>{T.ngRateDetail(summary.ng, summary.total)}</span>
+            <span className={styles.ngLabel}>
+              {T.defectTotal}
+              {' · '}
+              {T.batchLine(defects?.batch_id, clockTime(defects?.updated_at))}
+            </span>
           </>
         ) : (
           <>
-            <span className={styles.ngValue}>{totalNg.toLocaleString()}</span>
-            <span className={styles.ngLabel}>{T.ngFrames}</span>
+            <span className={styles.ngValueQuiet}>{T.noBatch}</span>
+            <span className={styles.ngLabel}>{T.noBatchHint}</span>
           </>
         )}
       </div>
 
       <div>
-        <div className={styles.sectionTitle}>{T.causesTitle}</div>
-        {causeCounts?.length ? (
+        <div className={styles.sectionTitle}>{T.slotsTitle}</div>
+        {slots.length ? (
           <div className={styles.causes}>
-            {causeCounts.map((c) => (
+            {slots.map((s) => (
               <button
-                key={c.cause}
+                key={s.slot}
                 type="button"
-                className={`${styles.cause} ${causeFilter === c.cause ? styles.causeOn : ''}`}
-                onClick={() => toggleCause(c.cause)}
+                className={`${styles.cause} ${slotFilter === s.slot ? styles.causeOn : ''}`}
+                aria-pressed={slotFilter === s.slot}
+                onClick={() => toggleSlot(s.slot)}
               >
                 <span className={styles.causeRow}>
-                  <span className={styles.causeName}>{c.cause}</span>
+                  <span className={styles.causeName}>{slotLabel(s)}</span>
                   <span className={styles.causeCount}>
-                    {c.n}
+                    {s.count}
                     {' '}
                     {T.timesWord}
-                    {totalNg ? ` · ${Math.round((c.n / totalNg) * 100)}%` : ''}
+                    {defects?.total ? ` · ${Math.round((s.count / defects.total) * 100)}%` : ''}
                   </span>
                 </span>
                 <span className={styles.track}>
                   <span
                     className={styles.trackFill}
-                    style={{ width: topCount ? `${(c.n / topCount) * 100}%` : 0 }}
+                    style={{ width: topCount ? `${(s.count / topCount) * 100}%` : 0 }}
                   />
                 </span>
               </button>
             ))}
           </div>
         ) : (
-          <p className={styles.quiet}>{T.causesEmpty}</p>
+          <p className={styles.quiet}>{T.slotsEmpty}</p>
         )}
       </div>
 
       <div>
         <div className={styles.stripHead}>
           <span className={styles.sectionTitleInline}>
-            {causeFilter ? T.stripFiltered(causeFilter) : T.stripTitle}
-            {snapshots?.length ? ` · ${snapshots.length} ${T.frames}` : ''}
+            {activeSlot ? T.stripFiltered(slotLabel(activeSlot)) : T.stripTitle}
+            {frames?.length ? ` · ${frames.length} ${T.frames}` : ''}
           </span>
           <span className={styles.stripNav}>
-            {causeFilter && (
-              <button type="button" className={styles.clearBtn} onClick={() => setCauseFilter(null)}>
+            {slotFilter != null && (
+              <button type="button" className={styles.clearBtn} onClick={() => setSlotFilter(null)}>
                 {T.clearFilter}
               </button>
             )}
@@ -250,32 +278,25 @@ export default function CameraRail({ node, tag }) {
         </div>
         <div className={styles.filmWell}>
           <div className={styles.sprocket} aria-hidden="true" />
-          {snapshots?.length ? (
+          {slotFilter == null ? (
+            <p className={styles.stripEmpty}>{T.stripPickSlot}</p>
+          ) : frames?.length ? (
             <div className={styles.strip} ref={stripRef}>
-              {snapshots.map((s) => <Frame key={s.id} cameraId={camera.id} snapshot={s} />)}
+              {frames.map((f) => (
+                <Frame
+                  key={`${f.index}-${f.mtime_ns}`}
+                  cameraId={camera.id}
+                  slot={slotFilter}
+                  frame={f}
+                  label={activeSlot ? slotLabel(activeSlot) : ''}
+                />
+              ))}
             </div>
           ) : (
-            <p className={styles.stripEmpty}>{causeFilter ? T.stripEmpty : T.stripEmptyAll}</p>
+            <p className={styles.stripEmpty}>{T.stripEmpty}</p>
           )}
           <div className={styles.sprocket} aria-hidden="true" />
         </div>
-      </div>
-
-      <div className={styles.streamRow}>
-        <span className={styles.sectionTitle}>{T.streamTitle}</span>
-        {camera.stream_url ? (
-          <a
-            className={styles.streamLink}
-            href={camera.stream_url}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {T.streamOpen}
-            <OpenInNewIcon fontSize="inherit" />
-          </a>
-        ) : (
-          <span className={styles.quiet}>{T.streamNone}</span>
-        )}
       </div>
     </aside>
   )

@@ -104,6 +104,7 @@ def _create_tables() -> bool:
         db.init_mimic_symbols_table()
         db.init_report_tables()
         db.init_cameras_table()
+        db.init_camera_defect_table()
         db.init_camera_snapshots_table()
     except psycopg.Error as e:
         # psycopg.Error, not just OperationalError: an unreachable host is only

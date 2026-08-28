@@ -1,14 +1,25 @@
-"""Camera config and NG-snapshot endpoints behind the /monitor camera rail.
+"""Camera config, defect counters and frame endpoints behind the /monitor rail.
 
 ``cameras`` is app config, not plant data: a station's camera is named once by
-an admin, and a mimic node reaches it by loop id (its ``code``), the same way
-any other symbol reaches its tag. Reads are open to any authenticated user;
-writes — including snapshot uploads — require an admin token.
+an admin, and a mimic node reaches it by its ``code``. Reads are open to any
+authenticated user; writes require an admin token.
 
-Snapshot bytes are stored in Postgres and served back through this API rather
-than a static path, for the same reasons ``mimic.py`` gives for asset images:
-the file never becomes a URL the app cannot revoke, and the hardening headers
-below travel with every response.
+There are two separate image paths here, and the distinction is the reason this
+module is longer than it looks:
+
+* **Snapshots** (``camera_snapshots``) are uploaded *through* this API and kept
+  as bytes in Postgres, for the reasons ``mimic.py`` gives for asset images —
+  the file never becomes a URL the app cannot revoke. This is the only
+  ingestion path in the system. The rail no longer renders them, but nothing
+  else can accept a frame, so the route stays.
+* **Frames** are read off disk from the folder the vision system writes into,
+  via ``camera_files``. The app never writes there and treats everything it
+  finds as untrusted: the size is capped, the format is sniffed from the
+  content, and the path is proven to stay inside the configured root.
+
+Defect counts come from ``camera_defect`` keyed by camera code — app data, not
+a fanned-out plant read, which is why nothing in this file touches
+``active_datasources``.
 """
 import hashlib
 from datetime import datetime
@@ -18,10 +29,10 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
+import camera_files
 import db
-from auth import active_datasources, get_current_user, require_admin
+from auth import get_current_user, require_admin
 from licensing import require_valid_license
-from sources import SourceReport
 
 router = APIRouter(
     prefix="/api/cameras",
@@ -46,23 +57,37 @@ class CameraOut(BaseModel):
     station_code: str | None = None
     station_label: str | None = None
     location: str | None = None
-    stream_url: str | None = None
-    notes: str | None = None
-    binding: dict | None = None
     enabled: bool = True
     updated_at: datetime
+    defect_1_label: str | None = None
+    defect_2_label: str | None = None
+    defect_3_label: str | None = None
+    defect_4_label: str | None = None
+    defect_5_label: str | None = None
 
 
 class CameraIn(BaseModel):
-    code: str = Field(..., min_length=1, max_length=40)
+    # `code` reaches the filesystem: camera_files.py builds the image folder
+    # path from it. Restricted here to characters that cannot mean anything to
+    # a path resolver, and validated again at the filesystem boundary — one
+    # layer is config, the other is the actual defence.
+    code: str = Field(
+        ..., min_length=1, max_length=40, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    )
     name: str = Field(..., min_length=1, max_length=120)
     station_code: str | None = None
     station_label: str | None = None
     location: str | None = None
-    stream_url: str | None = None
-    notes: str | None = None
-    binding: dict | None = None
     enabled: bool = True
+    # PUT replaces the whole row (there is no PATCH), so a caller that omits
+    # these clears them. No such caller exists yet — nothing in the frontend
+    # calls createCamera/updateCamera, the rows are seeded by SQL — but whoever
+    # builds a camera admin form must give the labels inputs.
+    defect_1_label: str | None = None
+    defect_2_label: str | None = None
+    defect_3_label: str | None = None
+    defect_4_label: str | None = None
+    defect_5_label: str | None = None
 
 
 @router.get("", response_model=list[CameraOut])
@@ -128,6 +153,17 @@ _IMAGE_HEADERS = {
     "Cache-Control": "public, max-age=31536000, immutable",
 }
 
+# Same hardening, different cache policy. A file on disk *can* be replaced in
+# place by the vision system, so the immutability argument above does not carry
+# over — a long max-age would pin a superseded frame in every operator's
+# browser. A short revalidating window plus the ETag below is the honest
+# version of the same optimisation.
+_FILE_IMAGE_HEADERS = {
+    "Content-Security-Policy": "default-src 'none'; sandbox",
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "private, max-age=30, must-revalidate",
+}
+
 
 class SnapshotOut(BaseModel):
     id: int
@@ -169,43 +205,132 @@ def cause_counts(camera_id: int, _user: dict = Depends(get_current_user)):
     return db.camera_cause_counts(camera_id)
 
 
-class SummaryOut(BaseModel):
-    total: int | None = None
-    ng: int | None = None
-    sources: list[SourceReport] = []
+# --- defect counters -----------------------------------------------------------
+# The five positional slots of `camera_defect`, named per camera by the
+# matching `defect_N_label` on `cameras`. Slot N means the same defect on both
+# tables and in the image folder's `defect_N` directory.
+DEFECT_SLOTS = (1, 2, 3, 4, 5)
 
 
-@router.get("/{camera_id}/summary", response_model=SummaryOut)
-def camera_summary(
-    camera_id: int,
-    _user: dict = Depends(get_current_user),
-    datasource_ids: list[int | None] = Depends(active_datasources),
-):
-    """Total inspected + NG count from the plant, over the header's selected
-    sources. `total`/`ng` are null (not zero) when the camera has no plant
-    binding configured yet — a different state from "the plant answered with
-    zero", which the rail must not conflate.
+class DefectSlotOut(BaseModel):
+    slot: int
+    label: str | None = None
+    count: int = 0
+    has_frames: bool = False
+
+
+class DefectSummaryOut(BaseModel):
+    batch_id: int | None = None
+    # Naive, unlike every other timestamp this API returns: camera_defect.updated_at
+    # is `timestamp`, not `timestamptz`. It is plant-local wall-clock time and is
+    # serialized without an offset — do not read it as UTC.
+    updated_at: datetime | None = None
+    total: int = 0
+    slots: list[DefectSlotOut] = []
+
+
+@router.get("/{camera_id}/defects", response_model=DefectSummaryOut)
+def camera_defects(camera_id: int, _user: dict = Depends(get_current_user)):
+    """The newest batch of defect counts for one camera, slot by slot.
+
+    A null `batch_id` means no defect row has ever been written for this camera
+    — which the rail shows differently from a batch that counted zero, because
+    "nothing reported yet" and "nothing wrong" are not the same answer.
+
+    A slot is returned when it is named, when it counted something, or when it
+    has frames on disk. The rest are omitted: the table has five slots but a
+    given line rarely uses all five, and an empty unnamed bar says nothing.
     """
     camera = _get_camera_or_404(camera_id)
-    binding = camera.get("binding")
-    if not binding:
-        return {"total": None, "ng": None, "sources": []}
+    row = db.camera_defect_latest(camera["code"])
 
-    reports = db.fan_out(
-        datasource_ids,
-        lambda ds: db.camera_plant_summary(
-            ds, binding["table"], binding["filter_col"], binding["filter_val"],
-            binding["ts_col"],
-        ),
-        label="camera summary",
-    )
-    total = sum(r["result"]["total"] for r in reports if r["ok"] and r["result"])
-    ng = sum(r["result"]["ng"] for r in reports if r["ok"] and r["result"])
-    sources = [
-        {k: r[k] for k in ("datasource_id", "datasource_name", "ok", "error")}
-        for r in reports
-    ]
-    return {"total": total, "ng": ng, "sources": sources}
+    slots: list[dict[str, Any]] = []
+    total = 0
+    for slot in DEFECT_SLOTS:
+        count = (row[f"defect_{slot}"] or 0) if row else 0
+        label = camera.get(f"defect_{slot}_label")
+        has_frames = bool(camera_files.list_slot_frames(camera["code"], slot))
+        total += count
+        if label or count or has_frames:
+            slots.append(
+                {"slot": slot, "label": label, "count": count, "has_frames": has_frames}
+            )
+
+    return {
+        "batch_id": row["batch_id"] if row else None,
+        "updated_at": row["updated_at"] if row else None,
+        "total": total,
+        "slots": slots,
+    }
+
+
+# --- folder-backed frames -------------------------------------------------------
+# The categorized images the vision system writes to disk. Read-only: there is
+# no write route here, and the app never creates anything under the image root.
+class FrameOut(BaseModel):
+    index: int
+    captured_at: datetime
+    size_bytes: int
+    # Carried to the client so a replaced file gets a new cache key. The
+    # browser-side blob cache keys on it; without that a frame swapped on disk
+    # would stay on screen for the life of the page whatever the HTTP headers
+    # say.
+    mtime_ns: int
+
+
+def _checked_slot(slot: int) -> int:
+    if not camera_files.MIN_SLOT <= slot <= camera_files.MAX_SLOT:
+        raise _bad(
+            f"slot must be between {camera_files.MIN_SLOT} and {camera_files.MAX_SLOT}"
+        )
+    return slot
+
+
+@router.get("/{camera_id}/defects/{slot}/frames", response_model=list[FrameOut])
+def list_slot_frames(
+    camera_id: int,
+    slot: int,
+    limit: int = 30,
+    _user: dict = Depends(get_current_user),
+):
+    """Frames stored on disk for one defect slot, newest first.
+
+    Empty — never an error — when the image root is unconfigured, unreachable,
+    or simply has no folder for this camera. An install with no image share is
+    a normal install.
+    """
+    camera = _get_camera_or_404(camera_id)
+    _checked_slot(slot)
+    limit = max(1, min(limit, 100))
+    return camera_files.list_slot_frames(camera["code"], slot, limit=limit)
+
+
+@router.get("/{camera_id}/defects/{slot}/frames/{index}/image")
+def get_slot_frame_image(
+    camera_id: int, slot: int, index: int, _user: dict = Depends(get_current_user)
+):
+    """One frame's bytes, addressed by position in the newest-first listing.
+
+    The format is sniffed from the content rather than trusted from the
+    extension — this file was written by another system into a folder we do not
+    control, so its name proves nothing about what is inside it.
+    """
+    camera = _get_camera_or_404(camera_id)
+    _checked_slot(slot)
+    try:
+        data, meta = camera_files.read_frame(camera["code"], slot, index)
+    except camera_files.FrameNotFound:
+        raise _not_found("Frame") from None
+
+    mime = _sniff_mime(data)
+    if mime is None or mime not in ALLOWED_SNAPSHOT_MIMES:
+        raise _bad("the stored file is not a PNG, JPEG or WebP image")
+
+    headers = {
+        **_FILE_IMAGE_HEADERS,
+        "ETag": f'"{meta.mtime_ns:x}-{meta.size_bytes:x}"',
+    }
+    return Response(content=data, media_type=mime, headers=headers)
 
 
 @router.post(

@@ -8,6 +8,7 @@ import {
   MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, TIME_FORMATS, tableColumns, tableRowLimit,
 } from '@/components/mimic/symbols/DataTable'
 import { MAX_CASES } from '@/components/mimic/conditions'
+import { fetchCameras } from '@/api/cameras'
 import { fetchSchemaColumns } from '@/api/schema'
 import { compileCondition } from '@/utils/mathExpr'
 import styles from './SymbolOptions.module.css'
@@ -440,6 +441,72 @@ function TableStructure({ node, onChange }) {
 }
 
 /**
+ * Which registered camera this symbol shows in the view-mode detail rail.
+ *
+ * The odd one out in this file — every other control here is appearance, and
+ * this one is a link to a record. It lives here anyway because the alternative
+ * is worse: SymbolBindingDialog's save path carries exactly `tagId`, `label`
+ * and `binding`, and `binding` is validated server-side against a real plant
+ * table, which a camera reference is not. `node.options` is the bag the server
+ * already stores untouched, so this needs no backend change at all.
+ *
+ * Stores the camera's `code`, not its row id. Cameras are seeded from SQL and
+ * the table has been rebuilt before; a layout pointing at `id: 17` breaks on
+ * the next reseed, one pointing at `CAM-03` survives it.
+ */
+function CameraLink({ node, onChange }) {
+  // Same query key the rail uses, so this list is usually already warm.
+  const { data: cameras, isLoading, isError } = useQuery({
+    queryKey: ['cameras'],
+    queryFn: fetchCameras,
+    staleTime: 60_000,
+  })
+
+  const linked = node.options?.cameraId ?? ''
+  const loopId = node.tagId?.trim() || ''
+
+  // A symbol bound the old way — loop id typed to match a code — pre-selects
+  // the camera it already resolves to, so the first save here turns an implicit
+  // match into an explicit link and the legacy path quietly loses its last user.
+  const legacyMatch = useMemo(() => {
+    if (linked || !loopId || !cameras) return null
+    return cameras.find((c) => c.code.toLowerCase() === loopId.toLowerCase()) ?? null
+  }, [cameras, linked, loopId])
+
+  const value = linked || legacyMatch?.code || ''
+
+  return (
+    <div className={styles.section}>
+      <div className={styles.sectionTitle}>Camera</div>
+      <p className={styles.hint}>
+        {isError
+          ? 'The camera list could not be loaded. The rail falls back to matching this symbol’s loop id against a camera code.'
+          : legacyMatch
+            ? `This symbol currently resolves by loop id (${loopId}). Saving makes the link explicit.`
+            : 'Picks which camera’s defect counts and inspection frames fill the detail panel in view mode.'}
+      </p>
+      <label className={styles.field}>
+        <span>Linked to</span>
+        <select
+          value={value}
+          disabled={isLoading || isError}
+          onChange={(e) => onChange({ cameraId: e.target.value || undefined })}
+        >
+          <option value="">Not linked</option>
+          {(cameras ?? []).map((c) => (
+            <option key={c.id} value={c.code}>
+              {c.code}
+              {c.name ? ` — ${c.name}` : ''}
+              {c.station_label ? ` (${c.station_label})` : ''}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  )
+}
+
+/**
  * SymbolOptions — the per-symbol appearance controls on the inspector rail.
  *
  * Separate from SymbolBindingDialog because the split is real: the dialog says
@@ -486,6 +553,10 @@ export default function SymbolOptions({ node, onChange }) {
 
   if (node.type === 'table') {
     return <TableStructure node={node} onChange={onChange} />
+  }
+
+  if (node.type === 'ipcamera') {
+    return <CameraLink node={node} onChange={onChange} />
   }
 
   if (node.type === 'led') {

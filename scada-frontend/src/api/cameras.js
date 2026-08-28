@@ -11,7 +11,7 @@ import { apiClient } from './client'
 
 export async function fetchCameras() {
   const { data } = await apiClient.get('/cameras')
-  return data // [{ id, code, name, station_code, station_label, location, stream_url, notes, binding, enabled, updated_at }]
+  return data // [{ id, code, name, station_code, station_label, location, enabled, updated_at, defect_1_label…defect_5_label }]
 }
 
 export async function createCamera(body) {
@@ -29,7 +29,34 @@ export async function deleteCamera(id) {
   await apiClient.delete(`/cameras/${id}`)
 }
 
-/** Snapshot metadata only — no bytes. Pass `cause` to filter the strip. */
+/**
+ * The newest batch of defect counts, slot by slot — drives the rail's bars.
+ * `batch_id: null` means nothing has ever been recorded for this camera, which
+ * the rail shows differently from a batch that counted zero.
+ */
+export async function fetchCameraDefects(cameraId) {
+  const { data } = await apiClient.get(`/cameras/${cameraId}/defects`)
+  return data // { batch_id, updated_at, total, slots: [{ slot, label, count, has_frames }] }
+}
+
+/**
+ * Frames stored on disk for one defect slot, newest first.
+ * Empty — never an error — on an install with no image folder configured.
+ */
+export async function fetchCameraDefectFrames(cameraId, slot, { limit = 30 } = {}) {
+  const { data } = await apiClient.get(`/cameras/${cameraId}/defects/${slot}/frames`, {
+    params: { limit },
+  })
+  return data // [{ index, captured_at, size_bytes, mtime_ns }]
+}
+
+/**
+ * Snapshot metadata only — no bytes. Pass `cause` to filter.
+ *
+ * Retained deliberately although the rail no longer renders these: the upload
+ * route below is the only way to get a frame *into* this system, and its
+ * evidence would be unreachable without a reader.
+ */
 export async function fetchCameraSnapshots(cameraId, { limit = 30, cause } = {}) {
   const { data } = await apiClient.get(`/cameras/${cameraId}/snapshots`, {
     params: { limit, cause: cause || undefined },
@@ -37,19 +64,10 @@ export async function fetchCameraSnapshots(cameraId, { limit = 30, cause } = {})
   return data // [{ id, camera_id, captured_at, cause, verdict, mime, size_bytes }]
 }
 
-/** NG-frame counts by cause, most frequent first — drives the rail's bars. */
+/** NG-frame counts by cause, most frequent first. See the note above. */
 export async function fetchCameraCauseCounts(cameraId) {
   const { data } = await apiClient.get(`/cameras/${cameraId}/causes`)
   return data // [{ cause, n }]
-}
-
-/**
- * Plant-wide inspected/NG totals over the header's selected sources.
- * `total`/`ng` are null — not zero — when the camera has no plant binding yet.
- */
-export async function fetchCameraSummary(cameraId) {
-  const { data } = await apiClient.get(`/cameras/${cameraId}/summary`)
-  return data // { total, ng, sources }
 }
 
 /**

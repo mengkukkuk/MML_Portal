@@ -1263,6 +1263,7 @@ def delete_panel(panel_id: int) -> bool:
 SENSITIVE_TABLES = {
     "users", "dashboard_panels", "mmldatabuffer", "datasources", "mimic_layouts",
     "mimic_assets", "mimic_symbols", "cameras", "camera_snapshots",
+    "camera_defect",
 }
 
 # Postgres text data_types a symbol may *print* rather than plot.
@@ -2218,15 +2219,29 @@ def delete_mimic_symbol(symbol_id: int) -> bool:
 
 
 # --- Cameras (/monitor vision-inspection panel) -----------------------------
-# Two app tables behind the camera detail rail. `cameras` is config — an admin
-# names a station's camera once and a mimic node reaches it by loop id, the
-# same way any other symbol reaches its tag, so binding needs no new dialog.
-# `camera_snapshots` holds the stored NG frames plus the cause each one was
-# tagged with — the cause histogram the rail renders is a GROUP BY over this
-# table, not a plant read, because no plant table in this system carries a
-# per-part verdict/cause column.
+# Three app tables behind the camera detail rail:
+#   `cameras`          — identity only. An admin names a station's camera once,
+#                        and a mimic node reaches it by `code`.
+#   `camera_defect`    — the counters the rail's bars are drawn from, five
+#                        positional slots per row, keyed by `code` as text.
+#   `camera_snapshots` — stored NG frames uploaded through the API. The rail no
+#                        longer reads these (its contact sheet comes from the
+#                        image folder, see camera_files.py), but this is the
+#                        only ingestion path in the system, so it stays.
+#
+# `cameras` deliberately holds no plant binding: defect counts come from
+# `camera_defect`, which is app data keyed by code, not a fanned-out plant read.
 def init_cameras_table() -> None:
-    """Create the cameras table if it doesn't exist. Idempotent."""
+    """Create the cameras table if it doesn't exist, then add newer columns.
+
+    Idempotent, following init_panels_table: CREATE IF NOT EXISTS can't evolve a
+    table that already exists, so every column added after the first release
+    needs its own ADD COLUMN IF NOT EXISTS.
+
+    Older installs also carry `stream_url`, `notes` and `binding`, which this
+    app no longer selects. They are nullable and inert; dropping them would be
+    the only irreversible step here, for no gain, so they are left alone.
+    """
     with get_connection() as conn:
         conn.execute(
             """CREATE TABLE IF NOT EXISTS cameras (
@@ -2236,13 +2251,50 @@ def init_cameras_table() -> None:
                 station_code  TEXT,
                 station_label TEXT,
                 location      TEXT,
-                stream_url    TEXT,
-                notes         TEXT,
-                binding       JSONB,
                 enabled       BOOLEAN NOT NULL DEFAULT true,
                 created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
                 updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
             )"""
+        )
+        # One label per camera_defect slot, so the bars can be named per camera:
+        # slot N on either table always means the same defect.
+        for slot in range(1, 6):
+            conn.execute(
+                f"ALTER TABLE cameras ADD COLUMN IF NOT EXISTS defect_{slot}_label TEXT"
+            )
+        conn.commit()
+
+
+def init_camera_defect_table() -> None:
+    """Create the camera_defect table if it doesn't exist. Idempotent.
+
+    `camera_id` is the camera's *code* as text, not a foreign key to
+    cameras.id — the inspection system writes these rows and knows the printed
+    code, not our serial. Matching is therefore case-insensitive, which is what
+    the expression index below exists to serve; a plain btree on camera_id
+    cannot answer `lower(camera_id) = lower(%s)`.
+
+    `updated_at` is a naive timestamp, matching local_db.sql. Left as-is
+    deliberately: the app, the database and the plant share a clock, the same
+    assumption the reports section already runs on.
+    """
+    with get_connection() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS camera_defect (
+                id         SERIAL PRIMARY KEY,
+                camera_id  TEXT,
+                updated_at TIMESTAMP DEFAULT now(),
+                batch_id   INTEGER,
+                defect_1   INTEGER DEFAULT 0,
+                defect_2   INTEGER DEFAULT 0,
+                defect_3   INTEGER DEFAULT 0,
+                defect_4   INTEGER DEFAULT 0,
+                defect_5   INTEGER DEFAULT 0
+            )"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS camera_defect_latest
+               ON camera_defect (lower(camera_id), batch_id DESC)"""
         )
         conn.commit()
 
@@ -2280,9 +2332,13 @@ def init_camera_snapshots_table() -> None:
 
 
 _CAMERA_COLS = (
-    "id, code, name, station_code, station_label, location, stream_url, "
-    "notes, binding, enabled, updated_at"
+    "id, code, name, station_code, station_label, location, enabled, updated_at, "
+    "defect_1_label, defect_2_label, defect_3_label, defect_4_label, defect_5_label"
 )
+
+# The five label columns, in slot order — used to build the INSERT/UPDATE
+# column lists and value tuples below without spelling them out five times.
+_CAMERA_LABEL_COLS = tuple(f"defect_{slot}_label" for slot in range(1, 6))
 
 
 def list_cameras() -> list[dict[str, Any]]:
@@ -2312,19 +2368,18 @@ def get_camera_by_code(code: str) -> dict[str, Any] | None:
 
 
 def insert_camera(fields: dict[str, Any]) -> dict[str, Any]:
+    labels = ", ".join(_CAMERA_LABEL_COLS)
     with get_connection() as conn:
         row = conn.execute(
             f"""INSERT INTO cameras
-                (code, name, station_code, station_label, location, stream_url,
-                 notes, binding, enabled)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (code, name, station_code, station_label, location, enabled, {labels})
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING {_CAMERA_COLS}""",
             (
                 fields["code"], fields["name"], fields.get("station_code"),
                 fields.get("station_label"), fields.get("location"),
-                fields.get("stream_url"), fields.get("notes"),
-                Json(fields["binding"]) if fields.get("binding") else None,
                 fields.get("enabled", True),
+                *(fields.get(col) for col in _CAMERA_LABEL_COLS),
             ),
         ).fetchone()
         conn.commit()
@@ -2332,20 +2387,20 @@ def insert_camera(fields: dict[str, Any]) -> dict[str, Any]:
 
 
 def update_camera(camera_id: int, fields: dict[str, Any]) -> dict[str, Any] | None:
+    labels = ", ".join(f"{col} = %s" for col in _CAMERA_LABEL_COLS)
     with get_connection() as conn:
         row = conn.execute(
             f"""UPDATE cameras SET
                 code = %s, name = %s, station_code = %s, station_label = %s,
-                location = %s, stream_url = %s, notes = %s, binding = %s,
-                enabled = %s, updated_at = now()
+                location = %s, enabled = %s, {labels}, updated_at = now()
             WHERE id = %s
             RETURNING {_CAMERA_COLS}""",
             (
                 fields["code"], fields["name"], fields.get("station_code"),
                 fields.get("station_label"), fields.get("location"),
-                fields.get("stream_url"), fields.get("notes"),
-                Json(fields["binding"]) if fields.get("binding") else None,
-                fields.get("enabled", True), camera_id,
+                fields.get("enabled", True),
+                *(fields.get(col) for col in _CAMERA_LABEL_COLS),
+                camera_id,
             ),
         ).fetchone()
         conn.commit()
@@ -2357,6 +2412,31 @@ def delete_camera(camera_id: int) -> bool:
         cur = conn.execute("DELETE FROM cameras WHERE id = %s", (camera_id,))
         conn.commit()
     return cur.rowcount > 0
+
+
+def camera_defect_latest(code: str) -> dict[str, Any] | None:
+    """The newest batch of defect counters for one camera, by its code.
+
+    Returns None when the camera has no rows at all — a different state from a
+    batch that counted zero of everything, and the rail must not draw the first
+    as if it were the second.
+
+    Ordered rather than filtered on `max(batch_id)`: batch_id is nullable, so
+    `WHERE batch_id = (SELECT max(...))` silently returns nothing for a camera
+    whose rows all have a null batch. NULLS LAST keeps those rows reachable and
+    still prefers a real batch when one exists.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            """SELECT id, camera_id, batch_id, updated_at,
+                      defect_1, defect_2, defect_3, defect_4, defect_5
+            FROM camera_defect
+            WHERE lower(camera_id) = lower(%s)
+            ORDER BY batch_id DESC NULLS LAST, updated_at DESC, id DESC
+            LIMIT 1""",
+            (code,),
+        ).fetchone()
+    return row
 
 
 def list_camera_snapshots(
@@ -2447,40 +2527,6 @@ def delete_camera_snapshot(camera_id: int, snapshot_id: int) -> bool:
         )
         conn.commit()
     return cur.rowcount > 0
-
-
-def camera_plant_summary(
-    datasource_id: int | None,
-    table: str,
-    filter_col: str,
-    filter_val: str,
-    ts_col: str,
-    hours: int = 24,
-) -> dict[str, int]:
-    """Total inspected + NG count for one camera, read from its bound plant
-    table over the trailing window. One call per source under db.fan_out —
-    a bad or stale binding raises ValueError from _safe_identifiers, which
-    fan_out reduces to that source's ok=False rather than a 500, the same as
-    an unreachable host.
-
-    NG is a row where `filter_col` equals `filter_val` (a verdict column and
-    its "ng" value, in the same vocabulary as a mimic tag binding's
-    filter_col/filter_val) — not a distinct table, so a plant that already
-    logs one row per inspection needs no schema change to support this.
-    """
-    with _table_source_conn(datasource_id) as (conn, schema):
-        _safe_identifiers(conn, schema, table, filter_col, ts_col)
-        query = sql.SQL(
-            "SELECT count(*) AS total, "
-            "count(*) FILTER (WHERE {filt}::text = %s) AS ng "
-            "FROM {tbl} WHERE {ts} >= now() - make_interval(hours => %s)"
-        ).format(
-            filt=sql.Identifier(filter_col),
-            tbl=sql.Identifier(schema, table),
-            ts=sql.Identifier(ts_col),
-        )
-        row = conn.execute(query, (filter_val, hours)).fetchone()
-    return {"total": row["total"], "ng": row["ng"]}
 
 
 # ============================================================================
