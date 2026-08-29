@@ -1033,19 +1033,128 @@ export default function MonitorPage() {
    * Going full screen drops the page header, and with it the first two things
    * anyone reading a mimic from across a control room needs: which plant this
    * is, and whether it is running.
+   *
+   * `tools` is the view-mode control cluster. It moves into this bar rather
+   * than floating over the sheet, because on a wall display the drawing is the
+   * whole point and every overlay is sitting on top of something an operator
+   * wanted to see — in the bottom corner it covered a station's own label.
+   * Between the title and the status is dead space the banner already owns.
    */
-  const fullscreenHead = fullscreen ? (
+  const fullscreenHead = (tools = null) => (fullscreen ? (
     <header className={styles.fsHead}>
       <div className={styles.fsTitle}>
         <span className={styles.fsEyebrow}>Process mimic</span>
         <h2 className={styles.fsName}>{activeName}</h2>
       </div>
+      {tools}
       <span className={styles.fsState}>
         <span className={`${styles.dot} ${dotClass}`} />
         {statusLabel}
       </span>
     </header>
-  ) : null
+  ) : null)
+
+  /**
+   * The view-mode control cluster: log, hand, zoom, fit, full screen.
+   *
+   * Defined once and rendered in one of two places — floating over the sheet
+   * when windowed, inside the banner when full screen. One definition because
+   * two copies would be two sets of controls to keep in step, and because only
+   * one may exist in the tree at a time: they carry `aria-controls` and
+   * keyboard hints that must not be duplicated.
+   */
+  const viewToolbar = (
+    <div
+      className={`${styles.viewTools} ${fullscreen ? styles.viewToolsInBanner : ''}`}
+      role="group"
+      aria-label="View controls"
+    >
+      <button
+        type="button"
+        className={`${styles.viewTool} ${productionLogOpen ? styles.viewToolOn : ''}`}
+        aria-expanded={productionLogOpen}
+        aria-controls="mimic-production-log"
+        title="Production log / บันทึกผลผลิต"
+        onClick={() => setProductionLogOpen((shown) => !shown)}
+      >
+        <BarChartOutlined fontSize="small" />
+        <span className={styles.viewLogLabel}>LOG</span>
+      </button>
+
+      <span className={styles.viewDivider} />
+
+      <button
+        type="button"
+        className={`${styles.viewTool} ${viewPan ? styles.viewToolOn : ''}`}
+        aria-pressed={viewPan}
+        aria-keyshortcuts="h"
+        title="Hand tool — drag to move the drawing inside the panel (H)"
+        onClick={() => setViewPan((on) => !on)}
+      >
+        <PanToolOutlined fontSize="small" />
+        <kbd className={styles.viewKey}>H</kbd>
+      </button>
+
+      <span className={styles.viewDivider} />
+
+      <button
+        type="button"
+        className={styles.viewTool}
+        title="Zoom out"
+        aria-label="Zoom out"
+        disabled={viewZoom <= 25}
+        onClick={() => canvasRef.current?.zoomOut()}
+      >
+        <ZoomOutOutlined fontSize="small" />
+      </button>
+      <output className={styles.viewZoom} aria-label="Drawing zoom">{viewZoom}%</output>
+      <button
+        type="button"
+        className={styles.viewTool}
+        title="Zoom in"
+        aria-label="Zoom in"
+        disabled={viewZoom >= 400}
+        onClick={() => canvasRef.current?.zoomIn()}
+      >
+        <ZoomInOutlined fontSize="small" />
+      </button>
+
+      <span className={styles.viewDivider} />
+
+      <button
+        type="button"
+        className={styles.viewTool}
+        title="Fit the drawn area to the panel"
+        aria-label="Fit contents"
+        onClick={() => canvasRef.current?.fitContents()}
+      >
+        <CenterFocusStrongOutlined fontSize="small" />
+      </button>
+      <button
+        type="button"
+        className={styles.viewTool}
+        title="Reset view"
+        aria-label="Reset view"
+        onClick={() => canvasRef.current?.resetView()}
+      >
+        <RestartAltOutlined fontSize="small" />
+      </button>
+
+      <span className={styles.viewDivider} />
+
+      <button
+        type="button"
+        className={`${styles.viewTool} ${fullscreen ? styles.viewToolOn : ''}`}
+        aria-pressed={fullscreen}
+        aria-keyshortcuts="f"
+        title={fullscreen ? 'Leave full screen (F or Esc)' : 'Show this mimic full screen (F)'}
+        onClick={toggleFullscreen}
+      >
+        {fullscreen ? <FullscreenExitOutlined fontSize="small" /> : <FullscreenOutlined fontSize="small" />}
+        <kbd className={styles.viewKey}>F</kbd>
+      </button>
+    </div>
+  )
 
   const subtitle = nodes.length === 0
     ? 'Empty drawing · add symbols from the palette in edit mode'
@@ -1135,7 +1244,9 @@ export default function MonitorPage() {
           </aside>
 
           <main className={styles.editorCenter}>
-            {fullscreenHead}
+            {/* No tools argument: edit mode has its own drafting toolbar
+              * immediately below, which already carries these controls. */}
+            {fullscreenHead()}
             <MimicEditorToolbar
               toolMode={toolMode}
               onToolMode={setToolMode}
@@ -1255,7 +1366,7 @@ export default function MonitorPage() {
       {layout && !editing && (
         <div className={`${styles.body} ${productionLogOpen ? styles.bodyLogOpen : ''}`} ref={stageRef}>
           <div className={styles.stageWrap}>
-            {fullscreenHead}
+            {fullscreenHead(viewToolbar)}
             <MimicCanvas
               ref={canvasRef}
               layout={layout}
@@ -1275,92 +1386,9 @@ export default function MonitorPage() {
               onMoveBubble={moveBubble}
             />
 
-            <div className={styles.viewTools} role="group" aria-label="View controls">
-              <button
-                type="button"
-                className={`${styles.viewTool} ${productionLogOpen ? styles.viewToolOn : ''}`}
-                aria-expanded={productionLogOpen}
-                aria-controls="mimic-production-log"
-                title="Production log / บันทึกผลผลิต"
-                onClick={() => setProductionLogOpen((shown) => !shown)}
-              >
-                <BarChartOutlined fontSize="small" />
-                <span className={styles.viewLogLabel}>LOG</span>
-              </button>
-
-              <span className={styles.viewDivider} />
-
-              <button
-                type="button"
-                className={`${styles.viewTool} ${viewPan ? styles.viewToolOn : ''}`}
-                aria-pressed={viewPan}
-                aria-keyshortcuts="h"
-                title="Hand tool — drag to move the drawing inside the panel (H)"
-                onClick={() => setViewPan((on) => !on)}
-              >
-                <PanToolOutlined fontSize="small" />
-                <kbd className={styles.viewKey}>H</kbd>
-              </button>
-
-              <span className={styles.viewDivider} />
-
-              <button
-                type="button"
-                className={styles.viewTool}
-                title="Zoom out"
-                aria-label="Zoom out"
-                disabled={viewZoom <= 25}
-                onClick={() => canvasRef.current?.zoomOut()}
-              >
-                <ZoomOutOutlined fontSize="small" />
-              </button>
-              <output className={styles.viewZoom} aria-label="Drawing zoom">{viewZoom}%</output>
-              <button
-                type="button"
-                className={styles.viewTool}
-                title="Zoom in"
-                aria-label="Zoom in"
-                disabled={viewZoom >= 400}
-                onClick={() => canvasRef.current?.zoomIn()}
-              >
-                <ZoomInOutlined fontSize="small" />
-              </button>
-
-              <span className={styles.viewDivider} />
-
-              <button
-                type="button"
-                className={styles.viewTool}
-                title="Fit the drawn area to the panel"
-                aria-label="Fit contents"
-                onClick={() => canvasRef.current?.fitContents()}
-              >
-                <CenterFocusStrongOutlined fontSize="small" />
-              </button>
-              <button
-                type="button"
-                className={styles.viewTool}
-                title="Reset view"
-                aria-label="Reset view"
-                onClick={() => canvasRef.current?.resetView()}
-              >
-                <RestartAltOutlined fontSize="small" />
-              </button>
-
-              <span className={styles.viewDivider} />
-
-              <button
-                type="button"
-                className={`${styles.viewTool} ${fullscreen ? styles.viewToolOn : ''}`}
-                aria-pressed={fullscreen}
-                aria-keyshortcuts="f"
-                title={fullscreen ? 'Leave full screen (F or Esc)' : 'Show this mimic full screen (F)'}
-                onClick={toggleFullscreen}
-              >
-                {fullscreen ? <FullscreenExitOutlined fontSize="small" /> : <FullscreenOutlined fontSize="small" />}
-                <kbd className={styles.viewKey}>F</kbd>
-              </button>
-            </div>
+            {/* Windowed only. In full screen the same cluster is rendered
+              * into the banner above instead, so it never covers the sheet. */}
+            {!fullscreen && viewToolbar}
 
             <ProductionLogDrawer
               open={productionLogOpen}
@@ -1390,8 +1418,10 @@ export default function MonitorPage() {
         </div>
       )}
 
-      {/* An empty drawing has no ticker to show; the bare strip would just be
-        * a box with nothing in it. */}
+      {/* Bottom strip to be added with title = "สิ่งที่ต้องจัดการ"
+      An empty drawing has no ticker to show;
+      the bare strip would just be a box with nothing in it. */}
+
       {nodes.length > 0 && (
       <div className={styles.strip} role="group" aria-label="All plant tags">
         {nodes.map((node) => {

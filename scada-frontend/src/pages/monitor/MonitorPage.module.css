@@ -274,16 +274,6 @@
   padding: var(--space-3) var(--space-4);
 }
 
-/* The controls sit over the sheet, and in full screen the banner has taken the
- * top-right corner, so they move to the bottom one. Absolute offsets resolve
- * against the padding box rather than the sheet, so the container's own padding
- * is added back — without it the overlay hangs off the edge of the drawing. */
-.body:fullscreen .viewTools {
-  top: auto;
-  right: calc(var(--space-5) + var(--space-3));
-  bottom: calc(var(--space-4) + var(--space-3));
-}
-
 .fsHead {
   display: flex;
   align-items: center;
@@ -291,6 +281,17 @@
   flex: 0 0 auto;
   padding-bottom: var(--space-3);
   border-bottom: 1px solid var(--border-soft);
+}
+
+/* The status pill claims the right edge with `margin-left: auto`. Giving the
+ * toolbar the same push puts both on the right with the title alone on the
+ * left, rather than leaving the controls stranded mid-bar. */
+.fsHead .viewToolsInBanner {
+  margin-left: auto;
+}
+
+.fsHead .viewToolsInBanner + .fsState {
+  margin-left: 0;
 }
 
 .fsTitle {
@@ -366,6 +367,30 @@
   box-shadow: var(--shadow-1);
 }
 
+/* In full screen the same cluster stops floating and joins the banner instead.
+ *
+ * On a wall display the sheet is the entire reason the mode exists, so an
+ * overlay is always covering something someone wanted to see — parked in the
+ * bottom corner it sat on top of a station's own label. The banner has room
+ * beside the plant name, and moving there costs the drawing nothing: that bar
+ * is already in the layout.
+ *
+ * Must stay *after* .viewTools: both are single-class selectors, so this only
+ * unsets `position` and the floating chrome by winning on source order. */
+.viewToolsInBanner {
+  position: static;
+  /* Shrinkable rather than rigid: .viewTools already wraps, so on a banner too
+   * narrow for one row the buttons take a second line instead of pushing the
+   * status pill off the edge. */
+  flex: 0 1 auto;
+  max-width: none;
+  /* Sits in a bar that already has its own ground, so the blur and the lifted
+   * panel fill would read as a card floating inside a card. */
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
 .viewTool {
   appearance: none;
   display: inline-flex;
@@ -431,12 +456,10 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* In full screen the controls normally occupy the bottom corner. When the
- * production drawer is open, lift them above it so LOG remains a usable toggle
- * instead of disappearing underneath the panel it opened. */
-.bodyLogOpen:fullscreen .viewTools {
-  bottom: calc(min(280px, 36vh) + var(--space-5));
-}
+/* The controls used to need lifting clear of the production drawer in full
+ * screen, back when they sat in the bottom corner the drawer opens into. They
+ * now live in the banner, which the drawer cannot reach, so LOG stays a usable
+ * toggle with no offset to maintain. */
 
 .viewLogLabel {
   font: 600 10px var(--font-mono);
