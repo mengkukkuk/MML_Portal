@@ -90,6 +90,7 @@ const FAST_CADENCES = [
 const GUARDED_FLOOR_MS = 1000
 
 const CADENCE_NOTE_ID = 'mimic-cadence-note'
+const PASTE_OFFSET = 24
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v)
 
@@ -315,6 +316,8 @@ export default function MonitorPage() {
   // inspector, so two selections would leave one of them unreachable.
   const [selectedId, setSelectedId] = useState(null)
   const [selectedEdgeId, setSelectedEdgeId] = useState(null)
+  const copiedNodeRef = useRef(null)
+  const pasteCountRef = useRef(0)
   const [editMode, setEditMode] = useState(false)
   // Local to this page, like AppShell's sidebar collapse — the rail is a
   // viewing preference for this drawing, not something worth persisting.
@@ -410,6 +413,8 @@ export default function MonitorPage() {
     loadLayout(null)
     setSelectedId(null)
     setSelectedEdgeId(null)
+    copiedNodeRef.current = null
+    pasteCountRef.current = 0
     setBindingNode(null)
     setProductionLogOpen(false)
     setProductionSettingsOpen(false)
@@ -441,6 +446,31 @@ export default function MonitorPage() {
     setSelectedId(null)
     if (compactEditor) { setInspectorOpen(true); setPaletteOpen(false) }
   }, [compactEditor])
+
+  const copySelection = useCallback(() => {
+    if (!selectedNode) return false
+    copiedNodeRef.current = structuredClone(selectedNode)
+    pasteCountRef.current = 0
+    return true
+  }, [selectedNode])
+
+  const pasteSymbol = useCallback(() => {
+    const copied = copiedNodeRef.current
+    if (!copied) return false
+
+    addCounter += 1
+    pasteCountRef.current += 1
+    const offset = PASTE_OFFSET * pasteCountRef.current
+    const node = {
+      ...structuredClone(copied),
+      id: `n-new-${Date.now().toString(36)}-${addCounter}`,
+      x: clamp(copied.x + offset, 0, VIEW_W - copied.w),
+      y: clamp(copied.y + offset, 0, VIEW_H - copied.h),
+    }
+    commitLayout((prev) => ({ ...prev, nodes: [...prev.nodes, node] }))
+    selectNode(node.id)
+    return true
+  }, [commitLayout, selectNode])
 
   // --- geometry edits ------------------------------------------------------
   const moveNode = useCallback((id, pos) => {
@@ -823,6 +853,10 @@ export default function MonitorPage() {
       if (mod && event.key.toLowerCase() === 's') {
         event.preventDefault()
         if (dirty && !saving) handleSave()
+      } else if (mod && event.key.toLowerCase() === 'c') {
+        if (copySelection()) event.preventDefault()
+      } else if (mod && event.key.toLowerCase() === 'v') {
+        if (pasteSymbol()) event.preventDefault()
       } else if (mod && event.key.toLowerCase() === 'z') {
         event.preventDefault()
         if (event.shiftKey) redoLayout()
@@ -848,7 +882,7 @@ export default function MonitorPage() {
     }
     window.addEventListener('keydown', shortcut)
     return () => window.removeEventListener('keydown', shortcut)
-  }, [deleteSelection, dirty, editing, handleSave, nudgeNode, redoLayout, saving, selectedEdgeId, selectedId, undoLayout])
+  }, [copySelection, deleteSelection, dirty, editing, handleSave, nudgeNode, pasteSymbol, redoLayout, saving, selectedEdgeId, selectedId, undoLayout])
 
   /**
    * H — the hand tool, in view mode.
