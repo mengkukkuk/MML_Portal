@@ -18,6 +18,7 @@ from psycopg.types.json import Json
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 import config
+import security
 from production_log import aggregate_counter_samples
 
 logger = logging.getLogger("mml-api.db")
@@ -1759,6 +1760,8 @@ def get_datasource_secret(datasource_id: int) -> dict[str, Any] | None:
             "password, sslmode, db_schema FROM datasources WHERE id = %s",
             (datasource_id,),
         ).fetchone()
+    if row is not None:
+        row["password"] = security.decrypt_secret(row["password"])
     return row
 
 
@@ -1780,7 +1783,8 @@ def create_datasource(
                 (name, type, host, port, dbname, username, password, sslmode, db_schema)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING {_DS_PUBLIC_COLS}""",
-            (name, type, host, port, database, username, password, sslmode, db_schema),
+            (name, type, host, port, database, username,
+             security.encrypt_secret(password), sslmode, db_schema),
         ).fetchone()
         conn.commit()
     return row
@@ -1800,6 +1804,7 @@ def update_datasource(
 ) -> dict[str, Any] | None:
     """Update a connection. A None password keeps the stored one (so the editor
     need not round-trip the secret). Returns None if no such datasource."""
+    stored_password = password if password is None else security.encrypt_secret(password)
     with get_connection() as conn:
         row = conn.execute(
             f"""UPDATE datasources
@@ -1808,7 +1813,7 @@ def update_datasource(
                 sslmode = %s, db_schema = %s, updated_at = now()
             WHERE id = %s
             RETURNING {_DS_PUBLIC_COLS}""",
-            (name, type, host, port, database, username, password, sslmode,
+            (name, type, host, port, database, username, stored_password, sslmode,
              db_schema, datasource_id),
         ).fetchone()
         conn.commit()
@@ -1817,6 +1822,30 @@ def update_datasource(
     # previous server until the process restarts.
     drop_pool(datasource_id)
     return row
+
+
+def encrypt_legacy_datasource_passwords() -> int:
+    """One-time upgrade sweep: encrypt any plaintext password left over from
+    before ENCRYPTION_KEY was set, or from before this feature existed.
+
+    Safe on every boot -- already-encrypted rows are excluded by the NOT LIKE
+    filter, so a repeat call is a no-op. No-ops entirely when ENCRYPTION_KEY
+    isn't configured, since there is nothing to encrypt into.
+    """
+    if not config.ENCRYPTION_KEY:
+        return 0
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, password FROM datasources "
+            "WHERE password <> '' AND password NOT LIKE 'fernet$%'"
+        ).fetchall()
+        for row in rows:
+            conn.execute(
+                "UPDATE datasources SET password = %s WHERE id = %s",
+                (security.encrypt_secret(row["password"]), row["id"]),
+            )
+        conn.commit()
+    return len(rows)
 
 
 def delete_datasource(datasource_id: int) -> bool:

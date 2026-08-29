@@ -1,13 +1,18 @@
-"""Password hashing (stdlib scrypt) and JWT creation/verification (PyJWT)."""
+"""Password hashing (stdlib scrypt), JWT creation/verification (PyJWT), and
+secret-at-rest encryption (cryptography.fernet)."""
 import hashlib
 import hmac
+import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import jwt
+from cryptography.fernet import Fernet, InvalidToken
 
 import config
+
+logger = logging.getLogger("mml-api.security")
 
 # scrypt parameters (interactive-login friendly)
 _SCRYPT_N = 16384
@@ -91,3 +96,75 @@ def decode_token(token: str) -> dict:
 
 def access_expires_seconds() -> int:
     return config.ACCESS_EXPIRE_MIN * 60
+
+
+# --- Secret-at-rest encryption (datasources.password) -----------------------
+# Self-describing like the scrypt$ hash above: a "fernet$"-prefixed value is
+# unambiguous ciphertext from this code; anything else is legacy plaintext (or
+# ENCRYPTION_KEY was never configured) and passes through unchanged on read.
+# Empty string always passes through unchanged both directions -- it is the
+# sentinel db.py's has_password column depends on.
+_FERNET_PREFIX = "fernet$"
+_warned_plaintext = False
+
+
+def _warn_plaintext_once(reason: str) -> None:
+    global _warned_plaintext
+    if not _warned_plaintext:
+        logger.warning(
+            "%s - datasource passwords will be stored in plaintext. Set "
+            "ENCRYPTION_KEY (see .env.example) to encrypt them.", reason,
+        )
+        _warned_plaintext = True
+
+
+def encrypt_secret(plain: str) -> str:
+    """Encrypt for storage. Returns plaintext unchanged if empty, or if
+    ENCRYPTION_KEY is unset/invalid -- a degrade, not a failure, so creating or
+    editing a datasource never breaks because of this."""
+    if not plain:
+        return plain
+    if not config.ENCRYPTION_KEY:
+        _warn_plaintext_once("ENCRYPTION_KEY is not set")
+        return plain
+    try:
+        f = Fernet(config.ENCRYPTION_KEY)
+    except ValueError:
+        _warn_plaintext_once("ENCRYPTION_KEY is not a valid Fernet key")
+        return plain
+    return _FERNET_PREFIX + f.encrypt(plain.encode("utf-8")).decode("ascii")
+
+
+def decrypt_secret(stored: str) -> str:
+    """Decrypt a value read from storage. A value without the fernet$ prefix
+    is legacy plaintext (or encryption was never turned on) and is returned
+    unchanged -- what makes turning ENCRYPTION_KEY on non-disruptive for rows
+    saved before it existed.
+
+    Raises RuntimeError if the value IS prefixed but cannot be decrypted --
+    ENCRYPTION_KEY is unset/invalid, or the ciphertext was made under a
+    different key. There is no plaintext to fall back to. Every caller of
+    db.get_datasource_secret is expected to treat this as "this one source is
+    unreachable", not to crash unrelated work.
+    """
+    if not stored.startswith(_FERNET_PREFIX):
+        return stored
+    if not config.ENCRYPTION_KEY:
+        raise RuntimeError(
+            "Stored password is encrypted but ENCRYPTION_KEY is not set - "
+            "cannot decrypt it."
+        )
+    try:
+        f = Fernet(config.ENCRYPTION_KEY)
+    except ValueError as e:
+        raise RuntimeError(
+            "Stored password is encrypted but ENCRYPTION_KEY is not a valid "
+            "Fernet key - cannot decrypt it."
+        ) from e
+    try:
+        return f.decrypt(stored[len(_FERNET_PREFIX):].encode("ascii")).decode("utf-8")
+    except InvalidToken as e:
+        raise RuntimeError(
+            "Stored password could not be decrypted - ENCRYPTION_KEY does "
+            "not match the key it was encrypted with."
+        ) from e

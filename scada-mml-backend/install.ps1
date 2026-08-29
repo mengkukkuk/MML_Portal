@@ -160,6 +160,13 @@ if (-not (Test-Path $envFile)) {
         Write-Warn "Generated JWT_SECRET: $jwtInput"
     }
 
+    # ENCRYPTION_KEY - auto-generate if blank (encrypts saved plant passwords)
+    $encInput = Read-Host "    ENCRYPTION_KEY  (Enter to auto-generate; encrypts saved plant passwords)"
+    if (-not $encInput) {
+        $encInput = & $VENV_PYTHON -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+        Write-Warn "Generated ENCRYPTION_KEY: $encInput"
+    }
+
     # CORS origins - needed in .env even though main.py has a fallback default
     $corsInput = Read-Host "    CORS_ORIGINS [http://localhost:5173] (comma-separated frontend URL(s))"
     if (-not $corsInput) { $corsInput = "http://localhost:5173" }
@@ -167,6 +174,11 @@ if (-not (Test-Path $envFile)) {
     # Patch the copied .env in-place
     $content = Get-Content $envFile -Raw
     $content = [regex]::Replace($content, '(?m)^JWT_SECRET=.*$',  "JWT_SECRET=$jwtInput")
+    if ($content -match '(?m)^ENCRYPTION_KEY=') {
+        $content = [regex]::Replace($content, '(?m)^ENCRYPTION_KEY=.*$', "ENCRYPTION_KEY=$encInput")
+    } else {
+        $content = $content.TrimEnd() + "`nENCRYPTION_KEY=$encInput`n"
+    }
     if ($content -match '(?m)^CORS_ORIGINS=') {
         $content = [regex]::Replace($content, '(?m)^CORS_ORIGINS=.*$', "CORS_ORIGINS=$corsInput")
     } else {

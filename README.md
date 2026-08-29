@@ -22,7 +22,8 @@ C:\dev\
 │   ├── config.py                   ← reads .env (DB, JWT, account, Brevo, SMTP, cookie)
 │   ├── db.py                       ← psycopg 3 access layer (users + readings + tags + panels +
 │   │                                 dashboards + datasources + mimic + reports)
-│   ├── security.py                 ← scrypt hashing + JWT (access/refresh/reset)
+│   ├── security.py                 ← scrypt hashing + JWT (access/refresh/reset) + Fernet
+│   │                                 encrypt/decrypt for saved datasource passwords
 │   ├── auth.py                     ← /api/auth router (login, register, me, refresh,
 │   │                                 logout, change-password, forgot-password, reset-password)
 │   ├── users.py                    ← /api/users router (admin user CRUD, require_admin)
@@ -49,7 +50,7 @@ C:\dev\
 │   ├── init_db.sql                 ← aspirational multi-schema reference (not loaded today)
 │   ├── tests\                      ← pytest suite
 │   ├── requirements.txt
-│   ├── .env.example                ← copy to .env and fill JWT_SECRET (+ Brevo/SMTP)
+│   ├── .env.example                ← copy to .env and fill JWT_SECRET (+ ENCRYPTION_KEY, Brevo/SMTP)
 │   ├── .env                        ← LOCAL SECRETS — do NOT commit
 │   ├── logs\                       ← NSSM stdout/stderr (installer creates this)
 │   └── venv\                       ← Python 3.14 virtual environment (created by installer)
@@ -150,6 +151,7 @@ What it does:
 3. Creates `venv\` if missing, installs `requirements.txt`.
 4. On first run, copies `.env.example` → `.env` and **interactively** prompts for:
    - `JWT_SECRET` (Enter = auto-generate `secrets.token_hex(32)`)
+   - `ENCRYPTION_KEY` (Enter = auto-generate a Fernet key; encrypts saved plant passwords at rest)
    - `CORS_ORIGINS` (default `http://localhost:5173`)
 5. Creates `scada-mml-backend\logs\` for NSSM stdout/stderr.
 6. Runs `seed_users.py` (idempotent, non-fatal if DB isn't reachable yet).
@@ -174,7 +176,7 @@ cd C:\dev\scada-mml-backend
 py -3.14 -m venv venv
 .\venv\Scripts\python.exe -m pip install --upgrade pip
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
-Copy-Item .env.example .env         # then edit .env (set JWT_SECRET)
+Copy-Item .env.example .env         # then edit .env (set JWT_SECRET, optionally ENCRYPTION_KEY)
 .\venv\Scripts\python.exe seed_users.py
 
 # Register the NSSM service by hand
@@ -191,6 +193,11 @@ Start-Service mml-api
 Binding to `127.0.0.1` is intentional behind IIS — the service is only reached via the reverse proxy.
 Verify: `curl http://127.0.0.1:8088/health` → `{"status":"ok"}` and Swagger at
 `http://127.0.0.1:8088/docs`.
+
+`JWT_SECRET` must be set to a real value here — the service refuses to start (fails the health
+check above) if it's left blank or at a known placeholder value. There's no interactive prompt
+on this manual path, so generate one yourself before starting the service:
+`python -c "import secrets; print(secrets.token_hex(32))"`.
 
 ### 3.5 (Optional) Keep the demo data flowing
 
@@ -319,14 +326,20 @@ selected for every user — so the app behaves exactly as it did before the spli
 
 **Back up localhost from day one.** Configuration saved after the cutover exists *only* there.
 
-### 4.2 JWT
+If the source install had `ENCRYPTION_KEY` set, its `datasources.password` values are copied
+byte-for-byte and will only decrypt here if this install's `ENCRYPTION_KEY` matches. The
+migration prints a warning listing any datasource it can't decrypt after copying — re-enter
+that connection's password from Settings → Data sources.
+
+### 4.2 JWT & secrets at rest
 
 | Key | Default | Purpose |
 |---|---|---|
-| `JWT_SECRET` | `dev-insecure-change-me` | HMAC signing key. **Rotate for prod.** Generate with `python -c "import secrets;print(secrets.token_hex(32))"`. |
+| `JWT_SECRET` | `dev-insecure-change-me` | HMAC signing key. **Required** — the service refuses to start if this is blank, or left at `dev-insecure-change-me` or the `.env.example` placeholder. Generate with `python -c "import secrets;print(secrets.token_hex(32))"`. |
 | `ACCESS_EXPIRE_MIN` | `30` | Access-token lifetime (minutes) |
 | `REFRESH_EXPIRE_DAYS` | `7` | Refresh-token lifetime (days). Stored as `HttpOnly` cookie. |
 | `RESET_EXPIRE_MIN` | `30` | Password-reset-token lifetime (minutes) |
+| `ENCRYPTION_KEY` | *(empty)* | Optional. Encrypts saved plant-datasource passwords at rest. Blank keeps today's plaintext storage — nothing breaks either way. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Setting it encrypts new/changed passwords immediately and sweeps existing plaintext rows into the encrypted form on the next boot; a value without the `fernet$` prefix is always treated as legacy plaintext, so turning this on is never disruptive. |
 
 ### 4.3 Account management
 

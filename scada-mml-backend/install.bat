@@ -138,10 +138,15 @@ if exist "%ENV_FILE%" (
         for /f "delims=" %%j in ('"%VENV_PYTHON%" -c "import secrets;print(secrets.token_hex(32))"') do set "JWTIN=%%j"
         echo     [!]  Generated JWT_SECRET: !JWTIN!
     )
+    set /p "ENCIN=    ENCRYPTION_KEY  (Enter to auto-generate; encrypts saved plant passwords): "
+    if not defined ENCIN (
+        for /f "delims=" %%e in ('"%VENV_PYTHON%" -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"') do set "ENCIN=%%e"
+        echo     [!]  Generated ENCRYPTION_KEY: !ENCIN!
+    )
     set /p "CORSIN=    CORS_ORIGINS [http://localhost:5173] (comma-separated frontend URL(s)): "
     if not defined CORSIN set "CORSIN=http://localhost:5173"
 
-    "%VENV_PYTHON%" -c "import os,re;p=r'%ENV_FILE%';s=open(p,encoding='utf-8').read();s=re.sub(r'(?m)^DB_PASSWORD=.*$','DB_PASSWORD='+os.environ.get('DBPASS',''),s);s=re.sub(r'(?m)^JWT_SECRET=.*$','JWT_SECRET='+os.environ.get('JWTIN',''),s);s=(re.sub(r'(?m)^CORS_ORIGINS=.*$','CORS_ORIGINS='+os.environ.get('CORSIN',''),s) if re.search(r'(?m)^CORS_ORIGINS=',s) else s.rstrip()+'\nCORS_ORIGINS='+os.environ.get('CORSIN','')+'\n');open(p,'w',encoding='utf-8').write(s)"
+    "%VENV_PYTHON%" -c "import os,re;p=r'%ENV_FILE%';s=open(p,encoding='utf-8').read();s=re.sub(r'(?m)^DB_PASSWORD=.*$','DB_PASSWORD='+os.environ.get('DBPASS',''),s);s=re.sub(r'(?m)^JWT_SECRET=.*$','JWT_SECRET='+os.environ.get('JWTIN',''),s);s=(re.sub(r'(?m)^ENCRYPTION_KEY=.*$','ENCRYPTION_KEY='+os.environ.get('ENCIN',''),s) if re.search(r'(?m)^ENCRYPTION_KEY=',s) else s.rstrip()+'\nENCRYPTION_KEY='+os.environ.get('ENCIN','')+'\n');s=(re.sub(r'(?m)^CORS_ORIGINS=.*$','CORS_ORIGINS='+os.environ.get('CORSIN',''),s) if re.search(r'(?m)^CORS_ORIGINS=',s) else s.rstrip()+'\nCORS_ORIGINS='+os.environ.get('CORSIN','')+'\n');open(p,'w',encoding='utf-8').write(s)"
     if !errorlevel! neq 0 (
         echo [FATAL] Failed to write .env values.
         goto :fail

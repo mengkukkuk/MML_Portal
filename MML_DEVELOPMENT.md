@@ -93,7 +93,8 @@ C:\dev\
 │   │                               sensor_readings, variables_tag (dynamic discovery),
 │   │                               dashboard_panels, dashboards, datasources,
 │   │                               mimic layouts/assets/symbols, report templates
-│   ├── security.py               # scrypt hashing + JWT create/decode (access/refresh/reset)
+│   ├── security.py               # scrypt hashing + JWT create/decode (access/refresh/reset) +
+│   │                               Fernet encrypt/decrypt for datasource passwords at rest
 │   ├── auth.py                   # /api/auth router — login, register, refresh, logout, etc.
 │   ├── users.py                  # /api/users router — admin CRUD with last-admin guards
 │   ├── readings.py               # /api/readings router — devices, metrics, latest, series
@@ -195,6 +196,7 @@ py -3.14 -m venv venv
 
 # 2. configure environment — copy the example and fill JWT_SECRET.
 #    The app/config database is hardcoded to localhost; .env does not configure it.
+#    JWT_SECRET is required — the service refuses to boot without a real value.
 Copy-Item .env.example .env    # then edit .env
 
 # 3. seed the database (creates users table + mock users; idempotent)
@@ -227,13 +229,13 @@ The full reference (~25 keys, grouped DB / JWT / Account / Brevo / SMTP / CORS /
 
 | Key                  | Default     | Purpose |
 |----------------------|-------------|---------|
-| `JWT_SECRET`         | dev value   | HMAC secret — generate with `python -c "import secrets;print(secrets.token_hex(32))"` |
+| `JWT_SECRET`         | dev value   | HMAC secret — **required**, the service refuses to boot if it's blank or left at a known placeholder. Generate with `python -c "import secrets;print(secrets.token_hex(32))"` |
 | `APP_BASE_URL`       | `http://localhost:5173` | Base URL used to build password-reset links in emails |
 
 Optional sections covered in the README: token lifetimes (`ACCESS_EXPIRE_MIN`, `REFRESH_EXPIRE_DAYS`,
-`RESET_EXPIRE_MIN`, `MIN_PASSWORD_LEN`), **Brevo HTTP delivery (`BREVO_API_KEY`)**, SMTP relay
-fallback (`SMTP_*`), CORS allow-list (`CORS_ORIGINS`), and the HTTPS-only cookie flag
-(`COOKIE_SECURE`).
+`RESET_EXPIRE_MIN`, `MIN_PASSWORD_LEN`), **`ENCRYPTION_KEY`** (encrypts saved datasource passwords
+at rest), **Brevo HTTP delivery (`BREVO_API_KEY`)**, SMTP relay fallback (`SMTP_*`), CORS
+allow-list (`CORS_ORIGINS`), and the HTTPS-only cookie flag (`COOKIE_SECURE`).
 
 ### App/config database vs plant data
 
@@ -365,7 +367,9 @@ CREATE TABLE IF NOT EXISTS datasources (
   port       INTEGER NOT NULL DEFAULT 5432,
   dbname     TEXT NOT NULL DEFAULT '',
   username   TEXT NOT NULL DEFAULT '',
-  password   TEXT NOT NULL DEFAULT '',               -- encrypted at rest in production
+  password   TEXT NOT NULL DEFAULT '',               -- encrypted at rest when ENCRYPTION_KEY is
+                                                       -- set (fernet$ prefix); legacy/plaintext
+                                                       -- rows otherwise -- see security.py
   sslmode    TEXT NOT NULL DEFAULT 'prefer',
   db_schema  TEXT NOT NULL DEFAULT 'public',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -629,6 +633,14 @@ Saved plant connections. **All plant data is read through these rows** — the a
 lives in the hardcoded localhost database instead (§4.1.1). Admins configure the connection;
 the backend opens it on demand, from a per-datasource pool.
 Password is never returned in read responses (only `has_password` boolean).
+
+The stored password is encrypted at rest (`security.encrypt_secret`/`decrypt_secret`, Fernet)
+when `ENCRYPTION_KEY` is set (§4.2); blank keeps it plaintext. A value without the `fernet$`
+prefix is always read back as legacy plaintext, so turning the key on later never breaks an
+existing connection — `db.encrypt_legacy_datasource_passwords()` migrates old rows on the next
+boot. If a saved password can't be decrypted (key missing/rotated), `POST /api/datasources/test`
+degrades to `{ok: false, message: "..."}` rather than a 500, and a fanned-out read reports that
+one source as failed (`sources[].ok: false`) rather than failing the whole request.
 
 | Method | Path                      | Body / Auth                                   | Success response |
 |--------|---------------------------|-----------------------------------------------|------------------|
@@ -1183,12 +1195,21 @@ written to `C:\dev\verify_prod.log`.
   function whitelist — no `eval`/`Function`/prototype access.
 - Mimic node bindings are validated on save against live datasources; a drawing cannot reference
   a nonexistent table/column or datasource.
+- `JWT_SECRET` is enforced at startup (`config.jwt_secret_is_insecure`, `main._check_secure_config`):
+  the service refuses to boot if it's blank or left at a known-insecure placeholder, rather than
+  silently serving forgeable tokens. This is the one startup handler allowed to abort the
+  lifespan — every other one degrades instead of raising.
+- Saved plant-datasource passwords are encrypted at rest (`security.encrypt_secret`/`decrypt_secret`,
+  Fernet) when `ENCRYPTION_KEY` is set (§4.2, §7.8). Existing plaintext rows are swept into the
+  encrypted form on the next boot; turning the key on is non-disruptive.
 
 **Outstanding**
 
 - Refresh-token revocation (`logout`) and reset-token consumption are **in-memory only** — they
   reset on service restart and assume a single worker process. Move to Postgres/Redis if you scale
   to multiple workers or need durable revocation.
+- `ENCRYPTION_KEY` is opt-in, not enforced — an install that never sets it keeps storing plant
+  passwords in plaintext. Consider making it required (like `JWT_SECRET`) in a future pass.
 - Rotate `JWT_SECRET` for production; existing tokens become invalid (intended).
 - `.env` holds the DB password and JWT/SMTP/Brevo secrets — keep it out of version control.
 - Set `COOKIE_SECURE=true` once the site is served over HTTPS.

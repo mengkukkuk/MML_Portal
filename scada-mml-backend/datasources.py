@@ -235,7 +235,10 @@ def test_datasource(body: DatasourceTestIn, _admin: dict = Depends(require_admin
     """
     base = {}
     if body.datasource_id is not None:
-        base = db.get_datasource_secret(body.datasource_id) or {}
+        try:
+            base = db.get_datasource_secret(body.datasource_id) or {}
+        except RuntimeError as e:
+            return TestResult(ok=False, message=str(e))
         if not base:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found"

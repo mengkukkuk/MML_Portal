@@ -71,6 +71,13 @@ FANOUT_TIMEOUT_S = int(os.getenv("FANOUT_TIMEOUT_S", "12"))
 # selection can stall the shared threadpool for everyone.
 MAX_SELECTED_DATASOURCES = int(os.getenv("MAX_SELECTED_DATASOURCES", "8"))
 
+# --- Secrets at rest ---------------------------------------------------------
+# Encrypts datasources.password before it is written to the app database.
+# Blank (default) leaves today's behaviour: plaintext, so an existing install
+# needs no change to keep working. Generate a key with:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
+
 # --- Camera image folder ----------------------------------------------------
 # Where the vision system drops categorized inspection frames, laid out as
 # <root>/<camera code>/NG/defect_<slot>/*.png. Read-only to this app; see
@@ -88,6 +95,20 @@ JWT_ALGORITHM = "HS256"
 ACCESS_EXPIRE_MIN = int(os.getenv("ACCESS_EXPIRE_MIN", "30"))
 REFRESH_EXPIRE_DAYS = int(os.getenv("REFRESH_EXPIRE_DAYS", "7"))
 RESET_EXPIRE_MIN = int(os.getenv("RESET_EXPIRE_MIN", "30"))
+
+# Known-insecure placeholders that must never reach production: the code
+# default above (fires when JWT_SECRET is absent entirely) and the
+# .env.example placeholder (fires if .env.example is copied to .env without
+# running install.ps1/install.bat and without hand-editing it).
+_INSECURE_JWT_SECRETS = {
+    "dev-insecure-change-me",
+    "change-me-to-a-long-random-string",
+    "",
+}
+
+
+def jwt_secret_is_insecure() -> bool:
+    return JWT_SECRET in _INSECURE_JWT_SECRETS
 
 # --- Account management ---
 # Base URL of the frontend, used to build password-reset links.

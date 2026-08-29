@@ -98,6 +98,9 @@ def _create_tables() -> bool:
         db.init_panels_table()
         db.init_dashboards_table()
         db.init_datasources_table()
+        migrated = db.encrypt_legacy_datasource_passwords()
+        if migrated:
+            logger.info("Encrypted %d legacy plaintext datasource password(s)", migrated)
         db.init_user_datasource_selection_table()
         db.init_mimic_table()
         db.init_mimic_assets_table()
@@ -126,6 +129,21 @@ def _create_tables() -> bool:
     return True
 
 _schema_ready = False
+
+@app.on_event("startup")
+def _check_secure_config() -> None:
+    """The one startup handler here allowed to abort the lifespan — every
+    neighbor degrades instead (see _create_tables/_load_license) because a
+    down database or missing license is transient and worth staying up
+    through. A placeholder JWT_SECRET is a static misconfiguration that makes
+    every token forgeable and will not fix itself on retry."""
+    if config.jwt_secret_is_insecure():
+        raise RuntimeError(
+            "JWT_SECRET is not set to a real secret. Generate one with: "
+            'python -c "import secrets; print(secrets.token_hex(32))" '
+            "and set it in .env before starting the service."
+        )
+
 
 @app.on_event("startup")
 def _ensure_tables() -> None:

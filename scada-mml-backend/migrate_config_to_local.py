@@ -37,6 +37,7 @@ from psycopg.types.json import Json
 
 import config
 import db
+import security
 
 load_dotenv()
 
@@ -238,7 +239,7 @@ def _register_source(dst, kwargs: dict, name: str, apply: bool) -> int | None:
                password = EXCLUDED.password, updated_at = now()
            RETURNING id""",
         (name, kwargs["host"], kwargs["port"], kwargs["dbname"],
-         kwargs["user"], kwargs["password"]),
+         kwargs["user"], security.encrypt_secret(kwargs["password"])),
     ).fetchone()[0]
     dst.execute(
         """INSERT INTO user_datasource_selection (user_id, datasource_id, position)
@@ -307,6 +308,28 @@ def main() -> int:
         ds_id = None
         if not args.no_register:
             ds_id = _register_source(dst, kwargs, args.name, args.apply)
+
+        # _copy_table("datasources") copies the password column byte-for-byte,
+        # which only decrypts correctly on this install if the source install
+        # happened to encrypt it under the same ENCRYPTION_KEY. Flag any row
+        # that doesn't, rather than leaving a plant silently unreachable.
+        if args.apply:
+            encrypted_rows = dst.execute(
+                "SELECT name, password FROM datasources WHERE password LIKE 'fernet$%'"
+            ).fetchall()
+            undecryptable = []
+            for row_name, row_password in encrypted_rows:
+                try:
+                    security.decrypt_secret(row_password)
+                except RuntimeError:
+                    undecryptable.append(row_name)
+            if undecryptable:
+                print(
+                    "\nWARNING: these copied datasources have a password encrypted "
+                    "under a different ENCRYPTION_KEY and cannot be decrypted on "
+                    "this install. Re-enter their passwords in Settings -> Data "
+                    f"sources: {', '.join(undecryptable)}"
+                )
 
     width = max(len(t) for t in TABLES)
     for r in results:

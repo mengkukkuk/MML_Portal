@@ -80,6 +80,11 @@ The single most important split in this codebase.
   No explicit selection falls back to the lowest-id datasource, flagged `implicit: true`.
 - **The header selection overrides everything.** A panel's or symbol's stored
   `datasource_id` is not consulted for reads.
+- `datasources.password` is encrypted at rest (`security.encrypt_secret`/`decrypt_secret`,
+  Fernet) when `ENCRYPTION_KEY` is set — a `fernet$`-prefixed value is ciphertext, anything
+  else is legacy plaintext and is read back unchanged, so turning the key on later never
+  breaks an existing connection. `db.encrypt_legacy_datasource_passwords()` sweeps old
+  plaintext rows into the new format once per boot.
 - Reads **fan out** across the selection via `db.fan_out` / `db.fan_out_rows` (threaded,
   bounded pool). Every response is `{"<rows>": [...], "sources": [...]}` and every row is
   stamped `datasource_id` / `datasource_name` — a plant that failed must be distinguishable
@@ -94,6 +99,9 @@ The single most important split in this codebase.
 - **Refresh token**: long-lived JWT (default 7 days), set as HttpOnly cookie at path `/api/auth`
 - **Reset token**: single-use JWT (30 min) for password reset flow
 - Axios interceptor in `scada-frontend/src/api/client.js` handles token refresh transparently
+- `main.py`'s `_check_secure_config` startup handler refuses to boot if `JWT_SECRET` is left at
+  its insecure default or the `.env.example` placeholder — the one startup handler allowed to
+  abort the lifespan, since every other one (DB down, license missing) degrades instead.
 
 ### Backend Layout
 | File | Role |
@@ -113,7 +121,7 @@ The single most important split in this codebase.
 | `alarms.py` | `/api/alarms/*` — read-only alarm-log endpoints with Acknowledge action for the Alarms page |
 | `reports.py` | `/api/reports/*` — OEE/MES reporting: template CRUD (admin token gates template writes), report runs, CSV/Excel export |
 | `report_engine.py` | Pure state-interval arithmetic — turns `public.event_logs` transitions into machine runtime/downtime/OEE metrics |
-| `security.py` | Password hashing via stdlib `hashlib.scrypt`, JWT sign/verify |
+| `security.py` | Password hashing via stdlib `hashlib.scrypt`, JWT sign/verify, and `encrypt_secret`/`decrypt_secret` (Fernet) for `datasources.password` at rest |
 | `db.py` | Psycopg 3 access layer — all SQL lives here. `get_connection()` is **always the localhost app DB**; plant SQL goes through the per-datasource pools and `fan_out`/`fan_out_rows`. Also dynamic `variables_tag` column discovery and table init helpers |
 | `mailer.py` | Password-reset delivery: **Brevo HTTP API** (preferred) → SMTP fallback → log-only dev mode |
 | `config.py` | All env vars with fallback defaults, plus the hardcoded `APP_DB_*` constants |
@@ -191,9 +199,18 @@ IIS rewrite rules are in `scada-frontend/public/web.config` (copied to `dist/` o
 ```
 JWT_SECRET=         # required — generate: python -c "import secrets; print(secrets.token_hex(32))"
 ```
+The service refuses to start if `JWT_SECRET` is missing/empty or left at a known-insecure
+placeholder (`dev-insecure-change-me`, or the `.env.example` value) — see `config.jwt_secret_is_insecure`
+and `main._check_secure_config`.
+
 There is deliberately **no** `DB_HOST` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` — the app
 database is hardcoded (see above) and plant credentials live in the `datasources` table.
 `DB_CONNECT_TIMEOUT` is the only DB knob left; it bounds each fan-out leg.
+
+`ENCRYPTION_KEY` (optional) encrypts saved plant-datasource passwords at rest — generate with
+`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
+Blank leaves them in plaintext (today's behaviour); setting it later encrypts new/changed
+passwords immediately and sweeps existing plaintext rows on the next boot.
 See `.env.example` for all options. For password-reset email delivery, set
 **`BREVO_API_KEY`** (preferred — Brevo HTTP API needs no IP allow-list) or fall
 back to `SMTP_HOST=…`. Leave both empty in dev to log reset links to the
