@@ -6,8 +6,9 @@
 .DESCRIPTION
     Mirrors what scada-mml-backend\install.ps1 does interactively (NSSM registration, .env
     patching, health-check polling) plus everything install.ps1 does NOT do: silent
-    PostgreSQL provisioning, IIS feature/module setup, IIS site + host-header binding, and a
-    hosts-file entry  -  all driven from wizard answers instead of console prompts.
+    PostgreSQL provisioning, IIS feature/module setup, IIS site + host-header binding, an
+    optional self-signed HTTPS binding, and a hosts-file entry  -  all driven from wizard
+    answers instead of console prompts.
 
     Every step is best-effort/non-fatal except where noted, matching install.ps1's philosophy:
     a plant-floor install should end with the service running and reachable even if one
@@ -29,6 +30,16 @@
 
 .PARAMETER ServicePort
     Port the bundled uvicorn/NSSM service binds to on 127.0.0.1. Default 8088.
+
+.PARAMETER EnableHttps
+    "true" to generate a self-signed certificate for -Hostname and bind it to the IIS site
+    on -HttpsPort (in addition to the existing HTTP binding). "false" leaves the site
+    HTTP-only. The public certificate is exported to {InstallDir}\certs\ so it can be pushed
+    to other client machines' Trusted Root store  -  this server trusts it automatically,
+    but nothing else on the LAN will until that certificate is imported there too.
+
+.PARAMETER HttpsPort
+    IIS HTTPS site port, used only when -EnableHttps is "true". Default 443.
 #>
 
 [CmdletBinding()]
@@ -38,10 +49,18 @@ param(
     [int]$Port = 80,
     [string]$InstallPostgres = "true",
     [string]$ServiceName = "mml-api",
-    [int]$ServicePort = 8088
+    [int]$ServicePort = 8088,
+    [string]$EnableHttps = "false",
+    [int]$HttpsPort = 443
 )
 
 $ErrorActionPreference = "Stop"
+
+# Windows PowerShell 5.1's .NET Framework HttpClient doesn't always default to TLS 1.2 on
+# older Windows builds -- without this, Step 10's Invoke-RestMethod calls against an HTTPS
+# binding (see Step 8b) can fail with a generic "could not create SSL/TLS secure channel"
+# error that has nothing to do with the certificate itself.
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 $LogDir  = "C:\ProgramData\MMLPortal"
 $LogFile = Join-Path $LogDir "install.log"
@@ -61,7 +80,7 @@ function Write-Result([string]$step, [bool]$pass, [string]$detail = "") {
 }
 
 Write-Log "===== MMLPortal post-install starting ====="
-Write-Log "InstallDir=$InstallDir Hostname=$Hostname Port=$Port InstallPostgres=$InstallPostgres ServicePort=$ServicePort"
+Write-Log "InstallDir=$InstallDir Hostname=$Hostname Port=$Port InstallPostgres=$InstallPostgres ServicePort=$ServicePort EnableHttps=$EnableHttps HttpsPort=$HttpsPort"
 
 $PythonExe   = Join-Path $InstallDir "python\python.exe"
 $BackendDir  = Join-Path $InstallDir "backend"
@@ -155,44 +174,102 @@ except Exception as e:
     }
 }
 
+# -- Step 1b  -  undo any stale ACL lockdown from an older installer ------------------
+# Older builds of this script locked backend\ down to SYSTEM + Administrators only via
+# icacls /inheritance:r, and that restriction persists on disk across reinstalls/upgrades
+# -- including onto THIS process, elevated as it is, which is exactly what broke a real
+# install (Step 2 below got Access Denied reading .env and the whole script died silently,
+# since Step 2 had no try/catch at the time). backend\ secret protection is now handled by
+# DPAPI-encrypting the values themselves (see Protect-DpapiSecret below), not by an NTFS
+# fence, so there is no reason to keep re-asserting one here -- just undo whatever a prior
+# run may have left behind. /reset restores inherited ACEs and drops explicit ones; it does
+# not apply a new lockdown. Non-fatal: a machine that never had the old lockdown has
+# nothing to undo, and this must never be able to block Step 2 the way the old ACL did.
+Write-Log "Step 1b: clearing any stale backend folder ACL lockdown from a prior install"
+icacls $BackendDir /reset /T /C 2>$null | Out-Null
+
+# -- DPAPI helper -------------------------------------------------------------------
+# Encrypts a plaintext string with Windows DPAPI at LocalMachine scope, decryptable by ANY
+# account on this machine -- not just the encrypting one. That matters here because this
+# script runs elevated as an interactive Administrator, but the mml-api service (via NSSM)
+# runs as LocalSystem: two different security principals that both need to read JWT_SECRET
+# back out of .env at their own process start. Output is prefixed "dpapi:" so config.py's
+# _resolve_secret() can tell an encrypted value apart from plaintext -- mirrors security.py's
+# "fernet$" prefix already used for datasource passwords at rest in the DB.
+function Protect-DpapiSecret([string]$PlainText) {
+    Add-Type -AssemblyName System.Security
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($PlainText)
+    $protected = [System.Security.Cryptography.ProtectedData]::Protect(
+        $bytes, $null, [System.Security.Cryptography.DataProtectionScope]::LocalMachine)
+    return "dpapi:" + [Convert]::ToBase64String($protected)
+}
+
 # -- Step 2  -  .env ---------------------------------------------------------------
 Write-Log "Step 2: .env"
-$envFile    = Join-Path $BackendDir ".env"
-$envExample = Join-Path $BackendDir ".env.example"
-$baseUrl    = if ($Port -eq 80) { "http://$Hostname" } else { "http://${Hostname}:${Port}" }
+try {
+    $envFile    = Join-Path $BackendDir ".env"
+    $envExample = Join-Path $BackendDir ".env.example"
+    $httpBaseUrl  = if ($Port -eq 80) { "http://$Hostname" } else { "http://${Hostname}:${Port}" }
+    $httpsBaseUrl = if ($HttpsPort -eq 443) { "https://$Hostname" } else { "https://${Hostname}:${HttpsPort}" }
+    # Password-reset links (APP_BASE_URL) should point at the encrypted site when one exists --
+    # CORS_ORIGINS lists both so the API still accepts requests from whichever binding a browser
+    # tab happens to be on (e.g. an old bookmark still using http://).
+    $baseUrl     = if ($EnableHttps -eq "true") { $httpsBaseUrl } else { $httpBaseUrl }
+    $corsOrigins = if ($EnableHttps -eq "true") { "$httpBaseUrl,$httpsBaseUrl" } else { $httpBaseUrl }
 
-$isNewEnv = -not (Test-Path $envFile)
-if ($isNewEnv) {
-    Copy-Item $envExample $envFile
-}
-
-# Whether .env pre-existed (reinstall/upgrade over a prior install) or was just created,
-# always reconcile APP_BASE_URL/CORS_ORIGINS to the hostname/port the wizard was just run
-# with -- otherwise a reinstall that changes the hostname silently keeps serving the OLD
-# hostname's CORS/base-URL config, which breaks login through IIS with no obvious cause.
-# JWT_SECRET is only ever generated once and is preserved across reinstalls so existing
-# refresh-token cookies from a prior install stay valid.
-$content = Get-Content $envFile -Raw
-if ($content -notmatch '(?m)^JWT_SECRET=\S') {
-    $jwtSecret = & $PythonExe -c "import secrets; print(secrets.token_hex(32))"
-    if ($content -match '(?m)^JWT_SECRET=') {
-        $content = [regex]::Replace($content, '(?m)^JWT_SECRET=.*$', "JWT_SECRET=$jwtSecret")
-    } else {
-        $content = $content.TrimEnd() + "`nJWT_SECRET=$jwtSecret`n"
+    $isNewEnv = -not (Test-Path $envFile)
+    if ($isNewEnv) {
+        Copy-Item $envExample $envFile
     }
+
+    # Whether .env pre-existed (reinstall/upgrade over a prior install) or was just created,
+    # always reconcile APP_BASE_URL/CORS_ORIGINS to the hostname/port the wizard was just run
+    # with -- otherwise a reinstall that changes the hostname silently keeps serving the OLD
+    # hostname's CORS/base-URL config, which breaks login through IIS with no obvious cause.
+    # JWT_SECRET is only ever generated once and is preserved across reinstalls so existing
+    # refresh-token cookies from a prior install stay valid.
+    $content = Get-Content $envFile -Raw
+    # Mirror config.py's _INSECURE_JWT_SECRETS: .env.example ships JWT_SECRET set to a non-empty
+    # placeholder ("change-me-to-a-long-random-string"), so a plain "is it set?" regex treats a
+    # freshly-copied .env.example as already configured and never generates a real secret --
+    # main.py's startup check then refuses to boot on every fresh install. Extract the actual
+    # value and compare it against the same insecure set the backend itself checks.
+    $currentJwt = $null
+    if ($content -match '(?m)^JWT_SECRET=(.*)$') { $currentJwt = $Matches[1].Trim() }
+    $insecureJwtValues = @('', 'dev-insecure-change-me', 'change-me-to-a-long-random-string')
+    if (-not $currentJwt -or $insecureJwtValues -contains $currentJwt) {
+        $jwtSecret = (& $PythonExe -c "import secrets; print(secrets.token_hex(32))").Trim()
+        # Store only the DPAPI-wrapped form -- the plaintext $jwtSecret variable is never
+        # written to disk or logged. A dpapi:-prefixed blob will never match any string in
+        # $insecureJwtValues on a future run, so it is correctly treated as "already
+        # configured" and left untouched -- this is what makes JWT_SECRET (and therefore
+        # existing refresh-token cookies) survive a reinstall.
+        $jwtSecretProtected = Protect-DpapiSecret $jwtSecret
+        if ($content -match '(?m)^JWT_SECRET=') {
+            $content = [regex]::Replace($content, '(?m)^JWT_SECRET=.*$', "JWT_SECRET=$jwtSecretProtected")
+        } else {
+            $content = $content.TrimEnd() + "`nJWT_SECRET=$jwtSecretProtected`n"
+        }
+    }
+    if ($content -match '(?m)^APP_BASE_URL=') {
+        $content = [regex]::Replace($content, '(?m)^APP_BASE_URL=.*$', "APP_BASE_URL=$baseUrl")
+    } else {
+        $content = $content.TrimEnd() + "`nAPP_BASE_URL=$baseUrl`n"
+    }
+    if ($content -match '(?m)^CORS_ORIGINS=') {
+        $content = [regex]::Replace($content, '(?m)^CORS_ORIGINS=.*$', "CORS_ORIGINS=$corsOrigins")
+    } else {
+        $content = $content.TrimEnd() + "`nCORS_ORIGINS=$corsOrigins`n"
+    }
+    $content | Out-File $envFile -Encoding utf8 -NoNewline
+    Write-Result ".env configured" $true $(if ($isNewEnv) { "created $envFile" } else { "reconciled existing $envFile (JWT_SECRET preserved)" })
+} catch {
+    # Every other step in this script is best-effort/non-fatal -- this one wasn't, so a
+    # permission or IO error here used to kill the entire install silently right after
+    # logging "Step 2: .env", with no PASS/WARN line and no summary. Never again: log it
+    # and keep going, same as every step below.
+    Write-Result ".env configured" $false $_.Exception.Message
 }
-if ($content -match '(?m)^APP_BASE_URL=') {
-    $content = [regex]::Replace($content, '(?m)^APP_BASE_URL=.*$', "APP_BASE_URL=$baseUrl")
-} else {
-    $content = $content.TrimEnd() + "`nAPP_BASE_URL=$baseUrl`n"
-}
-if ($content -match '(?m)^CORS_ORIGINS=') {
-    $content = [regex]::Replace($content, '(?m)^CORS_ORIGINS=.*$', "CORS_ORIGINS=$baseUrl")
-} else {
-    $content = $content.TrimEnd() + "`nCORS_ORIGINS=$baseUrl`n"
-}
-$content | Out-File $envFile -Encoding utf8 -NoNewline
-Write-Result ".env configured" $true $(if ($isNewEnv) { "created $envFile" } else { "reconciled existing $envFile (JWT_SECRET preserved)" })
 
 # -- Step 3  -  NSSM service --------------------------------------------------------
 Write-Log "Step 3: NSSM service '$ServiceName'"
@@ -247,15 +324,25 @@ if (-not (Test-Path $NssmExe)) {
 
 # -- Step 4  -  seed DB --------------------------------------------------------------
 Write-Log "Step 4: seed database"
-$seedScript = Join-Path $BackendDir "seed_users.py"
+$seedScript = Join-Path $BackendDir "seed_users.pyc"
 if (Test-Path $seedScript) {
+    # Can't invoke `python seed_users.pyc` directly here: the bundled embeddable Python's
+    # python3xx._pth file fully overrides sys.path init (isolated mode), which suppresses
+    # the normal cwd-on-sys.path behavior a full Python install gives a directly-run script
+    # -- so `import db`/`import security` inside seed_users fail with ModuleNotFoundError
+    # even though those sibling .pyc files sit right next to it. `-m` doesn't help either,
+    # since that same override also skips -m's usual cwd insertion. PYTHONPATH is ignored
+    # too -- ._pth intentionally ignores it. uvicorn's own CLI sidesteps this by explicitly
+    # doing `sys.path.insert(0, app_dir)` itself (see venv's uvicorn/main.py) before importing
+    # the app; mirror that here for seed_users, then call main() explicitly since the
+    # `if __name__ == "__main__"` guard never fires for an imported (not directly-run) module.
     $ErrorActionPreference = "Continue"
-    $seedOut = & $PythonExe $seedScript 2>&1
+    $seedOut = & $PythonExe -c "import sys; sys.path.insert(0, r'$BackendDir'); import seed_users; seed_users.main()" 2>&1
     $seedOk = ($LASTEXITCODE -eq 0)
     $ErrorActionPreference = "Stop"
     Write-Result "Seed database" $seedOk ($seedOut -join " | ")
 } else {
-    Write-Result "Seed database" $false "seed_users.py not found"
+    Write-Result "Seed database" $false "seed_users.pyc not found"
 }
 
 # -- Step 5  -  IIS Windows features -------------------------------------------------
@@ -335,6 +422,68 @@ try {
     Write-Result "IIS site created" $true "MMLPortal -> $StaticDir (host header: $Hostname`:$Port)"
 } catch {
     Write-Result "IIS site created" $false $_.Exception.Message
+}
+
+# -- Step 8b  -  HTTPS (self-signed certificate) ---------------------------------------
+Write-Log "Step 8b: HTTPS"
+if ($EnableHttps -eq "true") {
+    try {
+        Import-Module WebAdministration -ErrorAction Stop
+
+        # Reuse an existing, still-valid self-signed cert for this hostname across
+        # upgrades/reinstalls instead of minting a new one every run -- a new cert would
+        # invalidate any trust a client machine already established by importing the old
+        # one into its Trusted Root store.
+        $existingCert = Get-ChildItem Cert:\LocalMachine\My |
+            Where-Object { $_.Subject -eq "CN=$Hostname" -and $_.NotAfter -gt (Get-Date) } |
+            Sort-Object NotAfter -Descending | Select-Object -First 1
+
+        if ($existingCert) {
+            $cert = $existingCert
+            Write-Log "Reusing existing self-signed certificate for $Hostname (thumbprint $($cert.Thumbprint), expires $($cert.NotAfter))."
+        } else {
+            $cert = New-SelfSignedCertificate -DnsName $Hostname -CertStoreLocation "Cert:\LocalMachine\My" `
+                -FriendlyName "MMLPortal ($Hostname)" -NotAfter (Get-Date).AddYears(10) `
+                -KeyExportPolicy Exportable -KeyUsage DigitalSignature, KeyEncipherment `
+                -Type SSLServerAuthentication
+            Write-Log "Generated new self-signed certificate for $Hostname (thumbprint $($cert.Thumbprint), valid until $($cert.NotAfter))."
+        }
+
+        # Trust it on this machine so the server itself doesn't show the browser warning --
+        # this does NOT extend to other client PCs on the LAN, see the exported .cer below.
+        $rootStore = Get-Item Cert:\LocalMachine\Root
+        $rootStore.Open("ReadWrite")
+        if (-not (Get-ChildItem Cert:\LocalMachine\Root -ErrorAction SilentlyContinue | Where-Object Thumbprint -eq $cert.Thumbprint)) {
+            $rootStore.Add($cert)
+        }
+        $rootStore.Close()
+
+        # Drop any stale HTTPS binding from a previous install/hostname before rebinding --
+        # New-WebBinding fails on an existing identical binding, and a leftover binding
+        # pointed at an old cert would otherwise shadow the fresh one below.
+        Get-WebBinding -Name "MMLPortal" -Protocol "https" -ErrorAction SilentlyContinue | Remove-WebBinding -ErrorAction SilentlyContinue
+        $sslBindingPath = "IIS:\SslBindings\0.0.0.0!$HttpsPort"
+        if (Test-Path $sslBindingPath) { Remove-Item $sslBindingPath -ErrorAction SilentlyContinue }
+
+        # SslFlags 1 = SNI-enabled -- required so this shared IP can present the right cert
+        # for the host header instead of only ever answering with whichever cert bound first.
+        New-WebBinding -Name "MMLPortal" -Protocol "https" -Port $HttpsPort -HostHeader $Hostname -SslFlags 1
+        New-Item $sslBindingPath -Value $cert -SSLFlags 1 | Out-Null
+
+        # Export the public cert (no private key) so it can be pushed to every OTHER PC that
+        # will browse to this site -- importing it into their Trusted Root store is the only
+        # way to clear the "Not secure" warning there; it cannot be done remotely from here.
+        $certExportPath = Join-Path $InstallDir "certs\$Hostname.cer"
+        New-Item -ItemType Directory -Force -Path (Split-Path $certExportPath) | Out-Null
+        Export-Certificate -Cert $cert -FilePath $certExportPath -Type CERT | Out-Null
+
+        Write-Result "HTTPS binding" $true "port $HttpsPort, thumbprint $($cert.Thumbprint)"
+        Write-Log "Exported public certificate to $certExportPath -- import this into 'Trusted Root Certification Authorities' (Local Machine) on every OTHER PC that will browse to https://$Hostname to clear the browser warning there too (this server already trusts it)." "WARN"
+    } catch {
+        Write-Result "HTTPS binding" $false $_.Exception.Message
+    }
+} else {
+    Write-Log "HTTPS disabled by installer choice -- site remains HTTP-only."
 }
 
 # -- Step 9  -  hosts file -------------------------------------------------------------

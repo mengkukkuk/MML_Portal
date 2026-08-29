@@ -14,8 +14,10 @@
          site-packages, bootstrap pip, `pip install -r requirements.txt` straight into it.
          No venv layer  -  the folder itself is portable. -> installer\staging\python\
       4. Copy backend source (excluding venv/.env/logs/tests/__pycache__) -> installer\staging\backend\
-      5. Copy nssm.exe -> installer\staging\tools\
-      6. Invoke ISCC.exe (Inno Setup Compiler) against installer\MMLPortal.iss.
+      5. Compile installer\staging\backend\ to bytecode-only (.pyc) and delete the .py
+         source, so the target device never has raw, editable backend source on disk.
+      6. Copy nssm.exe + protect-secret.ps1 -> installer\staging\tools\
+      7. Invoke ISCC.exe (Inno Setup Compiler) against installer\MMLPortal.iss.
 
 .PARAMETER Version
     Version string embedded in the installer filename and Inno's AppVersion. Default: read
@@ -164,6 +166,7 @@ if (-not $SkipPythonBundle) {
         Abort "installer\staging\python\python.exe not found. Drop -SkipPythonBundle to build it."
     }
 }
+$pythonExe = Join-Path $pythonDest "python.exe"
 
 # -- Step 3  -  backend source ---------------------------------------------------
 Write-Step "Staging backend source -> installer\staging\backend\"
@@ -178,12 +181,28 @@ robocopy $BackendSrc $backendDest /E /XD $excludeDirs /XF $excludeFiles /NFL /ND
 if ($LASTEXITCODE -ge 8) { Abort "robocopy failed copying backend source (exit $LASTEXITCODE)." }
 Write-OK "Backend source staged (excluded: $($excludeDirs -join ', '), $($excludeFiles -join ', '))"
 
-# -- Step 4  -  tools (nssm.exe) --------------------------------------------------
+# -- Step 3b  -  compile backend to bytecode-only, strip raw .py source ----------
+# Ships the backend as sourceless .pyc so a local admin/operator on the target device can't
+# open main.py/licensing.py/etc. in a text editor and read or tamper with them. `-b` writes
+# legacy-style "foo.pyc" next to "foo.py" (not into __pycache__) -- Python's import system
+# transparently loads a bare .pyc when no sibling .py exists, and `python foo.pyc` runs
+# directly too, so nothing else in postinstall.ps1/NSSM needs to change except the one
+# script (seed_users) that's invoked by an explicit filename rather than via import/-m.
+# The .pyc is tied to this exact bundled Python's bytecode magic number, which is fine since
+# staging\python\ and staging\backend\ are always built and shipped together.
+Write-Step "Compiling backend to bytecode-only (.pyc), removing .py source"
+& $pythonExe -m compileall -b -f -q $backendDest
+if ($LASTEXITCODE -ne 0) { Abort "compileall failed compiling backend source to bytecode." }
+Get-ChildItem $backendDest -Recurse -Filter "*.py" | Remove-Item -Force
+Write-OK "Backend staged as bytecode-only (.pyc); no raw .py source ships to the target device."
+
+# -- Step 4  -  tools (nssm.exe, operator scripts) --------------------------------
 Write-Step "Staging tools -> installer\staging\tools\"
 $toolsDest = Join-Path $StagingDir "tools"
 New-Item -ItemType Directory -Force -Path $toolsDest | Out-Null
 Copy-Item (Join-Path $RedistDir "nssm.exe") (Join-Path $toolsDest "nssm.exe") -Force
-Write-OK "nssm.exe staged."
+Copy-Item (Join-Path $PSScriptRoot "protect-secret.ps1") (Join-Path $toolsDest "protect-secret.ps1") -Force
+Write-OK "nssm.exe and protect-secret.ps1 staged."
 
 # -- Step 5  -  compile the Inno Setup installer ----------------------------------
 Write-Step "Compiling installer (ISCC.exe)"

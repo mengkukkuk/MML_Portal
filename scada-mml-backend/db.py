@@ -2340,16 +2340,7 @@ def delete_mimic_symbol(symbol_id: int) -> bool:
 # `cameras` deliberately holds no plant binding: defect counts come from
 # `camera_defect`, which is app data keyed by code, not a fanned-out plant read.
 def init_cameras_table() -> None:
-    """Create the cameras table if it doesn't exist, then add newer columns.
-
-    Idempotent, following init_panels_table: CREATE IF NOT EXISTS can't evolve a
-    table that already exists, so every column added after the first release
-    needs its own ADD COLUMN IF NOT EXISTS.
-
-    Older installs also carry `stream_url`, `notes` and `binding`, which this
-    app no longer selects. They are nullable and inert; dropping them would be
-    the only irreversible step here, for no gain, so they are left alone.
-    """
+    """Create the cameras table if it doesn't exist"""
     with get_connection() as conn:
         conn.execute(
             """CREATE TABLE IF NOT EXISTS cameras (
@@ -2374,18 +2365,7 @@ def init_cameras_table() -> None:
 
 
 def init_camera_defect_table() -> None:
-    """Create the camera_defect table if it doesn't exist. Idempotent.
-
-    `camera_id` is the camera's *code* as text, not a foreign key to
-    cameras.id — the inspection system writes these rows and knows the printed
-    code, not our serial. Matching is therefore case-insensitive, which is what
-    the expression index below exists to serve; a plain btree on camera_id
-    cannot answer `lower(camera_id) = lower(%s)`.
-
-    `updated_at` is a naive timestamp, matching local_db.sql. Left as-is
-    deliberately: the app, the database and the plant share a clock, the same
-    assumption the reports section already runs on.
-    """
+    """Create the camera_defect table if it doesn't exist"""
     with get_connection() as conn:
         conn.execute(
             """CREATE TABLE IF NOT EXISTS camera_defect (

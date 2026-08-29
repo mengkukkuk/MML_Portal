@@ -53,7 +53,7 @@ Source: "scripts\uninstall.ps1";   DestDir: "{app}\scripts"; Flags: ignoreversio
 
 [Run]
 Filename: "powershell.exe"; \
-    Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\postinstall.ps1"" -InstallDir ""{app}"" -Hostname ""{code:GetHostname}"" -Port {code:GetPort} -InstallPostgres {code:GetInstallPostgres}"; \
+    Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\postinstall.ps1"" -InstallDir ""{app}"" -Hostname ""{code:GetHostname}"" -Port {code:GetPort} -InstallPostgres {code:GetInstallPostgres} -EnableHttps {code:GetEnableHttps} -HttpsPort {code:GetHttpsPort}"; \
     StatusMsg: "Configuring PostgreSQL, IIS, and the MMLPortal service  -  this can take several minutes..."; \
     Flags: waituntilterminated
 
@@ -66,6 +66,8 @@ Filename: "powershell.exe"; \
 var
   HostnamePage: TInputQueryWizardPage;
   PostgresPage: TInputOptionWizardPage;
+  HttpsPage: TInputOptionWizardPage;
+  HttpsPortPage: TInputQueryWizardPage;
 
 function DetectExistingPostgres(): Boolean;
 begin
@@ -94,6 +96,23 @@ begin
     False, False);
   PostgresPage.Add('Install bundled PostgreSQL 18 silently');
   PostgresPage.Values[0] := not DetectExistingPostgres();
+
+  HttpsPage := CreateInputOptionPage(PostgresPage.ID,
+    'HTTPS', 'Encrypt traffic between browsers and this server with a self-signed certificate.',
+    'Recommended: without this, login credentials and session cookies travel in plain text ' +
+    'over the network. Browsers will still show a security warning until the generated ' +
+    'certificate is imported into "Trusted Root Certification Authorities" on each PC that ' +
+    'browses to this site  -  the certificate file is exported to {app}\certs\ after install ' +
+    'for that purpose.',
+    False, False);
+  HttpsPage.Add('Enable HTTPS with a self-signed certificate');
+  HttpsPage.Values[0] := True;
+
+  HttpsPortPage := CreateInputQueryPage(HttpsPage.ID,
+    'HTTPS port', 'Which port should the encrypted (HTTPS) site answer on?',
+    'Leave this at 443 unless another site on this server already uses it.');
+  HttpsPortPage.Add('HTTPS port:', False);
+  HttpsPortPage.Values[0] := '443';
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -112,7 +131,23 @@ begin
       MsgBox('Please enter a valid port number (1-65535).', mbError, MB_OK);
       Result := False;
     end;
+  end
+  else if CurPageID = HttpsPortPage.ID then
+  begin
+    if HttpsPage.Values[0] and
+       ((StrToIntDef(HttpsPortPage.Values[0], -1) < 1) or
+        (StrToIntDef(HttpsPortPage.Values[0], -1) > 65535)) then
+    begin
+      MsgBox('Please enter a valid port number (1-65535).', mbError, MB_OK);
+      Result := False;
+    end;
   end;
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  { No point asking for an HTTPS port if HTTPS itself was left unchecked. }
+  Result := (PageID = HttpsPortPage.ID) and (not HttpsPage.Values[0]);
 end;
 
 function GetHostname(Param: string): string;
@@ -131,6 +166,22 @@ begin
     Result := 'true'
   else
     Result := 'false';
+end;
+
+function GetEnableHttps(Param: string): string;
+begin
+  if HttpsPage.Values[0] then
+    Result := 'true'
+  else
+    Result := 'false';
+end;
+
+function GetHttpsPort(Param: string): string;
+begin
+  if HttpsPage.Values[0] then
+    Result := Trim(HttpsPortPage.Values[0])
+  else
+    Result := '443';
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
