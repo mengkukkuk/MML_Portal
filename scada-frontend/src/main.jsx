@@ -23,6 +23,7 @@ import './styles/index.css'
 import { queryClient } from './lib/queryClient'
 import { muiTheme } from './theme/muiTheme'
 import App from './App.jsx'
+import TouchKeyboard from './components/TouchKeyboard/TouchKeyboard.jsx'
 
 createRoot(document.getElementById('app')).render(
   <StrictMode>
@@ -31,6 +32,7 @@ createRoot(document.getElementById('app')).render(
         <CssBaseline />
         <QueryClientProvider client={queryClient}>
           <App />
+          <TouchKeyboard />
         </QueryClientProvider>
       </ThemeProvider>
     </StyledEngineProvider>

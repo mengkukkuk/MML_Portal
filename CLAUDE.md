@@ -69,9 +69,14 @@ cd C:\dev\scada-mml-backend
 ### App/config database vs plant data
 The single most important split in this codebase.
 
-- The **app/config database is hardcoded** to `localhost:5432` / `postgres` / `postgres` /
-  `P@ssw0rd` (`config.APP_DB_*`). `.env` has no `DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASSWORD`
-  and setting them does nothing. It holds users, selections, dashboards, panels, mimic
+- The **app/config database is hardcoded** to `localhost:5432` / `postgres` / `postgres`
+  (`config.APP_DB_*`), with the password defaulting to `P@ssw0rd` but overridable via
+  `APP_DB_PASSWORD` in `.env` (same `_resolve_secret`/`dpapi:` treatment as `JWT_SECRET` —
+  the offline installer mints and DPAPI-encrypts a real per-install value on a fresh bundled
+  PostgreSQL install, and preserves an existing value across upgrades/reinstalls).
+  `APP_DB_NAME`/`APP_DB_SCHEMA` are also settable in `.env` (defaulting to `postgres`/`public`)
+  for sites where a DBA already provisioned a database; `DB_HOST`/`DB_USER` remain fixed and
+  setting them does nothing. It holds users, selections, dashboards, panels, mimic
   layouts/assets/symbols, report templates/settings, and the `datasources` table itself.
   Login, layout and settings therefore work even when every plant is unreachable.
 - **All plant data** — `sensor_readings`, `variables_tag`, `event_logs`, `alarm_logs` — is

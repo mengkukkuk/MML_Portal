@@ -53,7 +53,7 @@ Source: "scripts\uninstall.ps1";   DestDir: "{app}\scripts"; Flags: ignoreversio
 
 [Run]
 Filename: "powershell.exe"; \
-    Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\postinstall.ps1"" -InstallDir ""{app}"" -Hostname ""{code:GetHostname}"" -Port {code:GetPort} -InstallPostgres {code:GetInstallPostgres} -EnableHttps {code:GetEnableHttps} -HttpsPort {code:GetHttpsPort}"; \
+    Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\postinstall.ps1"" -InstallDir ""{app}"" -Hostname ""{code:GetHostname}"" -Port {code:GetPort} -InstallPostgres {code:GetInstallPostgres} -EnableHttps {code:GetEnableHttps} -HttpsPort {code:GetHttpsPort} -AppDbName ""{code:GetAppDbName}"" -AppDbSchema ""{code:GetAppDbSchema}"""; \
     StatusMsg: "Configuring PostgreSQL, IIS, and the MMLPortal service  -  this can take several minutes..."; \
     Flags: waituntilterminated
 
@@ -66,6 +66,7 @@ Filename: "powershell.exe"; \
 var
   HostnamePage: TInputQueryWizardPage;
   PostgresPage: TInputOptionWizardPage;
+  DatabaseNamePage: TInputQueryWizardPage;
   HttpsPage: TInputOptionWizardPage;
   HttpsPortPage: TInputQueryWizardPage;
 
@@ -97,7 +98,17 @@ begin
   PostgresPage.Add('Install bundled PostgreSQL 18 silently');
   PostgresPage.Values[0] := not DetectExistingPostgres();
 
-  HttpsPage := CreateInputOptionPage(PostgresPage.ID,
+  DatabaseNamePage := CreateInputQueryPage(PostgresPage.ID,
+    'Database', 'Which database and schema should MMLPortal use?',
+    'Leave the defaults on a blank PC. If your DBA already provisioned a database for this ' +
+    'install (e.g. "mmllocal" / "localbase"), enter its name and schema here instead. Letters, ' +
+    'digits, and underscores only.');
+  DatabaseNamePage.Add('Database name:', False);
+  DatabaseNamePage.Add('Schema:', False);
+  DatabaseNamePage.Values[0] := 'postgres';
+  DatabaseNamePage.Values[1] := 'public';
+
+  HttpsPage := CreateInputOptionPage(DatabaseNamePage.ID,
     'HTTPS', 'Encrypt traffic between browsers and this server with a self-signed certificate.',
     'Recommended: without this, login credentials and session cookies travel in plain text ' +
     'over the network. Browsers will still show a security warning until the generated ' +
@@ -115,6 +126,27 @@ begin
   HttpsPortPage.Values[0] := '443';
 end;
 
+function IsValidDbIdentifier(const Value: string): Boolean;
+var
+  i: Integer;
+  c: Char;
+begin
+  Result := False;
+  if (Length(Value) = 0) or (Length(Value) > 63) then
+    Exit;
+  c := Value[1];
+  if not ((c = '_') or ((c >= 'A') and (c <= 'Z')) or ((c >= 'a') and (c <= 'z'))) then
+    Exit;
+  for i := 2 to Length(Value) do
+  begin
+    c := Value[i];
+    if not ((c = '_') or ((c >= 'A') and (c <= 'Z')) or ((c >= 'a') and (c <= 'z')) or
+            ((c >= '0') and (c <= '9'))) then
+      Exit;
+  end;
+  Result := True;
+end;
+
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
@@ -129,6 +161,21 @@ begin
             (StrToIntDef(HostnamePage.Values[1], -1) > 65535) then
     begin
       MsgBox('Please enter a valid port number (1-65535).', mbError, MB_OK);
+      Result := False;
+    end;
+  end
+  else if CurPageID = DatabaseNamePage.ID then
+  begin
+    if not IsValidDbIdentifier(Trim(DatabaseNamePage.Values[0])) then
+    begin
+      MsgBox('Please enter a valid database name (letters, digits, underscores only; must not ' +
+             'start with a digit; max 63 characters).', mbError, MB_OK);
+      Result := False;
+    end
+    else if not IsValidDbIdentifier(Trim(DatabaseNamePage.Values[1])) then
+    begin
+      MsgBox('Please enter a valid schema name (letters, digits, underscores only; must not ' +
+             'start with a digit; max 63 characters).', mbError, MB_OK);
       Result := False;
     end;
   end
@@ -166,6 +213,16 @@ begin
     Result := 'true'
   else
     Result := 'false';
+end;
+
+function GetAppDbName(Param: string): string;
+begin
+  Result := Trim(DatabaseNamePage.Values[0]);
+end;
+
+function GetAppDbSchema(Param: string): string;
+begin
+  Result := Trim(DatabaseNamePage.Values[1]);
 end;
 
 function GetEnableHttps(Param: string): string;

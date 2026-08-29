@@ -51,7 +51,9 @@ param(
     [string]$ServiceName = "mml-api",
     [int]$ServicePort = 8088,
     [string]$EnableHttps = "false",
-    [int]$HttpsPort = 443
+    [int]$HttpsPort = 443,
+    [string]$AppDbName = "postgres",
+    [string]$AppDbSchema = "public"
 )
 
 $ErrorActionPreference = "Stop"
@@ -80,17 +82,92 @@ function Write-Result([string]$step, [bool]$pass, [string]$detail = "") {
 }
 
 Write-Log "===== MMLPortal post-install starting ====="
-Write-Log "InstallDir=$InstallDir Hostname=$Hostname Port=$Port InstallPostgres=$InstallPostgres ServicePort=$ServicePort EnableHttps=$EnableHttps HttpsPort=$HttpsPort"
+Write-Log "InstallDir=$InstallDir Hostname=$Hostname Port=$Port InstallPostgres=$InstallPostgres ServicePort=$ServicePort EnableHttps=$EnableHttps HttpsPort=$HttpsPort AppDbName=$AppDbName AppDbSchema=$AppDbSchema"
 
 $PythonExe   = Join-Path $InstallDir "python\python.exe"
 $BackendDir  = Join-Path $InstallDir "backend"
 $StaticDir   = Join-Path $InstallDir "static"
 $NssmExe     = Join-Path $InstallDir "tools\nssm.exe"
 $RedistDir   = Join-Path $InstallDir "redist"
-$AppDbPassword = "P@ssw0rd"   # must match config.py's hardcoded APP_DB_PASSWORD  -  do not diverge
+$envFile     = Join-Path $BackendDir ".env"
 
 if (-not (Test-Path $PythonExe)) { Write-Log "FATAL: $PythonExe not found." "ERROR"; exit 1 }
 if (-not (Test-Path $BackendDir)) { Write-Log "FATAL: $BackendDir not found." "ERROR"; exit 1 }
+
+# -- Identifier validation ----------------------------------------------------------
+# $AppDbName / $AppDbSchema get interpolated into a generated Python/SQL snippet below
+# (Step 1c) -- postinstall.ps1 can be invoked directly, not only through the wizard (which
+# already validates this), so re-check here too rather than trusting the caller.
+$dbIdentifierPattern = '^[A-Za-z_][A-Za-z0-9_]{0,62}$'
+if ($AppDbName -notmatch $dbIdentifierPattern) {
+    Write-Log "AppDbName '$AppDbName' is not a safe identifier -- falling back to 'postgres'." "WARN"
+    $AppDbName = "postgres"
+}
+if ($AppDbSchema -notmatch $dbIdentifierPattern) {
+    Write-Log "AppDbSchema '$AppDbSchema' is not a safe identifier -- falling back to 'public'." "WARN"
+    $AppDbSchema = "public"
+}
+
+# -- DPAPI helpers -------------------------------------------------------------------
+# Encrypts/decrypts a plaintext string with Windows DPAPI at LocalMachine scope, usable by ANY
+# account on this machine -- not just the encrypting one. That matters here because this
+# script runs elevated as an interactive Administrator, but the mml-api service (via NSSM)
+# runs as LocalSystem: two different security principals that both need to read secrets like
+# JWT_SECRET/APP_DB_PASSWORD back out of .env at their own process start. Output is prefixed
+# "dpapi:" so config.py's _resolve_secret() can tell an encrypted value apart from plaintext --
+# mirrors security.py's "fernet$" prefix already used for datasource passwords at rest in the DB.
+function Protect-DpapiSecret([string]$PlainText) {
+    Add-Type -AssemblyName System.Security
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($PlainText)
+    $protected = [System.Security.Cryptography.ProtectedData]::Protect(
+        $bytes, $null, [System.Security.Cryptography.DataProtectionScope]::LocalMachine)
+    return "dpapi:" + [Convert]::ToBase64String($protected)
+}
+
+function Unprotect-DpapiSecret([string]$DpapiValue) {
+    # Decrypts a dpapi:-prefixed value produced by Protect-DpapiSecret (or config.py's same
+    # convention). Needed here -- not just in config.py -- because Step 1's PostgreSQL
+    # connectivity check must test with the real plaintext password, which on a reinstall may
+    # already be sitting in .env in encrypted form from a previous run.
+    Add-Type -AssemblyName System.Security
+    $encoded = $DpapiValue.Substring(6)   # strip "dpapi:"
+    $bytes = [Convert]::FromBase64String($encoded)
+    $plain = [System.Security.Cryptography.ProtectedData]::Unprotect(
+        $bytes, $null, [System.Security.Cryptography.DataProtectionScope]::LocalMachine)
+    return [System.Text.Encoding]::UTF8.GetString($plain)
+}
+
+# -- Resolve the app-DB password up front -------------------------------------------
+# Step 1 (below) needs the plaintext password before .env is even written (Step 2) -- e.g. to
+# hand to the bundled PostgreSQL installer's --superpassword, or to test connectivity against
+# an already-provisioned instance.
+$AppDbPasswordIsNew = $false
+$existingAppDbPasswordRaw = $null
+if (Test-Path $envFile) {
+    $existingEnvContent = Get-Content $envFile -Raw
+    if ($existingEnvContent -match '(?m)^APP_DB_PASSWORD=(.*)$') {
+        $existingAppDbPasswordRaw = $Matches[1].Trim()
+    }
+}
+if ($existingAppDbPasswordRaw) {
+    # Reinstall over an install that already migrated to this feature -- reuse as-is, whether
+    # it's a dpapi: blob or (pre-migration hand-edited) plaintext.
+    if ($existingAppDbPasswordRaw.StartsWith("dpapi:")) {
+        $AppDbPassword = Unprotect-DpapiSecret $existingAppDbPasswordRaw
+    } else {
+        $AppDbPassword = $existingAppDbPasswordRaw
+    }
+} elseif (Test-Path $envFile) {
+    # .env exists but predates APP_DB_PASSWORD -- PostgreSQL itself was never touched, so keep
+    # the legacy literal or every DB call breaks after an "upgrade" that never changed Postgres.
+    $AppDbPassword = "P@ssw0rd"
+    $AppDbPasswordIsNew = $true
+} else {
+    # Genuinely fresh install -- safe to mint a real per-install secret before the bundled
+    # PostgreSQL installer (if any) even runs.
+    $AppDbPassword = (& $PythonExe -c "import secrets; print(secrets.token_hex(24))").Trim()
+    $AppDbPasswordIsNew = $true
+}
 
 # -- Step 1  -  PostgreSQL --------------------------------------------------------
 Write-Log "Step 1: PostgreSQL"
@@ -168,9 +245,44 @@ except Exception as e:
     $pgCheckOut = & $PythonExe $pgCheckScript 2>&1
     $pgCheckOk = ($LASTEXITCODE -eq 0)
     Remove-Item $pgCheckScript -ErrorAction SilentlyContinue
-    Write-Result "PostgreSQL connectivity (postgres/$AppDbPassword)" $pgCheckOk ($pgCheckOut -join " | ")
+    Write-Result "PostgreSQL connectivity (postgres user)" $pgCheckOk ($pgCheckOut -join " | ")
     if (-not $pgCheckOk) {
-        Write-Log "PostgreSQL is running but the app's hardcoded credentials (postgres/$AppDbPassword) don't work against it. This usually means a pre-existing PostgreSQL instance with a different superuser password. The backend will not be able to reach the database until this is resolved -- either reset the postgres user's password to match, or update config.py's APP_DB_* constants for this deployment." "WARN"
+        Write-Log "PostgreSQL is running but the app's configured credentials (postgres user) don't work against it. This usually means a pre-existing PostgreSQL instance with a different superuser password. The backend will not be able to reach the database until this is resolved -- either reset the postgres user's password to match, or update .env's APP_DB_PASSWORD for this deployment." "WARN"
+    }
+
+    # -- Step 1c  -  ensure the configured database exists ---------------------------
+    # The bundled PostgreSQL installer only ever creates the default "postgres" database --
+    # nothing creates $AppDbName if the wizard/caller pointed this install at a different,
+    # DBA-provisioned name (e.g. "mmllocal"). Idempotent: safe to run even when $AppDbName is
+    # the "postgres" default, in which case it just logs "already exists". Schema creation
+    # needs no installer-side step -- db.ensure_app_schema() already runs on every backend
+    # boot and reads APP_DB_SCHEMA from .env.
+    if ($pgCheckOk) {
+        Write-Log "Step 1c: ensure database '$AppDbName' exists"
+        $dbCreateScript = Join-Path $env:TEMP "mmlportal_dbcreate.py"
+        @"
+import sys
+try:
+    import psycopg
+    from psycopg import sql
+    conn = psycopg.connect(host="localhost", port=5432, dbname="postgres", user="postgres", password="$AppDbPassword", connect_timeout=5)
+    conn.autocommit = True
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", ("$AppDbName",))
+        if cur.fetchone():
+            print("EXISTS")
+        else:
+            cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier("$AppDbName")))
+            print("CREATED")
+    conn.close()
+except Exception as e:
+    print("FAIL: " + str(e))
+    sys.exit(1)
+"@ | Set-Content -Path $dbCreateScript -Encoding utf8
+        $dbCreateOut = & $PythonExe $dbCreateScript 2>&1
+        $dbCreateOk = ($LASTEXITCODE -eq 0)
+        Remove-Item $dbCreateScript -ErrorAction SilentlyContinue
+        Write-Result "App database ($AppDbName)" $dbCreateOk ($dbCreateOut -join " | ")
     }
 }
 
@@ -180,29 +292,13 @@ except Exception as e:
 # -- including onto THIS process, elevated as it is, which is exactly what broke a real
 # install (Step 2 below got Access Denied reading .env and the whole script died silently,
 # since Step 2 had no try/catch at the time). backend\ secret protection is now handled by
-# DPAPI-encrypting the values themselves (see Protect-DpapiSecret below), not by an NTFS
+# DPAPI-encrypting the values themselves (see Protect-DpapiSecret above), not by an NTFS
 # fence, so there is no reason to keep re-asserting one here -- just undo whatever a prior
 # run may have left behind. /reset restores inherited ACEs and drops explicit ones; it does
 # not apply a new lockdown. Non-fatal: a machine that never had the old lockdown has
 # nothing to undo, and this must never be able to block Step 2 the way the old ACL did.
 Write-Log "Step 1b: clearing any stale backend folder ACL lockdown from a prior install"
 icacls $BackendDir /reset /T /C 2>$null | Out-Null
-
-# -- DPAPI helper -------------------------------------------------------------------
-# Encrypts a plaintext string with Windows DPAPI at LocalMachine scope, decryptable by ANY
-# account on this machine -- not just the encrypting one. That matters here because this
-# script runs elevated as an interactive Administrator, but the mml-api service (via NSSM)
-# runs as LocalSystem: two different security principals that both need to read JWT_SECRET
-# back out of .env at their own process start. Output is prefixed "dpapi:" so config.py's
-# _resolve_secret() can tell an encrypted value apart from plaintext -- mirrors security.py's
-# "fernet$" prefix already used for datasource passwords at rest in the DB.
-function Protect-DpapiSecret([string]$PlainText) {
-    Add-Type -AssemblyName System.Security
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($PlainText)
-    $protected = [System.Security.Cryptography.ProtectedData]::Protect(
-        $bytes, $null, [System.Security.Cryptography.DataProtectionScope]::LocalMachine)
-    return "dpapi:" + [Convert]::ToBase64String($protected)
-}
 
 # -- Step 2  -  .env ---------------------------------------------------------------
 Write-Log "Step 2: .env"
@@ -260,6 +356,31 @@ try {
         $content = [regex]::Replace($content, '(?m)^CORS_ORIGINS=.*$', "CORS_ORIGINS=$corsOrigins")
     } else {
         $content = $content.TrimEnd() + "`nCORS_ORIGINS=$corsOrigins`n"
+    }
+    # APP_DB_NAME/APP_DB_SCHEMA: same "wizard always wins" treatment as APP_BASE_URL/CORS_ORIGINS
+    # above -- a reinstall that points at a different DBA-provisioned database must not silently
+    # keep serving the OLD database's config.
+    if ($content -match '(?m)^APP_DB_NAME=') {
+        $content = [regex]::Replace($content, '(?m)^APP_DB_NAME=.*$', "APP_DB_NAME=$AppDbName")
+    } else {
+        $content = $content.TrimEnd() + "`nAPP_DB_NAME=$AppDbName`n"
+    }
+    if ($content -match '(?m)^APP_DB_SCHEMA=') {
+        $content = [regex]::Replace($content, '(?m)^APP_DB_SCHEMA=.*$', "APP_DB_SCHEMA=$AppDbSchema")
+    } else {
+        $content = $content.TrimEnd() + "`nAPP_DB_SCHEMA=$AppDbSchema`n"
+    }
+    # APP_DB_PASSWORD: same preserve-once-generated treatment as JWT_SECRET -- only written when
+    # $AppDbPasswordIsNew (a genuinely fresh install, or an upgrade from a pre-APP_DB_PASSWORD
+    # .env still on the legacy literal). An already-migrated dpapi: value is left untouched so a
+    # reinstall never invalidates the real PostgreSQL password it was already set to.
+    if ($AppDbPasswordIsNew) {
+        $appDbPasswordProtected = Protect-DpapiSecret $AppDbPassword
+        if ($content -match '(?m)^APP_DB_PASSWORD=') {
+            $content = [regex]::Replace($content, '(?m)^APP_DB_PASSWORD=.*$', "APP_DB_PASSWORD=$appDbPasswordProtected")
+        } else {
+            $content = $content.TrimEnd() + "`nAPP_DB_PASSWORD=$appDbPasswordProtected`n"
+        }
     }
     $content | Out-File $envFile -Encoding utf8 -NoNewline
     Write-Result ".env configured" $true $(if ($isNewEnv) { "created $envFile" } else { "reconciled existing $envFile (JWT_SECRET preserved)" })
