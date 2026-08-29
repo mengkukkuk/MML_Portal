@@ -110,7 +110,12 @@
       "Bash(powershell.exe -NoProfile -Command \"$PSVersionTable.PSVersion\")",
       "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"installer\\\\scripts\\\\fetch-redist.ps1\")",
       "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"scripts\\\\fetch-redist.ps1\")",
-      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File \"G:\\\\Code\\\\DEV\\\\installer\\\\scripts\\\\build.ps1\" -SkipFrontendBuild -SkipPythonBundle)"
+      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File \"G:\\\\Code\\\\DEV\\\\installer\\\\scripts\\\\build.ps1\" -SkipFrontendBuild -SkipPythonBundle)",
+      "Bash(powershell -NoProfile -Command \"Test-Path ''C:\\\\Windows\\\\System32\\\\vmms.exe''\")",
+      "Bash(powershell -NoProfile -Command \"Test-Path ''C:\\\\Windows\\\\System32\\\\virtmgmt.msc''\")",
+      "Bash(powershell -NoProfile -Command \"Test-Path ''HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\Session Manager\\\\PendingFileRenameOperations''\")",
+      "Bash(powershell -NoProfile -Command \"\\(Get-ItemProperty ''HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Component Based Servicing\\\\RebootPending'' -ErrorAction SilentlyContinue\\) -ne $null\")",
+      "Bash(powershell -NoProfile -Command \"Test-Path ''C:\\\\Windows\\\\Temp\\\\hyperv_enable.log''\")"
     ]
   }
 }
