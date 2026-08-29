@@ -2,6 +2,19 @@ export const MIN_ZOOM = 0.25
 export const MAX_ZOOM = 4
 export const GRID_UNIT = 8
 
+/**
+ * Keep the visible drafting grid useful as the canvas zoom changes.
+ *
+ * Each level remains aligned to the real 8-unit snap grid, but doubles its
+ * visible interval when zooming out so guides never collapse into a dark
+ * screen texture. Zooming in reveals the finer levels again.
+ */
+export function gridStepForZoom(zoom, unit = GRID_UNIT) {
+  if (!Number.isFinite(zoom) || zoom <= 0) return unit * 2
+  const level = Math.min(3, Math.max(0, Math.round(Math.log2(2 / zoom))))
+  return unit * (2 ** level)
+}
+
 export const snapValue = (value, enabled, unit = GRID_UNIT) => (
   enabled ? Math.round(value / unit) * unit : value
 )

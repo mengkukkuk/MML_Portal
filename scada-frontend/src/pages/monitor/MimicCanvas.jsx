@@ -8,7 +8,7 @@ import {
 import InstrumentBubble from '@/components/mimic/InstrumentBubble'
 import { isFlowing } from '@/components/mimic/tagStatus'
 import { NORMAL_WIRE, WirePath, wireType } from '@/components/mimic/wireTypes'
-import { fitToContents, zoomAtPoint } from './editorViewport'
+import { fitToContents, gridStepForZoom, zoomAtPoint } from './editorViewport'
 import styles from './MimicCanvas.module.css'
 
 const SNAPSHOT_STYLE_PROPERTIES = [
@@ -224,6 +224,8 @@ const MimicCanvas = forwardRef(function MimicCanvas({
   }), [layout.viewBox?.h, layout.viewBox?.w])
   const baseViewKey = `${baseView.w}x${baseView.h}`
   const previousBaseViewKey = useRef(baseViewKey)
+  const visibleGridStep = gridStepForZoom(baseView.w / view.w)
+  const majorGridStep = visibleGridStep * 5
 
   const updateView = useCallback((next) => {
     setView(next)
@@ -643,20 +645,89 @@ const MimicCanvas = forwardRef(function MimicCanvas({
       }}
     >
       <defs>
-        <pattern id="mimic-grid" width={GRID * 5} height={GRID * 5} patternUnits="userSpaceOnUse">
-          <path className={styles.grid} d={`M ${GRID * 5} 0 L 0 0 0 ${GRID * 5}`} fill="none" />
+        {/* A title plate built from the text's own object bounds. The outer
+            flood is the hairline frame; the inner flood knocks the process
+            drawing out behind the title, while SourceGraphic restores the
+            letters on top. Because the filter follows the text transform, a
+            counter-rotated title keeps its plate when equipment turns. */}
+        <filter
+          id="mimic-title-plate"
+          x="-18%"
+          y="-55%"
+          width="136%"
+          height="210%"
+          filterUnits="objectBoundingBox"
+          primitiveUnits="objectBoundingBox"
+          colorInterpolationFilters="sRGB"
+        >
+          <feFlood
+            className={styles.titlePlateOutline}
+            x="-16%"
+            y="-48%"
+            width="132%"
+            height="196%"
+            result="plateOutline"
+          />
+          <feFlood
+            className={styles.titlePlateFill}
+            x="-12%"
+            y="-36%"
+            width="124%"
+            height="172%"
+            result="plateFill"
+          />
+          <feMerge>
+            <feMergeNode in="plateOutline" />
+            <feMergeNode in="plateFill" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+        <pattern
+          id="mimic-grid-minor"
+          width={visibleGridStep}
+          height={visibleGridStep}
+          patternUnits="userSpaceOnUse"
+        >
+          <path
+            className={styles.gridMinor}
+            d={`M ${visibleGridStep} 0 L 0 0 0 ${visibleGridStep}`}
+            fill="none"
+          />
+        </pattern>
+        <pattern
+          id="mimic-grid-major"
+          width={majorGridStep}
+          height={majorGridStep}
+          patternUnits="userSpaceOnUse"
+        >
+          <rect width={majorGridStep} height={majorGridStep} fill="url(#mimic-grid-minor)" />
+          <path
+            className={styles.gridMajor}
+            d={`M ${majorGridStep} 0 L 0 0 0 ${majorGridStep}`}
+            fill="none"
+          />
         </pattern>
       </defs>
 
       {editMode && gridVisible && (
-        <rect
-          data-canvas-background="true"
-          x={baseView.x}
-          y={baseView.y}
-          width={baseView.w}
-          height={baseView.h}
-          fill="url(#mimic-grid)"
-        />
+        <g>
+          <rect
+            data-canvas-background="true"
+            x={baseView.x}
+            y={baseView.y}
+            width={baseView.w}
+            height={baseView.h}
+            fill="url(#mimic-grid-major)"
+          />
+          <rect
+            className={styles.gridBoundary}
+            x={baseView.x}
+            y={baseView.y}
+            width={baseView.w}
+            height={baseView.h}
+            fill="none"
+          />
+        </g>
       )}
 
       {/* --- pipes: drawn first so equipment always sits on top ---------- */}

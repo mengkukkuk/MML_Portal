@@ -41,7 +41,7 @@ export default function Generator({ node, tag }) {
 
       {/* the machine */}
       <circle className={s.body} cx={cx} cy={cy} r={r} />
-      <text className={s.label} x={cx} y={cy + 5} textAnchor="middle">G</text>
+      <text className={`${s.label} ${s.labelMark}`} x={cx} y={cy + 5} textAnchor="middle">G</text>
 
       {/* rotor mark — the only way a circle reads as turning */}
       <g className={s.spinSlow}>

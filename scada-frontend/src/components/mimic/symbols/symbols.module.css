@@ -143,9 +143,16 @@
   font-weight: 600;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  fill: var(--fg-muted);
+  fill: var(--fg);
+  filter: var(--mimic-title-filter, none);
   pointer-events: none;
   user-select: none;
+}
+
+/* A symbol's internal identifying mark can share the title typography without
+ * becoming a second title plate. Generator's G is the only current example. */
+.labelMark {
+  filter: none;
 }
 
 .labelDim {

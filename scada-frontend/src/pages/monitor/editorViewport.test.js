@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { fitToContents, snapValue, zoomAtPoint } from './editorViewport.js'
+import {
+  fitToContents, gridStepForZoom, snapValue, zoomAtPoint,
+} from './editorViewport.js'
 
 test('zoom keeps the pointer-centred world coordinate stationary', () => {
   const view = { x: 0, y: 0, w: 1600, h: 900 }
@@ -31,4 +33,12 @@ test('fit-to-content adds padding and preserves canvas aspect ratio', () => {
 test('snap is an 8-unit toggle', () => {
   assert.equal(snapValue(13, true), 16)
   assert.equal(snapValue(13, false), 13)
+})
+
+test('visible grid reveals finer snap levels as zoom increases', () => {
+  assert.equal(gridStepForZoom(0.25), 64)
+  assert.equal(gridStepForZoom(0.5), 32)
+  assert.equal(gridStepForZoom(1), 16)
+  assert.equal(gridStepForZoom(2), 8)
+  assert.equal(gridStepForZoom(4), 8)
 })

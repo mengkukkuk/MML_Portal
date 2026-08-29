@@ -167,7 +167,7 @@ TAG_BUFFER_FAIL_LIMIT = int(os.getenv("TAG_BUFFER_FAIL_LIMIT", "5"))
 # --- Licensing (offline, signed license file; no phone-home) ---------------
 LICENSE_FILE_PATH = os.getenv(
     "LICENSE_FILE_PATH",
-    r"C:\ProgramData\MMLPortal\license.lic",
+    r"C:\TBCLC\tbclicense.lic",
 )
 
 LICENSE_WARNING_WINDOW_DAYS = int(os.getenv("LICENSE_WARNING_WINDOW_DAYS", "14"))

@@ -9,6 +9,7 @@
  * every panel size and the page never scrolls to reach a symbol. Anything too
  * small to read is what the hand tool and zoom are for. */
 .stage {
+  --mimic-title-filter: url("#mimic-title-plate");
   display: block;
   width: 100%;
   height: 100%;
@@ -220,11 +221,51 @@
   stroke-linejoin: round;
 }
 
-/* --- edit-mode chrome -------------------------------------------------- */
+/* --- edit-mode chrome --------------------------------------------------
+ * Two drafting weights make the grid readable without competing with the
+ * process lines. MimicCanvas changes their logical spacing at zoom thresholds;
+ * non-scaling strokes keep both weights optically stable while it does so.
+ */
 
-.grid {
-  stroke: var(--border-soft);
-  stroke-width: 0.5;
+.gridMinor,
+.gridMajor,
+.gridBoundary {
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+/* SVG filter paint for the symbol title faceplate. Kept beside the stage
+ * variable because the filter only exists inside MimicCanvas; palette preview
+ * SVGs intentionally fall back to an unplated title. */
+.titlePlateOutline {
+  flood-color: var(--fg-dim);
+  flood-opacity: 0.82;
+}
+
+.titlePlateFill {
+  flood-color: var(--bg-panel);
+  flood-opacity: 0.96;
+}
+
+.gridMinor {
+  stroke: var(--fg-dim);
+  stroke-width: 0.65;
+  opacity: 0.38;
+}
+
+.gridMajor {
+  stroke: var(--accent);
+  stroke-width: 0.9;
+  opacity: 0.26;
+}
+
+/* The sheet edge is the zero/reference boundary highlighted by the user's
+ * red L annotation. It follows the active faceplate accent instead of adding
+ * a fourth status colour that could be mistaken for an alarm. */
+.gridBoundary {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  opacity: 0.72;
 }
 
 /* The balloon is draggable in edit mode: the default placement suits one
