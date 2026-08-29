@@ -409,7 +409,15 @@ try {
         }
     }
 
-    if (-not (Get-WebAppPoolState -Name "MMLPortalPool" -ErrorAction SilentlyContinue)) {
+    # Get-WebAppPoolState -ErrorAction SilentlyContinue does NOT reliably suppress a missing
+    # pool: the IIS: PSDrive provider throws its ItemNotFoundException directly from the
+    # provider layer ("Cannot find path 'IIS:\AppPools\MMLPortalPool' because it does not
+    # exist."), which bypasses a cmdlet-level -ErrorAction and was escaping straight into this
+    # try block's catch on every fresh install -- New-WebAppPool below was never reached, so
+    # the site was never created (and Step 8b's HTTPS binding then failed too, since there was
+    # no site to bind it to). Test-Path against the same PSDrive never throws for a missing
+    # item; it just returns $false, which is what an existence check actually needs here.
+    if (-not (Test-Path "IIS:\AppPools\MMLPortalPool")) {
         New-WebAppPool -Name "MMLPortalPool" | Out-Null
     }
     Set-ItemProperty "IIS:\AppPools\MMLPortalPool" -Name managedRuntimeVersion -Value ""
