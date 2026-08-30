@@ -130,26 +130,66 @@ CREATE TRIGGER trg_camera_defect_history
 EXECUTE FUNCTION vision_data2.fn_log_camera_defect_history();
 
 -- VIEW .v_camera_defect_live
+--
+-- A convenience/reporting view. The application does NOT read it: `defects` is
+-- keyed by label, which throws away the slot index, and NG frames on disk live
+-- at <root>/<code>/NG/defect_<slot>/ -- so the camera rail reads the two arrays
+-- directly and pairs them by position instead.
+--
+-- Invariant maintained here: the values of `defects` always sum to
+-- `total_defects`. Three ways that could break, and how each is handled:
+--   1. camera_defect row with no matching cameras row -> defect_labels is NULL.
+--      Driving the join off generate_series (not off unnest(defect_labels))
+--      means idx is never NULL, so the 'defect_' || idx fallback is never NULL
+--      either. A NULL jsonb key would abort the query for EVERY camera, not
+--      just the orphan.
+--   2. Two slots sharing a label -> their counts are SUMmed into one key rather
+--      than one silently overwriting the other.
+--   3. defect_array longer than defect_labels (they are separate columns on
+--      separate tables, with no constraint tying their lengths) -> the series
+--      runs to the longer of the two, so trailing counts still get a key.
 CREATE OR REPLACE VIEW vision_data2.v_camera_defect_live AS
+WITH slot AS (
+    -- แตก Label และ Count ตามลำดับ Index (1, 2, 3, ...)
+    -- Out-of-range subscripts return NULL, which is what the COALESCEs absorb:
+    -- an unnamed slot falls back to 'defect_N', an uncounted one to 0.
+    SELECT
+        d.id                                      AS camera_defect_id,
+        COALESCE(c.defect_labels[s.idx], 'defect_' || s.idx) AS label_name,
+        COALESCE(d.defect_array[s.idx], 0)        AS defect_count
+    FROM vision_data2.camera_defect d
+             LEFT JOIN vision_data2.cameras c ON c.code = d.code
+             CROSS JOIN LATERAL generate_series(
+            1,
+            GREATEST(
+                    COALESCE(array_length(c.defect_labels, 1), 0),
+                    COALESCE(array_length(d.defect_array, 1), 0)
+            )
+                       ) AS s(idx)
+),
+     defects AS (
+         SELECT camera_defect_id, jsonb_object_agg(label_name, defect_count) AS defects
+         FROM (
+                  SELECT camera_defect_id, label_name, SUM(defect_count)::integer AS defect_count
+                  FROM slot
+                  GROUP BY camera_defect_id, label_name
+              ) folded
+         GROUP BY camera_defect_id
+     )
 SELECT
     d.id AS camera_defect_id,
     d.code AS camera_code,
     d.name AS camera_name,
     d.batch_id,
-    -- รวม defect_labels และ defect_array เข้าด้วยกันเป็น JSONB Object แบบ dynamic
-    jsonb_object_agg(
-            COALESCE(lbl.label_name, 'defect_' || lbl.idx),
-            COALESCE(val.defect_count, 0)
-    ) AS defects,
+    -- '{}' when both arrays are empty: generate_series(1, 0) yields no rows, so
+    -- there is no `defects` row to join. A camera with nothing recorded is a
+    -- normal camera and must still appear in the view.
+    COALESCE(j.defects, '{}'::jsonb) AS defects,
     -- คำนวณผลรวม Defect ทั้งหมดใน Batch นี้ให้อัตโนมัติ
     (SELECT COALESCE(SUM(s), 0) FROM unnest(d.defect_array) s) AS total_defects,
     d.updated_at
 FROM vision_data2.camera_defect d
-         LEFT JOIN vision_data2.cameras c ON c.code = d.code
--- แตก Label และ Count ตามลำดับ Index (1, 2, 3, ...)
-         LEFT JOIN LATERAL unnest(c.defect_labels) WITH ORDINALITY AS lbl(label_name, idx) ON true
-         LEFT JOIN LATERAL unnest(d.defect_array) WITH ORDINALITY AS val(defect_count, idx) ON lbl.idx = val.idx
-GROUP BY d.id, d.code, d.name, d.batch_id, d.defect_array, d.updated_at;
+         LEFT JOIN defects j ON j.camera_defect_id = d.id;
 
 -- INSERT EXAMPLE DATA
 INSERT INTO vision_data2.cameras (code, name, station_code, station_label, location, enabled)

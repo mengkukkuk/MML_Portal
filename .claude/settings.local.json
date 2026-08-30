@@ -118,7 +118,8 @@
       "Bash(powershell -NoProfile -Command \"Test-Path ''C:\\\\Windows\\\\Temp\\\\hyperv_enable.log''\")",
       "Bash(~/.claude/bin/codeagent-wrapper --lite:*)",
       "Bash(TaskOutput)",
-      "Bash(PGPASSWORD='P@ssw0rd' psql -h 127.0.0.1 -p 5432 -U postgres -d mmldata -c \"\\\\d vision_data.cameras\")"
+      "Bash(PGPASSWORD='P@ssw0rd' psql -h 127.0.0.1 -p 5432 -U postgres -d mmldata -c \"\\\\d vision_data.cameras\")",
+      "Bash(powershell -NoProfile -c \"Get-Process -Id 6308 | Select-Object Id,ProcessName,StartTime | Format-List\")"
     ]
   }
 }
