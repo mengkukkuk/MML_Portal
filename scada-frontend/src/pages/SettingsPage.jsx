@@ -292,8 +292,8 @@ export default function SettingsPage() {
 
   // --- Camera link source ------------------------------------------------
   // Which saved connection backs the Monitor "Linked to" camera picker.
-  // `datasource_id: null` means the picker keeps reading this app's own
-  // `cameras` table — the default, and the only option before this existed.
+  // `datasource_id: null` means an admin still needs to configure the source;
+  // camera identity never falls back to the app/config database.
   const { data: cameraSource } = useQuery({
     queryKey: ['camera-link-source'],
     queryFn: fetchCameraLinkSource,

@@ -5,8 +5,10 @@ selected in Settings. They never fall back to the app/config database and are
 independent of the user's header datasource selection. Folder-backed NG images
 remain read-only filesystem data keyed by the same stable camera code.
 """
+import logging
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any
+from typing import Any, TypeVar
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -18,6 +20,9 @@ import camera_files
 import db
 from auth import get_current_user, require_admin
 from licensing import require_valid_license
+
+logger = logging.getLogger("mml-api.cameras")
+_T = TypeVar("_T")
 
 router = APIRouter(
     prefix="/api/cameras",
@@ -47,6 +52,22 @@ def _camera_source_or_409() -> dict[str, Any]:
             detail="Camera source is not configured",
         )
     return settings
+
+
+def _source_query(query: Callable[[], _T]) -> _T:
+    """Run one camera-data read and keep datasource error semantics uniform."""
+    try:
+        return query()
+    except (psycopg.OperationalError, PoolTimeout) as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_detail(e),
+        ) from e
+    except (ValueError, psycopg.Error) as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_detail(e),
+        ) from e
 
 
 # --- Camera source -------------------------------------------------------------
@@ -103,15 +124,7 @@ def camera_link_options(_user: dict = Depends(get_current_user)):
     """
     settings = _camera_source_or_409()
     ds_id = settings["datasource_id"]
-    try:
-        cameras = db.list_remote_camera_options(ds_id)
-    except (psycopg.OperationalError, PoolTimeout) as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_detail(e),
-        )
-    except (ValueError, psycopg.Error) as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_detail(e))
+    cameras = _source_query(lambda: db.list_remote_camera_options(ds_id))
     return {
         "source": "datasource", "datasource_id": ds_id,
         "datasource_name": settings.get("datasource_name"),
@@ -120,23 +133,12 @@ def camera_link_options(_user: dict = Depends(get_current_user)):
 
 
 def _get_linked_camera_or_404(camera_code: str) -> tuple[int, dict[str, Any]]:
-    """Resolve rail identity against the source selected in Settings.
-
-    This is deliberately separate from ``_get_camera_or_404`` below. That
-    helper backs CRUD/snapshot routes whose integer ids belong to the local app
-    database; a Monitor link is a code and may belong to another database.
-    """
+    """Resolve a stable camera code against the source selected in Settings."""
     settings = _camera_source_or_409()
     ds_id = settings["datasource_id"]
-    try:
-        camera = db.get_remote_camera_option_by_code(ds_id, camera_code)
-    except (psycopg.OperationalError, PoolTimeout) as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_detail(e),
-        )
-    except (ValueError, psycopg.Error) as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_detail(e))
+    camera = _source_query(
+        lambda: db.get_remote_camera_option_by_code(ds_id, camera_code)
+    )
     if camera is None:
         raise _not_found()
     return ds_id, camera
@@ -185,9 +187,9 @@ class DefectSlotOut(BaseModel):
 
 class DefectSummaryOut(BaseModel):
     batch_id: int | None = None
-    # Naive, unlike every other timestamp this API returns: camera_defect.updated_at
-    # is `timestamp`, not `timestamp`. It is plant-local wall-clock time and is
-    # serialized without an offset — do not read it as UTC.
+    # Naive, unlike every other timestamp this API returns:
+    # camera_defect.updated_at is `timestamp`, not `timestamptz`. It is
+    # plant-local wall-clock time and is serialized without an offset.
     updated_at: datetime | None = None
     total: int = 0
     slots: list[DefectSlotOut] = []
@@ -195,15 +197,9 @@ class DefectSummaryOut(BaseModel):
 
 def _defect_summary(datasource_id: int, camera: dict[str, Any]) -> dict[str, Any]:
     """Build the rail summary from a source-resolved camera identity."""
-    try:
-        row = db.camera_defect_latest(datasource_id, camera["code"])
-    except (psycopg.OperationalError, PoolTimeout) as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_detail(e),
-        )
-    except (ValueError, psycopg.Error) as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_detail(e))
+    row = _source_query(
+        lambda: db.camera_defect_latest(datasource_id, camera["code"])
+    )
     # One walk of the folder for all five slots — this route is polled on the
     # page's live cadence, so it must not re-resolve the path per slot.
     with_frames = camera_files.slots_with_frames(camera["code"])

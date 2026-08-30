@@ -1,3 +1,37 @@
+create table localbase.devices
+(
+    id         serial
+        primary key,
+    name       text                                            not null
+        unique,
+    type       text                                            not null,
+    location   text                     default ''::text       not null,
+    status     text                     default 'online'::text not null,
+    created_at timestamp with time zone default now()          not null
+);
+
+alter table localbase.devices
+    owner to postgres;
+
+create table localbase.alarms
+(
+    id              bigserial
+        primary key,
+    device_id       integer                                          not null
+        references localbase.devices
+            on delete cascade,
+    severity        text                     default 'warning'::text not null,
+    message         text                                             not null,
+    ts              timestamp with time zone default now()           not null,
+    acknowledged_at timestamp with time zone
+);
+
+alter table localbase.alarms
+    owner to postgres;
+
+create index idx_alarms_ts
+    on localbase.alarms (ts desc);
+
 create table localbase.users
 (
     id            serial

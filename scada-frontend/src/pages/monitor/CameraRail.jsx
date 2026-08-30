@@ -136,7 +136,7 @@ export default function CameraRail({ node, tag, pollMs = 5000 }) {
   }, [cameras, wanted])
 
   const viaLoopId = !!camera && !linkCode
-  const cameraSourceKey = cameraOptions?.datasource_id ?? 'local'
+  const cameraSourceKey = cameraOptions?.datasource_id ?? 'unconfigured'
 
   /**
    * The live pair. Both follow the page cadence rather than only loading once,
@@ -162,7 +162,7 @@ export default function CameraRail({ node, tag, pollMs = 5000 }) {
   })
 
   const { data: frames, isError: framesError } = useQuery({
-    queryKey: ['camera-frames', camera?.code, slotFilter],
+    queryKey: ['camera-frames', cameraSourceKey, camera?.code, slotFilter],
     queryFn: () => fetchCameraDefectFrames(camera.code, slotFilter, { limit: 30 }),
     enabled: !!camera && slotFilter != null,
     refetchInterval,

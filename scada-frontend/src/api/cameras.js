@@ -22,7 +22,7 @@ export async function fetchCameraLinkSource() {
 /** Admin only — designate the required camera datasource. */
 export async function updateCameraLinkSource(datasourceId) {
   const { data } = await apiClient.put('/cameras/link-source', { datasource_id: datasourceId })
-  return data
+  return data // { datasource_id, datasource_name }
 }
 
 /**
