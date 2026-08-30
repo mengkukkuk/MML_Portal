@@ -104,9 +104,9 @@ def _create_tables() -> bool:
         db.init_mimic_assets_table()
         db.init_mimic_symbols_table()
         db.init_report_tables()
-        # No init_camera*: camera identity and defect counters are plant data
-        # owned by the vision system, reached through a mimic's doc.cameraDefect
-        # binding. The app names those tables, it does not create them.
+        db.init_cameras_table()
+        db.init_camera_defect_table()
+        db.init_camera_snapshots_table()
     except psycopg.Error as e:
         # psycopg.Error, not just OperationalError: an unreachable host is only
         # one way this fails. DDL against a *live* server can raise

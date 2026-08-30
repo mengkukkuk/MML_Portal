@@ -8,7 +8,7 @@ import {
   MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, TIME_FORMATS, tableColumns, tableRowLimit,
 } from '@/components/mimic/symbols/DataTable'
 import { MAX_CASES } from '@/components/mimic/conditions'
-import { fetchMimicCameras } from '@/api/mimic'
+import { fetchCameras } from '@/api/cameras'
 import { fetchSchemaColumns } from '@/api/schema'
 import { compileCondition } from '@/utils/mathExpr'
 import styles from './SymbolOptions.module.css'
@@ -450,27 +450,17 @@ function TableStructure({ node, onChange }) {
  * table, which a camera reference is not. `node.options` is the bag the server
  * already stores untouched, so this needs no backend change at all.
  *
- * Stores the camera's `code`, not its row id. The list comes from a table the
- * vision system owns, in whichever plant the header has selected — a row id
- * there is a per-database serial that means something different in the next
- * line's schema, while `CAM-03` is what is printed on the station.
- *
- * The list itself comes from this drawing's `doc.cameraDefect` binding, so it
- * is empty until an admin has configured one. That is deliberate: a global
- * camera list would have to guess which line a symbol belongs to.
+ * Stores the camera's `code`, not its row id. Cameras are seeded from SQL and
+ * the table has been rebuilt before; a layout pointing at `id: 17` breaks on
+ * the next reseed, one pointing at `CAM-03` survives it.
  */
-function CameraLink({ node, slug, onChange, onConfigure }) {
+function CameraLink({ node, onChange }) {
   // Same query key the rail uses, so this list is usually already warm.
-  const { data: cameras, isLoading, error } = useQuery({
-    queryKey: ['mimic-cameras', slug],
-    queryFn: () => fetchMimicCameras(slug),
-    enabled: !!slug,
+  const { data: cameras, isLoading, isError } = useQuery({
+    queryKey: ['cameras'],
+    queryFn: fetchCameras,
     staleTime: 60_000,
-    retry: false,
   })
-
-  const unconfigured = error?.response?.status === 404
-  const isError = !!error
 
   const linked = node.options?.cameraId ?? ''
   const loopId = node.tagId?.trim() || ''
@@ -489,13 +479,11 @@ function CameraLink({ node, slug, onChange, onConfigure }) {
     <div className={styles.section}>
       <div className={styles.sectionTitle}>Camera</div>
       <p className={styles.hint}>
-        {unconfigured
-          ? 'This drawing has no camera table yet. Point it at the vision system’s defect table to fill the list below.'
-          : isError
-            ? 'The camera list could not be loaded. The rail falls back to matching this symbol’s loop id against a camera code.'
-            : legacyMatch
-              ? `This symbol currently resolves by loop id (${loopId}). Saving makes the link explicit.`
-              : 'Picks which camera’s defect counts and inspection frames fill the detail panel in view mode.'}
+        {isError
+          ? 'The camera list could not be loaded. The rail falls back to matching this symbol’s loop id against a camera code.'
+          : legacyMatch
+            ? `This symbol currently resolves by loop id (${loopId}). Saving makes the link explicit.`
+            : 'Picks which camera’s defect counts and inspection frames fill the detail panel in view mode.'}
       </p>
       <label className={styles.field}>
         <span>Linked to</span>
@@ -506,21 +494,14 @@ function CameraLink({ node, slug, onChange, onConfigure }) {
         >
           <option value="">Not linked</option>
           {(cameras ?? []).map((c) => (
-            <option key={c.code} value={c.code}>
+            <option key={c.id} value={c.code}>
               {c.code}
               {c.name ? ` — ${c.name}` : ''}
-              {c.station ? ` (${c.station})` : ''}
+              {c.station_label ? ` (${c.station_label})` : ''}
             </option>
           ))}
         </select>
       </label>
-      {/* The defect table is a property of the whole drawing, not of this
-          symbol, but this is the only place anyone goes looking for it — an
-          admin reaches an empty "Linked to" list and needs the next step to be
-          right here rather than on a toolbar they have to be told about. */}
-      <button type="button" className={styles.linkButton} onClick={onConfigure}>
-        {unconfigured ? 'Configure camera defect table…' : 'Edit camera defect table…'}
-      </button>
     </div>
   )
 }
@@ -540,7 +521,7 @@ function CameraLink({ node, slug, onChange, onConfigure }) {
  * `node.options`; the server stores the bag untouched, so neither needs a
  * backend change.
  */
-export default function SymbolOptions({ node, slug, onChange, onCameraDefect }) {
+export default function SymbolOptions({ node, onChange }) {
   const o = node.options ?? {}
 
   if (node.type === 'displaybox') {
@@ -575,7 +556,7 @@ export default function SymbolOptions({ node, slug, onChange, onCameraDefect }) 
   }
 
   if (node.type === 'ipcamera') {
-    return <CameraLink node={node} slug={slug} onChange={onChange} onConfigure={onCameraDefect} />
+    return <CameraLink node={node} onChange={onChange} />
   }
 
   if (node.type === 'led') {

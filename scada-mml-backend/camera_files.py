@@ -39,15 +39,10 @@ from pathlib import Path
 
 import config
 
-# Slots are positional: slot N is the Nth column of the mimic's `defect_cols`
-# binding, and the folder tree uses the same numbering, so defect_3 on disk is
-# the third bound column in the database.
-#
-# MAX_SLOT is an absolute ceiling, not the slot count. The real count comes from
-# the binding and is passed in by the caller; this only exists so a malformed
-# request cannot ask this module to stat an unbounded number of directories.
+# Slots come from camera_defect's five positional columns; the folder tree uses
+# the same numbering, so defect_3 on disk is defect_3 in the database.
 MIN_SLOT = 1
-MAX_SLOT = 32
+MAX_SLOT = 5
 
 # Only NG frames are categorized by defect. Every camera folder also carries an
 # empty OK/ directory; nothing reads it, and nothing here should.
@@ -187,27 +182,19 @@ def _slot_dir(code: str, slot: int) -> Path | None:
     return target if target.is_dir() else None
 
 
-def slots_with_frames(code: str, slot_count: int) -> set[int]:
-    """Which of one camera's first `slot_count` slots have a file behind them.
+def slots_with_frames(code: str) -> set[int]:
+    """Which of one camera's slots have at least one file behind them.
 
-    Exists because the defects route is polled on the operator's live cadence,
-    and the obvious implementation — call list_slot_frames once per slot — walks
-    the camera's path once per slot and stats every file in every one of them
-    just to answer that many yes/no questions. That is fine once on page load
-    and wasteful several times a minute, especially when the image root is a
-    network share.
+    Exists because /defects is polled on the operator's live cadence, and the
+    obvious implementation — call list_slot_frames once per slot — walks the
+    camera's path five times over and stats every file in every slot just to
+    answer five yes/no questions. That is fine once on page load and wasteful
+    several times a minute, especially when the image root is a network share.
 
     So: resolve the camera's NG directory once, then stop at the first file in
     each slot. Returns an empty set for anything unreadable, same contract as
     everything else here.
-
-    `slot_count` comes from the caller's binding rather than a module constant,
-    so a line grading six defect categories reports six. It is clamped to
-    MAX_SLOT because this walks the filesystem on a request path.
     """
-    limit = min(int(slot_count), MAX_SLOT)
-    if limit < MIN_SLOT:
-        return set()
     base = root()
     if base is None:
         return set()
@@ -216,7 +203,6 @@ def slots_with_frames(code: str, slot_count: int) -> set[int]:
     except (FrameNotFound, ValueError):
         return set()
 
-    wanted = {f"defect_{slot}": slot for slot in range(MIN_SLOT, limit + 1)}
     found: set[int] = set()
     try:
         with os.scandir(ng_dir) as entries:
@@ -225,9 +211,11 @@ def slots_with_frames(code: str, slot_count: int) -> set[int]:
                     break
                 if not entry.is_dir():
                     continue
-                slot = wanted.get(entry.name.lower())
-                if slot is not None and _has_any_file(entry.path):
-                    found.add(slot)
+                name = entry.name.lower()
+                for slot in range(MIN_SLOT, MAX_SLOT + 1):
+                    if name == f"defect_{slot}" and _has_any_file(entry.path):
+                        found.add(slot)
+                        break
     except OSError:
         return set()
     return found

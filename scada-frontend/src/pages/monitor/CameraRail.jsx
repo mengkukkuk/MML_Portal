@@ -3,19 +3,12 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import IconButton from '@mui/material/IconButton'
-import { fetchCameraDefectFrames } from '@/api/cameras'
-import { fetchMimicCameras, fetchMimicCameraDefects } from '@/api/mimic'
+import { fetchCameras, fetchCameraDefects, fetchCameraDefectFrames } from '@/api/cameras'
 import useCameraFrameUrl from '@/components/mimic/useCameraFrameUrl'
 import styles from './CameraRail.module.css'
 
 /**
  * CameraRail — the view-mode detail panel for an ipcamera symbol.
- *
- * Cameras come from the drawing's `doc.cameraDefect` binding rather than a
- * global list, which is why this needs the slug. The binding names a table in
- * the plant the header has selected, so the same rail on two drawings reads two
- * different production lines' vision schemas without either knowing about the
- * other.
  *
  * Every Thai string used by this panel lives in this one map, on purpose:
  * the rest of the app is English (DetailRail, NodeInspector, the palette),
@@ -29,10 +22,7 @@ const T = {
     'สัญลักษณ์นี้ยังไม่ได้เลือกกล้อง เข้าโหมดแก้ไข → เลือกสัญลักษณ์ → เลือกกล้องจากรายการในแผงด้านขวา',
   unboundWrongCode: (code) =>
     `รหัส "${code}" ไม่ตรงกับกล้องที่ลงทะเบียนไว้ เข้าโหมดแก้ไขแล้วเลือกกล้องจากรายการแทนการพิมพ์รหัส`,
-  unboundNoneRegistered: 'ยังไม่มีกล้องในแหล่งข้อมูลที่เลือก',
-  unconfiguredTitle: 'ยังไม่ได้ตั้งค่ากล้องสำหรับแผนผังนี้',
-  unconfiguredHint:
-    'ผู้ดูแลระบบต้องเข้าโหมดแก้ไข → ปุ่มกล้องบนแถบเครื่องมือ → เลือกตารางของเสียจากแหล่งข้อมูล',
+  unboundNoneRegistered: 'ยังไม่มีกล้องลงทะเบียนในระบบ',
   registeredCodes: 'รหัสกล้องที่มีอยู่',
   station: 'จุดติดตั้ง',
   linkedByLoopId: 'ผูกด้วยรหัส loop id',
@@ -78,8 +68,8 @@ function slotLabel(slot) {
   return slot.label || T.slotFallback(slot.slot)
 }
 
-function Frame({ code, slot, frame, label }) {
-  const url = useCameraFrameUrl(code, slot, frame.index, frame.mtime_ns)
+function Frame({ cameraId, slot, frame, label }) {
+  const url = useCameraFrameUrl(cameraId, slot, frame.index, frame.mtime_ns)
   return (
     <figure className={styles.frame}>
       <div className={styles.frameImg}>
@@ -104,31 +94,20 @@ function Frame({ code, slot, frame, label }) {
  */
 const MIN_POLL_MS = 2000
 
-export default function CameraRail({ node, tag, slug, pollMs = 5000 }) {
+export default function CameraRail({ node, tag, pollMs = 5000 }) {
   const [slotFilter, setSlotFilter] = useState(null)
   const stripRef = useRef(null)
 
   const refetchInterval = Math.max(pollMs, MIN_POLL_MS)
 
-  const {
-    data: cameras, isLoading: camerasLoading, error: camerasError,
-  } = useQuery({
-    queryKey: ['mimic-cameras', slug],
-    queryFn: () => fetchMimicCameras(slug),
-    enabled: !!slug,
-    // Identity and labels are the vision system's own configuration, not a
-    // reading — they change when someone commissions a station, not when the
-    // line runs. Polling them on the live cadence would be a request per tick
-    // for a row that is the same all shift.
+  const { data: cameras, isLoading: camerasLoading } = useQuery({
+    queryKey: ['cameras'],
+    queryFn: fetchCameras,
+    // Identity and labels are admin config, not a reading — they change when
+    // someone edits a camera, not when the line runs. Polling them on the live
+    // cadence would be a request per tick for a row that is the same all shift.
     staleTime: 60_000,
-    // A drawing with no binding 404s, which is a normal state, not a fault.
-    retry: false,
   })
-
-  // The one error worth telling apart. Everything else about this rail degrades
-  // to "nothing to show"; an unconfigured drawing degrades to an instruction,
-  // because there is something an admin can actually do about it.
-  const unconfigured = camerasError?.response?.status === 404
 
   /**
    * Two ways a symbol reaches its camera, and the order matters.
@@ -167,8 +146,8 @@ export default function CameraRail({ node, tag, slug, pollMs = 5000 }) {
    * change a different cache entry and throw away the counts on screen.
    */
   const { data: defects } = useQuery({
-    queryKey: ['mimic-camera-defects', slug, camera?.code],
-    queryFn: () => fetchMimicCameraDefects(slug, camera.code),
+    queryKey: ['camera-defects', camera?.id],
+    queryFn: () => fetchCameraDefects(camera.id),
     enabled: !!camera,
     refetchInterval,
     // A SCADA wall display must not freeze in a background tab.
@@ -177,8 +156,8 @@ export default function CameraRail({ node, tag, slug, pollMs = 5000 }) {
   })
 
   const { data: frames } = useQuery({
-    queryKey: ['camera-frames', camera?.code, slotFilter],
-    queryFn: () => fetchCameraDefectFrames(camera.code, slotFilter, { limit: 30 }),
+    queryKey: ['camera-frames', camera?.id, slotFilter],
+    queryFn: () => fetchCameraDefectFrames(camera.id, slotFilter, { limit: 30 }),
     enabled: !!camera && slotFilter != null,
     refetchInterval,
     refetchIntervalInBackground: true,
@@ -217,24 +196,20 @@ export default function CameraRail({ node, tag, slug, pollMs = 5000 }) {
           <span className={styles.tagId}>{wanted || 'No camera linked'}</span>
           <span className={styles.tagLabel}>{node?.label}</span>
         </div>
-        <p className={styles.unboundTitle}>
-          {unconfigured ? T.unconfiguredTitle : T.unboundTitle}
-        </p>
+        <p className={styles.unboundTitle}>{T.unboundTitle}</p>
         <p className={styles.quiet}>
-          {unconfigured
-            ? T.unconfiguredHint
-            : wanted ? T.unboundWrongCode(wanted) : T.unboundNoLink}
+          {wanted ? T.unboundWrongCode(wanted) : T.unboundNoLink}
         </p>
-        {!unconfigured && (cameras?.length ? (
+        {cameras?.length ? (
           <div>
             <div className={styles.sectionTitle}>{T.registeredCodes}</div>
             <div className={styles.codeList}>
-              {cameras.map((c) => <span key={c.code} className={styles.code}>{c.code}</span>)}
+              {cameras.map((c) => <span key={c.id} className={styles.code}>{c.code}</span>)}
             </div>
           </div>
         ) : (
           <p className={styles.quiet}>{T.unboundNoneRegistered}</p>
-        ))}
+        )}
       </aside>
     )
   }
@@ -252,11 +227,11 @@ export default function CameraRail({ node, tag, slug, pollMs = 5000 }) {
           </span>
         </div>
         <span className={styles.tagLabel}>{camera.name}</span>
-        {camera.station && (
+        {(camera.station_code || camera.station_label) && (
           <span className={styles.eyebrow}>
             {T.station}
             {' · '}
-            {camera.station}
+            {[camera.station_code, camera.station_label].filter(Boolean).join(' · ')}
           </span>
         )}
         {viaLoopId && <span className={styles.legacyNote}>{T.linkedByLoopId}</span>}
@@ -346,7 +321,7 @@ export default function CameraRail({ node, tag, slug, pollMs = 5000 }) {
               {frames.map((f) => (
                 <Frame
                   key={`${f.index}-${f.mtime_ns}`}
-                  code={camera.code}
+                  cameraId={camera.id}
                   slot={slotFilter}
                   frame={f}
                   label={activeSlot ? slotLabel(activeSlot) : ''}

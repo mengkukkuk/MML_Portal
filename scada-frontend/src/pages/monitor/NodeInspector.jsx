@@ -16,8 +16,8 @@ import styles from './NodeInspector.module.css'
  * now shows the palette when nothing is selected and this when something is.
  */
 export default function NodeInspector({
-  node, datasources = [], slug, onConnect, onDelete, onResetBubble, onResetSize, onRotate,
-  onOptions, onCameraDefect, onBack,
+  node, datasources = [], onConnect, onDelete, onResetBubble, onResetSize, onRotate,
+  onOptions, onBack,
 }) {
   const def = symbolDef(node)
   const b = node.binding
@@ -92,12 +92,7 @@ export default function NodeInspector({
       {/* Directly under the data source, because every option here is a rule
           about the reading above it — a colour rule reads nothing until that
           says which column, and the two are edited in one sitting. */}
-      <SymbolOptions
-        node={node}
-        slug={slug}
-        onChange={(patch) => onOptions(node.id, patch)}
-        onCameraDefect={onCameraDefect}
-      />
+      <SymbolOptions node={node} onChange={(patch) => onOptions(node.id, patch)} />
 
       <div className={styles.section}>
         <div className={styles.sectionTitle}>Title</div>

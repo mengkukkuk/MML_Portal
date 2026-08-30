@@ -42,7 +42,6 @@ import MimicEditorToolbar from './MimicEditorToolbar'
 import MimicCommandBar from './MimicCommandBar'
 import ProductionLogDrawer from './ProductionLogDrawer'
 import ProductionLogDialog from './ProductionLogDialog'
-import CameraDefectDialog from './CameraDefectDialog'
 import {
   ImportLayoutDialog, RevisionConflictDialog, UnsavedChangesDialog,
 } from './EditorDialogs'
@@ -328,7 +327,6 @@ export default function MonitorPage() {
   const [viewPan, setViewPan] = useState(false)
   const [productionLogOpen, setProductionLogOpen] = useState(false)
   const [productionSettingsOpen, setProductionSettingsOpen] = useState(false)
-  const [cameraSettingsOpen, setCameraSettingsOpen] = useState(false)
   /**
    * Edit mode is only real when this admin is allowed to write this drawing.
    * Derived here rather than beside `lock` because it reads `editMode`, which is
@@ -727,12 +725,6 @@ export default function MonitorPage() {
     commitLayout((previous) => ({ ...previous, productionLog: binding }))
     setProductionSettingsOpen(false)
     notify(binding ? 'Production log settings updated in the draft.' : 'Production log removed from the draft.')
-  }, [commitLayout, notify])
-
-  const applyCameraDefect = useCallback((binding) => {
-    commitLayout((previous) => ({ ...previous, cameraDefect: binding }))
-    setCameraSettingsOpen(false)
-    notify(binding ? 'Camera defect settings updated in the draft.' : 'Camera defects removed from the draft.')
   }, [commitLayout, notify])
 
   const toggleEdit = useCallback(() => {
@@ -1382,14 +1374,12 @@ export default function MonitorPage() {
                   <NodeInspector
                     node={selectedNode}
                     datasources={datasourcesQuery.data || []}
-                    slug={activeSlug}
                     onConnect={() => openBinding(selectedNode)}
                     onDelete={deleteNode}
                     onResetBubble={resetBubble}
                     onResetSize={resetNodeSize}
                     onRotate={rotateNode}
                     onOptions={setNodeOptions}
-                    onCameraDefect={() => setCameraSettingsOpen(true)}
                     onBack={() => setSelectedId(null)}
                   />
                 ) : (
@@ -1454,7 +1444,7 @@ export default function MonitorPage() {
               </IconButton>
               {!railCollapsed && (
                 isCameraNode(selectedNode)
-                  ? <CameraRail node={selectedNode} tag={selectedTag} slug={activeSlug} pollMs={intervalMs} />
+                  ? <CameraRail node={selectedNode} tag={selectedTag} pollMs={intervalMs} />
                   : <DetailRail tag={selectedTag} node={selectedNode} history={history[selectedId]} events={events} canBind={false} />
               )}
             </div>
@@ -1504,14 +1494,6 @@ export default function MonitorPage() {
         container={overlayHost}
         onClose={() => setProductionSettingsOpen(false)}
         onSave={applyProductionLog}
-      />
-
-      <CameraDefectDialog
-        open={cameraSettingsOpen}
-        binding={layout?.cameraDefect ?? null}
-        container={overlayHost}
-        onClose={() => setCameraSettingsOpen(false)}
-        onSave={applyCameraDefect}
       />
 
       <CustomSymbolDialog

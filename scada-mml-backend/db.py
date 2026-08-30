@@ -1272,28 +1272,11 @@ def delete_panel(panel_id: int) -> bool:
 # Tables never exposed to the picker (credentials / app-internal state).
 # `datasources` holds saved connection passwords — must never be chartable, or a
 # text filter column could leak secrets via distinct_column_values.
-#
-# Scoped to the database it is protecting, which it was not always: the denylist
-# used to be one flat set matched on the bare table name, so a *plant* table
-# that happened to share a name with an app table was unreachable. That was
-# invisible until the vision tables moved out of the app database — a site
-# keeping its cameras in `vision_line9` could not bind them, because the app
-# database's own `cameras` had claimed the name globally.
-_APP_SENSITIVE_TABLES = {
+SENSITIVE_TABLES = {
     "users", "dashboard_panels", "mmldatabuffer", "datasources", "mimic_layouts",
-    "mimic_assets", "mimic_symbols",
+    "mimic_assets", "mimic_symbols", "cameras", "camera_snapshots",
+    "camera_defect",
 }
-
-# Denied on a plant connection too. Not app-internal state — these are the two
-# names that would hold credentials *in any database*, and a plant historian
-# with a `users` table is a plausible enough accident to keep refusing. The
-# camera tables are deliberately absent: on a plant source they are inspection
-# results, and nothing in them is a secret.
-_PLANT_SENSITIVE_TABLES = {"users", "datasources"}
-
-
-def _sensitive_tables(app_db: bool) -> set[str]:
-    return _APP_SENSITIVE_TABLES if app_db else _PLANT_SENSITIVE_TABLES
 
 # Postgres text data_types a symbol may *print* rather than plot.
 #
@@ -1382,39 +1365,31 @@ def _table_source_conn(datasource_id: int | None):
             _mark_reachable(datasource_id)
 
 
-def _allowed_tables(conn, schema: str, datasource_id: int | None) -> set[str]:
-    """Chartable base-table names in ``schema`` (minus the sensitive denylist).
-
-    Takes the datasource id rather than a bool so callers pass the value they
-    already hold — an ``app_db=`` flag is the kind of argument that eventually
-    gets handed the wrong way round at one call site out of nine.
-    """
-    denied = _sensitive_tables(datasource_id is None)
+def _allowed_tables(conn, schema: str) -> set[str]:
+    """Chartable base-table names in ``schema`` (minus the sensitive denylist)."""
     rows = conn.execute(
         """SELECT table_name FROM information_schema.tables
            WHERE table_schema = %s AND table_type = 'BASE TABLE'""",
         (schema,),
     ).fetchall()
-    return {r["table_name"] for r in rows if r["table_name"] not in denied}
+    return {r["table_name"] for r in rows if r["table_name"] not in SENSITIVE_TABLES}
 
 
 def list_schema_tables(datasource_id: int | None = None) -> list[dict[str, Any]]:
     """Base tables an admin may chart, minus the sensitive denylist."""
     with _table_source_conn(datasource_id) as (conn, schema):
-        names = sorted(_allowed_tables(conn, schema, datasource_id))
+        names = sorted(_allowed_tables(conn, schema))
     return [{"table": n, "label": n} for n in names]
 
 
-def _table_columns(
-    conn, schema: str, table: str, datasource_id: int | None
-) -> dict[str, str]:
+def _table_columns(conn, schema: str, table: str) -> dict[str, str]:
     """{column_name: data_type} for an allowlisted table in ``schema``.
 
     Validation gate for all dynamic-SQL builders: raises ValueError if the table
     is not in the (denylist-filtered) allowlist, so a caller can never reference
     an arbitrary or sensitive table.
     """
-    if table not in _allowed_tables(conn, schema, datasource_id):
+    if table not in _allowed_tables(conn, schema):
         raise ValueError(f"Table not allowed: {table!r}")
     rows = conn.execute(
         """SELECT column_name, data_type
@@ -1426,17 +1401,12 @@ def _table_columns(
     return {r["column_name"]: r["data_type"] for r in rows}
 
 
-def _safe_identifiers(
-    conn, schema: str, table: str, *cols: str | None, datasource_id: int | None = None
-) -> dict[str, str]:
+def _safe_identifiers(conn, schema: str, table: str, *cols: str | None) -> dict[str, str]:
     """Validate table + columns; return the table's {col: type} map.
 
     Each non-None column must exist on the table. Raises ValueError otherwise.
-
-    ``datasource_id`` is keyword-only because ``cols`` is variadic — a
-    positional id would be silently swallowed as another column name.
     """
-    columns = _table_columns(conn, schema, table, datasource_id)
+    columns = _table_columns(conn, schema, table)
     for c in cols:
         if c is not None and c not in columns:
             raise ValueError(f"Column not in {table!r}: {c!r}")
@@ -1463,7 +1433,7 @@ def _primary_key_columns(conn, schema: str, table: str) -> set[str]:
 def describe_table(table: str, datasource_id: int | None = None) -> dict[str, list[str]]:
     """Categorize a table's columns for the panel editor's pickers."""
     with _table_source_conn(datasource_id) as (conn, schema):
-        columns = _table_columns(conn, schema, table, datasource_id)
+        columns = _table_columns(conn, schema, table)
         # Numeric columns are chartable values, but a surrogate key identifies
         # rows, not a metric — exclude PK columns and any column conventionally
         # named `id` (some SCADA log tables carry an `id` with no PK constraint).
@@ -1493,7 +1463,7 @@ def distinct_column_values(
 ) -> list[str]:
     """Distinct non-null values of a filter column (series picker)."""
     with _table_source_conn(datasource_id) as (conn, schema):
-        _safe_identifiers(conn, schema, table, column, datasource_id=datasource_id)
+        _safe_identifiers(conn, schema, table, column)
         query = sql.SQL(
             "SELECT DISTINCT {col}::text AS v FROM {tbl} "
             "WHERE {col} IS NOT NULL ORDER BY 1 LIMIT %s"
@@ -1527,10 +1497,7 @@ def table_latest(
         if buffered is not None:
             return buffered
     with _table_source_conn(datasource_id) as (conn, schema):
-        _safe_identifiers(
-            conn, schema, table, value_col, filter_col, ts_col,
-            datasource_id=datasource_id,
-        )
+        _safe_identifiers(conn, schema, table, value_col, filter_col, ts_col)
         ts_select = (
             sql.SQL(", {} AS ts").format(sql.Identifier(ts_col))
             if ts_col else sql.SQL(", NULL AS ts")
@@ -1577,10 +1544,7 @@ def table_series(
     ):
         return buffered_tag_series(filter_val, value_col, minutes, datasource_id)
     with _table_source_conn(datasource_id) as (conn, schema):
-        _safe_identifiers(
-            conn, schema, table, value_col, filter_col, ts_col,
-            datasource_id=datasource_id,
-        )
+        _safe_identifiers(conn, schema, table, value_col, filter_col, ts_col)
         query = sql.SQL(
             "SELECT {val} AS value, {ts} AS ts FROM {tbl} WHERE {ts} >= "
             "now() - make_interval(mins => %s)"
@@ -1619,8 +1583,7 @@ def production_log_hourly(
         # the request snapshot before even that first read.
         conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         _safe_identifiers(
-            conn, schema, table, ts_col, produced_col, rejected_col, filter_col,
-            datasource_id=datasource_id,
+            conn, schema, table, ts_col, produced_col, rejected_col, filter_col
         )
         table_sql = sql.Identifier(schema, table)
         fields = sql.SQL("{ts} AS ts, {produced} AS produced, {rejected} AS rejected").format(
@@ -1689,10 +1652,7 @@ def table_rows(
     one row per device.
     """
     with _table_source_conn(datasource_id) as (conn, schema):
-        _safe_identifiers(
-            conn, schema, table, *columns, filter_col, ts_col,
-            datasource_id=datasource_id,
-        )
+        _safe_identifiers(conn, schema, table, *columns, filter_col, ts_col)
         query = sql.SQL("SELECT {cols} FROM {tbl}").format(
             cols=sql.SQL(", ").join(sql.Identifier(c) for c in columns),
             tbl=sql.Identifier(schema, table),
@@ -2234,8 +2194,8 @@ def datasource_names(datasource_ids: Sequence[int | None]) -> dict[int | None, s
 # of it has query needs, and the frontend document is already flat and
 # serialisable. Reads are open to any authenticated user (every operator sees
 # the same commissioned plant); writes are admin-only, enforced in mimic.py.
-# `mimic_layouts` is in _APP_SENSITIVE_TABLES so a layout can never be charted
-# back through the generic table source.
+# `mimic_layouts` is in SENSITIVE_TABLES so a layout can never be charted back
+# through the generic table source.
 def init_mimic_table() -> None:
     """Create the mimic_layouts table if it doesn't exist. Idempotent."""
     with get_connection() as conn:
@@ -2340,8 +2300,8 @@ def delete_mimic_layout(slug: str) -> bool:
 #
 # Bytes live in Postgres rather than on disk: the app already treats the database
 # as its only durable store, and an asset that vanished on redeploy would leave
-# every drawing referencing it broken. Both tables are in _APP_SENSITIVE_TABLES
-# so neither can be charted back through the generic table source.
+# every drawing referencing it broken. Both tables are in SENSITIVE_TABLES so
+# neither can be charted back through the generic table source.
 def init_mimic_assets_table() -> None:
     """Create the mimic_assets table if it doesn't exist. Idempotent."""
     with get_connection() as conn:
@@ -2539,178 +2499,294 @@ def delete_mimic_symbol(symbol_id: int) -> bool:
 
 
 # --- Cameras (/monitor vision-inspection panel) -----------------------------
-# Camera identity and defect counters are *plant* data, read through the
-# datasource the header has selected. They used to be app configuration, and
-# that was the mistake this section exists to correct: the vision system owns
-# both tables and writes them into its own per-line schema (`vision_line9`,
-# `vision_line10`, …), so a copy of them in the app database was a second place
-# for the same facts to live and drift.
+# Three app tables behind the camera detail rail:
+#   `cameras`          — identity only. An admin names a station's camera once,
+#                        and a mimic node reaches it by `code`.
+#   `camera_defect`    — the counters the rail's bars are drawn from, five
+#                        positional slots per row, keyed by `code` as text.
+#   `camera_snapshots` — stored NG frames uploaded through the API. The rail no
+#                        longer reads these (its contact sheet comes from the
+#                        image folder, see camera_files.py), but this is the
+#                        only ingestion path in the system, so it stays.
 #
-# Nothing here creates a table, and that is the point. A second production line
-# is a schema the vision system has already provisioned plus a `doc.cameraDefect`
-# binding pointing at it — not a migration, and not a code change.
-#
-# Every identifier below arrives from a saved binding and is put through
-# `_safe_identifiers` against the live `information_schema` on the connection it
-# is about to be used on, exactly as `production_log_hourly` does. A binding is
-# admin input that was validated when it was saved, which says nothing about
-# whether the column still exists today.
+# `cameras` deliberately holds no plant binding: defect counts come from
+# `camera_defect`, which is app data keyed by code, not a fanned-out plant read.
+def init_cameras_table() -> None:
+    """Create the cameras table if it doesn't exist"""
+    with get_connection() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS cameras (
+                id            SERIAL PRIMARY KEY,
+                code          TEXT NOT NULL UNIQUE,
+                name          TEXT NOT NULL,
+                station_code  TEXT,
+                station_label TEXT,
+                location      TEXT,
+                enabled       BOOLEAN NOT NULL DEFAULT true,
+                created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+            )"""
+        )
+        # One label per camera_defect slot, so the bars can be named per camera:
+        # slot N on either table always means the same defect.
+        for slot in range(1, 6):
+            conn.execute(
+                f"ALTER TABLE cameras ADD COLUMN IF NOT EXISTS defect_{slot}_label TEXT"
+            )
+        conn.commit()
 
 
-def _registry_columns(registry: dict[str, Any]) -> tuple[str, str | None, str | None, list[str]]:
-    """Unpack the optional registry sub-binding into its four column roles."""
-    return (
-        registry["code_col"],
-        registry.get("name_col"),
-        registry.get("station_col"),
-        list(registry.get("label_cols") or []),
-    )
+def init_camera_defect_table() -> None:
+    """Create the camera_defect table if it doesn't exist"""
+    with get_connection() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS camera_defect (
+                id         SERIAL PRIMARY KEY,
+                camera_id  TEXT,
+                updated_at TIMESTAMP DEFAULT now(),
+                batch_id   INTEGER,
+                defect_1   INTEGER DEFAULT 0,
+                defect_2   INTEGER DEFAULT 0,
+                defect_3   INTEGER DEFAULT 0,
+                defect_4   INTEGER DEFAULT 0,
+                defect_5   INTEGER DEFAULT 0
+            )"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS camera_defect_latest
+               ON camera_defect (lower(camera_id), batch_id DESC)"""
+        )
+        conn.commit()
 
 
-def camera_registry(
-    binding: dict[str, Any], datasource_id: int | None = None
-) -> list[dict[str, Any]]:
-    """Every camera this binding can reach, by code.
+def init_camera_snapshots_table() -> None:
+    """Create the camera_snapshots table if it doesn't exist. Idempotent.
 
-    Two paths, and the fallback is the interesting one. With a `registry`
-    sub-binding the codes come from the vision system's own camera table, along
-    with whatever names and per-slot labels it carries. Without one they are
-    recovered as `DISTINCT camera_col` from the defect table itself.
-
-    That fallback is what makes a new line usable the moment its defect table is
-    bound: naming the cameras is a separate, later job, and requiring it first
-    would mean an operator sees nothing at all until an admin has filled in a
-    second form. An unnamed camera renders under its own code, which is what is
-    painted on the physical station anyway.
+    Must run after init_cameras_table (FK). CASCADE, unlike mimic_symbols'
+    RESTRICT on its asset: a frame has no meaning without its camera, so
+    deleting a camera should take its stored evidence with it.
     """
-    table = binding["table"]
-    camera_col = binding["camera_col"]
-    registry = binding.get("registry")
+    with get_connection() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS camera_snapshots (
+                id          SERIAL PRIMARY KEY,
+                camera_id   INTEGER NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
+                captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                cause       TEXT,
+                verdict     TEXT NOT NULL DEFAULT 'ng',
+                mime        TEXT NOT NULL,
+                bytes       BYTEA NOT NULL,
+                size_bytes  INTEGER NOT NULL,
+                sha256      TEXT NOT NULL,
+                meta        JSONB NOT NULL DEFAULT '{}'::jsonb,
+                uploaded_by INTEGER,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE (camera_id, sha256)
+            )"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS camera_snapshots_recent
+               ON camera_snapshots (camera_id, captured_at DESC)"""
+        )
+        conn.commit()
 
-    with _table_source_conn(datasource_id) as (conn, schema):
-        if not registry:
-            _safe_identifiers(
-                conn, schema, table, camera_col, datasource_id=datasource_id
-            )
-            rows = conn.execute(
-                sql.SQL(
-                    "SELECT DISTINCT {col}::text AS code FROM {tbl} "
-                    "WHERE {col} IS NOT NULL ORDER BY 1"
-                ).format(
-                    col=sql.Identifier(camera_col),
-                    tbl=sql.Identifier(schema, table),
-                )
-            ).fetchall()
-            return [
-                {"code": r["code"], "name": None, "station": None, "labels": []}
-                for r in rows
-            ]
 
-        reg_table = registry["table"]
-        code_col, name_col, station_col, label_cols = _registry_columns(registry)
-        _safe_identifiers(
-            conn, schema, reg_table, code_col, name_col, station_col, *label_cols,
-            datasource_id=datasource_id,
-        )
-        fields = [sql.SQL("{}::text AS code").format(sql.Identifier(code_col))]
-        fields.append(
-            sql.SQL("{}::text AS name").format(sql.Identifier(name_col))
-            if name_col else sql.SQL("NULL::text AS name")
-        )
-        fields.append(
-            sql.SQL("{}::text AS station").format(sql.Identifier(station_col))
-            if station_col else sql.SQL("NULL::text AS station")
-        )
-        # Labels are aliased positionally rather than by their column names so
-        # a registry using `defect_1_label` and one using `scratch_name` come
-        # back in the same shape, and neither can collide with `code`/`name`.
-        for i, col in enumerate(label_cols):
-            fields.append(
-                sql.SQL("{}::text AS {}").format(
-                    sql.Identifier(col), sql.Identifier(f"label_{i}")
-                )
-            )
+_CAMERA_COLS = (
+    "id, code, name, station_code, station_label, location, enabled, updated_at, "
+    "defect_1_label, defect_2_label, defect_3_label, defect_4_label, defect_5_label"
+)
+
+# The five label columns, in slot order — used to build the INSERT/UPDATE
+# column lists and value tuples below without spelling them out five times.
+_CAMERA_LABEL_COLS = tuple(f"defect_{slot}_label" for slot in range(1, 6))
+
+
+def list_cameras() -> list[dict[str, Any]]:
+    with get_connection() as conn:
         rows = conn.execute(
-            sql.SQL("SELECT {fields} FROM {tbl} WHERE {code} IS NOT NULL ORDER BY 1").format(
-                fields=sql.SQL(", ").join(fields),
-                tbl=sql.Identifier(schema, reg_table),
-                code=sql.Identifier(code_col),
-            )
+            f"SELECT {_CAMERA_COLS} FROM cameras ORDER BY code"
         ).fetchall()
-
-    return [
-        {
-            "code": r["code"],
-            "name": r["name"],
-            "station": r["station"],
-            "labels": [r[f"label_{i}"] for i in range(len(label_cols))],
-        }
-        for r in rows
-    ]
+    return rows
 
 
-def camera_defect_latest(
-    binding: dict[str, Any], code: str, datasource_id: int | None = None
-) -> dict[str, Any] | None:
-    """The newest batch of defect counters for one camera code.
-
-    None means this camera has no rows at all — a different state from a batch
-    that counted zero, and the rail says so differently. Preserved from the
-    original implementation because it is the distinction operators asked for.
-
-    Matched case-insensitively: the code is typed into a mimic symbol by one
-    person and into the vision system's configuration by another.
-
-    Ordered by the batch column when the binding names one, falling back to the
-    timestamp. `ORDER BY … DESC LIMIT 1` rather than `WHERE batch = (SELECT
-    max(…))` — the subquery form silently returns nothing for a camera whose
-    rows all predate another camera's latest batch, which is the bug the
-    original carried a comment about.
-    """
-    table = binding["table"]
-    camera_col = binding["camera_col"]
-    batch_col = binding.get("batch_col")
-    ts_col = binding.get("ts_col")
-    defect_cols = list(binding["defect_cols"])
-    order_col = batch_col or ts_col
-
-    with _table_source_conn(datasource_id) as (conn, schema):
-        _safe_identifiers(
-            conn, schema, table, camera_col, batch_col, ts_col, *defect_cols,
-            datasource_id=datasource_id,
-        )
-        fields = [
-            sql.SQL("{}::bigint AS batch_id").format(sql.Identifier(batch_col))
-            if batch_col else sql.SQL("NULL::bigint AS batch_id"),
-            sql.SQL("{} AS updated_at").format(sql.Identifier(ts_col))
-            if ts_col else sql.SQL("NULL::timestamp AS updated_at"),
-        ]
-        for i, col in enumerate(defect_cols):
-            fields.append(
-                sql.SQL("{}::bigint AS {}").format(
-                    sql.Identifier(col), sql.Identifier(f"defect_{i}")
-                )
-            )
+def get_camera(camera_id: int) -> dict[str, Any] | None:
+    with get_connection() as conn:
         row = conn.execute(
-            sql.SQL(
-                "SELECT {fields} FROM {tbl} WHERE lower({cam}::text) = lower(%s) "
-                "ORDER BY {order} DESC NULLS LAST LIMIT 1"
-            ).format(
-                fields=sql.SQL(", ").join(fields),
-                tbl=sql.Identifier(schema, table),
-                cam=sql.Identifier(camera_col),
-                order=sql.Identifier(order_col),
+            f"SELECT {_CAMERA_COLS} FROM cameras WHERE id = %s", (camera_id,)
+        ).fetchone()
+    return row
+
+
+def get_camera_by_code(code: str) -> dict[str, Any] | None:
+    """Case-insensitive: a mimic node's loop id and a camera's code are typed
+    by different admins on different screens and should not have to match case."""
+    with get_connection() as conn:
+        row = conn.execute(
+            f"SELECT {_CAMERA_COLS} FROM cameras WHERE lower(code) = lower(%s)", (code,)
+        ).fetchone()
+    return row
+
+
+def insert_camera(fields: dict[str, Any]) -> dict[str, Any]:
+    labels = ", ".join(_CAMERA_LABEL_COLS)
+    with get_connection() as conn:
+        row = conn.execute(
+            f"""INSERT INTO cameras
+                (code, name, station_code, station_label, location, enabled, {labels})
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING {_CAMERA_COLS}""",
+            (
+                fields["code"], fields["name"], fields.get("station_code"),
+                fields.get("station_label"), fields.get("location"),
+                fields.get("enabled", True),
+                *(fields.get(col) for col in _CAMERA_LABEL_COLS),
             ),
+        ).fetchone()
+        conn.commit()
+    return row
+
+
+def update_camera(camera_id: int, fields: dict[str, Any]) -> dict[str, Any] | None:
+    labels = ", ".join(f"{col} = %s" for col in _CAMERA_LABEL_COLS)
+    with get_connection() as conn:
+        row = conn.execute(
+            f"""UPDATE cameras SET
+                code = %s, name = %s, station_code = %s, station_label = %s,
+                location = %s, enabled = %s, {labels}, updated_at = now()
+            WHERE id = %s
+            RETURNING {_CAMERA_COLS}""",
+            (
+                fields["code"], fields["name"], fields.get("station_code"),
+                fields.get("station_label"), fields.get("location"),
+                fields.get("enabled", True),
+                *(fields.get(col) for col in _CAMERA_LABEL_COLS),
+                camera_id,
+            ),
+        ).fetchone()
+        conn.commit()
+    return row
+
+
+def delete_camera(camera_id: int) -> bool:
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM cameras WHERE id = %s", (camera_id,))
+        conn.commit()
+    return cur.rowcount > 0
+
+
+def camera_defect_latest(code: str) -> dict[str, Any] | None:
+    """The newest batch of defect counters for one camera, by its code.
+
+    Returns None when the camera has no rows at all — a different state from a
+    batch that counted zero of everything, and the rail must not draw the first
+    as if it were the second.
+
+    Ordered rather than filtered on `max(batch_id)`: batch_id is nullable, so
+    `WHERE batch_id = (SELECT max(...))` silently returns nothing for a camera
+    whose rows all have a null batch. NULLS LAST keeps those rows reachable and
+    still prefers a real batch when one exists.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            """SELECT id, camera_id, batch_id, updated_at,
+                      defect_1, defect_2, defect_3, defect_4, defect_5
+            FROM camera_defect
+            WHERE lower(camera_id) = lower(%s)
+            ORDER BY batch_id DESC NULLS LAST, updated_at DESC, id DESC
+            LIMIT 1""",
             (code,),
         ).fetchone()
+    return row
 
-    if row is None:
-        return None
-    return {
-        "batch_id": row["batch_id"],
-        "updated_at": row["updated_at"],
-        "counts": [row[f"defect_{i}"] or 0 for i in range(len(defect_cols))],
-    }
+
+def list_camera_snapshots(
+    camera_id: int, limit: int = 30, cause: str | None = None
+) -> list[dict[str, Any]]:
+    """Metadata only — bytes are fetched one at a time through the image route."""
+    with get_connection() as conn:
+        if cause:
+            rows = conn.execute(
+                """SELECT id, camera_id, captured_at, cause, verdict, mime, size_bytes
+                FROM camera_snapshots
+                WHERE camera_id = %s AND cause = %s
+                ORDER BY captured_at DESC LIMIT %s""",
+                (camera_id, cause, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT id, camera_id, captured_at, cause, verdict, mime, size_bytes
+                FROM camera_snapshots
+                WHERE camera_id = %s
+                ORDER BY captured_at DESC LIMIT %s""",
+                (camera_id, limit),
+            ).fetchall()
+    return rows
+
+
+def camera_cause_counts(camera_id: int) -> list[dict[str, Any]]:
+    """Cause histogram for the rail's filter bars — NG frames only, most first."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT cause, count(*)::int AS n
+            FROM camera_snapshots
+            WHERE camera_id = %s AND verdict = 'ng' AND cause IS NOT NULL
+            GROUP BY cause
+            ORDER BY n DESC""",
+            (camera_id,),
+        ).fetchall()
+    return rows
+
+
+def get_camera_snapshot_bytes(camera_id: int, snapshot_id: int) -> dict[str, Any] | None:
+    """One frame *with* its bytes — the read behind the image endpoint."""
+    with get_connection() as conn:
+        row = conn.execute(
+            """SELECT id, mime, bytes FROM camera_snapshots
+            WHERE id = %s AND camera_id = %s""",
+            (snapshot_id, camera_id),
+        ).fetchone()
+    return row
+
+
+def find_camera_snapshot_by_hash(camera_id: int, sha256: str) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            """SELECT id, camera_id, captured_at, cause, verdict, mime, size_bytes
+            FROM camera_snapshots WHERE camera_id = %s AND sha256 = %s""",
+            (camera_id, sha256),
+        ).fetchone()
+    return row
+
+
+def insert_camera_snapshot(
+    camera_id: int,
+    mime: str,
+    data: bytes,
+    sha256: str,
+    cause: str | None,
+    verdict: str,
+    uploaded_by: int | None,
+) -> dict[str, Any]:
+    with get_connection() as conn:
+        row = conn.execute(
+            """INSERT INTO camera_snapshots
+                (camera_id, cause, verdict, mime, bytes, size_bytes, sha256, uploaded_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, camera_id, captured_at, cause, verdict, mime, size_bytes""",
+            (camera_id, cause, verdict, mime, data, len(data), sha256, uploaded_by),
+        ).fetchone()
+        conn.commit()
+    return row
+
+
+def delete_camera_snapshot(camera_id: int, snapshot_id: int) -> bool:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "DELETE FROM camera_snapshots WHERE id = %s AND camera_id = %s",
+            (snapshot_id, camera_id),
+        )
+        conn.commit()
+    return cur.rowcount > 0
 
 
 # ============================================================================

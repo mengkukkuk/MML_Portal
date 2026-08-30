@@ -32,8 +32,7 @@ def image_root(tmp_path, monkeypatch):
     slot1.mkdir(parents=True)
     (root / "cam-03" / "NG" / "defect_2").mkdir()      # present but empty
     (root / "cam-03" / "OK").mkdir()                    # never read
-    # defect_3+ deliberately absent — the binding declares more slots than this
-    # line actually grades, which is the normal state of a shared vision schema.
+    # defect_3..5 deliberately absent — the table has five slots, the line uses two.
 
     # Written oldest-first, then stamped out of order, so any test that passes
     # by accident of creation order fails here.
@@ -88,8 +87,8 @@ def test_unknown_camera_is_empty_not_an_error(image_root):
 
 
 def test_missing_slot_directory_is_empty_not_an_error(image_root):
-    """defect_5 has no folder. The binding still names the column, so this is
-    the normal state of an unused slot rather than a misconfiguration."""
+    """defect_5 has no folder. The table still has the column, so this is the
+    normal state of an unused slot rather than a misconfiguration."""
     assert camera_files.list_slot_frames("CAM-03", 5) == []
 
 
@@ -133,7 +132,7 @@ def test_directories_inside_a_slot_are_not_listed_as_frames(image_root):
     assert len(camera_files.list_slot_frames("CAM-03", 1)) == 3
 
 
-@pytest.mark.parametrize("slot", [0, -1, 33, 99])
+@pytest.mark.parametrize("slot", [0, 6, -1, 99])
 def test_out_of_range_slots_have_no_frames(image_root, slot):
     assert camera_files.list_slot_frames("CAM-03", slot) == []
     with pytest.raises(FrameNotFound):
@@ -147,68 +146,44 @@ def test_bool_is_not_a_valid_slot(image_root):
 
 
 # --- slots_with_frames ---------------------------------------------------------
-# The polled path: /defects runs this on every live tick, so it answers N
-# yes/no questions with one walk instead of N full listings. `slot_count` comes
-# from the caller's `defect_cols` binding, not from a module constant, so a line
-# grading six categories asks about six.
+# The polled path: /defects runs this on every live tick, so it answers five
+# yes/no questions with one walk instead of five full listings.
 
 def test_slots_with_frames_reports_only_slots_holding_files(image_root):
     """defect_1 has files, defect_2 is an empty directory, defect_3..5 have no
     directory at all. All three are different on disk and identical to an
     operator: nothing to look at."""
-    assert camera_files.slots_with_frames("CAM-03", 5) == {1}
+    assert camera_files.slots_with_frames("CAM-03") == {1}
 
 
 def test_slots_with_frames_matches_the_camera_case_insensitively(image_root):
-    assert camera_files.slots_with_frames("cam-03", 5) == {1}
+    assert camera_files.slots_with_frames("cam-03") == {1}
 
 
 def test_slots_with_frames_agrees_with_list_slot_frames(image_root):
     """The cheap check and the full listing must never disagree — a slot shown
     as having frames that then renders an empty strip is worse than either."""
-    cheap = camera_files.slots_with_frames("CAM-03", camera_files.MAX_SLOT)
     for slot in range(camera_files.MIN_SLOT, camera_files.MAX_SLOT + 1):
+        cheap = slot in camera_files.slots_with_frames("CAM-03")
         full = bool(camera_files.list_slot_frames("CAM-03", slot))
-        assert (slot in cheap) == full, f"slot {slot} disagrees"
-
-
-def test_slots_with_frames_stops_at_the_bound_slot_count(image_root):
-    """The binding decides how many slots exist. A folder past the end of
-    `defect_cols` is not a slot this line grades, however many files are in it."""
-    (image_root / "cam-03" / "NG" / "defect_9").mkdir()
-    (image_root / "cam-03" / "NG" / "defect_9" / "x.png").write_bytes(PNG)
-
-    assert camera_files.slots_with_frames("CAM-03", 5) == {1}
-    assert camera_files.slots_with_frames("CAM-03", 9) == {1, 9}
+        assert cheap == full, f"slot {slot} disagrees"
 
 
 def test_slots_with_frames_ignores_directories_that_are_not_slots(image_root):
+    (image_root / "cam-03" / "NG" / "defect_9").mkdir()
+    (image_root / "cam-03" / "NG" / "defect_9" / "x.png").write_bytes(PNG)
     (image_root / "cam-03" / "NG" / "scratch").mkdir()
     (image_root / "cam-03" / "NG" / "scratch" / "x.png").write_bytes(PNG)
-    assert camera_files.slots_with_frames("CAM-03", camera_files.MAX_SLOT) == {1}
-
-
-def test_slots_with_frames_clamps_an_absurd_slot_count(image_root):
-    """MAX_SLOT is an absolute ceiling rather than the slot count: a malformed
-    request must not turn one poll into an unbounded stat storm."""
-    (image_root / "cam-03" / "NG" / f"defect_{camera_files.MAX_SLOT + 1}").mkdir()
-    (image_root / "cam-03" / "NG" / f"defect_{camera_files.MAX_SLOT + 1}" / "x.png").write_bytes(PNG)
-
-    assert camera_files.slots_with_frames("CAM-03", 10_000) == {1}
-
-
-@pytest.mark.parametrize("slot_count", [0, -1])
-def test_slots_with_frames_is_empty_for_a_binding_with_no_slots(image_root, slot_count):
-    assert camera_files.slots_with_frames("CAM-03", slot_count) == set()
+    assert camera_files.slots_with_frames("CAM-03") == {1}
 
 
 def test_slots_with_frames_is_empty_without_a_root(monkeypatch):
     monkeypatch.setattr(camera_files.config, "CAMERA_IMAGE_ROOT", "")
-    assert camera_files.slots_with_frames("CAM-03", 5) == set()
+    assert camera_files.slots_with_frames("CAM-03") == set()
 
 
 def test_slots_with_frames_is_empty_for_an_unknown_camera(image_root):
-    assert camera_files.slots_with_frames("CAM-99", 5) == set()
+    assert camera_files.slots_with_frames("CAM-99") == set()
 
 
 @pytest.mark.parametrize("code", ["../../etc", "C:\\Windows", "NUL", ""])
@@ -216,7 +191,7 @@ def test_slots_with_frames_refuses_a_hostile_code(image_root, code):
     """The fast path takes the same segments as the slow one, so it has to
     enforce the same containment — an optimisation that skipped the check
     would be a hole behind a route that is polled continuously."""
-    assert camera_files.slots_with_frames(code, 5) == set()
+    assert camera_files.slots_with_frames(code) == set()
 
 
 # --- reading -------------------------------------------------------------------
@@ -295,10 +270,9 @@ def test_legal_path_segments_are_accepted(segment):
     ],
 )
 def test_a_hostile_camera_code_reads_nothing(image_root, code):
-    """The DB-controlled leg. A camera code now comes from a *plant* table the
-    vision system owns, and ends up in a filesystem path — so it is a traversal
-    primitive unless something stops it. The route's CODE_PATTERN is the first
-    layer, this is the one that counts."""
+    """The DB-controlled leg. `cameras.code` is admin-supplied text that ends up
+    in a filesystem path, so it is a traversal primitive unless something stops
+    it — CameraIn's pattern is the first layer, this is the one that counts."""
     assert camera_files.list_slot_frames(code, 1) == []
     with pytest.raises(FrameNotFound):
         camera_files.read_frame(code, 1, 0)
