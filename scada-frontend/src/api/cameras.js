@@ -47,6 +47,17 @@ export async function fetchCameraDefects(cameraCode) {
 }
 
 /**
+ * The film strip shows one of two things: rejects for a single defect slot, or
+ * the camera's passing frames. `OK_SLOT` is the sentinel for the latter.
+ *
+ * It travels through the rail's filter state, the blob-cache key and the image
+ * URL, which keeps the two cases on one code path instead of two parallel ones.
+ * A string can never collide with a slot number, so `slot === OK_SLOT` is an
+ * unambiguous test everywhere it is made.
+ */
+export const OK_SLOT = 'ok'
+
+/**
  * Frames stored on disk for one defect slot, newest first.
  * Empty — never an error — on an install with no image folder configured.
  */
@@ -56,4 +67,31 @@ export async function fetchCameraDefectFrames(cameraCode, slot, { limit = 30 } =
     params: { limit },
   })
   return data // [{ index, captured_at, size_bytes, mtime_ns }]
+}
+
+/** Passing frames for one camera. Not split by slot — an OK capture has no defect. */
+export async function fetchCameraOkFrames(cameraCode, { limit = 30 } = {}) {
+  const code = encodeURIComponent(cameraCode)
+  const { data } = await apiClient.get(`/cameras/linked/${code}/ok/frames`, {
+    params: { limit },
+  })
+  return data // [{ index, captured_at, size_bytes, mtime_ns }]
+}
+
+/** Whichever listing `slot` names — a defect slot number, or OK_SLOT. */
+export function fetchCameraFrames(cameraCode, slot, options) {
+  return slot === OK_SLOT
+    ? fetchCameraOkFrames(cameraCode, options)
+    : fetchCameraDefectFrames(cameraCode, slot, options)
+}
+
+/**
+ * Where one frame's bytes live. Kept here rather than in the blob-cache hook so
+ * every path this module's router serves is described in one file.
+ */
+export function cameraFrameImagePath(cameraCode, slot, index) {
+  const code = encodeURIComponent(cameraCode)
+  return slot === OK_SLOT
+    ? `/cameras/linked/${code}/ok/frames/${index}/image`
+    : `/cameras/linked/${code}/defects/${slot}/frames/${index}/image`
 }

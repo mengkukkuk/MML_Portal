@@ -62,6 +62,26 @@ def test_frame_listing_is_empty_when_no_image_root_is_configured(monkeypatch):
     assert cameras.list_linked_camera_slot_frames("cam-001", 1, _user=USER) == []
 
 
+def test_ok_frame_listing_is_empty_when_no_image_root_is_configured(monkeypatch):
+    monkeypatch.setattr(cameras.camera_files.config, "CAMERA_IMAGE_ROOT", "")
+    assert cameras.list_linked_camera_ok_frames("cam-001", _user=USER) == []
+
+
+@pytest.mark.parametrize("limit,expected", [(0, 1), (-5, 1), (500, 100), (30, 30)])
+def test_ok_frame_listing_clamps_the_limit(monkeypatch, limit, expected):
+    """The OK route takes `limit` straight off the query string, same as the NG
+    one. An unclamped value is a way to ask the server to stat a whole share."""
+    seen = {}
+
+    def record(_code, limit):
+        seen["limit"] = limit
+        return []
+
+    monkeypatch.setattr(cameras.camera_files, "list_ok_frames", record)
+    cameras.list_linked_camera_ok_frames("cam-001", limit=limit, _user=USER)
+    assert seen["limit"] == expected
+
+
 def test_frame_image_keeps_security_and_revalidation_headers(monkeypatch):
     meta = FrameMeta(index=0, captured_at=None, size_bytes=len(PNG), mtime_ns=123)
     monkeypatch.setattr(cameras.camera_files, "read_frame", lambda *_args: (PNG, meta))
@@ -72,3 +92,34 @@ def test_frame_image_keeps_security_and_revalidation_headers(monkeypatch):
     assert response.headers["content-security-policy"] == "default-src 'none'; sandbox"
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["cache-control"] == "private, max-age=30, must-revalidate"
+
+
+def test_ok_frame_image_goes_through_the_same_gate(monkeypatch):
+    """OK and NG frames come off the same untrusted share, so the OK route must
+    not be a way around the sniff, the allowlist or the security headers."""
+    meta = FrameMeta(index=0, captured_at=None, size_bytes=len(PNG), mtime_ns=123)
+    monkeypatch.setattr(cameras.camera_files, "read_ok_frame", lambda *_args: (PNG, meta))
+
+    response = cameras.get_linked_camera_ok_frame_image("cam-001", 0, _user=USER)
+
+    assert response.media_type == "image/png"
+    assert response.headers["content-security-policy"] == "default-src 'none'; sandbox"
+    assert response.headers["etag"] == '"7b-20"'
+
+
+def test_an_ok_frame_that_is_not_a_raster_image_is_refused(monkeypatch):
+    meta = FrameMeta(index=0, captured_at=None, size_bytes=len(SVG), mtime_ns=1)
+    monkeypatch.setattr(cameras.camera_files, "read_ok_frame", lambda *_args: (SVG, meta))
+    with pytest.raises(HTTPException) as exc:
+        cameras.get_linked_camera_ok_frame_image("cam-001", 0, _user=USER)
+    assert exc.value.status_code == 400
+
+
+def test_a_missing_ok_frame_is_a_404(monkeypatch):
+    def raise_not_found(*_args):
+        raise camera_files.FrameNotFound("nope")
+
+    monkeypatch.setattr(cameras.camera_files, "read_ok_frame", raise_not_found)
+    with pytest.raises(HTTPException) as exc:
+        cameras.get_linked_camera_ok_frame_image("cam-001", 0, _user=USER)
+    assert exc.value.status_code == 404

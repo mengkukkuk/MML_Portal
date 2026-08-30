@@ -119,7 +119,10 @@
       "Bash(~/.claude/bin/codeagent-wrapper --lite:*)",
       "Bash(TaskOutput)",
       "Bash(PGPASSWORD='P@ssw0rd' psql -h 127.0.0.1 -p 5432 -U postgres -d mmldata -c \"\\\\d vision_data.cameras\")",
-      "Bash(powershell -NoProfile -c \"Get-Process -Id 6308 | Select-Object Id,ProcessName,StartTime | Format-List\")"
+      "Bash(powershell -NoProfile -c \"Get-Process -Id 6308 | Select-Object Id,ProcessName,StartTime | Format-List\")",
+      "Bash(./venv/Scripts/python.exe -c \"import PIL; print\\(''''pillow'''', PIL.__version__\\)\")",
+      "Bash(./venv/Scripts/python.exe \"C:/Users/mengk/AppData/Local/Temp/gen_cam_frames.py\" \"D:/FTP-DATA\")",
+      "Bash(powershell -NoProfile -Command \"Get-Process -Id 6308 | Select-Object Id,ProcessName,StartTime | Format-List\")"
     ]
   }
 }

@@ -4,7 +4,7 @@ import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import IconButton from '@mui/material/IconButton'
 import {
-  fetchCameraLinkOptions, fetchCameraDefects, fetchCameraDefectFrames,
+  fetchCameraLinkOptions, fetchCameraDefects, fetchCameraFrames, OK_SLOT,
 } from '@/api/cameras'
 import useCameraFrameUrl from '@/components/mimic/useCameraFrameUrl'
 import styles from './CameraRail.module.css'
@@ -40,8 +40,12 @@ const T = {
   stripTitle: 'ภาพ NG ล่าสุด',
   stripFiltered: (label) => `ภาพ NG · ${label}`,
   clearFilter: 'แสดงทุกสาเหตุ',
-  stripPickSlot: 'แตะสาเหตุด้านบนเพื่อดูภาพ',
+  stripPickSlot: 'แตะสาเหตุด้านบน หรือปุ่ม OK เพื่อดูภาพ',
   stripEmpty: 'ยังไม่มีภาพของสาเหตุนี้',
+  okToggle: 'ภาพ OK',
+  okTitle: 'ภาพ OK ล่าสุด',
+  okWord: 'ผ่าน',
+  okEmpty: 'ยังไม่มีภาพที่ผ่านของกล้องนี้',
   frames: 'ภาพ',
   loading: 'กำลังโหลด…',
   sourceUnavailable: 'ไม่สามารถโหลดแหล่งข้อมูลกล้องได้',
@@ -75,10 +79,17 @@ function slotLabel(slot) {
 
 function Frame({ cameraCode, slot, frame, label }) {
   const url = useCameraFrameUrl(cameraCode, slot, frame.index, frame.mtime_ns)
+  const isOk = slot === OK_SLOT
   return (
     <figure className={styles.frame}>
-      <div className={styles.frameImg}>
-        {url ? <img src={url} alt="" /> : <span className={styles.frameLoading}>NG</span>}
+      <div className={`${styles.frameImg} ${isOk ? styles.frameImgOk : ''}`}>
+        {url
+          ? <img src={url} alt="" />
+          : (
+            <span className={`${styles.frameLoading} ${isOk ? styles.frameLoadingOk : ''}`}>
+              {isOk ? 'OK' : 'NG'}
+            </span>
+          )}
       </div>
       <figcaption>
         {label}
@@ -161,9 +172,21 @@ export default function CameraRail({ node, tag, pollMs = 5000 }) {
     placeholderData: keepPreviousData,
   })
 
-  const { data: frames, isError: framesError } = useQuery({
+  /**
+   * `isPlaceholderData` is true exactly when this listing came from a *different*
+   * key — which for this query means a different slot — and false on an ordinary
+   * poll of the same one. So it is the precise test for "these frames belong to
+   * the slot the operator just left".
+   *
+   * That distinction has to be made, because index is positional: rendering the
+   * old listing under the new slot asks for frames the new folder may not have
+   * and 404s every one of them.
+   */
+  const {
+    data: frames, isError: framesError, isPlaceholderData: framesAreStale,
+  } = useQuery({
     queryKey: ['camera-frames', cameraSourceKey, camera?.code, slotFilter],
-    queryFn: () => fetchCameraDefectFrames(camera.code, slotFilter, { limit: 30 }),
+    queryFn: () => fetchCameraFrames(camera.code, slotFilter, { limit: 30 }),
     enabled: !!camera && slotFilter != null,
     refetchInterval,
     refetchIntervalInBackground: true,
@@ -175,7 +198,10 @@ export default function CameraRail({ node, tag, pollMs = 5000 }) {
     () => slots.reduce((max, s) => Math.max(max, s.count), 0),
     [slots],
   )
-  const activeSlot = slots.find((s) => s.slot === slotFilter) ?? null
+  // `slotFilter` holds a defect slot number, OK_SLOT, or null for "nothing picked".
+  const showingOk = slotFilter === OK_SLOT
+  const activeSlot = showingOk ? null : (slots.find((s) => s.slot === slotFilter) ?? null)
+  const stripFrames = framesAreStale ? null : frames
 
   const statusClass = STATUS_CLASS[tag?.status] || styles.pillStale
   const statusWord = T.statusWord[tag?.status] || T.statusWord.stale
@@ -310,15 +336,23 @@ export default function CameraRail({ node, tag, pollMs = 5000 }) {
       <div>
         <div className={styles.stripHead}>
           <span className={styles.sectionTitleInline}>
-            {activeSlot ? T.stripFiltered(slotLabel(activeSlot)) : T.stripTitle}
-            {frames?.length ? ` · ${frames.length} ${T.frames}` : ''}
+            {showingOk ? T.okTitle : activeSlot ? T.stripFiltered(slotLabel(activeSlot)) : T.stripTitle}
+            {stripFrames?.length ? ` · ${stripFrames.length} ${T.frames}` : ''}
           </span>
           <span className={styles.stripNav}>
-            {slotFilter != null && (
+            {activeSlot && (
               <button type="button" className={styles.clearBtn} onClick={() => setSlotFilter(null)}>
                 {T.clearFilter}
               </button>
             )}
+            <button
+              type="button"
+              className={`${styles.okBtn} ${showingOk ? styles.okBtnOn : ''}`}
+              aria-pressed={showingOk}
+              onClick={() => toggleSlot(OK_SLOT)}
+            >
+              {T.okToggle}
+            </button>
             <IconButton size="small" aria-label={T.scrollLeft} onClick={() => scrollStrip(-1)}>
               <ChevronLeftIcon fontSize="small" />
             </IconButton>
@@ -331,20 +365,22 @@ export default function CameraRail({ node, tag, pollMs = 5000 }) {
           <div className={styles.sprocket} aria-hidden="true" />
           {slotFilter == null ? (
             <p className={styles.stripEmpty}>{T.stripPickSlot}</p>
-          ) : frames?.length ? (
+          ) : stripFrames == null ? (
+            <p className={styles.stripEmpty}>{T.loading}</p>
+          ) : stripFrames.length ? (
             <div className={styles.strip} ref={stripRef}>
-              {frames.map((f) => (
+              {stripFrames.map((f) => (
                 <Frame
                   key={`${f.index}-${f.mtime_ns}`}
                   cameraCode={camera.code}
                   slot={slotFilter}
                   frame={f}
-                  label={activeSlot ? slotLabel(activeSlot) : ''}
+                  label={showingOk ? T.okWord : activeSlot ? slotLabel(activeSlot) : ''}
                 />
               ))}
             </div>
           ) : (
-            <p className={styles.stripEmpty}>{T.stripEmpty}</p>
+            <p className={styles.stripEmpty}>{showingOk ? T.okEmpty : T.stripEmpty}</p>
           )}
           <div className={styles.sprocket} aria-hidden="true" />
         </div>

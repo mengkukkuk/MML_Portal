@@ -158,7 +158,8 @@ def _load_encryption_key() -> tuple[str, str | None]:
 ENCRYPTION_KEY, ENCRYPTION_KEY_LOAD_ERROR = _load_encryption_key()
 
 # --- Camera image folder ----------------------------------------------------
-# <root>/<camera code>/NG/defect_<slot>/*.png
+# <root>/<camera code>/NG/<date>/defect_<slot>/*.png
+# <root>/<camera code>/OK/<date>/*.png
 
 CAMERA_IMAGE_ROOT = os.getenv("CAMERA_IMAGE_ROOT", "")
 

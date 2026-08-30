@@ -225,10 +225,20 @@ def list_linked_camera_slot_frames(
     limit = max(1, min(limit, 100))
     return camera_files.list_slot_frames(camera["code"], slot, limit=limit)
 
-def _frame_image(camera: dict[str, Any], slot: int, index: int) -> Response:
-    _checked_slot(slot)
+@router.get("/linked/{camera_code}/ok/frames", response_model=list[FrameOut])
+def list_linked_camera_ok_frames(
+    camera_code: str,
+    limit: int = 30,
+    _user: dict = Depends(get_current_user),
+):
+    """Passing frames for one camera. No slot: OK captures are uncategorized."""
+    _datasource_id, camera = _get_linked_camera_or_404(camera_code)
+    limit = max(1, min(limit, 100))
+    return camera_files.list_ok_frames(camera["code"], limit=limit)
+
+def _serve_frame(read: Callable[[], tuple[bytes, camera_files.FrameMeta]]) -> Response:
     try:
-        data, meta = camera_files.read_frame(camera["code"], slot, index)
+        data, meta = read()
     except camera_files.FrameNotFound:
         raise _not_found("Frame") from None
 
@@ -250,4 +260,14 @@ def get_linked_camera_slot_frame_image(
     _user: dict = Depends(get_current_user),
 ):
     _datasource_id, camera = _get_linked_camera_or_404(camera_code)
-    return _frame_image(camera, slot, index)
+    _checked_slot(slot)
+    return _serve_frame(lambda: camera_files.read_frame(camera["code"], slot, index))
+
+@router.get("/linked/{camera_code}/ok/frames/{index}/image")
+def get_linked_camera_ok_frame_image(
+    camera_code: str,
+    index: int,
+    _user: dict = Depends(get_current_user),
+):
+    _datasource_id, camera = _get_linked_camera_or_404(camera_code)
+    return _serve_frame(lambda: camera_files.read_ok_frame(camera["code"], index))

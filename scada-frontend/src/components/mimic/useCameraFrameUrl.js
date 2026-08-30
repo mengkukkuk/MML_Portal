@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { apiClient } from '@/api/client'
+import { cameraFrameImagePath } from '@/api/cameras'
 
 /**
  * useCameraFrameUrl — a drawable URL for one folder-backed inspection frame.
@@ -18,6 +19,9 @@ import { apiClient } from '@/api/client'
  *
  * So `mtimeNs` is part of the key. The listing endpoint returns it per frame,
  * a replaced file changes it, and the new key simply misses the cache.
+ *
+ * `slot` is a defect slot number or `OK_SLOT`; both are safe key components and
+ * both resolve through `cameraFrameImagePath`.
  */
 
 const MAX_ENTRIES = 60
@@ -37,9 +41,8 @@ function keyFor(cameraCode, slot, index, mtimeNs) {
 }
 
 async function load(cameraCode, slot, index, key) {
-  const code = encodeURIComponent(cameraCode)
   const { data } = await apiClient.get(
-    `/cameras/linked/${code}/defects/${slot}/frames/${index}/image`,
+    cameraFrameImagePath(cameraCode, slot, index),
     { responseType: 'blob' },
   )
   const url = URL.createObjectURL(data)

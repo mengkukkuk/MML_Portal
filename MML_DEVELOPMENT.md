@@ -264,7 +264,8 @@ choice is stored server-side in `user_datasource_selection` and resolved from th
 **Monitor cameras use an independent required datasource setting.** The app/config DB stores
 only `camera_link_settings`; the picker and rail read `cameras` and `camera_defect` from that
 saved datasource's configured schema by camera code. This source does not fan out and does not
-follow the user's header selection. NG frame bytes remain in `CAMERA_IMAGE_ROOT`.
+follow the user's header selection. Frame bytes — NG per defect slot, plus the camera's OK
+captures — remain on disk under `CAMERA_IMAGE_ROOT`, newest capture-date folder only.
 
 **Fan-out.** `db.fan_out(datasource_ids, query)` runs the query against every selected source
 on a bounded module-level thread pool and returns one entry per input id — in input order,

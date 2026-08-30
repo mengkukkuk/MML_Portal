@@ -1,9 +1,16 @@
 """Read categorized inspection frames off disk.
 
-The vision system writes rejected frames into a folder tree the app does not
-own and did not create:
+The vision system writes frames into a folder tree the app does not own and did
+not create:
 
-    <CAMERA_IMAGE_ROOT>/<camera code>/NG/defect_<slot>/<whatever>.png
+    <CAMERA_IMAGE_ROOT>/<camera code>/NG/<date>/defect_<slot>/<whatever>.png
+    <CAMERA_IMAGE_ROOT>/<camera code>/OK/<date>/<whatever>.png
+
+Only the **newest** date folder is read. The alternative — merging every date —
+makes the cost of a single poll grow with every day the line has ever run, and
+/defects is polled on the operator's live cadence against what is usually a
+network share. The rail's own framing ("defects in the latest batch") is same-day
+anyway, so the older folders are history, not live state.
 
 This is the only place in the backend that touches a data directory, so it is
 deliberately its own module with a DB-free, HTTP-free surface — the same role
@@ -54,9 +61,16 @@ MAX_SLOT = 16
 # would let slots_with_frames report frames that list_slot_frames cannot find.
 _SLOT_DIR_RE = re.compile(r"^defect_([1-9][0-9]?)$")
 
-# Only NG frames are categorized by defect. Every camera folder also carries an
-# empty OK/ directory; nothing reads it, and nothing here should.
-_VERDICT_DIR = "NG"
+# The two verdict trees. NG is subdivided by defect slot; OK is not — a passing
+# frame has no reason to be categorized, so its date folder holds files directly.
+_NG_DIR = "NG"
+_OK_DIR = "OK"
+
+# A capture date folder: `2026-08-30` or `20260830`. Matched rather than assumed
+# so a stray `thumbs`/`.tmp` sibling can never be mistaken for the newest day.
+# Comparison strips the dashes, which makes the two spellings sort against each
+# other correctly on the off chance a tree contains both.
+_DATE_DIR_RE = re.compile(r"^(\d{4})-?(\d{2})-?(\d{2})$")
 
 # A file this app did not write, in a folder it does not own, so the same 2 MB
 # ceiling the upload endpoint applies. Kept local rather than imported from
@@ -174,8 +188,54 @@ def _resolve_within(base: Path, *segments: str) -> Path:
     return target
 
 
+def _contained(base: Path, path: Path) -> Path | None:
+    """Resolve `path`, returning it only if it is still under `base`.
+
+    The tail of `_resolve_within`, for paths that came out of a `scandir` rather
+    than from a caller's segments. resolve() follows symlinks and junctions, so
+    this is the escape check: a `2026-08-30` junction pointing at C:\\Windows
+    resolves outside the root and is refused here.
+    """
+    try:
+        target = path.resolve(strict=True)
+    except OSError:
+        return None
+    return target if target.is_relative_to(base) else None
+
+
+def _newest_date_dir(base: Path, code: str, verdict: str) -> Path | None:
+    """One camera's most recent capture-date folder under NG/ or OK/, or None."""
+    try:
+        verdict_dir = _resolve_within(base, code, verdict)
+    except (FrameNotFound, ValueError):
+        # No folder for this camera, or a code that could not be a path. Both
+        # mean "no frames", not "something went wrong".
+        return None
+
+    newest: tuple[str, Path] | None = None
+    try:
+        with os.scandir(verdict_dir) as entries:
+            for seen, entry in enumerate(entries):
+                if seen >= _MAX_SCAN_ENTRIES:
+                    break
+                if not entry.is_dir():
+                    continue
+                match = _DATE_DIR_RE.match(entry.name)
+                if match is None:
+                    continue
+                key = "".join(match.groups())
+                if newest is None or key > newest[0]:
+                    newest = (key, Path(entry.path))
+    except OSError:
+        return None
+    if newest is None:
+        return None
+    target = _contained(base, newest[1])
+    return target if target is not None and target.is_dir() else None
+
+
 def _slot_dir(code: str, slot: int) -> Path | None:
-    """The folder holding one camera's frames for one defect slot, or None."""
+    """The folder holding one camera's newest-day frames for one defect slot."""
     if not isinstance(slot, int) or isinstance(slot, bool):
         return None
     if not MIN_SLOT <= slot <= MAX_SLOT:
@@ -183,13 +243,24 @@ def _slot_dir(code: str, slot: int) -> Path | None:
     base = root()
     if base is None:
         return None
-    try:
-        target = _resolve_within(base, code, _VERDICT_DIR, f"defect_{slot}")
-    except (FrameNotFound, ValueError):
-        # A camera with no folder, a slot never used, or a code that could not
-        # be a path — all of them mean "no frames", not "something went wrong".
+    day = _newest_date_dir(base, code, _NG_DIR)
+    if day is None:
         return None
-    return target if target.is_dir() else None
+    try:
+        child = _child(day, f"defect_{slot}")
+    except (FrameNotFound, ValueError):
+        # A slot never used on the newest day is not an error.
+        return None
+    target = _contained(base, child)
+    return target if target is not None and target.is_dir() else None
+
+
+def _ok_dir(code: str) -> Path | None:
+    """The folder holding one camera's newest-day passing frames."""
+    base = root()
+    if base is None:
+        return None
+    return _newest_date_dir(base, code, _OK_DIR)
 
 
 def slots_with_frames(code: str) -> set[int]:
@@ -201,21 +272,20 @@ def slots_with_frames(code: str) -> set[int]:
     handful of yes/no questions. That is fine once on page load and wasteful
     several times a minute, especially when the image root is a network share.
 
-    So: resolve the camera's NG directory once, then stop at the first file in
+    So: resolve the camera's newest NG day once, then stop at the first file in
     each slot. Returns an empty set for anything unreadable, same contract as
     everything else here.
     """
     base = root()
     if base is None:
         return set()
-    try:
-        ng_dir = _resolve_within(base, code, _VERDICT_DIR)
-    except (FrameNotFound, ValueError):
+    day = _newest_date_dir(base, code, _NG_DIR)
+    if day is None:
         return set()
 
     found: set[int] = set()
     try:
-        with os.scandir(ng_dir) as entries:
+        with os.scandir(day) as entries:
             for seen, entry in enumerate(entries):
                 if seen >= _MAX_SCAN_ENTRIES:
                     break
@@ -246,44 +316,51 @@ def _has_any_file(directory: str) -> bool:
     return False
 
 
-def list_slot_frames(code: str, slot: int, limit: int = 30) -> list[FrameMeta]:
-    """Frames for one camera and slot, newest first. Empty when there are none.
+def _newest_first(directory: Path) -> list[tuple[int, int, Path]]:
+    """(mtime_ns, size, path) for every regular file, newest first.
 
     Ordered by mtime rather than by parsing the filename: the names the vision
     system writes carry a timestamp but also spaces ("Screenshot 2025-05-07
     111525.png"), and mtime has been verified to match that timestamp exactly.
     Trusting the filesystem's own clock costs nothing and cannot misparse.
     """
-    directory = _slot_dir(code, slot)
+    entries: list[tuple[int, int, Path]] = []
+    with os.scandir(directory) as scan:
+        for seen, entry in enumerate(scan):
+            if seen >= _MAX_SCAN_ENTRIES:
+                break
+            if not entry.is_file():
+                continue
+            info = entry.stat()
+            entries.append((info.st_mtime_ns, info.st_size, Path(entry.path)))
+    entries.sort(key=lambda e: e[0], reverse=True)
+    return entries
+
+
+def _meta(index: int, mtime_ns: int, size: int) -> FrameMeta:
+    return FrameMeta(
+        index=index,
+        captured_at=datetime.fromtimestamp(mtime_ns / 1_000_000_000),
+        size_bytes=size,
+        mtime_ns=mtime_ns,
+    )
+
+
+def _frames_in(directory: Path | None, limit: int) -> list[FrameMeta]:
+    """Newest-first listing of one folder. Empty for anything unreadable."""
     if directory is None:
         return []
-
-    stats: list[tuple[int, int]] = []  # (mtime_ns, size)
     try:
-        with os.scandir(directory) as entries:
-            for seen, entry in enumerate(entries):
-                if seen >= _MAX_SCAN_ENTRIES:
-                    break
-                if not entry.is_file():
-                    continue
-                info = entry.stat()
-                stats.append((info.st_mtime_ns, info.st_size))
+        entries = _newest_first(directory)
     except OSError:
         return []
-
-    stats.sort(key=lambda s: s[0], reverse=True)
     return [
-        FrameMeta(
-            index=i,
-            captured_at=datetime.fromtimestamp(mtime_ns / 1_000_000_000),
-            size_bytes=size,
-            mtime_ns=mtime_ns,
-        )
-        for i, (mtime_ns, size) in enumerate(stats[:limit])
+        _meta(i, mtime_ns, size)
+        for i, (mtime_ns, size, _path) in enumerate(entries[:limit])
     ]
 
 
-def read_frame(code: str, slot: int, index: int) -> tuple[bytes, FrameMeta]:
+def _read_in(directory: Path | None, index: int) -> tuple[bytes, FrameMeta]:
     """Read one frame's bytes by its position in the newest-first listing.
 
     Raises FrameNotFound for any missing piece. The size is checked from the
@@ -295,26 +372,16 @@ def read_frame(code: str, slot: int, index: int) -> tuple[bytes, FrameMeta]:
     have skipped both that and the size ceiling — the two checks that matter
     most for a file this application did not write.
     """
-    directory = _slot_dir(code, slot)
     if directory is None:
-        raise FrameNotFound("no such camera or slot")
+        raise FrameNotFound("no such camera, slot or verdict folder")
     if not isinstance(index, int) or isinstance(index, bool) or index < 0:
         raise FrameNotFound("index must be a non-negative integer")
 
-    entries: list[tuple[int, int, Path]] = []
     try:
-        with os.scandir(directory) as scan:
-            for seen, entry in enumerate(scan):
-                if seen >= _MAX_SCAN_ENTRIES:
-                    break
-                if not entry.is_file():
-                    continue
-                info = entry.stat()
-                entries.append((info.st_mtime_ns, info.st_size, Path(entry.path)))
+        entries = _newest_first(directory)
     except OSError as exc:
-        raise FrameNotFound("cannot read the slot folder") from exc
+        raise FrameNotFound("cannot read the frame folder") from exc
 
-    entries.sort(key=lambda e: e[0], reverse=True)
     if index >= len(entries):
         raise FrameNotFound(f"no frame at index {index}")
 
@@ -329,7 +396,7 @@ def read_frame(code: str, slot: int, index: int) -> tuple[bytes, FrameMeta]:
     # scan and the read it is still a path we are choosing to trust.
     resolved = path.resolve(strict=True)
     if not resolved.is_relative_to(directory):
-        raise FrameNotFound("frame resolved outside its slot folder")
+        raise FrameNotFound("frame resolved outside its folder")
     if not resolved.is_file():
         raise FrameNotFound("not a regular file")
 
@@ -338,10 +405,24 @@ def read_frame(code: str, slot: int, index: int) -> tuple[bytes, FrameMeta]:
     except OSError as exc:
         raise FrameNotFound("cannot read the frame") from exc
 
-    meta = FrameMeta(
-        index=index,
-        captured_at=datetime.fromtimestamp(mtime_ns / 1_000_000_000),
-        size_bytes=size,
-        mtime_ns=mtime_ns,
-    )
-    return data, meta
+    return data, _meta(index, mtime_ns, size)
+
+
+def list_slot_frames(code: str, slot: int, limit: int = 30) -> list[FrameMeta]:
+    """Rejected frames for one camera and defect slot, newest first."""
+    return _frames_in(_slot_dir(code, slot), limit)
+
+
+def read_frame(code: str, slot: int, index: int) -> tuple[bytes, FrameMeta]:
+    """One rejected frame's bytes, addressed by newest-first position."""
+    return _read_in(_slot_dir(code, slot), index)
+
+
+def list_ok_frames(code: str, limit: int = 30) -> list[FrameMeta]:
+    """Passing frames for one camera, newest first. Not split by defect slot."""
+    return _frames_in(_ok_dir(code), limit)
+
+
+def read_ok_frame(code: str, index: int) -> tuple[bytes, FrameMeta]:
+    """One passing frame's bytes, addressed by newest-first position."""
+    return _read_in(_ok_dir(code), index)

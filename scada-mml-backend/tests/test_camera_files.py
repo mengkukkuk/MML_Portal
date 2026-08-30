@@ -19,31 +19,65 @@ WEBP = b"RIFF" + struct.pack("<I", 32) + b"WEBP" + b"\x00" * 20
 SVG = b'<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>'
 
 
+# The two capture days the fixture builds. Only DAY is ever read; OLD_DAY exists
+# so every test is also a check that yesterday stays out of today's listing.
+DAY = "2026-08-30"
+OLD_DAY = "2026-08-29"
+
+
+def ng_day(root, day=DAY):
+    return root / "cam-03" / "NG" / day
+
+
+def ok_day(root, day=DAY):
+    return root / "cam-03" / "OK" / day
+
+
+def _stamp(directory, names_and_mtimes, data=PNG):
+    for name, mtime in names_and_mtimes:
+        path = directory / name
+        path.write_bytes(data)
+        os.utime(path, (mtime, mtime))
+
+
 @pytest.fixture
 def image_root(tmp_path, monkeypatch):
     """A stand-in for the vision system's output folder.
 
     Mirrors the real one: lowercase camera directories against upper-case codes,
-    an NG tree with some slots used and some absent, an empty OK/ nobody reads,
-    and filenames with spaces in them.
+    NG and OK trees each subdivided by capture date, some slots used and some
+    absent, and filenames with spaces in them.
+
+    The older day is fully populated on both sides. Nothing under it should ever
+    surface — reading it would mean a poll's cost grows with the line's history.
     """
     root = tmp_path / "tobacco_cam"
-    slot1 = root / "cam-03" / "NG" / "defect_1"
+    slot1 = ng_day(root) / "defect_1"
     slot1.mkdir(parents=True)
-    (root / "cam-03" / "NG" / "defect_2").mkdir()      # present but empty
-    (root / "cam-03" / "OK").mkdir()                    # never read
-    # defect_3..5 deliberately absent — the table has five slots, the line uses two.
+    (ng_day(root) / "defect_2").mkdir()               # present but empty
+    # defect_3.. deliberately absent — an unused slot has no folder at all.
+
+    old_slot1 = ng_day(root, OLD_DAY) / "defect_1"
+    old_slot1.mkdir(parents=True)
+    (ng_day(root, OLD_DAY) / "defect_7").mkdir()      # a slot only yesterday used
+
+    ok_day(root).mkdir(parents=True)
+    ok_day(root, OLD_DAY).mkdir(parents=True)
 
     # Written oldest-first, then stamped out of order, so any test that passes
     # by accident of creation order fails here.
-    for name, mtime in (
+    _stamp(slot1, (
         ("Screenshot 2025-05-07 105855.png", 1_746_589_135),
-        ("Screenshot 2025-05-07 110032.png", 1_746_590_432),
         ("Screenshot 2025-05-07 111525.png", 1_746_591_325),
-    ):
-        path = slot1 / name
-        path.write_bytes(PNG)
-        os.utime(path, (mtime, mtime))
+        ("Screenshot 2025-05-07 110032.png", 1_746_590_432),
+    ))
+    _stamp(old_slot1, (("yesterday.png", 1_746_500_000),))
+    _stamp(ng_day(root, OLD_DAY) / "defect_7", (("yesterday.png", 1_746_500_001),))
+    _stamp(ok_day(root), (
+        ("pass a.png", 1_746_589_200),
+        ("pass b.png", 1_746_591_400),
+    ))
+    _stamp(ok_day(root, OLD_DAY), (("yesterday-ok.png", 1_746_500_002),))
 
     monkeypatch.setattr(camera_files.config, "CAMERA_IMAGE_ROOT", str(root))
     return root
@@ -128,7 +162,7 @@ def test_limit_caps_the_listing(image_root):
 
 
 def test_directories_inside_a_slot_are_not_listed_as_frames(image_root):
-    (image_root / "cam-03" / "NG" / "defect_1" / "subdir").mkdir()
+    (ng_day(image_root) / "defect_1" / "subdir").mkdir()
     assert len(camera_files.list_slot_frames("CAM-03", 1)) == 3
 
 
@@ -143,6 +177,112 @@ def test_bool_is_not_a_valid_slot(image_root):
     """True == 1 in Python. A bool arriving here means a caller mixed up a flag
     with a slot number, and silently reading defect_1 would hide that."""
     assert camera_files.list_slot_frames("CAM-03", True) == []
+
+
+# --- the date level ------------------------------------------------------------
+# Only the newest capture day is read, on both trees. These pin that down,
+# because "merge every day" is the intuitive reading of the folder tree and it
+# is the one whose cost grows without bound.
+
+def test_only_the_newest_day_is_listed(image_root):
+    """The older day holds a defect_1 frame of its own. Seeing 4 here would mean
+    a poll's cost grows with every day the line has ever run."""
+    frames = camera_files.list_slot_frames("CAM-03", 1)
+    assert len(frames) == 3
+    assert all(f.mtime_ns > 1_746_500_000 * 1_000_000_000 for f in frames)
+
+
+def test_a_slot_used_only_yesterday_is_not_offered(image_root):
+    """defect_7 exists under the older day only. Offering it would put a chip on
+    the rail whose film strip is permanently empty."""
+    assert 7 not in camera_files.slots_with_frames("CAM-03")
+    assert camera_files.list_slot_frames("CAM-03", 7) == []
+
+
+def test_a_newer_day_takes_over(image_root):
+    newer = ng_day(image_root, "2026-09-01") / "defect_1"
+    newer.mkdir(parents=True)
+    _stamp(newer, (("today.png", 1_800_000_000),))
+    frames = camera_files.list_slot_frames("CAM-03", 1)
+    assert [f.mtime_ns for f in frames] == [1_800_000_000 * 1_000_000_000]
+
+
+def test_compact_and_dashed_date_folders_sort_against_each_other(image_root):
+    """`20260901` and `2026-09-01` are the same day spelled two ways. Comparing
+    the raw names would sort every compact folder below every dashed one."""
+    newer = ng_day(image_root, "20260901") / "defect_1"
+    newer.mkdir(parents=True)
+    _stamp(newer, (("today.png", 1_800_000_000),))
+    assert len(camera_files.list_slot_frames("CAM-03", 1)) == 1
+
+
+def test_non_date_folders_are_never_mistaken_for_a_day(image_root):
+    """A `thumbs`/`_tmp` sibling sorts above every date string. Picking it would
+    empty the strip on a camera that has frames."""
+    for name in ("thumbs", "zz-archive", "_tmp"):
+        (image_root / "cam-03" / "NG" / name / "defect_1").mkdir(parents=True)
+    assert len(camera_files.list_slot_frames("CAM-03", 1)) == 3
+
+
+def test_a_verdict_tree_with_no_date_folders_is_empty(image_root):
+    (image_root / "cam-09" / "NG").mkdir(parents=True)
+    assert camera_files.list_slot_frames("CAM-09", 1) == []
+    assert camera_files.slots_with_frames("CAM-09") == set()
+
+
+# --- OK frames -----------------------------------------------------------------
+# The passing tree is flat below the date: an OK capture has no defect, so there
+# is nothing to categorize it by. Same degradation contract as everything else.
+
+def test_ok_frames_are_newest_first(image_root):
+    frames = camera_files.list_ok_frames("CAM-03")
+    assert [f.index for f in frames] == [0, 1]
+    assert frames[0].mtime_ns > frames[1].mtime_ns
+
+
+def test_ok_frames_come_from_the_newest_day_only(image_root):
+    assert len(camera_files.list_ok_frames("CAM-03")) == 2
+
+
+def test_ok_limit_caps_the_listing(image_root):
+    assert len(camera_files.list_ok_frames("CAM-03", limit=1)) == 1
+
+
+def test_ok_frames_match_the_camera_case_insensitively(image_root):
+    assert len(camera_files.list_ok_frames("cam-03")) == 2
+
+
+def test_reading_an_ok_frame_returns_its_bytes(image_root):
+    data, meta = camera_files.read_ok_frame("CAM-03", 0)
+    assert data == PNG
+    assert meta.index == 0
+    assert meta.size_bytes == len(PNG)
+
+
+def test_ok_index_past_the_end_is_not_found(image_root):
+    with pytest.raises(FrameNotFound):
+        camera_files.read_ok_frame("CAM-03", 2)
+
+
+def test_ok_frames_are_empty_without_a_root(monkeypatch):
+    monkeypatch.setattr(camera_files.config, "CAMERA_IMAGE_ROOT", "")
+    assert camera_files.list_ok_frames("CAM-03") == []
+    with pytest.raises(FrameNotFound):
+        camera_files.read_ok_frame("CAM-03", 0)
+
+
+def test_ok_frames_are_empty_for_a_camera_with_no_ok_tree(image_root):
+    (image_root / "cam-07" / "NG").mkdir(parents=True)
+    assert camera_files.list_ok_frames("CAM-07") == []
+
+
+@pytest.mark.parametrize("code", ["../../etc", "C:\\Windows", "NUL", ""])
+def test_a_hostile_camera_code_reads_no_ok_frames(image_root, code):
+    """The OK path takes the camera code from the same place the NG path does,
+    so it has to enforce the same containment."""
+    assert camera_files.list_ok_frames(code) == []
+    with pytest.raises(FrameNotFound):
+        camera_files.read_ok_frame(code, 0)
 
 
 # --- slots_with_frames ---------------------------------------------------------
@@ -178,16 +318,16 @@ def test_slots_with_frames_ignores_directories_that_are_not_slots(image_root):
     listing disagree.
     """
     for name in (f"defect_{camera_files.MAX_SLOT + 1}", "defect_01", "scratch"):
-        (image_root / "cam-03" / "NG" / name).mkdir()
-        (image_root / "cam-03" / "NG" / name / "x.png").write_bytes(PNG)
+        (ng_day(image_root) / name).mkdir()
+        (ng_day(image_root) / name / "x.png").write_bytes(PNG)
     assert camera_files.slots_with_frames("CAM-03") == {1}
 
 
 def test_slots_with_frames_reaches_past_the_original_five(image_root):
     """The ceiling moved with defect_array's length; a camera declaring more
     than five defect types must still be able to show their pictures."""
-    (image_root / "cam-03" / "NG" / "defect_9").mkdir()
-    (image_root / "cam-03" / "NG" / "defect_9" / "x.png").write_bytes(PNG)
+    (ng_day(image_root) / "defect_9").mkdir()
+    (ng_day(image_root) / "defect_9" / "x.png").write_bytes(PNG)
     assert 9 in camera_files.slots_with_frames("CAM-03")
     assert [f.index for f in camera_files.list_slot_frames("CAM-03", 9)] == [0]
 
@@ -223,7 +363,7 @@ def test_negative_and_bool_indexes_are_refused(image_root, index):
 
 
 def test_oversized_frame_is_refused_without_being_read(image_root):
-    big = image_root / "cam-03" / "NG" / "defect_1" / "huge.png"
+    big = ng_day(image_root) / "defect_1" / "huge.png"
     big.write_bytes(PNG + b"\x00" * (camera_files.MAX_FRAME_BYTES + 1))
     os.utime(big, (2_000_000_000, 2_000_000_000))  # newest, so index 0
     with pytest.raises(FrameNotFound):
@@ -235,7 +375,7 @@ def test_read_returns_bytes_so_the_caller_can_sniff_them(image_root):
     rather than a path precisely so cameras.py can check the magic bytes — a
     FileResponse would have streamed this to the browser on the strength of its
     extension alone."""
-    liar = image_root / "cam-03" / "NG" / "defect_1" / "liar.png"
+    liar = ng_day(image_root) / "defect_1" / "liar.png"
     liar.write_bytes(SVG)
     os.utime(liar, (2_000_000_000, 2_000_000_000))
     data, _ = camera_files.read_frame("CAM-03", 1, 0)
@@ -326,10 +466,29 @@ def test_a_symlinked_camera_folder_cannot_escape_the_root(tmp_path, monkeypatch)
 
     root = tmp_path / "root"
     root.mkdir()
-    secret = tmp_path / "secret" / "NG" / "defect_1"
+    secret = tmp_path / "secret" / "NG" / DAY / "defect_1"
     secret.mkdir(parents=True)
     (secret / "loot.png").write_bytes(PNG)
     (root / "cam-03").symlink_to(tmp_path / "secret", target_is_directory=True)
 
     monkeypatch.setattr(camera_files.config, "CAMERA_IMAGE_ROOT", str(root))
     assert camera_files.list_slot_frames("CAM-03", 1) == []
+
+
+def test_a_symlinked_date_folder_cannot_escape_the_root(tmp_path, monkeypatch):
+    """The date level is chosen from a scandir rather than from caller segments,
+    so it does not pass through _resolve_within. _contained is what re-checks it,
+    and this is the case that would be silently open without it."""
+    if not _can_symlink(tmp_path):
+        pytest.skip("this host cannot create symlinks (Windows without Developer Mode)")
+
+    root = tmp_path / "root"
+    (root / "cam-03" / "NG").mkdir(parents=True)
+    secret = tmp_path / "secret" / "defect_1"
+    secret.mkdir(parents=True)
+    (secret / "loot.png").write_bytes(PNG)
+    (root / "cam-03" / "NG" / DAY).symlink_to(tmp_path / "secret", target_is_directory=True)
+
+    monkeypatch.setattr(camera_files.config, "CAMERA_IMAGE_ROOT", str(root))
+    assert camera_files.list_slot_frames("CAM-03", 1) == []
+    assert camera_files.slots_with_frames("CAM-03") == set()
