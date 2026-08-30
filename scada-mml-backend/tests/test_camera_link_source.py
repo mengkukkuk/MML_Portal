@@ -88,6 +88,43 @@ def test_deleted_datasource_cannot_be_selected(monkeypatch):
     assert exc.value.detail == "Datasource not found"
 
 
+def test_deleting_configured_datasource_clears_source_and_returns_409(monkeypatch):
+    statements = []
+
+    class Connection:
+        def execute(self, statement, *_args):
+            statements.append(str(statement))
+
+        def commit(self):
+            pass
+
+    @contextmanager
+    def app_connection():
+        yield Connection()
+
+    monkeypatch.setattr(db, "get_connection", app_connection)
+    db.init_camera_link_settings_table()
+    assert any("ON DELETE SET NULL" in statement for statement in statements)
+
+    # This is the row shape after PostgreSQL applies that FK action.
+    monkeypatch.setattr(
+        db,
+        "get_camera_link_source",
+        lambda: {"datasource_id": None, "datasource_name": None},
+    )
+    monkeypatch.setattr(
+        db,
+        "get_remote_camera_option_by_code",
+        lambda *_args: pytest.fail("must not query a cleared camera source"),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        cameras.linked_camera_defects("cam-001", _user=USER)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "Camera source is not configured"
+
+
 def test_camera_options_report_an_unreachable_source_as_503(monkeypatch):
     monkeypatch.setattr(
         db,
