@@ -149,6 +149,15 @@ if (Test-Path $envFile) {
         $existingAppDbPasswordRaw = $Matches[1].Trim()
     }
 }
+# Whether PostgreSQL was already here before this run -- NOT whether .env exists. .env can be
+# absent for reasons that have nothing to do with Postgres being fresh (an uninstall wipes the
+# install dir, including .env, but never touches Postgres itself), so ".env is missing" must
+# never be treated as "safe to mint a brand-new superuser password" on its own: Step 1 below
+# only ever applies --superpassword when it *installs* PostgreSQL, i.e. when this service does
+# NOT already exist. Minting a random secret whenever .env merely happened to be missing wrote
+# a password into .env that was never actually set on a pre-existing Postgres instance --
+# permanently breaking every DB connection until someone noticed and fixed it by hand.
+$pgSvcPreExisting = Get-Service -Name "postgresql-x64-18" -ErrorAction SilentlyContinue
 if ($existingAppDbPasswordRaw) {
     # Reinstall over an install that already migrated to this feature -- reuse as-is, whether
     # it's a dpapi: blob or (pre-migration hand-edited) plaintext.
@@ -157,14 +166,18 @@ if ($existingAppDbPasswordRaw) {
     } else {
         $AppDbPassword = $existingAppDbPasswordRaw
     }
-} elseif (Test-Path $envFile) {
-    # .env exists but predates APP_DB_PASSWORD -- PostgreSQL itself was never touched, so keep
-    # the legacy literal or every DB call breaks after an "upgrade" that never changed Postgres.
+} elseif ($pgSvcPreExisting) {
+    # PostgreSQL already exists on this machine -- whether .env also exists (predates
+    # APP_DB_PASSWORD) or not (wiped by an uninstall/reinstall cycle), Step 1 below will skip
+    # the bundled installer entirely and never apply a new password to this instance. Fall back
+    # to the legacy hardcoded default and let Step 1's connectivity check confirm/deny it
+    # against the real instance instead of guessing with a secret Postgres never had.
     $AppDbPassword = "P@ssw0rd"
     $AppDbPasswordIsNew = $true
 } else {
-    # Genuinely fresh install -- safe to mint a real per-install secret before the bundled
-    # PostgreSQL installer (if any) even runs.
+    # Genuinely fresh install -- no .env AND no pre-existing Postgres service -- safe to mint a
+    # real per-install secret, since Step 1 will pass it as --superpassword to the installer
+    # that is actually about to create this Postgres instance with it.
     $AppDbPassword = (& $PythonExe -c "import secrets; print(secrets.token_hex(24))").Trim()
     $AppDbPasswordIsNew = $true
 }
@@ -374,13 +387,22 @@ try {
     # $AppDbPasswordIsNew (a genuinely fresh install, or an upgrade from a pre-APP_DB_PASSWORD
     # .env still on the legacy literal). An already-migrated dpapi: value is left untouched so a
     # reinstall never invalidates the real PostgreSQL password it was already set to.
-    if ($AppDbPasswordIsNew) {
+    #
+    # Also gated on $pgCheckOk (Step 1's connectivity probe against the real instance, using
+    # this exact candidate password) -- belt-and-suspenders alongside the pre-existing-service
+    # check above: a candidate that Step 1 already proved doesn't work must never be persisted.
+    # Leaving APP_DB_PASSWORD unset in that case is safe -- config.py's own fallback for a
+    # missing key is the same "P@ssw0rd" literal -- and it leaves a working dpapi: value from a
+    # PRIOR successful run (if any) untouched instead of clobbering it with a known-bad one.
+    if ($AppDbPasswordIsNew -and $pgCheckOk) {
         $appDbPasswordProtected = Protect-DpapiSecret $AppDbPassword
         if ($content -match '(?m)^APP_DB_PASSWORD=') {
             $content = [regex]::Replace($content, '(?m)^APP_DB_PASSWORD=.*$', "APP_DB_PASSWORD=$appDbPasswordProtected")
         } else {
             $content = $content.TrimEnd() + "`nAPP_DB_PASSWORD=$appDbPasswordProtected`n"
         }
+    } elseif ($AppDbPasswordIsNew) {
+        Write-Log "APP_DB_PASSWORD left untouched in .env -- the candidate password failed Step 1's connectivity check against the real PostgreSQL instance, so it was not written. Resolve the real 'postgres' role password (reset it to match, or run tools\protect-secret.ps1 with the real password and paste the result into APP_DB_PASSWORD in .env) before the backend can reach the database." "WARN"
     }
     $content | Out-File $envFile -Encoding utf8 -NoNewline
     Write-Result ".env configured" $true $(if ($isNewEnv) { "created $envFile" } else { "reconciled existing $envFile (JWT_SECRET preserved)" })

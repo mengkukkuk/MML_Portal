@@ -81,7 +81,7 @@ DB_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
 APP_DB_HOST = "localhost"
 APP_DB_PORT = 5432
 APP_DB_NAME = os.getenv("APP_DB_NAME", "postgres")
-APP_DB_USER = "postgres"
+APP_DB_USER = os.getenv("APP_DB_USER", "postgres")
 APP_DB_PASSWORD = _resolve_secret("APP_DB_PASSWORD", "P@ssw0rd")
 APP_DB_SCHEMA = os.getenv("APP_DB_SCHEMA", "public")
 
