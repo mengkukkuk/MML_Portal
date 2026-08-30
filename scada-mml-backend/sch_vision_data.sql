@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS vision_data2.camera_defect
     station_code  text,
     station_label text,
     location      text,
-    batch_id      integer DEFAULT 1 NOT NULL,
+    batch_id      integer DEFAULT 0 NOT NULL,
     defect_array  integer[] DEFAULT '{0,0,0,0,0}'::integer[],
     created_at    timestamptz DEFAULT now() NOT NULL,
     updated_at    timestamptz DEFAULT now() NOT NULL
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS vision_data2.camera_defect_logs
     station_code  text,
     station_label text,
     location      text,
-    batch_id      bigserial NOT NULL,
+    batch_id      integer DEFAULT 0 NOT NULL,
     defect_array  integer[] NOT NULL,
     created_at    timestamptz DEFAULT now() NOT NULL,
     updated_at    timestamptz DEFAULT now() NOT NULL
