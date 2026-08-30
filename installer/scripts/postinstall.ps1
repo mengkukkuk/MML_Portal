@@ -432,6 +432,19 @@ if (-not (Test-Path $NssmExe)) {
     & $NssmExe set $ServiceName DisplayName         "MML Portal API"
     & $NssmExe set $ServiceName Description         "MML Portal backend - FastAPI/uvicorn on port $ServicePort"
     & $NssmExe set $ServiceName Start               SERVICE_AUTO_START
+    # Without this, Windows SCM starts mml-api and postgresql-x64-18 independently on boot with
+    # no ordering guarantee -- the app has its own connection-pool retry/self-heal logic so a
+    # lost race isn't fatal, but there's no reason to invite the race (and the noisy warm-up
+    # errors it logs) when SCM can just enforce the order directly. Only set this when the
+    # service actually exists under this exact name: a dependency on a nonexistent service name
+    # (e.g. a DBA-managed PostgreSQL under a custom service name) would make mml-api refuse to
+    # start at all -- strictly worse than today's race, which merely delays first connection.
+    $pgSvcForDependency = Get-Service -Name "postgresql-x64-18" -ErrorAction SilentlyContinue
+    if ($pgSvcForDependency) {
+        & $NssmExe set $ServiceName DependOnService "postgresql-x64-18"
+    } else {
+        Write-Log "postgresql-x64-18 service not found -- not setting a service dependency for '$ServiceName'. If PostgreSQL runs locally under a different service name, set it manually: nssm set $ServiceName DependOnService <your-postgres-service-name>" "WARN"
+    }
     $logDir = Join-Path $BackendDir "logs"
     New-Item -ItemType Directory -Force -Path $logDir | Out-Null
     & $NssmExe set $ServiceName AppStdout           (Join-Path $logDir "stdout.log")
