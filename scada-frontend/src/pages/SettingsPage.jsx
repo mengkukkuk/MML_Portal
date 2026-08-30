@@ -179,6 +179,8 @@ export default function SettingsPage() {
     mutationFn: (id) => deleteDatasource(id),
     onSuccess: (_data, id) => {
       invalidateDatasources()
+      queryClient.invalidateQueries({ queryKey: ['camera-link-source'] })
+      queryClient.invalidateQueries({ queryKey: ['camera-link-options'] })
       setRowTest((prev) => {
         const next = { ...prev }
         delete next[id]
@@ -529,7 +531,7 @@ export default function SettingsPage() {
       <section className={`${styles.mod} ${collapsed.cameraSource ? styles.modCollapsed : ''}`}>
         <header className={styles.modHead} onClick={() => toggle('cameraSource')}>
           <span className={styles.modTag}>Camera source</span>
-          <span className={styles.modSub}>Where the Monitor camera picker reads from</span>
+          <span className={styles.modSub}>Where Monitor camera identity reads from</span>
           <ChevronRightRounded
             className={`${styles.modChevron} ${!collapsed.cameraSource ? styles.modChevronOpen : ''}`}
           />
@@ -537,11 +539,9 @@ export default function SettingsPage() {
         {!collapsed.cameraSource && (
           <div className={styles.modBody}>
             <p className={styles.fldHint}>
-              The Monitor page&apos;s camera link picker (position, then code) reads
-              its list from this app&apos;s own Cameras table by default. Point it at
-              a saved connection instead to read live from that system&apos;s own
-              camera registry — e.g. a vision system that already maintains one.
-              Defect counts and NG frames are unaffected either way.
+              The Monitor camera picker, rail identity, and defect counts read from
+              one required saved connection. NG frame images remain in the configured
+              image folder and are matched by camera code.
             </p>
             {!isAdmin && (
               <p className={styles.dsReadonly}>
@@ -558,9 +558,9 @@ export default function SettingsPage() {
                     value={cameraSource?.datasource_id ?? ''}
                     disabled={!isAdmin || cameraSourceMutation.isPending}
                     displayEmpty
-                    onChange={(e) => cameraSourceMutation.mutate(e.target.value || null)}
+                    onChange={(e) => cameraSourceMutation.mutate(e.target.value)}
                   >
-                    <MenuItem value="">Local — this app&apos;s Cameras table</MenuItem>
+                    <MenuItem value="" disabled>Select camera source</MenuItem>
                     {datasources.map((ds) => (
                       <MenuItem key={ds.id} value={ds.id}>{ds.name}</MenuItem>
                     ))}

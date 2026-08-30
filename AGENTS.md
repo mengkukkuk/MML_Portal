@@ -83,6 +83,10 @@ The single most important split in this codebase.
   read from the rows of `datasources` the current user has selected in the header
   (`user_datasource_selection`, resolved from the JWT by `auth.resolve_active_datasources`).
   No explicit selection falls back to the lowest-id datasource, flagged `implicit: true`.
+- **Monitor cameras are a separate configured-source read.** The app DB stores only the
+  singleton `camera_link_settings` datasource choice. Camera identity and defect batches are
+  read from that datasource's `cameras` / `camera_defect` tables by stable camera code; they
+  do not follow the header selection and never fall back to local camera tables.
 - **The header selection overrides everything.** A panel's or symbol's stored
   `datasource_id` is not consulted for reads.
 - Reads **fan out** across the selection via `db.fan_out` / `db.fan_out_rows` (threaded,
@@ -114,6 +118,7 @@ The single most important split in this codebase.
 | `datasources.py` | `/api/datasources/*` — plant connection CRUD (admin gates writes; test endpoint probes real connections) **and** `/selection` GET/PUT/DELETE, the per-user header choice (any role, max 8) |
 | `sources.py` | `SourceReport` — the per-source `ok`/`error` block every fanned-out response carries, plus a tz-safe sort key for merging plants |
 | `mimic.py` | `/api/mimic/*` — layout CRUD for `/monitor` drawings, asset uploads, symbol/wire binding validation (admin token gates writes) |
+| `cameras.py` | `/api/cameras/*` — required camera-source selection, camera-code binding options, remote defect summaries, and read-only folder-backed NG frames |
 | `events.py` | `/api/events/*` — read-only event-log endpoints backing the Events page |
 | `alarms.py` | `/api/alarms/*` — read-only alarm-log endpoints with Acknowledge action for the Alarms page |
 | `reports.py` | `/api/reports/*` — OEE/MES reporting: template CRUD (admin token gates template writes), report runs, CSV/Excel export |

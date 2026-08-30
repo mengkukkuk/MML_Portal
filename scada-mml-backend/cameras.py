@@ -1,34 +1,18 @@
-"""Camera config, defect counters and frame endpoints behind the /monitor rail.
+"""Configured-source camera registry, defect counters and NG frame endpoints.
 
-``cameras`` is app config, not plant data: a station's camera is named once by
-an admin, and a mimic node reaches it by its ``code``. Reads are open to any
-authenticated user; writes require an admin token.
-
-There are two separate image paths here, and the distinction is the reason this
-module is longer than it looks:
-
-* **Snapshots** (``camera_snapshots``) are uploaded *through* this API and kept
-  as bytes in Postgres, for the reasons ``mimic.py`` gives for asset images —
-  the file never becomes a URL the app cannot revoke. This is the only
-  ingestion path in the system. The rail no longer renders them, but nothing
-  else can accept a frame, so the route stays.
-* **Frames** are read off disk from the folder the vision system writes into,
-  via ``camera_files``. The app never writes there and treats everything it
-  finds as untrusted: the size is capped, the format is sniffed from the
-  content, and the path is proven to stay inside the configured root.
-
-Defect counts come from ``camera_defect`` keyed by camera code — app data, not
-a fanned-out plant read, which is why nothing in this file touches
-``active_datasources``.
+Camera identity and defect batches are read exclusively from the datasource
+selected in Settings. They never fall back to the app/config database and are
+independent of the user's header datasource selection. Folder-backed NG images
+remain read-only filesystem data keyed by the same stable camera code.
 """
-import hashlib
 from datetime import datetime
 from typing import Any
 
 import psycopg
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
+from psycopg_pool import PoolTimeout
 
 import camera_files
 import db
@@ -55,24 +39,26 @@ def _detail(e: Exception) -> str:
     return text.splitlines()[0] if text else "Database error"
 
 
-# --- Link picker source --------------------------------------------------------
-# Which table backs the "Linked to" dropdown in the Monitor symbol inspector.
-# Declared before the /{camera_id} routes below: FastAPI/Starlette matches by
-# declaration order, and PUT /api/cameras/link-source would otherwise be
-# captured by PUT /api/cameras/{camera_id} and 422 on the int conversion —
-# same reasoning as datasources.py's /selection routes.
-#
-# Separate from the CRUD below: an admin can point the *picker* at a plant
-# datasource's own camera registry (e.g. a vision system) without touching how
-# defect counts or NG frames are stored — those keep reading this app's own
-# `camera_defect` / `camera_snapshots`, keyed by the linked camera's code.
+def _camera_source_or_409() -> dict[str, Any]:
+    settings = db.get_camera_link_source()
+    if not settings or settings.get("datasource_id") is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Camera source is not configured",
+        )
+    return settings
+
+
+# --- Camera source -------------------------------------------------------------
+# One saved datasource backs both the "Linked to" picker and rail defect data.
+# NG image bytes remain filesystem-backed and use the same camera code.
 class CameraLinkSourceOut(BaseModel):
     datasource_id: int | None = None
     datasource_name: str | None = None
 
 
 class CameraLinkSourceIn(BaseModel):
-    datasource_id: int | None = None
+    datasource_id: int = Field(..., ge=1)
 
 
 @router.get("/link-source", response_model=CameraLinkSourceOut)
@@ -82,7 +68,7 @@ def camera_link_source(_user: dict = Depends(get_current_user)):
 
 @router.put("/link-source", response_model=CameraLinkSourceOut)
 def set_camera_link_source(body: CameraLinkSourceIn, _admin: dict = Depends(require_admin)):
-    if body.datasource_id is not None and db.get_datasource(body.datasource_id) is None:
+    if db.get_datasource(body.datasource_id) is None:
         raise _not_found("Datasource")
     return db.set_camera_link_source(body.datasource_id)
 
@@ -94,13 +80,16 @@ class CameraLinkOptionOut(BaseModel):
     station_label: str | None = None
     location: str | None = None
     enabled: bool = True
+    defect_1_label: str | None = None
+    defect_2_label: str | None = None
+    defect_3_label: str | None = None
+    defect_4_label: str | None = None
+    defect_5_label: str | None = None
 
 
 class CameraLinkOptionsOut(BaseModel):
-    # "local" — no datasource designated, reading this app's own `cameras`.
-    # "datasource" — reading the designated plant datasource's `cameras` table.
     source: str
-    datasource_id: int | None = None
+    datasource_id: int
     datasource_name: str | None = None
     cameras: list[CameraLinkOptionOut]
 
@@ -110,18 +99,17 @@ def camera_link_options(_user: dict = Depends(get_current_user)):
     """Candidate cameras for the Monitor link picker, position (location) and
     code being the two fields the picker filters on.
 
-    Falls back to this app's own `cameras` table when no datasource has been
-    designated in Settings, so a fresh install still has a working picker.
+    A configured source is mandatory; an unconfigured install returns 409.
     """
-    settings = db.get_camera_link_source()
-    ds_id = settings["datasource_id"] if settings else None
-    if ds_id is None:
-        return {
-            "source": "local", "datasource_id": None, "datasource_name": None,
-            "cameras": db.list_cameras(),
-        }
+    settings = _camera_source_or_409()
+    ds_id = settings["datasource_id"]
     try:
         cameras = db.list_remote_camera_options(ds_id)
+    except (psycopg.OperationalError, PoolTimeout) as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_detail(e),
+        )
     except (ValueError, psycopg.Error) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_detail(e))
     return {
@@ -131,85 +119,31 @@ def camera_link_options(_user: dict = Depends(get_current_user)):
     }
 
 
-# --- camera config -----------------------------------------------------------
-class CameraOut(BaseModel):
-    id: int
-    code: str
-    name: str
-    station_code: str | None = None
-    station_label: str | None = None
-    location: str | None = None
-    enabled: bool = True
-    updated_at: datetime
-    defect_1_label: str | None = None
-    defect_2_label: str | None = None
-    defect_3_label: str | None = None
-    defect_4_label: str | None = None
-    defect_5_label: str | None = None
+def _get_linked_camera_or_404(camera_code: str) -> tuple[int, dict[str, Any]]:
+    """Resolve rail identity against the source selected in Settings.
 
-
-class CameraIn(BaseModel):
-    # `code` reaches the filesystem: camera_files.py builds the image folder
-    # path from it. Restricted here to characters that cannot mean anything to
-    # a path resolve, and validated again at the filesystem boundary — one
-    # layer is config, the other is the actual defense.
-    code: str = Field(
-        ..., min_length=1, max_length=40, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
-    )
-    name: str = Field(..., min_length=1, max_length=120)
-    station_code: str | None = None
-    station_label: str | None = None
-    location: str | None = None
-    enabled: bool = True
-    # PUT replaces the whole row (there is no PATCH), so a caller that omits
-    # these clears them. No such caller exists yet — nothing in the frontend
-    # calls createCamera/updateCamera, SQL seeds the rows — but whoever
-    # builds a camera admin form must give the labels inputs.
-    defect_1_label: str | None = None
-    defect_2_label: str | None = None
-    defect_3_label: str | None = None
-    defect_4_label: str | None = None
-    defect_5_label: str | None = None
-
-
-@router.get("", response_model=list[CameraOut])
-def list_cameras(_user: dict = Depends(get_current_user)):
-    return db.list_cameras()
-
-
-@router.post("", response_model=CameraOut, status_code=status.HTTP_201_CREATED)
-def create_camera(body: CameraIn, _admin: dict = Depends(require_admin)):
-    existing = db.get_camera_by_code(body.code)
-    if existing is not None:
-        raise _bad(f"a camera with code {body.code!r} already exists")
-    return db.insert_camera(body.model_dump())
-
-
-@router.put("/{camera_id}", response_model=CameraOut)
-def update_camera(camera_id: int, body: CameraIn, _admin: dict = Depends(require_admin)):
-    existing = db.get_camera_by_code(body.code)
-    if existing is not None and existing["id"] != camera_id:
-        raise _bad(f"a camera with code {body.code!r} already exists")
-    row = db.update_camera(camera_id, body.model_dump())
-    if row is None:
+    This is deliberately separate from ``_get_camera_or_404`` below. That
+    helper backs CRUD/snapshot routes whose integer ids belong to the local app
+    database; a Monitor link is a code and may belong to another database.
+    """
+    settings = _camera_source_or_409()
+    ds_id = settings["datasource_id"]
+    try:
+        camera = db.get_remote_camera_option_by_code(ds_id, camera_code)
+    except (psycopg.OperationalError, PoolTimeout) as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_detail(e),
+        )
+    except (ValueError, psycopg.Error) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_detail(e))
+    if camera is None:
         raise _not_found()
-    return row
+    return ds_id, camera
 
 
-@router.delete("/{camera_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_camera(camera_id: int, _admin: dict = Depends(require_admin)):
-    if not db.delete_camera(camera_id):
-        raise _not_found()
-
-
-# --- NG snapshots -------------------------------------------------------------
-# A photo budget, not the mimic asset budget: a camera frame is a real JPEG/PNG
-# capture, not a small authored icon.
-MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024
-
-# Deliberately narrower than mimic.py's ALLOWED_ASSET_MIMES — a camera frame is
-# never SVG, so that allowlist (and its markup risk) does not apply here.
-ALLOWED_SNAPSHOT_MIMES = {"image/png", "image/jpeg", "image/webp"}
+# Folder-backed camera frames are always raster images.
+ALLOWED_FRAME_MIMES = {"image/png", "image/jpeg", "image/webp"}
 
 _MAGIC = (
     (b"\x89PNG\r\n\x1a\n", "image/png"),
@@ -226,65 +160,13 @@ def _sniff_mime(data: bytes) -> str | None:
     return None
 
 
-_IMAGE_HEADERS = {
-    "Content-Security-Policy": "default-src 'none'; sandbox",
-    "X-Content-Type-Options": "nosniff",
-    # A snapshot row is never rewritten in place — a re-upload of the same
-    # bytes returns the existing row instead of a new one — so this is safe
-    # to cache hard, same reasoning as mimic.py's asset headers.
-    "Cache-Control": "public, max-age=31536000, immutable",
-}
-
-# Same hardening, different cache policy. A file on disk *can* be replaced in
-# place by the vision system, so the immutability argument above does not carry
-# over — a long max-age would pin a superseded frame in every operator's
-# browser. A short revalidating window plus the ETag below is the honest
-# version of the same optimization.
+# A file on disk can be replaced in place by the vision system, so use a short
+# revalidating cache window plus an ETag rather than immutable caching.
 _FILE_IMAGE_HEADERS = {
     "Content-Security-Policy": "default-src 'none'; sandbox",
     "X-Content-Type-Options": "nosniff",
     "Cache-Control": "private, max-age=30, must-revalidate",
 }
-
-
-class SnapshotOut(BaseModel):
-    id: int
-    camera_id: int
-    captured_at: datetime
-    cause: str | None = None
-    verdict: str = "ng"
-    mime: str
-    size_bytes: int
-
-
-def _get_camera_or_404(camera_id: int) -> dict[str, Any]:
-    camera = db.get_camera(camera_id)
-    if camera is None:
-        raise _not_found()
-    return camera
-
-
-@router.get("/{camera_id}/snapshots", response_model=list[SnapshotOut])
-def list_snapshots(
-    camera_id: int,
-    limit: int = 30,
-    cause: str | None = None,
-    _user: dict = Depends(get_current_user),
-):
-    _get_camera_or_404(camera_id)
-    limit = max(1, min(limit, 100))
-    return db.list_camera_snapshots(camera_id, limit=limit, cause=cause)
-
-
-class CauseCountOut(BaseModel):
-    cause: str
-    n: int
-
-
-@router.get("/{camera_id}/causes", response_model=list[CauseCountOut])
-def cause_counts(camera_id: int, _user: dict = Depends(get_current_user)):
-    _get_camera_or_404(camera_id)
-    return db.camera_cause_counts(camera_id)
 
 
 # --- defect counters -----------------------------------------------------------
@@ -311,20 +193,17 @@ class DefectSummaryOut(BaseModel):
     slots: list[DefectSlotOut] = []
 
 
-@router.get("/{camera_id}/defects", response_model=DefectSummaryOut)
-def camera_defects(camera_id: int, _user: dict = Depends(get_current_user)):
-    """The newest batch of defect counts for one camera, slot by slot.
-
-    A null `batch_id` means no defect row has ever been written for this camera
-    — which the rail shows differently from a batch that counted zero, because
-    "nothing reported yet" and "nothing wrong" are different answers.
-
-    A slot is returned when it is named, when it counted something, or when it
-    has frames on disk. The rest are omitted: the table has five slots, but a
-    given line rarely uses all five, and an empty unnamed bar says nothing.
-    """
-    camera = _get_camera_or_404(camera_id)
-    row = db.camera_defect_latest(camera["code"])
+def _defect_summary(datasource_id: int, camera: dict[str, Any]) -> dict[str, Any]:
+    """Build the rail summary from a source-resolved camera identity."""
+    try:
+        row = db.camera_defect_latest(datasource_id, camera["code"])
+    except (psycopg.OperationalError, PoolTimeout) as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_detail(e),
+        )
+    except (ValueError, psycopg.Error) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_detail(e))
     # One walk of the folder for all five slots — this route is polled on the
     # page's live cadence, so it must not re-resolve the path per slot.
     with_frames = camera_files.slots_with_frames(camera["code"])
@@ -349,6 +228,13 @@ def camera_defects(camera_id: int, _user: dict = Depends(get_current_user)):
     }
 
 
+@router.get("/linked/{camera_code}/defects", response_model=DefectSummaryOut)
+def linked_camera_defects(camera_code: str, _user: dict = Depends(get_current_user)):
+    """Defect summary for the camera code selected from the configured source."""
+    datasource_id, camera = _get_linked_camera_or_404(camera_code)
+    return _defect_summary(datasource_id, camera)
+
+
 # --- folder-backed frames -------------------------------------------------------
 # The categorized images the vision system writes to disk. Read-only: there is
 # no write route here, and the app never creates anything under the image root.
@@ -371,36 +257,21 @@ def _checked_slot(slot: int) -> int:
     return slot
 
 
-@router.get("/{camera_id}/defects/{slot}/frames", response_model=list[FrameOut])
-def list_slot_frames(
-    camera_id: int,
+@router.get("/linked/{camera_code}/defects/{slot}/frames", response_model=list[FrameOut])
+def list_linked_camera_slot_frames(
+    camera_code: str,
     slot: int,
     limit: int = 30,
     _user: dict = Depends(get_current_user),
 ):
-    """Frames stored on disk for one defect slot, newest first.
-
-    Empty — never an error — when the image root is unconfigured, unreachable,
-    or simply has no folder for this camera. An install with no image share is
-    a normal install.
-    """
-    camera = _get_camera_or_404(camera_id)
+    """Folder-backed frames for a camera resolved from the configured source."""
+    _datasource_id, camera = _get_linked_camera_or_404(camera_code)
     _checked_slot(slot)
     limit = max(1, min(limit, 100))
     return camera_files.list_slot_frames(camera["code"], slot, limit=limit)
 
 
-@router.get("/{camera_id}/defects/{slot}/frames/{index}/image")
-def get_slot_frame_image(
-    camera_id: int, slot: int, index: int, _user: dict = Depends(get_current_user)
-):
-    """One frame's bytes, addressed by position in the newest-first listing.
-
-    The format is sniffed from the content rather than trusted from the
-    extension — this file was written by another system into a folder we do not
-    control, so its name proves nothing about what is inside it.
-    """
-    camera = _get_camera_or_404(camera_id)
+def _frame_image(camera: dict[str, Any], slot: int, index: int) -> Response:
     _checked_slot(slot)
     try:
         data, meta = camera_files.read_frame(camera["code"], slot, index)
@@ -408,7 +279,7 @@ def get_slot_frame_image(
         raise _not_found("Frame") from None
 
     mime = _sniff_mime(data)
-    if mime is None or mime not in ALLOWED_SNAPSHOT_MIMES:
+    if mime is None or mime not in ALLOWED_FRAME_MIMES:
         raise _bad("the stored file is not a PNG, JPEG or WebP image")
 
     headers = {
@@ -418,66 +289,13 @@ def get_slot_frame_image(
     return Response(content=data, media_type=mime, headers=headers)
 
 
-@router.post(
-    "/{camera_id}/snapshots", response_model=SnapshotOut, status_code=status.HTTP_201_CREATED
-)
-async def upload_snapshot(
-    camera_id: int,
-    file: UploadFile = File(...),
-    cause: str | None = None,
-    verdict: str = "ng",
-    admin: dict = Depends(require_admin),
+@router.get("/linked/{camera_code}/defects/{slot}/frames/{index}/image")
+def get_linked_camera_slot_frame_image(
+    camera_code: str,
+    slot: int,
+    index: int,
+    _user: dict = Depends(get_current_user),
 ):
-    """Store one NG (or OK) frame for a camera.
-
-    Machine/inspection-station ingestion is a separate design with its own
-    auth story — this endpoint is admin-only like every other write here, not
-    opened to an operator role, since an image upload is real attack surface
-    with no demonstrated non-admin caller yet.
-    """
-    _get_camera_or_404(camera_id)
-
-    data = await file.read()
-    if not data:
-        raise _bad("the uploaded file is empty")
-    if len(data) > MAX_SNAPSHOT_BYTES:
-        raise _bad(
-            f"image is {len(data) // 1024} KB; the limit is {MAX_SNAPSHOT_BYTES // 1024} KB"
-        )
-
-    sniffed = _sniff_mime(data)
-    if sniffed is None or sniffed not in ALLOWED_SNAPSHOT_MIMES:
-        raise _bad(
-            "unsupported image format — use PNG, JPEG or WebP "
-            f"(this file's contents read as {sniffed or 'something else'})"
-        )
-    declared = (file.content_type or "").split(";")[0].strip().lower()
-    if declared and declared in ALLOWED_SNAPSHOT_MIMES and declared != sniffed:
-        raise _bad(f"file claims to be {declared} but its contents are {sniffed}")
-
-    digest = hashlib.sha256(data).hexdigest()
-    existing = db.find_camera_snapshot_by_hash(camera_id, digest)
-    if existing is not None:
-        return existing
-
-    return db.insert_camera_snapshot(
-        camera_id, sniffed, data, digest, cause, verdict, admin.get("id")
-    )
-
-
-@router.get("/{camera_id}/snapshots/{snapshot_id}/image")
-def get_snapshot_image(
-    camera_id: int, snapshot_id: int, _user: dict = Depends(get_current_user)
-):
-    row = db.get_camera_snapshot_bytes(camera_id, snapshot_id)
-    if row is None:
-        raise _not_found("Snapshot")
-    return Response(content=bytes(row["bytes"]), media_type=row["mime"], headers=_IMAGE_HEADERS)
-
-
-@router.delete("/{camera_id}/snapshots/{snapshot_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_snapshot(
-    camera_id: int, snapshot_id: int, _admin: dict = Depends(require_admin)
-):
-    if not db.delete_camera_snapshot(camera_id, snapshot_id):
-        raise _not_found("Snapshot")
+    """One frame for a camera resolved from the configured source."""
+    _datasource_id, camera = _get_linked_camera_or_404(camera_code)
+    return _frame_image(camera, slot, index)

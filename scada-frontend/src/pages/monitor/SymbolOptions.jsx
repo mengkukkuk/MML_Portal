@@ -506,12 +506,10 @@ function CameraLink({ node, onChange }) {
       <div className={styles.sectionTitle}>Camera</div>
       <p className={styles.hint}>
         {isError
-          ? 'The camera list could not be loaded. The rail falls back to matching this symbol’s loop id against a camera code.'
+          ? 'The camera list could not be loaded. Configure or reconnect the Camera source in Settings.'
           : legacyMatch
             ? `This symbol currently resolves by loop id (${loopId}). Saving makes the link explicit.`
-            : data?.source === 'datasource'
-              ? `Picks which camera’s defect counts and inspection frames fill the detail panel in view mode. Read live from “${data.datasource_name ?? 'the configured datasource'}”.`
-              : 'Picks which camera’s defect counts and inspection frames fill the detail panel in view mode.'}
+            : `Picks which camera’s defect counts and inspection frames fill the detail panel in view mode. Read live from “${data?.datasource_name ?? 'the configured datasource'}”.`}
       </p>
 
       {positions.length > 0 && (

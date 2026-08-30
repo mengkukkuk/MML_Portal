@@ -1274,8 +1274,7 @@ def delete_panel(panel_id: int) -> bool:
 # text filter column could leak secrets via distinct_column_values.
 SENSITIVE_TABLES = {
     "users", "dashboard_panels", "mmldatabuffer", "datasources", "mimic_layouts",
-    "mimic_assets", "mimic_symbols", "cameras", "camera_snapshots",
-    "camera_defect",
+    "mimic_assets", "mimic_symbols", "cameras", "camera_defect",
 }
 
 # Postgres text data_types a symbol may *print* rather than plot.
@@ -2499,56 +2498,15 @@ def delete_mimic_symbol(symbol_id: int) -> bool:
 
 
 # --- Cameras (/monitor vision-inspection panel) -----------------------------
-# Three app tables behind the camera detail rail:
-#   `cameras`          — identity only. An admin names a station's camera once,
-#                        and a mimic node reaches it by `code`.
-#   `camera_defect`    — the counters the rail's bars are drawn from, five
-#                        positional slots per row, keyed by `code` as text.
-#   `camera_snapshots` — stored NG frames uploaded through the API. The rail no
-#                        longer reads these (its contact sheet comes from the
-#                        image folder, see camera_files.py), but this is the
-#                        only ingestion path in the system, so it stays.
-#
-# `cameras` deliberately holds no plant binding: defect counts come from
-# `camera_defect`, which is app data keyed by code, not a fanned-out plant read.
-def init_cameras_table() -> None:
-    """Create the cameras table if it doesn't exist"""
-    with get_connection() as conn:
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS cameras (
-                id            SERIAL PRIMARY KEY,
-                code          TEXT NOT NULL UNIQUE,
-                name          TEXT NOT NULL,
-                station_code  TEXT,
-                station_label TEXT,
-                location      TEXT,
-                enabled       BOOLEAN NOT NULL DEFAULT true,
-                created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-            )"""
-        )
-        # One label per camera_defect slot, so the bars can be named per camera:
-        # slot N on either table always means the same defect.
-        for slot in range(1, 6):
-            conn.execute(
-                f"ALTER TABLE cameras ADD COLUMN IF NOT EXISTS defect_{slot}_label TEXT"
-            )
-        conn.commit()
-
-
+# App DB owns only the selected datasource id. Camera identity and defect
+# batches live in that datasource's configured schema; NG frames live on disk.
 def init_camera_link_settings_table() -> None:
     """Create the singleton settings row behind the Monitor camera picker.
 
-    A mimic node's camera *link* can be chosen from this app's own `cameras`
-    table (the default, `datasource_id IS NULL`), or from a designated plant
-    datasource's own `cameras` table — e.g. a vision system that already
-    maintains its camera registry, so the picker mirrors that list live
-    instead of an admin keeping a second copy in sync by hand. Must run after
-    init_datasources_table (FK).
-
-    Defect counts and NG frames are unaffected either way: `camera_defect` and
-    `camera_snapshots` keep keying off the linked camera's `code` against this
-    app's own tables, same as before this setting existed.
+    A source is required before Monitor camera bindings can load. The nullable
+    FK still matters for lifecycle safety: deleting the selected datasource
+    clears the singleton and makes camera endpoints return 409 until an admin
+    chooses a replacement. Must run after init_datasources_table (FK).
     """
     with get_connection() as conn:
         conn.execute(
@@ -2566,9 +2524,11 @@ def init_camera_link_settings_table() -> None:
 
 
 def get_camera_link_source() -> dict[str, Any] | None:
-    """The datasource designated as the camera-link picker's source, or a row
-    with `datasource_id: None` when the picker still reads this app's own
-    `cameras` table (the default on a fresh install)."""
+    """The datasource designated as Monitor's camera source.
+
+    A null datasource means the feature is not configured; there is no app-DB
+    camera fallback.
+    """
     with get_connection() as conn:
         row = conn.execute(
             """SELECT s.datasource_id, d.name AS datasource_name
@@ -2579,7 +2539,7 @@ def get_camera_link_source() -> dict[str, Any] | None:
     return row
 
 
-def set_camera_link_source(datasource_id: int | None) -> dict[str, Any] | None:
+def set_camera_link_source(datasource_id: int) -> dict[str, Any] | None:
     with get_connection() as conn:
         conn.execute(
             """UPDATE camera_link_settings
@@ -2592,8 +2552,7 @@ def set_camera_link_source(datasource_id: int | None) -> dict[str, Any] | None:
 
 
 def list_remote_camera_options(datasource_id: int) -> list[dict[str, Any]]:
-    """Camera identity rows read live from a plant datasource's own `cameras`
-    table, for the link picker only — never for defect counts or frames.
+    """Camera identity rows read from the configured camera datasource.
 
     Not routed through the generic table/schema picker (schema.py / the
     describe_table family): `cameras` sits in that path's SENSITIVE_TABLES
@@ -2605,7 +2564,9 @@ def list_remote_camera_options(datasource_id: int) -> list[dict[str, Any]]:
     with _table_source_conn(datasource_id) as (conn, schema):
         rows = conn.execute(
             sql.SQL(
-                """SELECT id, code, name, station_code, station_label, location, enabled
+                """SELECT code, name, station_code, station_label, location, enabled,
+                          defect_1_label, defect_2_label, defect_3_label,
+                          defect_4_label, defect_5_label
                    FROM {tbl}
                    WHERE enabled
                    ORDER BY location NULLS LAST, code"""
@@ -2614,145 +2575,30 @@ def list_remote_camera_options(datasource_id: int) -> list[dict[str, Any]]:
     return rows
 
 
-def init_camera_defect_table() -> None:
-    """Create the camera_defect table if it doesn't exist"""
-    with get_connection() as conn:
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS camera_defect (
-                id         SERIAL PRIMARY KEY,
-                camera_id  TEXT,
-                updated_at TIMESTAMP DEFAULT now(),
-                batch_id   INTEGER,
-                defect_1   INTEGER DEFAULT 0,
-                defect_2   INTEGER DEFAULT 0,
-                defect_3   INTEGER DEFAULT 0,
-                defect_4   INTEGER DEFAULT 0,
-                defect_5   INTEGER DEFAULT 0
-            )"""
-        )
-        conn.execute(
-            """CREATE INDEX IF NOT EXISTS camera_defect_latest
-               ON camera_defect (lower(camera_id), batch_id DESC)"""
-        )
-        conn.commit()
+def get_remote_camera_option_by_code(
+    datasource_id: int, code: str
+) -> dict[str, Any] | None:
+    """One camera identity from the configured external camera registry.
 
-
-def init_camera_snapshots_table() -> None:
-    """Create the camera_snapshots table if it doesn't exist. Idempotent.
-
-    Must run after init_cameras_table (FK). CASCADE, unlike mimic_symbols'
-    RESTRICT on its asset: a frame has no meaning without its camera, so
-    deleting a camera should take its stored evidence with it.
+    The Monitor rail resolves by the stable printed code, never by the remote
+    table's serial id: ids can collide across databases and change on reseed.
     """
-    with get_connection() as conn:
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS camera_snapshots (
-                id          SERIAL PRIMARY KEY,
-                camera_id   INTEGER NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
-                captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                cause       TEXT,
-                verdict     TEXT NOT NULL DEFAULT 'ng',
-                mime        TEXT NOT NULL,
-                bytes       BYTEA NOT NULL,
-                size_bytes  INTEGER NOT NULL,
-                sha256      TEXT NOT NULL,
-                meta        JSONB NOT NULL DEFAULT '{}'::jsonb,
-                uploaded_by INTEGER,
-                created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-                UNIQUE (camera_id, sha256)
-            )"""
-        )
-        conn.execute(
-            """CREATE INDEX IF NOT EXISTS camera_snapshots_recent
-               ON camera_snapshots (camera_id, captured_at DESC)"""
-        )
-        conn.commit()
-
-
-_CAMERA_COLS = (
-    "id, code, name, station_code, station_label, location, enabled, updated_at, "
-    "defect_1_label, defect_2_label, defect_3_label, defect_4_label, defect_5_label"
-)
-
-# The five label columns, in slot order — used to build the INSERT/UPDATE
-# column lists and value tuples below without spelling them out five times.
-_CAMERA_LABEL_COLS = tuple(f"defect_{slot}_label" for slot in range(1, 6))
-
-
-def list_cameras() -> list[dict[str, Any]]:
-    with get_connection() as conn:
-        rows = conn.execute(
-            f"SELECT {_CAMERA_COLS} FROM cameras ORDER BY code"
-        ).fetchall()
-    return rows
-
-
-def get_camera(camera_id: int) -> dict[str, Any] | None:
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
         row = conn.execute(
-            f"SELECT {_CAMERA_COLS} FROM cameras WHERE id = %s", (camera_id,)
+            sql.SQL(
+                """SELECT code, name, station_code, station_label, location, enabled,
+                          defect_1_label, defect_2_label, defect_3_label,
+                          defect_4_label, defect_5_label
+                   FROM {tbl}
+                   WHERE enabled AND lower(code) = lower(%s)
+                   LIMIT 1"""
+            ).format(tbl=sql.Identifier(schema, "cameras")),
+            (code,),
         ).fetchone()
     return row
 
 
-def get_camera_by_code(code: str) -> dict[str, Any] | None:
-    """Case-insensitive: a mimic node's loop id and a camera's code are typed
-    by different admins on different screens and should not have to match case."""
-    with get_connection() as conn:
-        row = conn.execute(
-            f"SELECT {_CAMERA_COLS} FROM cameras WHERE lower(code) = lower(%s)", (code,)
-        ).fetchone()
-    return row
-
-
-def insert_camera(fields: dict[str, Any]) -> dict[str, Any]:
-    labels = ", ".join(_CAMERA_LABEL_COLS)
-    with get_connection() as conn:
-        row = conn.execute(
-            f"""INSERT INTO cameras
-                (code, name, station_code, station_label, location, enabled, {labels})
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING {_CAMERA_COLS}""",
-            (
-                fields["code"], fields["name"], fields.get("station_code"),
-                fields.get("station_label"), fields.get("location"),
-                fields.get("enabled", True),
-                *(fields.get(col) for col in _CAMERA_LABEL_COLS),
-            ),
-        ).fetchone()
-        conn.commit()
-    return row
-
-
-def update_camera(camera_id: int, fields: dict[str, Any]) -> dict[str, Any] | None:
-    labels = ", ".join(f"{col} = %s" for col in _CAMERA_LABEL_COLS)
-    with get_connection() as conn:
-        row = conn.execute(
-            f"""UPDATE cameras SET
-                code = %s, name = %s, station_code = %s, station_label = %s,
-                location = %s, enabled = %s, {labels}, updated_at = now()
-            WHERE id = %s
-            RETURNING {_CAMERA_COLS}""",
-            (
-                fields["code"], fields["name"], fields.get("station_code"),
-                fields.get("station_label"), fields.get("location"),
-                fields.get("enabled", True),
-                *(fields.get(col) for col in _CAMERA_LABEL_COLS),
-                camera_id,
-            ),
-        ).fetchone()
-        conn.commit()
-    return row
-
-
-def delete_camera(camera_id: int) -> bool:
-    with get_connection() as conn:
-        cur = conn.execute("DELETE FROM cameras WHERE id = %s", (camera_id,))
-        conn.commit()
-    return cur.rowcount > 0
-
-
-def camera_defect_latest(code: str) -> dict[str, Any] | None:
+def camera_defect_latest(datasource_id: int, code: str) -> dict[str, Any] | None:
     """The newest batch of defect counters for one camera, by its code.
 
     Returns None when the camera has no rows at all — a different state from a
@@ -2764,107 +2610,19 @@ def camera_defect_latest(code: str) -> dict[str, Any] | None:
     whose rows all have a null batch. NULLS LAST keeps those rows reachable and
     still prefers a real batch when one exists.
     """
-    with get_connection() as conn:
+    with _table_source_conn(datasource_id) as (conn, schema):
         row = conn.execute(
-            """SELECT id, camera_id, batch_id, updated_at,
-                      defect_1, defect_2, defect_3, defect_4, defect_5
-            FROM camera_defect
-            WHERE lower(camera_id) = lower(%s)
-            ORDER BY batch_id DESC NULLS LAST, updated_at DESC, id DESC
-            LIMIT 1""",
+            sql.SQL(
+                """SELECT id, code, batch_id, updated_at,
+                          defect_1, defect_2, defect_3, defect_4, defect_5
+                   FROM {table}
+                   WHERE lower(code) = lower(%s)
+                   ORDER BY batch_id DESC NULLS LAST, updated_at DESC, id DESC
+                   LIMIT 1"""
+            ).format(table=sql.Identifier(schema, "camera_defect")),
             (code,),
         ).fetchone()
     return row
-
-
-def list_camera_snapshots(
-    camera_id: int, limit: int = 30, cause: str | None = None
-) -> list[dict[str, Any]]:
-    """Metadata only — bytes are fetched one at a time through the image route."""
-    with get_connection() as conn:
-        if cause:
-            rows = conn.execute(
-                """SELECT id, camera_id, captured_at, cause, verdict, mime, size_bytes
-                FROM camera_snapshots
-                WHERE camera_id = %s AND cause = %s
-                ORDER BY captured_at DESC LIMIT %s""",
-                (camera_id, cause, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """SELECT id, camera_id, captured_at, cause, verdict, mime, size_bytes
-                FROM camera_snapshots
-                WHERE camera_id = %s
-                ORDER BY captured_at DESC LIMIT %s""",
-                (camera_id, limit),
-            ).fetchall()
-    return rows
-
-
-def camera_cause_counts(camera_id: int) -> list[dict[str, Any]]:
-    """Cause histogram for the rail's filter bars — NG frames only, most first."""
-    with get_connection() as conn:
-        rows = conn.execute(
-            """SELECT cause, count(*)::int AS n
-            FROM camera_snapshots
-            WHERE camera_id = %s AND verdict = 'ng' AND cause IS NOT NULL
-            GROUP BY cause
-            ORDER BY n DESC""",
-            (camera_id,),
-        ).fetchall()
-    return rows
-
-
-def get_camera_snapshot_bytes(camera_id: int, snapshot_id: int) -> dict[str, Any] | None:
-    """One frame *with* its bytes — the read behind the image endpoint."""
-    with get_connection() as conn:
-        row = conn.execute(
-            """SELECT id, mime, bytes FROM camera_snapshots
-            WHERE id = %s AND camera_id = %s""",
-            (snapshot_id, camera_id),
-        ).fetchone()
-    return row
-
-
-def find_camera_snapshot_by_hash(camera_id: int, sha256: str) -> dict[str, Any] | None:
-    with get_connection() as conn:
-        row = conn.execute(
-            """SELECT id, camera_id, captured_at, cause, verdict, mime, size_bytes
-            FROM camera_snapshots WHERE camera_id = %s AND sha256 = %s""",
-            (camera_id, sha256),
-        ).fetchone()
-    return row
-
-
-def insert_camera_snapshot(
-    camera_id: int,
-    mime: str,
-    data: bytes,
-    sha256: str,
-    cause: str | None,
-    verdict: str,
-    uploaded_by: int | None,
-) -> dict[str, Any]:
-    with get_connection() as conn:
-        row = conn.execute(
-            """INSERT INTO camera_snapshots
-                (camera_id, cause, verdict, mime, bytes, size_bytes, sha256, uploaded_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id, camera_id, captured_at, cause, verdict, mime, size_bytes""",
-            (camera_id, cause, verdict, mime, data, len(data), sha256, uploaded_by),
-        ).fetchone()
-        conn.commit()
-    return row
-
-
-def delete_camera_snapshot(camera_id: int, snapshot_id: int) -> bool:
-    with get_connection() as conn:
-        cur = conn.execute(
-            "DELETE FROM camera_snapshots WHERE id = %s AND camera_id = %s",
-            (snapshot_id, camera_id),
-        )
-        conn.commit()
-    return cur.rowcount > 0
 
 
 # ============================================================================

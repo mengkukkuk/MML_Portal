@@ -3,7 +3,9 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import IconButton from '@mui/material/IconButton'
-import { fetchCameras, fetchCameraDefects, fetchCameraDefectFrames } from '@/api/cameras'
+import {
+  fetchCameraLinkOptions, fetchCameraDefects, fetchCameraDefectFrames,
+} from '@/api/cameras'
 import useCameraFrameUrl from '@/components/mimic/useCameraFrameUrl'
 import styles from './CameraRail.module.css'
 
@@ -42,6 +44,8 @@ const T = {
   stripEmpty: 'ยังไม่มีภาพของสาเหตุนี้',
   frames: 'ภาพ',
   loading: 'กำลังโหลด…',
+  sourceUnavailable: 'ไม่สามารถโหลดแหล่งข้อมูลกล้องได้',
+  sourceUnavailableHint: 'ตรวจสอบ Camera source ใน Settings และการเชื่อมต่อฐานข้อมูล',
   scrollLeft: 'เลื่อนไปทางซ้าย',
   scrollRight: 'เลื่อนไปทางขวา',
 }
@@ -49,6 +53,7 @@ const T = {
 const STATUS_CLASS = {
   normal: styles.pillOk, warn: styles.pillWarn, crit: styles.pillFault, stale: styles.pillStale,
 }
+const EMPTY_CAMERAS = []
 
 /**
  * Wall-clock time, no timezone conversion.
@@ -68,8 +73,8 @@ function slotLabel(slot) {
   return slot.label || T.slotFallback(slot.slot)
 }
 
-function Frame({ cameraId, slot, frame, label }) {
-  const url = useCameraFrameUrl(cameraId, slot, frame.index, frame.mtime_ns)
+function Frame({ cameraCode, slot, frame, label }) {
+  const url = useCameraFrameUrl(cameraCode, slot, frame.index, frame.mtime_ns)
   return (
     <figure className={styles.frame}>
       <div className={styles.frameImg}>
@@ -100,14 +105,14 @@ export default function CameraRail({ node, tag, pollMs = 5000 }) {
 
   const refetchInterval = Math.max(pollMs, MIN_POLL_MS)
 
-  const { data: cameras, isLoading: camerasLoading } = useQuery({
-    queryKey: ['cameras'],
-    queryFn: fetchCameras,
-    // Identity and labels are admin config, not a reading — they change when
-    // someone edits a camera, not when the line runs. Polling them on the live
-    // cadence would be a request per tick for a row that is the same all shift.
+  const { data: cameraOptions, isLoading: camerasLoading, isError: camerasError } = useQuery({
+    queryKey: ['camera-link-options'],
+    queryFn: fetchCameraLinkOptions,
+    // Identity and labels come from the camera source selected in Settings.
+    // They are registry data, not readings, so they do not need the live poll.
     staleTime: 60_000,
   })
+  const cameras = cameraOptions?.cameras ?? EMPTY_CAMERAS
 
   /**
    * Two ways a symbol reaches its camera, and the order matters.
@@ -126,11 +131,12 @@ export default function CameraRail({ node, tag, pollMs = 5000 }) {
   const wanted = linkCode || loopId
 
   const camera = useMemo(() => {
-    if (!cameras || !wanted) return null
+    if (!wanted) return null
     return cameras.find((c) => c.code.toLowerCase() === wanted.toLowerCase()) ?? null
   }, [cameras, wanted])
 
   const viaLoopId = !!camera && !linkCode
+  const cameraSourceKey = cameraOptions?.datasource_id ?? 'local'
 
   /**
    * The live pair. Both follow the page cadence rather than only loading once,
@@ -145,9 +151,9 @@ export default function CameraRail({ node, tag, pollMs = 5000 }) {
    * Cadence stays out of the query key. Folding it in would make every cadence
    * change a different cache entry and throw away the counts on screen.
    */
-  const { data: defects } = useQuery({
-    queryKey: ['camera-defects', camera?.id],
-    queryFn: () => fetchCameraDefects(camera.id),
+  const { data: defects, isError: defectsError } = useQuery({
+    queryKey: ['camera-defects', cameraSourceKey, camera?.code],
+    queryFn: () => fetchCameraDefects(camera.code),
     enabled: !!camera,
     refetchInterval,
     // A SCADA wall display must not freeze in a background tab.
@@ -155,9 +161,9 @@ export default function CameraRail({ node, tag, pollMs = 5000 }) {
     placeholderData: keepPreviousData,
   })
 
-  const { data: frames } = useQuery({
-    queryKey: ['camera-frames', camera?.id, slotFilter],
-    queryFn: () => fetchCameraDefectFrames(camera.id, slotFilter, { limit: 30 }),
+  const { data: frames, isError: framesError } = useQuery({
+    queryKey: ['camera-frames', camera?.code, slotFilter],
+    queryFn: () => fetchCameraDefectFrames(camera.code, slotFilter, { limit: 30 }),
     enabled: !!camera && slotFilter != null,
     refetchInterval,
     refetchIntervalInBackground: true,
@@ -188,6 +194,15 @@ export default function CameraRail({ node, tag, pollMs = 5000 }) {
     return <aside className={styles.rail}><p className={styles.quiet}>{T.loading}</p></aside>
   }
 
+  if (camerasError || defectsError || framesError) {
+    return (
+      <aside className={styles.rail} role="alert">
+        <p className={styles.unboundTitle}>{T.sourceUnavailable}</p>
+        <p className={styles.quiet}>{T.sourceUnavailableHint}</p>
+      </aside>
+    )
+  }
+
   if (!camera) {
     return (
       <aside className={styles.rail}>
@@ -204,7 +219,7 @@ export default function CameraRail({ node, tag, pollMs = 5000 }) {
           <div>
             <div className={styles.sectionTitle}>{T.registeredCodes}</div>
             <div className={styles.codeList}>
-              {cameras.map((c) => <span key={c.id} className={styles.code}>{c.code}</span>)}
+              {cameras.map((c) => <span key={c.code} className={styles.code}>{c.code}</span>)}
             </div>
           </div>
         ) : (
@@ -321,7 +336,7 @@ export default function CameraRail({ node, tag, pollMs = 5000 }) {
               {frames.map((f) => (
                 <Frame
                   key={`${f.index}-${f.mtime_ns}`}
-                  cameraId={camera.id}
+                  cameraCode={camera.code}
                   slot={slotFilter}
                   frame={f}
                   label={activeSlot ? slotLabel(activeSlot) : ''}

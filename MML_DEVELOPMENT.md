@@ -261,6 +261,11 @@ choice is stored server-side in `user_datasource_selection` and resolved from th
 `auth.active_datasources`. A user with no explicit selection gets the lowest-id datasource
 (implicit, not persisted); with no datasources at all, the app database's own `public` schema.
 
+**Monitor cameras use an independent required datasource setting.** The app/config DB stores
+only `camera_link_settings`; the picker and rail read `cameras` and `camera_defect` from that
+saved datasource's configured schema by camera code. This source does not fan out and does not
+follow the user's header selection. NG frame bytes remain in `CAMERA_IMAGE_ROOT`.
+
 **Fan-out.** `db.fan_out(datasource_ids, query)` runs the query against every selected source
 on a bounded module-level thread pool and returns one entry per input id — in input order,
 with `ok`/`error` — so a source that failed is distinguishable from a source that was quiet.
@@ -282,8 +287,8 @@ unselected source holds no sockets, and are opened with `wait=False` so a powere
 cannot block startup.
 
 **Per-consumer resolution.** Live panels fan out (one series per source, labelled with the
-source name); Events, Alarms and Reports merge; Monitor symbols read the **first** selected
-source only, because a symbol is one physical asset. Alarm acknowledgement is never fanned
+source name); Events, Alarms and Reports merge; ordinary Monitor tag bindings read the
+**first** selected source, while camera bindings use `camera_link_settings`. Alarm acknowledgement is never fanned
 out — alarm ids are per-database sequences and collide, so acking "id 42" across sources would
 ack a different plant's alarm.
 
@@ -302,8 +307,8 @@ These live in two different places, and which one a table belongs to is not a de
 
 | Where | Tables |
 |-------|--------|
-| **App/config DB** (hardcoded localhost, always reachable) | `users`, `user_datasource_selection`, `dashboards`, `dashboard_panels`, `datasources`, `mimic_layouts`, `mimic_assets`, `mimic_symbols`, `report_templates`, `report_settings` |
-| **Plant DB** (each selected row of `datasources`) | `devices`, `sensor_readings`, `variables_tag`, `event_logs`, `alarm_logs`, `mmldatabuffer` |
+| **App/config DB** (hardcoded localhost, always reachable) | `users`, `user_datasource_selection`, `dashboards`, `dashboard_panels`, `datasources`, `camera_link_settings`, `mimic_layouts`, `mimic_assets`, `mimic_symbols`, `report_templates`, `report_settings` |
+| **Plant DB** (saved datasource connections) | `devices`, `sensor_readings`, `variables_tag`, `event_logs`, `alarm_logs`, `mmldatabuffer`; the configured camera source also supplies `cameras` and `camera_defect` |
 
 The app never creates the plant tables — it only reads them, through the `db_schema` recorded on
 the datasource row. A plant database missing one of them degrades that one feature for that one

@@ -301,6 +301,10 @@ selection:
 - **Monitor** (mimic) reads the **first** selected source only — a symbol is one physical
   asset, so fanning it out would draw several plants' numbers onto one piece of equipment.
 
+Monitor camera symbols are the exception: Settings requires one dedicated **Camera source**.
+Their identity and defect batches come from that datasource's `cameras` and `camera_defect`
+tables by camera code, independently of the top-nav selection. NG images remain filesystem-backed.
+
 Each source is queried concurrently and independently. One unreachable plant costs its
 connect timeout and appears as a warning banner on the page; the healthy sources still render.
 A user with no explicit selection falls back to the lowest-id saved datasource, so a
