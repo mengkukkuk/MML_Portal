@@ -105,33 +105,70 @@ def access_expires_seconds() -> int:
 # Empty string always passes through unchanged both directions -- it is the
 # sentinel db.py's has_password column depends on.
 _FERNET_PREFIX = "fernet$"
-_warned_plaintext = False
+
+# Every decryption failure message starts with this so callers upstack can tell
+# "an admin must re-enter this password" apart from "the plant is offline" without
+# pattern-matching on prose.
+CREDENTIAL_RECOVERY_PREFIX = "Datasource credential recovery required:"
 
 
-def _warn_plaintext_once(reason: str) -> None:
-    global _warned_plaintext
-    if not _warned_plaintext:
-        logger.warning(
-            "%s - datasource passwords will be stored in plaintext. Set "
-            "ENCRYPTION_KEY (see .env.example) to encrypt them.", reason,
+class SecretConfigurationError(RuntimeError):
+    """A non-empty secret cannot be encrypted because no valid key is available.
+
+    Raised on the WRITE path only. This used to silently store plaintext instead,
+    which is how cleartext plant passwords shipped unnoticed -- the single warning
+    it logged was indistinguishable from ordinary startup noise.
+    """
+
+
+class SecretDecryptionError(RuntimeError):
+    """Stored ciphertext cannot be decrypted; an operator has to recover it.
+
+    There is no plaintext to fall back to. Callers must treat this as "this one
+    datasource is unusable", never as a reason to fail unrelated work.
+    """
+
+
+def encryption_key_problem() -> str | None:
+    """Return None when a usable Fernet key is configured, else a safe
+    explanation of what is wrong with it. Never includes key material."""
+    if config.ENCRYPTION_KEY_LOAD_ERROR:
+        return config.ENCRYPTION_KEY_LOAD_ERROR
+    if not config.ENCRYPTION_KEY:
+        return (
+            "ENCRYPTION_KEY is not configured - datasource passwords cannot be "
+            "encrypted. Run the installer's provisioning step to create one."
         )
-        _warned_plaintext = True
+    try:
+        Fernet(config.ENCRYPTION_KEY)
+    except (ValueError, TypeError):
+        return "The configured encryption key is not a valid Fernet key."
+    return None
+
+
+def is_encrypted_secret(stored: str) -> bool:
+    """True when the value was written by encrypt_secret (as opposed to legacy
+    plaintext saved before a key existed)."""
+    return stored.startswith(_FERNET_PREFIX)
 
 
 def encrypt_secret(plain: str) -> str:
-    """Encrypt for storage. Returns plaintext unchanged if empty, or if
-    ENCRYPTION_KEY is unset/invalid -- a degrade, not a failure, so creating or
-    editing a datasource never breaks because of this."""
+    """Encrypt for storage.
+
+    Empty passes through unchanged -- it is the sentinel db.py's has_password
+    column depends on, and storing "no password" needs no key.
+
+    Fails CLOSED for anything non-empty: without a valid key this raises rather
+    than quietly writing the plant password to the database in cleartext.
+    """
     if not plain:
         return plain
-    if not config.ENCRYPTION_KEY:
-        _warn_plaintext_once("ENCRYPTION_KEY is not set")
-        return plain
-    try:
-        f = Fernet(config.ENCRYPTION_KEY)
-    except ValueError:
-        _warn_plaintext_once("ENCRYPTION_KEY is not a valid Fernet key")
-        return plain
+    problem = encryption_key_problem()
+    if problem:
+        raise SecretConfigurationError(
+            f"Cannot encrypt datasource password: {problem}"
+        )
+    f = Fernet(config.ENCRYPTION_KEY)
     return _FERNET_PREFIX + f.encrypt(plain.encode("utf-8")).decode("ascii")
 
 
@@ -141,30 +178,27 @@ def decrypt_secret(stored: str) -> str:
     unchanged -- what makes turning ENCRYPTION_KEY on non-disruptive for rows
     saved before it existed.
 
-    Raises RuntimeError if the value IS prefixed but cannot be decrypted --
-    ENCRYPTION_KEY is unset/invalid, or the ciphertext was made under a
-    different key. There is no plaintext to fall back to. Every caller of
-    db.get_datasource_secret is expected to treat this as "this one source is
-    unreachable", not to crash unrelated work.
+    Raises SecretDecryptionError if the value IS prefixed but cannot be decrypted
+    -- the key is unset/invalid, or the ciphertext was made under a different key.
+    There is no plaintext to fall back to. Every caller of db.get_datasource_secret
+    is expected to treat this as "this one source is unreachable", not to crash
+    unrelated work. The message always begins with CREDENTIAL_RECOVERY_PREFIX so
+    callers can distinguish it from an ordinary connection failure.
     """
-    if not stored.startswith(_FERNET_PREFIX):
+    if not is_encrypted_secret(stored):
         return stored
-    if not config.ENCRYPTION_KEY:
-        raise RuntimeError(
-            "Stored password is encrypted but ENCRYPTION_KEY is not set - "
-            "cannot decrypt it."
+    problem = encryption_key_problem()
+    if problem:
+        raise SecretDecryptionError(
+            f"{CREDENTIAL_RECOVERY_PREFIX} this password is encrypted but "
+            f"cannot be read. {problem}"
         )
-    try:
-        f = Fernet(config.ENCRYPTION_KEY)
-    except ValueError as e:
-        raise RuntimeError(
-            "Stored password is encrypted but ENCRYPTION_KEY is not a valid "
-            "Fernet key - cannot decrypt it."
-        ) from e
+    f = Fernet(config.ENCRYPTION_KEY)
     try:
         return f.decrypt(stored[len(_FERNET_PREFIX):].encode("ascii")).decode("utf-8")
     except InvalidToken as e:
-        raise RuntimeError(
-            "Stored password could not be decrypted - ENCRYPTION_KEY does "
-            "not match the key it was encrypted with."
+        raise SecretDecryptionError(
+            f"{CREDENTIAL_RECOVERY_PREFIX} the configured encryption key does not "
+            "match the key this password was encrypted with. An administrator must "
+            "re-enter it, or restore the original key."
         ) from e

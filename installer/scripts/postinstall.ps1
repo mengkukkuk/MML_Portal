@@ -623,16 +623,28 @@ if ($EnableHttps -eq "true") {
         $rootStore.Close()
 
         # Drop any stale HTTPS binding from a previous install/hostname before rebinding --
-        # New-WebBinding fails on an existing identical binding, and a leftover binding
-        # pointed at an old cert would otherwise shadow the fresh one below.
+        # a leftover binding pointed at an old cert would otherwise shadow the fresh one below.
         Get-WebBinding -Name "MMLPortal" -Protocol "https" -ErrorAction SilentlyContinue | Remove-WebBinding -ErrorAction SilentlyContinue
         $sslBindingPath = "IIS:\SslBindings\0.0.0.0!$HttpsPort"
         if (Test-Path $sslBindingPath) { Remove-Item $sslBindingPath -ErrorAction SilentlyContinue }
 
-        # SslFlags 1 = SNI-enabled -- required so this shared IP can present the right cert
-        # for the host header instead of only ever answering with whichever cert bound first.
-        New-WebBinding -Name "MMLPortal" -Protocol "https" -Port $HttpsPort -HostHeader $Hostname -SslFlags 1
-        New-Item $sslBindingPath -Value $cert -SSLFlags 1 | Out-Null
+        # SNI (host-header HTTPS) via the WebAdministration PowerShell provider is unreliable
+        # here: `New-WebBinding -HostHeader ... -SslFlags 1` reproducibly failed on every real
+        # install attempt on this class of machine with "Bindings property 'bindingInformation'
+        # must specify hostname value when SSLFlags value is non zero" -- even though a hostname
+        # WAS supplied -- and the documented two-step workaround (create binding, then set
+        # .sslFlags via Set-WebBinding) silently no-ops instead of throwing: the binding is left
+        # with sslFlags=0, which breaks SNI just as badly with no error to report. Both are known
+        # limitations of the WebAdministration snap-in around SNI bindings. Go straight to the
+        # Microsoft.Web.Administration ServerManager API instead -- the same one IIS Manager's
+        # GUI uses under the hood -- which sets bindingInformation and sslFlags atomically in one
+        # committed transaction and has none of the above failure modes.
+        Add-Type -Path "$env:WinDir\System32\inetsrv\Microsoft.Web.Administration.dll" -ErrorAction Stop
+        $sm = New-Object Microsoft.Web.Administration.ServerManager
+        $site = $sm.Sites["MMLPortal"]
+        $bindingInfo = "*:${HttpsPort}:$Hostname"
+        $site.Bindings.Add($bindingInfo, $cert.GetCertHash(), "My", [Microsoft.Web.Administration.SslFlags]::Sni) | Out-Null
+        $sm.CommitChanges()
 
         # Export the public cert (no private key) so it can be pushed to every OTHER PC that
         # will browse to this site -- importing it into their Trusted Root store is the only

@@ -145,7 +145,16 @@ def _build_pool(datasource_id: int | None) -> tuple["ConnectionPool", str]:
             config.APP_DB_POOL_MIN, config.APP_DB_POOL_MAX, config.APP_DB_SCHEMA,
         )
     else:
-        ds = get_datasource_secret(datasource_id)
+        try:
+            ds = get_datasource_secret(datasource_id)
+        except security.SecretDecryptionError as e:
+            # Record before re-raising. Decryption happens here, *above* the
+            # probe/_ds_errors bookkeeping in _connect, so without this the
+            # source stays absent from _ds_errors and datasource_health() reports
+            # it as ok=True/"never tried" -- a broken credential looking healthy
+            # on the very page an admin opens to find broken credentials.
+            _ds_errors[datasource_id] = _first_line(e) or str(e)
+            raise
         if ds is None:
             raise ValueError(f"datasource {datasource_id} not found")
         kwargs = dict(
@@ -310,6 +319,7 @@ def datasource_health() -> list[dict[str, Any]]:
             "in_use": r["id"] in in_use,
             "last_error": _ds_errors.get(r["id"]),
             "ok": _ds_errors.get(r["id"]) is None,
+            "credential_state": datasource_credential_state(r["id"]),
         }
         for r in rows
     ]
@@ -1787,6 +1797,7 @@ def create_datasource(
              security.encrypt_secret(password), sslmode, db_schema),
         ).fetchone()
         conn.commit()
+    _refresh_credential_state_after_write()
     return row
 
 
@@ -1821,19 +1832,43 @@ def update_datasource(
     # rebuilds against what was just saved, rather than silently querying the
     # previous server until the process restarts.
     drop_pool(datasource_id)
+    _refresh_credential_state_after_write()
     return row
+
+
+def _refresh_credential_state_after_write() -> None:
+    """Re-audit after a committed datasource write so the admin status page and
+    _ds_errors reflect the save immediately -- in particular so replacing a
+    broken password clears its recovery flag without a service restart.
+
+    Best-effort by design: the write is already committed, so a failure here must
+    not be reported to the caller as a failed save.
+    """
+    try:
+        reconcile_datasource_credentials()
+    except psycopg.Error as e:
+        logger.warning("Could not refresh datasource credential state: %s", e)
 
 
 def encrypt_legacy_datasource_passwords() -> int:
     """One-time upgrade sweep: encrypt any plaintext password left over from
-    before ENCRYPTION_KEY was set, or from before this feature existed.
+    before an encryption key was configured, or from before this feature existed.
 
     Safe on every boot -- already-encrypted rows are excluded by the NOT LIKE
-    filter, so a repeat call is a no-op. No-ops entirely when ENCRYPTION_KEY
-    isn't configured, since there is nothing to encrypt into.
+    filter, so a repeat call is a no-op.
+
+    Raises SecretConfigurationError when no usable key is configured. It used to
+    guard on `if not config.ENCRYPTION_KEY: return 0`, which a *malformed* but
+    non-empty key sailed straight through; encrypt_secret then returned the
+    plaintext unchanged and this function still reported len(rows) migrated. It
+    claimed to have encrypted rows it had just rewritten in cleartext. Callers
+    that must not raise should go through reconcile_datasource_credentials().
     """
-    if not config.ENCRYPTION_KEY:
-        return 0
+    problem = security.encryption_key_problem()
+    if problem:
+        raise security.SecretConfigurationError(
+            f"Cannot encrypt legacy datasource passwords: {problem}"
+        )
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT id, password FROM datasources "
@@ -1846,6 +1881,143 @@ def encrypt_legacy_datasource_passwords() -> int:
             )
         conn.commit()
     return len(rows)
+
+
+# Cached result of the last reconciliation, served to the admin status route so
+# it reports the audited state rather than re-decrypting on every page load.
+_credential_security: dict[str, Any] = {
+    "state": "unknown",
+    "message": None,
+    "migrated": 0,
+    "plaintext_count": 0,
+    "encrypted_count": 0,
+    "recovery_required_count": 0,
+}
+_credential_states: dict[int, str] = {}
+
+
+def datasource_credential_security() -> dict[str, Any]:
+    """Global credential-encryption posture from the last reconciliation."""
+    return dict(_credential_security)
+
+
+def datasource_credential_state(datasource_id: int) -> str:
+    """Per-row state: empty | plaintext | encrypted | recovery_required."""
+    return _credential_states.get(datasource_id, "unknown")
+
+
+def reconcile_datasource_credentials() -> dict[str, Any]:
+    """Audit every stored datasource password, then migrate plaintext ones if —
+    and only if — that is safe.
+
+    Never raises for key problems: this runs from the startup path, which only
+    catches psycopg.Error, and the operator needs the API up to *perform* the
+    recovery. psycopg.Error is deliberately propagated so a database outage keeps
+    its existing degraded-boot behaviour.
+
+    The migrate-nothing-when-anything-is-unreadable rule is the important part.
+    If old ciphertext cannot be read, the configured key is not the key that wrote
+    it; encrypting the plaintext rows anyway would leave the table split across
+    two keys, one of which nobody has. Better to stay uniformly recoverable.
+    """
+    global _credential_security
+
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, password FROM datasources ORDER BY id"
+        ).fetchall()
+
+    problem = security.encryption_key_problem()
+    states: dict[int, str] = {}
+    plaintext_ids: list[int] = []
+    encrypted = recovery = 0
+
+    for row in rows:
+        stored = row["password"] or ""
+        if not stored:
+            states[row["id"]] = "empty"
+        elif not security.is_encrypted_secret(stored):
+            states[row["id"]] = "plaintext"
+            plaintext_ids.append(row["id"])
+        else:
+            try:
+                security.decrypt_secret(stored)
+            except security.SecretDecryptionError:
+                states[row["id"]] = "recovery_required"
+                recovery += 1
+            else:
+                states[row["id"]] = "encrypted"
+                encrypted += 1
+
+    migrated = 0
+    if problem:
+        state = "unconfigured"
+        message = problem
+    elif recovery:
+        state = "recovery_required"
+        message = (
+            f"{recovery} datasource password(s) cannot be decrypted with the "
+            "configured key. An administrator must re-enter them, or restore the "
+            "original key. Plaintext migration is paused until then to avoid "
+            "splitting the table across two keys."
+        )
+    else:
+        migrated = _migrate_plaintext_passwords(plaintext_ids)
+        for ds_id in plaintext_ids:
+            states[ds_id] = "encrypted"
+        encrypted += migrated
+        state = "secure"
+        message = None
+
+    _credential_states.clear()
+    _credential_states.update(states)
+    for ds_id, ds_state in states.items():
+        if ds_state == "recovery_required":
+            _ds_errors[ds_id] = (
+                f"{security.CREDENTIAL_RECOVERY_PREFIX} an administrator must "
+                "re-enter this password, or restore the original encryption key."
+            )
+        elif _is_recovery_error(_ds_errors.get(ds_id)):
+            # Recovered: drop the stale marker so the source reads as untried
+            # again rather than staying red until something reconnects.
+            _ds_errors.pop(ds_id, None)
+
+    _credential_security = {
+        "state": state,
+        "message": message,
+        "migrated": migrated,
+        "plaintext_count": len(plaintext_ids) - migrated,
+        "encrypted_count": encrypted,
+        "recovery_required_count": recovery,
+    }
+    return dict(_credential_security)
+
+
+def _is_recovery_error(error: str | None) -> bool:
+    return bool(error) and error.startswith(security.CREDENTIAL_RECOVERY_PREFIX)
+
+
+def _migrate_plaintext_passwords(datasource_ids: list[int]) -> int:
+    """Encrypt the named plaintext rows in one transaction. Returns the count
+    actually changed -- re-read inside the transaction so a row edited between
+    the audit and here is not double-encrypted or miscounted."""
+    if not datasource_ids:
+        return 0
+    changed = 0
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, password FROM datasources "
+            "WHERE id = ANY(%s) AND password <> '' AND password NOT LIKE 'fernet$%%'",
+            (datasource_ids,),
+        ).fetchall()
+        for row in rows:
+            conn.execute(
+                "UPDATE datasources SET password = %s WHERE id = %s",
+                (security.encrypt_secret(row["password"]), row["id"]),
+            )
+            changed += 1
+        conn.commit()
+    return changed
 
 
 def delete_datasource(datasource_id: int) -> bool:

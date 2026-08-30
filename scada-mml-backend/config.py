@@ -62,7 +62,13 @@ def _resolve_secret(name: str, default: str = "") -> str:
     convention for datasource passwords: anything without the prefix -- unset, empty, or
     plain text -- passes through unchanged, so existing plaintext .env files need no
     migration."""
-    value = os.getenv(name, default)
+    return _resolve_secret_value(name, os.getenv(name, default))
+
+
+def _resolve_secret_value(name: str, value: str) -> str:
+    """The dpapi:-unwrapping half of _resolve_secret, split out so it can also be
+    applied to a secret read from a file rather than the environment. ``name`` is
+    only used to make error messages point at the right source."""
     if not value.startswith(_DPAPI_PREFIX):
         return value
     import base64
@@ -105,7 +111,51 @@ MAX_SELECTED_DATASOURCES = int(os.getenv("MAX_SELECTED_DATASOURCES", "8"))
 
 # --- Secrets at rest ---------------------------------------------------------
 #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-ENCRYPTION_KEY = _resolve_secret("ENCRYPTION_KEY", "")
+#
+# The key lives OUTSIDE the application directory (ProgramData by default) because
+# that is the only way it survives an uninstall/reinstall: the packaged installer
+# rewrites backend\.env from .env.example, which is exactly how this install lost
+# its key and stranded datasource 1 behind undecryptable ciphertext.
+#
+# ENCRYPTION_KEY is still read as the legacy/dev location, and provisioning keeps a
+# copy there, so rolling back to a build that predates ENCRYPTION_KEY_FILE can still
+# decrypt. But when ENCRYPTION_KEY_FILE is configured it is authoritative and a
+# failure to read it does NOT fall back to ENCRYPTION_KEY -- silently encrypting
+# under a second, different key is what produces a half-readable database.
+ENCRYPTION_KEY_FILE = os.getenv("ENCRYPTION_KEY_FILE", "")
+
+
+def _load_encryption_key() -> tuple[str, str | None]:
+    """Resolve the datasource-encryption key. Returns ``(key, load_error)``.
+
+    Never raises. config.py is imported at process start, so a missing or
+    corrupt key file must degrade to "no key available" -- which fails writes
+    closed and flags rows for recovery -- rather than preventing boot. The
+    operator needs the API up to *perform* the recovery.
+    """
+    if not ENCRYPTION_KEY_FILE:
+        try:
+            return _resolve_secret("ENCRYPTION_KEY", ""), None
+        except RuntimeError as e:
+            return "", str(e)
+
+    try:
+        with open(ENCRYPTION_KEY_FILE, "r", encoding="utf-8") as fh:
+            raw = fh.read().strip()
+    except OSError as e:
+        return "", (
+            f"ENCRYPTION_KEY_FILE={ENCRYPTION_KEY_FILE!r} could not be read ({e}). "
+            "Datasource passwords cannot be encrypted or decrypted until it is restored."
+        )
+    if not raw:
+        return "", f"ENCRYPTION_KEY_FILE={ENCRYPTION_KEY_FILE!r} is empty."
+    try:
+        return _resolve_secret_value("ENCRYPTION_KEY_FILE", raw), None
+    except RuntimeError as e:
+        return "", str(e)
+
+
+ENCRYPTION_KEY, ENCRYPTION_KEY_LOAD_ERROR = _load_encryption_key()
 
 # --- Camera image folder ----------------------------------------------------
 # <root>/<camera code>/NG/defect_<slot>/*.png

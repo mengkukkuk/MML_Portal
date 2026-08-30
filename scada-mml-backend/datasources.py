@@ -10,6 +10,7 @@ Security: passwords are never returned (the public projection exposes only
 `has_password`). The test endpoint can probe arbitrary hosts, so it is
 admin-only.
 """
+import logging
 from datetime import datetime
 
 import psycopg
@@ -18,8 +19,11 @@ from pydantic import BaseModel, Field
 
 import db
 import config
+import security
 from auth import get_current_user, require_admin
 from licensing import current_status, require_datasource_slot, require_valid_license
+
+logger = logging.getLogger("mml-api.datasources")
 
 router = APIRouter(
     prefix="/api/datasources",
@@ -196,6 +200,8 @@ def create_datasource(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"A connection named {body.name!r} already exists",
         )
+    except security.SecretConfigurationError as e:
+        raise _encryption_unavailable(e)
 
 
 @router.put("/{datasource_id}", response_model=DatasourceOut)
@@ -214,9 +220,28 @@ def update_datasource(datasource_id: int, body: DatasourceIn, _admin: dict = Dep
             status_code=status.HTTP_409_CONFLICT,
             detail=f"A connection named {body.name!r} already exists",
         )
+    except security.SecretConfigurationError as e:
+        raise _encryption_unavailable(e)
     if ds is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
     return ds
+
+
+def _encryption_unavailable(e: Exception) -> HTTPException:
+    """503, not 400: the request is fine, the server is missing its encryption
+    key. Refusing is the point -- the alternative is writing the plant password
+    to the database in cleartext, which is the bug this exists to prevent.
+    Metadata-only updates (password omitted) never reach here.
+    """
+    logger.error("Refused to store a datasource password: %s", e)
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=(
+            "Datasource password encryption is unavailable, so the password was "
+            "not saved. Provision or restore the encryption key on the server, "
+            "then try again."
+        ),
+    )
 
 
 @router.delete("/{datasource_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -234,15 +259,22 @@ def test_datasource(body: DatasourceTestIn, _admin: dict = Depends(require_admin
     failed probe is a normal outcome, not an HTTP error.
     """
     base = {}
+    stored_password = ""
     if body.datasource_id is not None:
-        try:
-            base = db.get_datasource_secret(body.datasource_id) or {}
-        except RuntimeError as e:
-            return TestResult(ok=False, message=str(e))
+        # Password-free read first. A source whose stored secret can no longer be
+        # decrypted is exactly the one an admin opens this dialog to repair, so
+        # fetching the metadata must not depend on the broken secret.
+        base = db.get_datasource(body.datasource_id) or {}
         if not base:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found"
             )
+        if not body.password:
+            try:
+                secret = db.get_datasource_secret(body.datasource_id) or {}
+            except RuntimeError as e:
+                return TestResult(ok=False, message=str(e))
+            stored_password = secret.get("password", "")
 
     def pick(field: str, default=""):
         val = getattr(body, field)
@@ -254,7 +286,7 @@ def test_datasource(body: DatasourceTestIn, _admin: dict = Depends(require_admin
     username = pick("username")
     sslmode = pick("sslmode", "prefer") or "prefer"
     # Typed password wins; otherwise reuse the stored secret.
-    password = body.password if body.password else base.get("password", "")
+    password = body.password if body.password else stored_password
 
     if not host or not database:
         return TestResult(ok=False, message="Host and database are required.")

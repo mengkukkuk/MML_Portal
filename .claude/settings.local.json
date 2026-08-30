@@ -115,7 +115,8 @@
       "Bash(powershell -NoProfile -Command \"Test-Path ''C:\\\\Windows\\\\System32\\\\virtmgmt.msc''\")",
       "Bash(powershell -NoProfile -Command \"Test-Path ''HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\Session Manager\\\\PendingFileRenameOperations''\")",
       "Bash(powershell -NoProfile -Command \"\\(Get-ItemProperty ''HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Component Based Servicing\\\\RebootPending'' -ErrorAction SilentlyContinue\\) -ne $null\")",
-      "Bash(powershell -NoProfile -Command \"Test-Path ''C:\\\\Windows\\\\Temp\\\\hyperv_enable.log''\")"
+      "Bash(powershell -NoProfile -Command \"Test-Path ''C:\\\\Windows\\\\Temp\\\\hyperv_enable.log''\")",
+      "Bash(~/.claude/bin/codeagent-wrapper --lite:*)"
     ]
   }
 }

@@ -1,4 +1,4 @@
-﻿---
+---
 name: mmlportal-patterns
 description: >-
   Conventions for the MMLPortal SCADA monorepo. Apply when adding or modifying

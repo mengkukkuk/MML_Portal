@@ -98,9 +98,7 @@ def _create_tables() -> bool:
         db.init_panels_table()
         db.init_dashboards_table()
         db.init_datasources_table()
-        migrated = db.encrypt_legacy_datasource_passwords()
-        if migrated:
-            logger.info("Encrypted %d legacy plaintext datasource password(s)", migrated)
+        _report_credential_security(db.reconcile_datasource_credentials())
         db.init_user_datasource_selection_table()
         db.init_mimic_table()
         db.init_mimic_assets_table()
@@ -127,6 +125,36 @@ def _create_tables() -> bool:
     _schema_ready = True
     db.SCHEMA_READY = True
     return True
+
+
+def _report_credential_security(result: dict) -> None:
+    """Log the datasource-password audit at a level matching how bad it is.
+
+    Deliberately never aborts the lifespan, unlike _check_secure_config's
+    JWT_SECRET guard. An install whose key is missing needs the API *up* so an
+    admin can sign in and re-enter the affected passwords, and an existing
+    deployment still on plaintext must survive the upgrade that introduces this.
+    """
+    state = result["state"]
+    if state == "secure":
+        if result["migrated"]:
+            logger.info(
+                "Encrypted %d legacy plaintext datasource password(s)", result["migrated"]
+            )
+        return
+    if state == "unconfigured":
+        logger.warning(
+            "Datasource password encryption is UNAVAILABLE: %s Saving a datasource "
+            "password will be refused until a key is provisioned; %d existing "
+            "password(s) remain in plaintext.",
+            result["message"], result["plaintext_count"],
+        )
+        return
+    if state == "recovery_required":
+        logger.error(
+            "%d datasource password(s) require recovery: %s",
+            result["recovery_required_count"], result["message"],
+        )
 
 _schema_ready = False
 

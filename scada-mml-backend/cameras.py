@@ -69,8 +69,8 @@ class CameraOut(BaseModel):
 class CameraIn(BaseModel):
     # `code` reaches the filesystem: camera_files.py builds the image folder
     # path from it. Restricted here to characters that cannot mean anything to
-    # a path resolver, and validated again at the filesystem boundary — one
-    # layer is config, the other is the actual defence.
+    # a path resolve, and validated again at the filesystem boundary — one
+    # layer is config, the other is the actual defense.
     code: str = Field(
         ..., min_length=1, max_length=40, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
     )
@@ -81,7 +81,7 @@ class CameraIn(BaseModel):
     enabled: bool = True
     # PUT replaces the whole row (there is no PATCH), so a caller that omits
     # these clears them. No such caller exists yet — nothing in the frontend
-    # calls createCamera/updateCamera, the rows are seeded by SQL — but whoever
+    # calls createCamera/updateCamera, SQL seeds the rows — but whoever
     # builds a camera admin form must give the labels inputs.
     defect_1_label: str | None = None
     defect_2_label: str | None = None
@@ -157,7 +157,7 @@ _IMAGE_HEADERS = {
 # place by the vision system, so the immutability argument above does not carry
 # over — a long max-age would pin a superseded frame in every operator's
 # browser. A short revalidating window plus the ETag below is the honest
-# version of the same optimisation.
+# version of the same optimization.
 _FILE_IMAGE_HEADERS = {
     "Content-Security-Policy": "default-src 'none'; sandbox",
     "X-Content-Type-Options": "nosniff",
@@ -222,7 +222,7 @@ class DefectSlotOut(BaseModel):
 class DefectSummaryOut(BaseModel):
     batch_id: int | None = None
     # Naive, unlike every other timestamp this API returns: camera_defect.updated_at
-    # is `timestamp`, not `timestamptz`. It is plant-local wall-clock time and is
+    # is `timestamp`, not `timestamp`. It is plant-local wall-clock time and is
     # serialized without an offset — do not read it as UTC.
     updated_at: datetime | None = None
     total: int = 0
@@ -235,10 +235,10 @@ def camera_defects(camera_id: int, _user: dict = Depends(get_current_user)):
 
     A null `batch_id` means no defect row has ever been written for this camera
     — which the rail shows differently from a batch that counted zero, because
-    "nothing reported yet" and "nothing wrong" are not the same answer.
+    "nothing reported yet" and "nothing wrong" are different answers.
 
     A slot is returned when it is named, when it counted something, or when it
-    has frames on disk. The rest are omitted: the table has five slots but a
+    has frames on disk. The rest are omitted: the table has five slots, but a
     given line rarely uses all five, and an empty unnamed bar says nothing.
     """
     camera = _get_camera_or_404(camera_id)
