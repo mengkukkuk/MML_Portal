@@ -5,6 +5,7 @@ import struct
 import pytest
 from fastapi import HTTPException
 
+import camera_files
 import cameras
 import db
 from camera_files import FrameMeta
@@ -45,7 +46,11 @@ def test_frame_sniff_rejects_svg():
     assert "image/svg+xml" not in cameras.ALLOWED_FRAME_MIMES
 
 
-@pytest.mark.parametrize("slot", [0, 6, -1])
+# Derived from the bound rather than written out, so raising MAX_SLOT for a
+# longer defect_array cannot leave this asserting that a valid slot is invalid.
+@pytest.mark.parametrize(
+    "slot", [camera_files.MIN_SLOT - 1, camera_files.MAX_SLOT + 1, -1]
+)
 def test_frame_listing_refuses_an_out_of_range_slot(slot):
     with pytest.raises(HTTPException) as exc:
         cameras.list_linked_camera_slot_frames("cam-001", slot, _user=USER)

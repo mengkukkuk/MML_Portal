@@ -1,10 +1,4 @@
-"""Configured-source camera registry, defect counters and NG frame endpoints.
-
-Camera identity and defect batches are read exclusively from the datasource
-selected in Settings. They never fall back to the app/config database and are
-independent of the user's header datasource selection. Folder-backed NG images
-remain read-only filesystem data keyed by the same stable camera code.
-"""
+"""Configured-source camera registry, defect counters, and NG frame endpoints"""
 import logging
 from collections.abc import Callable
 from datetime import datetime
@@ -71,8 +65,6 @@ def _source_query(query: Callable[[], _T]) -> _T:
 
 
 # --- Camera source -------------------------------------------------------------
-# One saved datasource backs both the "Linked to" picker and rail defect data.
-# NG image bytes remain filesystem-backed and use the same camera code.
 class CameraLinkSourceOut(BaseModel):
     datasource_id: int | None = None
     datasource_name: str | None = None
@@ -101,11 +93,7 @@ class CameraLinkOptionOut(BaseModel):
     station_label: str | None = None
     location: str | None = None
     enabled: bool = True
-    defect_1_label: str | None = None
-    defect_2_label: str | None = None
-    defect_3_label: str | None = None
-    defect_4_label: str | None = None
-    defect_5_label: str | None = None
+    defect_labels: list[str | None] = []
 
 
 class CameraLinkOptionsOut(BaseModel):
@@ -117,11 +105,6 @@ class CameraLinkOptionsOut(BaseModel):
 
 @router.get("/link-options", response_model=CameraLinkOptionsOut)
 def camera_link_options(_user: dict = Depends(get_current_user)):
-    """Candidate cameras for the Monitor link picker, position (location) and
-    code being the two fields the picker filters on.
-
-    A configured source is mandatory; an unconfigured install returns 409.
-    """
     settings = _camera_source_or_409()
     ds_id = settings["datasource_id"]
     cameras = _source_query(lambda: db.list_remote_camera_options(ds_id))
@@ -143,7 +126,6 @@ def _get_linked_camera_or_404(camera_code: str) -> tuple[int, dict[str, Any]]:
         raise _not_found()
     return ds_id, camera
 
-
 # Folder-backed camera frames are always raster images.
 ALLOWED_FRAME_MIMES = {"image/png", "image/jpeg", "image/webp"}
 
@@ -151,7 +133,6 @@ _MAGIC = (
     (b"\x89PNG\r\n\x1a\n", "image/png"),
     (b"\xff\xd8\xff", "image/jpeg"),
 )
-
 
 def _sniff_mime(data: bytes) -> str | None:
     for prefix, mime in _MAGIC:
@@ -161,68 +142,55 @@ def _sniff_mime(data: bytes) -> str | None:
         return "image/webp"
     return None
 
-
 # A file on disk can be replaced in place by the vision system, so use a short
-# revalidating cache window plus an ETag rather than immutable caching.
 _FILE_IMAGE_HEADERS = {
     "Content-Security-Policy": "default-src 'none'; sandbox",
     "X-Content-Type-Options": "nosniff",
     "Cache-Control": "private, max-age=30, must-revalidate",
 }
 
-
 # --- defect counters -----------------------------------------------------------
-# The five positional slots of `camera_defect`, named per camera by the
-# matching `defect_N_label` on `cameras`. Slot N means the same defect on both
-# tables and in the image folder's `defect_N` directory.
-DEFECT_SLOTS = (1, 2, 3, 4, 5)
-
-
 class DefectSlotOut(BaseModel):
     slot: int
     label: str | None = None
     count: int = 0
     has_frames: bool = False
 
-
 class DefectSummaryOut(BaseModel):
     batch_id: int | None = None
-    # Naive, unlike every other timestamp this API returns:
-    # camera_defect.updated_at is `timestamp`, not `timestamptz`. It is
-    # plant-local wall-clock time and is serialized without an offset.
     updated_at: datetime | None = None
     total: int = 0
     slots: list[DefectSlotOut] = []
 
-
 def _defect_summary(datasource_id: int, camera: dict[str, Any]) -> dict[str, Any]:
-    """Build the rail summary from a source-resolved camera identity."""
     row = _source_query(
         lambda: db.camera_defect_latest(datasource_id, camera["code"])
     )
-    # One walk of the folder for all five slots — this route is polled on the
-    # page's live cadence, so it must not re-resolve the path per slot.
-    with_frames = camera_files.slots_with_frames(camera["code"])
+    counts = (row.get("defect_array") if row else None) or []
+    labels = camera.get("defect_labels") or []
 
+    with_frames = camera_files.slots_with_frames(camera["code"])
+    total = sum(int(c or 0) for c in counts)
+
+    span = min(
+        max(len(counts), len(labels), max(with_frames, default=0)),
+        camera_files.MAX_SLOT,
+    )
     slots: list[dict[str, Any]] = []
-    total = 0
-    for slot in DEFECT_SLOTS:
-        count = (row[f"defect_{slot}"] or 0) if row else 0
-        label = camera.get(f"defect_{slot}_label")
+    for slot in range(camera_files.MIN_SLOT, span + 1):
+        count = int(counts[slot - 1] or 0) if slot <= len(counts) else 0
+        label = labels[slot - 1] if slot <= len(labels) else None
         has_frames = slot in with_frames
-        total += count
         if label or count or has_frames:
             slots.append(
                 {"slot": slot, "label": label, "count": count, "has_frames": has_frames}
             )
-
     return {
         "batch_id": row["batch_id"] if row else None,
         "updated_at": row["updated_at"] if row else None,
         "total": total,
         "slots": slots,
     }
-
 
 @router.get("/linked/{camera_code}/defects", response_model=DefectSummaryOut)
 def linked_camera_defects(camera_code: str, _user: dict = Depends(get_current_user)):
@@ -232,18 +200,11 @@ def linked_camera_defects(camera_code: str, _user: dict = Depends(get_current_us
 
 
 # --- folder-backed frames -------------------------------------------------------
-# The categorized images the vision system writes to disk. Read-only: there is
-# no write route here, and the app never creates anything under the image root.
 class FrameOut(BaseModel):
     index: int
     captured_at: datetime
     size_bytes: int
-    # Carried to the client so a replaced file gets a new cache key. The
-    # browser-side blob cache keys on it; without that a frame swapped on disk
-    # would stay on screen for the life of the page whatever the HTTP headers
-    # say.
     mtime_ns: int
-
 
 def _checked_slot(slot: int) -> int:
     if not camera_files.MIN_SLOT <= slot <= camera_files.MAX_SLOT:
@@ -252,7 +213,6 @@ def _checked_slot(slot: int) -> int:
         )
     return slot
 
-
 @router.get("/linked/{camera_code}/defects/{slot}/frames", response_model=list[FrameOut])
 def list_linked_camera_slot_frames(
     camera_code: str,
@@ -260,12 +220,10 @@ def list_linked_camera_slot_frames(
     limit: int = 30,
     _user: dict = Depends(get_current_user),
 ):
-    """Folder-backed frames for a camera resolved from the configured source."""
     _datasource_id, camera = _get_linked_camera_or_404(camera_code)
     _checked_slot(slot)
     limit = max(1, min(limit, 100))
     return camera_files.list_slot_frames(camera["code"], slot, limit=limit)
-
 
 def _frame_image(camera: dict[str, Any], slot: int, index: int) -> Response:
     _checked_slot(slot)
@@ -284,7 +242,6 @@ def _frame_image(camera: dict[str, Any], slot: int, index: int) -> Response:
     }
     return Response(content=data, media_type=mime, headers=headers)
 
-
 @router.get("/linked/{camera_code}/defects/{slot}/frames/{index}/image")
 def get_linked_camera_slot_frame_image(
     camera_code: str,
@@ -292,6 +249,5 @@ def get_linked_camera_slot_frame_image(
     index: int,
     _user: dict = Depends(get_current_user),
 ):
-    """One frame for a camera resolved from the configured source."""
     _datasource_id, camera = _get_linked_camera_or_404(camera_code)
     return _frame_image(camera, slot, index)

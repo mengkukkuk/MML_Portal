@@ -2565,8 +2565,7 @@ def list_remote_camera_options(datasource_id: int) -> list[dict[str, Any]]:
         rows = conn.execute(
             sql.SQL(
                 """SELECT code, name, station_code, station_label, location, enabled,
-                          defect_1_label, defect_2_label, defect_3_label,
-                          defect_4_label, defect_5_label
+                          COALESCE(defect_labels, ARRAY[]::text[]) AS defect_labels
                    FROM {tbl}
                    WHERE enabled
                    ORDER BY location NULLS LAST, code"""
@@ -2587,8 +2586,7 @@ def get_remote_camera_option_by_code(
         row = conn.execute(
             sql.SQL(
                 """SELECT code, name, station_code, station_label, location, enabled,
-                          defect_1_label, defect_2_label, defect_3_label,
-                          defect_4_label, defect_5_label
+                          COALESCE(defect_labels, ARRAY[]::text[]) AS defect_labels
                    FROM {tbl}
                    WHERE enabled AND lower(code) = lower(%s)
                    LIMIT 1"""
@@ -2599,22 +2597,11 @@ def get_remote_camera_option_by_code(
 
 
 def camera_defect_latest(datasource_id: int, code: str) -> dict[str, Any] | None:
-    """The newest batch of defect counters for one camera, by its code.
-
-    Returns None when the camera has no rows at all — a different state from a
-    batch that counted zero of everything, and the rail must not draw the first
-    as if it were the second.
-
-    Ordered rather than filtered on `max(batch_id)`: batch_id is nullable, so
-    `WHERE batch_id = (SELECT max(...))` silently returns nothing for a camera
-    whose rows all have a null batch. NULLS LAST keeps those rows reachable and
-    still prefers a real batch when one exists.
-    """
     with _table_source_conn(datasource_id) as (conn, schema):
         row = conn.execute(
             sql.SQL(
-                """SELECT id, code, batch_id, updated_at,
-                          defect_1, defect_2, defect_3, defect_4, defect_5
+                """SELECT id, code, batch_id, updated_at::timestamp AS updated_at,
+                          defect_array
                    FROM {table}
                    WHERE lower(code) = lower(%s)
                    ORDER BY batch_id DESC NULLS LAST, updated_at DESC, id DESC
@@ -2628,11 +2615,6 @@ def camera_defect_latest(datasource_id: int, code: str) -> dict[str, Any] | None
 # ============================================================================
 # Reports — OEE / production status reporting
 # ============================================================================
-# Two app-owned tables (report_templates, report_settings) plus read-only
-# queries against the SCADA-owned public.event_logs / public.alarm_logs.
-# All timestamps here are naive/server-local: the plant, the database and the
-# API share a clock, so no timezone conversion happens (documented constraint —
-# a remote viewer sees plant time, not their own).
 
 _DEFAULT_STATE_RULES = {
     "PLANNED_DOWN": ["changeover", "maintenance", "cleaning", "setup", "break"],
@@ -2641,8 +2623,6 @@ _DEFAULT_STATE_RULES = {
     "RUN": ["start", "running", "run", "auto"],
 }
 
-#: The seeded "Production Status Report". Only inserted when the table is empty,
-#: so an admin's edits are never clobbered by a service restart.
 _DEFAULT_TEMPLATE_BLOCKS = [
     {"id": "b1", "type": "kpi", "title": "Overview", "width": "full",
      "options": {"metrics": ["oee", "availability", "runtime", "downtime", "stops", "mttr"],
@@ -2660,15 +2640,7 @@ _DEFAULT_TEMPLATE_BLOCKS = [
      "options": {"pageSize": 50}},
 ]
 
-
 def init_report_tables() -> None:
-    """Create the report tables and the event_logs index. Idempotent.
-
-    The CREATE INDEX targets a table the SCADA system owns, not the app. That is
-    deliberate and has precedent (_probe_alarms.py does the same on alarm_logs):
-    without it every report does a full scan, and the index is additive so the
-    external writer is unaffected.
-    """
     with get_connection() as conn:
         conn.execute(
             """CREATE TABLE IF NOT EXISTS report_templates (
@@ -2709,9 +2681,6 @@ def init_report_tables() -> None:
             )
         conn.commit()
 
-    # Separate connection: on a fresh install event_logs may not exist yet, or the
-    # app role may lack DDL rights on a SCADA-owned table. Neither should stop the
-    # API booting — reports just run unindexed until the table is created.
     try:
         with get_connection() as conn:
             conn.execute(
@@ -2724,11 +2693,9 @@ def init_report_tables() -> None:
     except psycopg.Error:
         pass
 
-
 # --- Template CRUD ----------------------------------------------------------
 _TEMPLATE_COLS = ("id, name, description, blocks, default_filters, is_default, "
                   "created_at, updated_at")
-
 
 def list_report_templates() -> list[dict[str, Any]]:
     with get_connection() as conn:
@@ -2747,8 +2714,6 @@ def get_report_template(template_id: int) -> dict[str, Any] | None:
 
 
 def get_default_report_template() -> dict[str, Any] | None:
-    """The template /reports lands on. Falls back to the first by name so the
-    page still works if someone clears every is_default flag."""
     with get_connection() as conn:
         return conn.execute(
             f"SELECT {_TEMPLATE_COLS} FROM report_templates "

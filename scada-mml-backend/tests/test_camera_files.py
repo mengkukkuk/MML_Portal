@@ -170,11 +170,26 @@ def test_slots_with_frames_agrees_with_list_slot_frames(image_root):
 
 
 def test_slots_with_frames_ignores_directories_that_are_not_slots(image_root):
+    """Anything the router could not turn back into a `defect_N` path must be
+    skipped, or the rail offers a chip whose film strip is always empty.
+
+    `defect_01` is the subtle one: it reads as slot 1, but _slot_dir only ever
+    builds `defect_1`, so honouring it would make the cheap check and the full
+    listing disagree.
+    """
+    for name in (f"defect_{camera_files.MAX_SLOT + 1}", "defect_01", "scratch"):
+        (image_root / "cam-03" / "NG" / name).mkdir()
+        (image_root / "cam-03" / "NG" / name / "x.png").write_bytes(PNG)
+    assert camera_files.slots_with_frames("CAM-03") == {1}
+
+
+def test_slots_with_frames_reaches_past_the_original_five(image_root):
+    """The ceiling moved with defect_array's length; a camera declaring more
+    than five defect types must still be able to show their pictures."""
     (image_root / "cam-03" / "NG" / "defect_9").mkdir()
     (image_root / "cam-03" / "NG" / "defect_9" / "x.png").write_bytes(PNG)
-    (image_root / "cam-03" / "NG" / "scratch").mkdir()
-    (image_root / "cam-03" / "NG" / "scratch" / "x.png").write_bytes(PNG)
-    assert camera_files.slots_with_frames("CAM-03") == {1}
+    assert 9 in camera_files.slots_with_frames("CAM-03")
+    assert [f.index for f in camera_files.list_slot_frames("CAM-03", 9)] == [0]
 
 
 def test_slots_with_frames_is_empty_without_a_root(monkeypatch):

@@ -39,10 +39,20 @@ from pathlib import Path
 
 import config
 
-# Slots come from camera_defect's five positional columns; the folder tree uses
-# the same numbering, so defect_3 on disk is defect_3 in the database.
+# Slots are positions in camera_defect.defect_array; the folder tree uses the
+# same numbering, so defect_3 on disk is element 3 of the array.
+#
+# The array is unbounded in the schema, but this is a path segment and a route
+# parameter, so it needs a ceiling. 16 is comfortably above the 5 the vision
+# system ships with while keeping the folder scan and the slot list bounded by
+# something other than whatever a remote database happens to contain.
 MIN_SLOT = 1
-MAX_SLOT = 5
+MAX_SLOT = 16
+
+# `defect_<n>`, lowercased, as written by the vision system. No leading zeros:
+# _slot_dir only ever builds `defect_{int}`, so accepting `defect_01` as slot 1
+# would let slots_with_frames report frames that list_slot_frames cannot find.
+_SLOT_DIR_RE = re.compile(r"^defect_([1-9][0-9]?)$")
 
 # Only NG frames are categorized by defect. Every camera folder also carries an
 # empty OK/ directory; nothing reads it, and nothing here should.
@@ -186,9 +196,9 @@ def slots_with_frames(code: str) -> set[int]:
     """Which of one camera's slots have at least one file behind them.
 
     Exists because /defects is polled on the operator's live cadence, and the
-    obvious implementation — call list_slot_frames once per slot — walks the
-    camera's path five times over and stats every file in every slot just to
-    answer five yes/no questions. That is fine once on page load and wasteful
+    obvious implementation — call list_slot_frames once per slot — re-walks the
+    camera's path per slot and stats every file in each one just to answer a
+    handful of yes/no questions. That is fine once on page load and wasteful
     several times a minute, especially when the image root is a network share.
 
     So: resolve the camera's NG directory once, then stop at the first file in
@@ -211,11 +221,12 @@ def slots_with_frames(code: str) -> set[int]:
                     break
                 if not entry.is_dir():
                     continue
-                name = entry.name.lower()
-                for slot in range(MIN_SLOT, MAX_SLOT + 1):
-                    if name == f"defect_{slot}" and _has_any_file(entry.path):
-                        found.add(slot)
-                        break
+                match = _SLOT_DIR_RE.match(entry.name.lower())
+                if match is None:
+                    continue
+                slot = int(match.group(1))
+                if MIN_SLOT <= slot <= MAX_SLOT and _has_any_file(entry.path):
+                    found.add(slot)
     except OSError:
         return set()
     return found
