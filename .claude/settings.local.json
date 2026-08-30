@@ -116,7 +116,12 @@
       "Bash(powershell -NoProfile -Command \"Test-Path ''HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\Session Manager\\\\PendingFileRenameOperations''\")",
       "Bash(powershell -NoProfile -Command \"\\(Get-ItemProperty ''HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Component Based Servicing\\\\RebootPending'' -ErrorAction SilentlyContinue\\) -ne $null\")",
       "Bash(powershell -NoProfile -Command \"Test-Path ''C:\\\\Windows\\\\Temp\\\\hyperv_enable.log''\")",
-      "Bash(~/.claude/bin/codeagent-wrapper --lite:*)"
+      "Bash(~/.claude/bin/codeagent-wrapper --lite:*)",
+      "Bash(./venv/Scripts/python.exe -m pytest tests/test_datasource_conn.py -q)",
+      "Bash(./venv/Scripts/python.exe -m pytest tests/test_datasource_conn.py::test_none_is_the_app_db_on_public -q)",
+      "Bash(grep -rn \"SymbolOptions\" src/pages/monitor/*.jsx)",
+      "Bash(sed -n '1,40p' src/pages/monitor/defaultLayout.js)",
+      "Bash(sed -n '1,110p' src/pages/monitor/NodeInspector.jsx)"
     ]
   }
 }

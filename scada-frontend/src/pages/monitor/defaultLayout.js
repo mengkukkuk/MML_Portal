@@ -16,11 +16,16 @@
  * (see SymbolBindingDialog), or the Demo data toggle hands the simulator's
  * matching tag over instead.
  */
-export const LAYOUT_VERSION = 3
+export const LAYOUT_VERSION = 4
 
 export const DEFAULT_LAYOUT = {
   version: LAYOUT_VERSION,
   productionLog: null,
+  // Vision-inspection counters behind the camera rail. Null because the seed is
+  // uncommissioned like everything else here: the table lives in the vision
+  // system's own per-line schema, and only an admin knows which one a given
+  // drawing belongs to.
+  cameraDefect: null,
   plant: 'boiler-1',
   name: 'Boiler House 1',
   viewBox: { w: 1600, h: 900 },

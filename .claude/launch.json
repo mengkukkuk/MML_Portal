@@ -23,6 +23,16 @@
       "port": 8088
     },
     {
+      "name": "backend-8089",
+      "runtimeExecutable": "scada-mml-backend/venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-m", "uvicorn", "main:app",
+        "--app-dir", "scada-mml-backend",
+        "--host", "127.0.0.1", "--port", "8089"
+      ],
+      "port": 8089
+    },
+    {
       "name": "frontend-preview",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "scada-frontend", "run", "preview"],

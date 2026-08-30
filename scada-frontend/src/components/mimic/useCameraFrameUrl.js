@@ -4,21 +4,20 @@ import { apiClient } from '@/api/client'
 /**
  * useCameraFrameUrl — a drawable URL for one folder-backed inspection frame.
  *
- * Same shape as useCameraSnapshotUrl (bounded LRU, revoke on eviction, null
- * until the bytes arrive) for the same reason: the access token rides an Axios
- * interceptor rather than a cookie, so a browser-issued `<img src>` against the
- * API comes back 401.
+ * Fetched through Axios rather than handed to `<img src>` because the access
+ * token rides an interceptor rather than a cookie, so a browser-issued request
+ * against the API comes back 401. Hence the bounded LRU of object URLs below,
+ * revoked on eviction.
  *
- * The difference is the cache key, and it is the whole point of this being a
- * separate hook. A stored snapshot is addressed by a database id that never
- * points at different bytes. A frame is addressed by its *position* in a folder
- * the vision system keeps writing to — index 0 means "the newest file", which
- * is a different image tomorrow. Keying on `camera/slot/index` alone would pin
- * the first frame an operator ever saw for the life of the page, no matter what
- * the HTTP cache headers said, because this cache never revalidates.
+ * The cache key is the interesting part. A frame is addressed by its *position*
+ * in a folder the vision system keeps writing to — index 0 means "the newest
+ * file", which is a different image tomorrow. Keying on `code/slot/index` alone
+ * would pin the first frame an operator ever saw for the life of the page, no
+ * matter what the HTTP cache headers said, because this cache never
+ * revalidates.
  *
- * So `mtimeNs` is part of the key. The listing endpoint returns it per frame,
- * a replaced file changes it, and the new key simply misses the cache.
+ * So `mtimeNs` is part of the key. The listing endpoint returns it per frame, a
+ * replaced file changes it, and the new key simply misses the cache.
  */
 
 const MAX_ENTRIES = 60
@@ -33,13 +32,13 @@ function evictIfNeeded() {
   }
 }
 
-function keyFor(cameraId, slot, index, mtimeNs) {
-  return `${cameraId}/${slot}/${index}/${mtimeNs}`
+function keyFor(code, slot, index, mtimeNs) {
+  return `${code}/${slot}/${index}/${mtimeNs}`
 }
 
-async function load(cameraId, slot, index, key) {
+async function load(code, slot, index, key) {
   const { data } = await apiClient.get(
-    `/cameras/${cameraId}/defects/${slot}/frames/${index}/image`,
+    `/cameras/${encodeURIComponent(code)}/defects/${slot}/frames/${index}/image`,
     { responseType: 'blob' },
   )
   const url = URL.createObjectURL(data)
@@ -50,8 +49,8 @@ async function load(cameraId, slot, index, key) {
   return url
 }
 
-function resolve(cameraId, slot, index, mtimeNs) {
-  const key = keyFor(cameraId, slot, index, mtimeNs)
+function resolve(code, slot, index, mtimeNs) {
+  const key = keyFor(code, slot, index, mtimeNs)
   const hit = cache.get(key)
   if (hit) {
     // Touch it: a still-visible frame should outlive a scrolled-past one.
@@ -60,7 +59,7 @@ function resolve(cameraId, slot, index, mtimeNs) {
     return hit
   }
   const entry = {
-    promise: load(cameraId, slot, index, key).catch((err) => {
+    promise: load(code, slot, index, key).catch((err) => {
       cache.delete(key)
       throw err
     }),
@@ -70,16 +69,16 @@ function resolve(cameraId, slot, index, mtimeNs) {
 }
 
 /** The blob URL for one frame, or null until it arrives (and if it never does). */
-export default function useCameraFrameUrl(cameraId, slot, index, mtimeNs) {
-  const ready = !!cameraId && slot != null && index != null
+export default function useCameraFrameUrl(code, slot, index, mtimeNs) {
+  const ready = !!code && slot != null && index != null
   const [url, setUrl] = useState(
-    () => (ready ? cache.get(keyFor(cameraId, slot, index, mtimeNs))?.url ?? null : null),
+    () => (ready ? cache.get(keyFor(code, slot, index, mtimeNs))?.url ?? null : null),
   )
 
   useEffect(() => {
     if (!ready) { setUrl(null); return undefined }
 
-    const entry = resolve(cameraId, slot, index, mtimeNs)
+    const entry = resolve(code, slot, index, mtimeNs)
     if (entry.url) { setUrl(entry.url); return undefined }
 
     let alive = true
@@ -88,7 +87,7 @@ export default function useCameraFrameUrl(cameraId, slot, index, mtimeNs) {
       () => { if (alive) setUrl(null) },
     )
     return () => { alive = false }
-  }, [ready, cameraId, slot, index, mtimeNs])
+  }, [ready, code, slot, index, mtimeNs])
 
   return url
 }

@@ -31,6 +31,37 @@ export async function fetchMimicProductionLog(slug) {
 }
 
 /**
+ * Cameras reachable through this drawing's `doc.cameraDefect` binding.
+ *
+ * Under the mimic router rather than /api/cameras because the binding is what
+ * says which table these come from, and the binding belongs to the drawing. A
+ * second production line is a schema the vision system already provisioned plus
+ * a binding pointing at it — no migration and no code change.
+ *
+ * 404s when the drawing has no binding yet, which is the state every layout is
+ * in until an admin configures one.
+ */
+export async function fetchMimicCameras(slug) {
+  const { data } = await apiClient.get(`/mimic/layouts/${encodeURIComponent(slug)}/cameras`)
+  return data // [{ code, name, station }]
+}
+
+/**
+ * The newest batch of defect counts for one camera, slot by slot.
+ *
+ * `batch_id: null` means nothing has ever been recorded for this camera, which
+ * the rail shows differently from a batch that counted zero. The slot count
+ * follows the binding's `defect_cols`, so a line grading six categories gets
+ * six — the old fixed five are gone.
+ */
+export async function fetchMimicCameraDefects(slug, code) {
+  const { data } = await apiClient.get(
+    `/mimic/layouts/${encodeURIComponent(slug)}/cameras/${encodeURIComponent(code)}/defects`,
+  )
+  return data // { code, batch_id, updated_at, total, slots: [...], sources }
+}
+
+/**
  * Upsert. There is no PATCH: the whole document goes every time, so a rename
  * must send the existing `doc` back or it erases the drawing.
  */

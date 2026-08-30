@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
+import camera_files
 import db
 from auth import active_datasources, get_current_user, require_admin
 from licensing import require_entitlement, require_valid_license
@@ -92,6 +93,31 @@ class MimicIn(BaseModel):
     # Optional for backwards compatibility. ``model_fields_set`` below keeps
     # an omitted value distinct from an explicit null used for a new layout.
     base_updated_at: datetime | None = None
+
+
+class CameraOut(BaseModel):
+    code: str
+    name: str | None = None
+    station: str | None = None
+
+
+class CameraSlotOut(BaseModel):
+    slot: int
+    label: str | None = None
+    count: int = 0
+    has_frames: bool = False
+
+
+class CameraDefectOut(BaseModel):
+    code: str
+    batch_id: int | None = None
+    # Naive, unlike most timestamps this API returns. The bound column is
+    # typically a plain `timestamp` holding plant-local wall-clock time, and it
+    # is serialized without an offset — do not read it as UTC.
+    updated_at: datetime | None = None
+    total: int = 0
+    slots: list[CameraSlotOut] = []
+    sources: list[SourceReport] = []
 
 
 class ProductionBucketOut(BaseModel):
@@ -250,6 +276,138 @@ def _validate_production_log(
         raise _bad(f"{where}: filter_col and filter_val must be set together")
 
 
+# How many defect slots one camera may report. Not a schema limit any more —
+# the real count is `len(defect_cols)` — but a document is admin input and a
+# thousand-column binding would turn one rail poll into a thousand-column
+# projection and a thousand directory walks.
+MAX_DEFECT_SLOTS = 32
+
+
+def _validate_camera_defect(
+    binding: dict[str, Any],
+    cache: dict[tuple[int | None, str], dict[str, list[str]]],
+) -> None:
+    """Validate the vision-inspection counters behind the camera detail rail.
+
+    The slot count is `len(defect_cols)` rather than a constant, which is the
+    whole reason this binding exists: a line that grades six defect categories
+    used to be unrepresentable, and the sixth column had to be dropped on the
+    floor or merged into another. Slot N is `defect_cols[N-1]`, and that
+    position is also the `defect_N` folder the vision system writes frames into,
+    so reordering the list silently re-points the contact sheets — which is why
+    the editor appends rather than sorts.
+    """
+    where = "doc.cameraDefect"
+    if not isinstance(binding, dict):
+        raise _bad(f"{where} must be an object or null")
+
+    ds_id = binding.get("datasource_id")
+    if ds_id is not None:
+        if not isinstance(ds_id, int) or isinstance(ds_id, bool):
+            raise _bad(f"{where}: datasource_id must be an integer or null")
+        if db.get_datasource(ds_id) is None:
+            raise _bad(f"{where}: datasource_id {ds_id} does not exist")
+
+    table = binding.get("table")
+    if not table or not isinstance(table, str):
+        raise _bad(f"{where}: table is required")
+    try:
+        cols = _describe_cached(cache, table, ds_id)
+    except ValueError:
+        raise _bad(f"{where}: table not allowed: {table!r}")
+    except psycopg.Error as e:
+        first = str(e).strip().splitlines()[0] if str(e).strip() else "connection error"
+        raise _bad(f"{where}: could not reach the selected connection: {first}")
+
+    camera_col = binding.get("camera_col")
+    if not camera_col or not isinstance(camera_col, str):
+        raise _bad(f"{where}: camera_col is required")
+    if camera_col not in cols["filter_columns"]:
+        raise _bad(f"{where}: camera_col must be a column of {table!r}")
+
+    defect_cols = binding.get("defect_cols")
+    if not isinstance(defect_cols, list) or not defect_cols:
+        raise _bad(f"{where}: defect_cols must be a non-empty list")
+    if len(defect_cols) > MAX_DEFECT_SLOTS:
+        raise _bad(f"{where}: at most {MAX_DEFECT_SLOTS} defect columns")
+    if len(set(defect_cols)) != len(defect_cols):
+        # Two slots on one column would draw the same count twice under
+        # different names, and send both to different frame folders.
+        raise _bad(f"{where}: defect_cols must not repeat a column")
+    for col in defect_cols:
+        if not isinstance(col, str) or col not in cols["value_columns"]:
+            raise _bad(f"{where}: defect_cols must all be numeric columns of {table!r}")
+
+    # One of the two is needed to order the batches; without either, "the newest
+    # batch" is whichever row Postgres hands back first.
+    batch_col = binding.get("batch_col")
+    ts_col = binding.get("ts_col")
+    if batch_col is not None:
+        if batch_col not in cols["value_columns"]:
+            raise _bad(f"{where}: batch_col must be a numeric column of {table!r}")
+    if ts_col is not None:
+        if ts_col not in cols["ts_columns"]:
+            raise _bad(f"{where}: ts_col must be a timestamp column of {table!r}")
+    if not batch_col and not ts_col:
+        raise _bad(
+            f"{where}: a batch column or a timestamp column is required to "
+            "identify the newest batch"
+        )
+
+    registry = binding.get("registry")
+    if registry is None:
+        return
+    if not isinstance(registry, dict):
+        raise _bad(f"{where}.registry must be an object or null")
+
+    reg_table = registry.get("table")
+    if not reg_table or not isinstance(reg_table, str):
+        raise _bad(f"{where}.registry: table is required")
+    try:
+        reg_cols = _describe_cached(cache, reg_table, ds_id)
+    except ValueError:
+        raise _bad(f"{where}.registry: table not allowed: {reg_table!r}")
+    except psycopg.Error as e:
+        first = str(e).strip().splitlines()[0] if str(e).strip() else "connection error"
+        raise _bad(f"{where}.registry: could not reach the selected connection: {first}")
+
+    code_col = registry.get("code_col")
+    if not code_col or not isinstance(code_col, str):
+        raise _bad(f"{where}.registry: code_col is required")
+    # Deliberately checked against the full column set rather than
+    # `text_columns`: a registry's code is the table's natural key and is
+    # frequently its primary key too, which `describe_table` excludes from every
+    # value list precisely because it identifies rather than reports.
+    if code_col not in reg_cols["filter_columns"]:
+        raise _bad(f"{where}.registry: code_col must be a column of {reg_table!r}")
+
+    for key in ("name_col", "station_col"):
+        value = registry.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str) or value not in reg_cols["filter_columns"]:
+            raise _bad(f"{where}.registry: {key} must be a column of {reg_table!r}")
+
+    label_cols = registry.get("label_cols")
+    if label_cols is None:
+        return
+    if not isinstance(label_cols, list):
+        raise _bad(f"{where}.registry: label_cols must be a list or null")
+    if len(label_cols) > len(defect_cols):
+        raise _bad(
+            f"{where}.registry: label_cols has {len(label_cols)} entries for "
+            f"{len(defect_cols)} defect columns"
+        )
+    for col in label_cols:
+        # A shorter list is fine — trailing slots fall back to a numbered label.
+        # A null entry is fine for the same reason, and is how the editor leaves
+        # a gap when only some slots are named.
+        if col is None:
+            continue
+        if not isinstance(col, str) or col not in reg_cols["filter_columns"]:
+            raise _bad(f"{where}.registry: label_cols must all be columns of {reg_table!r}")
+
+
 def _validate(doc: dict) -> None:
     """Reject a document that could not be rendered or could not be polled."""
     nodes = doc.get("nodes")
@@ -267,6 +425,9 @@ def _validate(doc: dict) -> None:
     production_log = doc.get("productionLog")
     if production_log is not None:
         _validate_production_log(production_log, cache)
+    camera_defect = doc.get("cameraDefect")
+    if camera_defect is not None:
+        _validate_camera_defect(camera_defect, cache)
     seen_ids: set[str] = set()
     # Read once for the whole document rather than per node: a drawing built from
     # a custom palette is mostly custom nodes, and each would otherwise be its
@@ -402,6 +563,134 @@ def get_production_log(
     }
 
 
+def _camera_binding(slug: str) -> dict[str, Any]:
+    """The layout's camera binding, or a 404 explaining which piece is missing."""
+    row = db.get_mimic_layout(slug)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Mimic layout not found"
+        )
+    binding = row.get("doc", {}).get("cameraDefect")
+    if not binding:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Cameras are not configured for this mimic",
+        )
+    return binding
+
+
+def _camera_source(datasource_ids: list[int | None]) -> int | None:
+    """Monitor data always follows the header's primary selection.
+
+    The binding's own `datasource_id` is kept for editor context but must never
+    redirect an operator's read to another plant — same rule as the production
+    log, and the reason a layout stays portable between lines.
+    """
+    return datasource_ids[0] if datasource_ids else None
+
+
+@router.get("/layouts/{slug}/cameras", response_model=list[CameraOut])
+def list_layout_cameras(
+    slug: str,
+    _user: dict = Depends(get_current_user),
+    datasource_ids: list[int | None] = Depends(active_datasources),
+):
+    """Cameras reachable through this mimic's binding, for the symbol picker."""
+    binding = _camera_binding(slug)
+    reports = db.fan_out(
+        [_camera_source(datasource_ids)],
+        lambda ds: db.camera_registry(binding, datasource_id=ds),
+        label="mimic cameras",
+    )
+    cameras = next((r["result"] for r in reports if r["ok"]), None)
+    if cameras is None:
+        detail = reports[0].get("error") if reports else "No active datasource"
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Camera datasource unavailable: {detail}",
+        )
+    return cameras
+
+
+@router.get("/layouts/{slug}/cameras/{code}/defects", response_model=CameraDefectOut)
+def layout_camera_defects(
+    slug: str,
+    code: str,
+    _user: dict = Depends(get_current_user),
+    datasource_ids: list[int | None] = Depends(active_datasources),
+):
+    """The newest batch of defect counts for one camera, slot by slot.
+
+    A null `batch_id` means no defect row has ever been written for this camera
+    — which the rail shows differently from a batch that counted zero, because
+    "nothing reported yet" and "nothing wrong" are different answers.
+
+    A slot is returned when it is named, when it counted something, or when it
+    has frames on disk. The rest are omitted: a binding may declare more
+    categories than a given line actually grades, and an empty unnamed bar says
+    nothing.
+    """
+    binding = _camera_binding(slug)
+    defect_cols = binding.get("defect_cols") or []
+    target = _camera_source(datasource_ids)
+
+    reports = db.fan_out(
+        [target],
+        lambda ds: (
+            db.camera_defect_latest(binding, code, datasource_id=ds),
+            db.camera_registry(binding, datasource_id=ds),
+        ),
+        label="mimic camera defects",
+    )
+    result = next((r["result"] for r in reports if r["ok"]), None)
+    if result is None:
+        detail = reports[0].get("error") if reports else "No active datasource"
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Camera datasource unavailable: {detail}",
+        )
+    latest, registry = result
+
+    entry = next((c for c in registry if c["code"].lower() == code.lower()), None)
+    if entry is None and latest is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Camera {code!r} is not reachable through this mimic",
+        )
+    labels = (entry or {}).get("labels") or []
+
+    # One walk of the folder for all slots — this route is polled on the page's
+    # live cadence, so it must not re-resolve the path per slot.
+    with_frames = camera_files.slots_with_frames(code, len(defect_cols))
+
+    counts = (latest or {}).get("counts") or []
+    slots = []
+    total = 0
+    for index in range(len(defect_cols)):
+        slot = index + 1
+        count = int(counts[index]) if index < len(counts) else 0
+        label = labels[index] if index < len(labels) else None
+        has_frames = slot in with_frames
+        total += count
+        if label or count or has_frames:
+            slots.append(
+                {"slot": slot, "label": label, "count": count, "has_frames": has_frames}
+            )
+
+    sources = [
+        {k: report[k] for k in ("datasource_id", "datasource_name", "ok", "error")}
+        for report in reports
+    ]
+    return {
+        "code": (entry or {}).get("code") or code,
+        "batch_id": (latest or {}).get("batch_id"),
+        "updated_at": (latest or {}).get("updated_at"),
+        "total": total,
+        "slots": slots,
+        "sources": sources,
+    }
+
+
 @router.put("/layouts/{slug}", response_model=MimicOut)
 def save_layout(
     slug: str,
@@ -416,25 +705,30 @@ def save_layout(
         raise _bad(
             "slug must be lowercase letters, digits, dash or underscore (max 64 characters)"
         )
+    # Both document-level bindings are read through the header's primary
+    # selection, so both are validated against it. A configured id is allowed to
+    # stay in the document for editor context and portability, but it may not
+    # disagree with the plant the read will actually go to — that would validate
+    # green against one database and return nothing from another.
     validation_doc = body.doc
-    production_log = body.doc.get("productionLog")
-    if production_log:
+    primary_source: int | None = None
+    document_bindings = [
+        (key, body.doc.get(key)) for key in ("productionLog", "cameraDefect")
+    ]
+    if any(binding for _, binding in document_bindings):
         selected_sources = active_datasources(_admin)
-        configured_source = production_log.get("datasource_id")
         primary_source = selected_sources[0] if selected_sources else None
-        if configured_source is not None and configured_source != primary_source:
-            raise _bad(
-                "doc.productionLog: datasource_id must match the primary header selection"
-            )
-        # Validate against the same primary plant the eventual read will use,
-        # without changing the portable value stored in the document.
-        validation_doc = {
-            **body.doc,
-            "productionLog": {
-                **production_log,
-                "datasource_id": primary_source,
-            },
-        }
+        overrides: dict[str, Any] = {}
+        for key, binding in document_bindings:
+            if not binding:
+                continue
+            configured_source = binding.get("datasource_id")
+            if configured_source is not None and configured_source != primary_source:
+                raise _bad(
+                    f"doc.{key}: datasource_id must match the primary header selection"
+                )
+            overrides[key] = {**binding, "datasource_id": primary_source}
+        validation_doc = {**body.doc, **overrides}
     _validate(validation_doc)
     enforce_revision = "base_updated_at" in body.model_fields_set
     row = db.upsert_mimic_layout(

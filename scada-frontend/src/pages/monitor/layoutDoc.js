@@ -129,6 +129,21 @@ export function migrateLayout(doc) {
     }
   }
 
+  // v3 → v4 adds the camera binding. Null rather than a guess: cameras used to
+  // be app configuration shared by every drawing, and moving them into the
+  // plant means only an admin can say which line's vision schema this drawing
+  // reads. An ipcamera symbol shows "not configured" until they do.
+  //
+  // The version bump is what stops an older bundle re-saving this document and
+  // silently dropping the binding — editLock() sends that build read-only.
+  if ((out.version ?? 3) < 4) {
+    out = {
+      ...out,
+      version: 4,
+      cameraDefect: out.cameraDefect ?? null,
+    }
+  }
+
   return isRenderable(out) ? out : null
 }
 
@@ -177,5 +192,6 @@ export function emptyLayout(name) {
     nodes: [],
     edges: [],
     productionLog: null,
+    cameraDefect: null,
   }
 }
