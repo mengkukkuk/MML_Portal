@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import AddOutlined from '@mui/icons-material/AddOutlined'
 import CloseOutlined from '@mui/icons-material/CloseOutlined'
@@ -8,7 +8,7 @@ import {
   MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, TIME_FORMATS, tableColumns, tableRowLimit,
 } from '@/components/mimic/symbols/DataTable'
 import { MAX_CASES } from '@/components/mimic/conditions'
-import { fetchCameras } from '@/api/cameras'
+import { fetchCameraLinkOptions } from '@/api/cameras'
 import { fetchSchemaColumns } from '@/api/schema'
 import { compileCondition } from '@/utils/mathExpr'
 import styles from './SymbolOptions.module.css'
@@ -450,18 +450,25 @@ function TableStructure({ node, onChange }) {
  * table, which a camera reference is not. `node.options` is the bag the server
  * already stores untouched, so this needs no backend change at all.
  *
- * Stores the camera's `code`, not its row id. Cameras are seeded from SQL and
- * the table has been rebuilt before; a layout pointing at `id: 17` breaks on
- * the next reseed, one pointing at `CAM-03` survives it.
+ * Stores the camera's `code`, not its row id. Depending on Settings › Camera
+ * source, that list is either this app's own seeded `cameras` table or a
+ * plant datasource's live registry (e.g. a vision system) — either way the
+ * table has been rebuilt before; a layout pointing at a row id breaks on the
+ * next reseed, one pointing at `CAM-03` survives it.
+ *
+ * Position is the first filter, code the second: an install with more than a
+ * handful of cameras is easier to search by where a camera is (`location`)
+ * than by scanning every code in the plant.
  */
 function CameraLink({ node, onChange }) {
-  // Same query key the rail uses, so this list is usually already warm.
-  const { data: cameras, isLoading, isError } = useQuery({
-    queryKey: ['cameras'],
-    queryFn: fetchCameras,
+  // Same query key the rail's picker would use, so repeated opens are warm.
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['camera-link-options'],
+    queryFn: fetchCameraLinkOptions,
     staleTime: 60_000,
   })
 
+  const cameras = data?.cameras ?? []
   const linked = node.options?.cameraId ?? ''
   const loopId = node.tagId?.trim() || ''
 
@@ -469,11 +476,30 @@ function CameraLink({ node, onChange }) {
   // the camera it already resolves to, so the first save here turns an implicit
   // match into an explicit link and the legacy path quietly loses its last user.
   const legacyMatch = useMemo(() => {
-    if (linked || !loopId || !cameras) return null
+    if (linked || !loopId || !cameras.length) return null
     return cameras.find((c) => c.code.toLowerCase() === loopId.toLowerCase()) ?? null
   }, [cameras, linked, loopId])
 
   const value = linked || legacyMatch?.code || ''
+
+  const linkedCamera = useMemo(
+    () => cameras.find((c) => c.code.toLowerCase() === value.toLowerCase()) ?? null,
+    [cameras, value],
+  )
+
+  const positions = useMemo(
+    () => [...new Set(cameras.map((c) => c.location).filter(Boolean))].sort(),
+    [cameras],
+  )
+
+  const [position, setPosition] = useState('')
+  // Once the list loads, default the filter to wherever the linked camera
+  // already is — opening an existing link should not hide it behind a filter.
+  useEffect(() => {
+    if (linkedCamera?.location) setPosition(linkedCamera.location)
+  }, [linkedCamera])
+
+  const filtered = position ? cameras.filter((c) => c.location === position) : cameras
 
   return (
     <div className={styles.section}>
@@ -483,8 +509,23 @@ function CameraLink({ node, onChange }) {
           ? 'The camera list could not be loaded. The rail falls back to matching this symbol’s loop id against a camera code.'
           : legacyMatch
             ? `This symbol currently resolves by loop id (${loopId}). Saving makes the link explicit.`
-            : 'Picks which camera’s defect counts and inspection frames fill the detail panel in view mode.'}
+            : data?.source === 'datasource'
+              ? `Picks which camera’s defect counts and inspection frames fill the detail panel in view mode. Read live from “${data.datasource_name ?? 'the configured datasource'}”.`
+              : 'Picks which camera’s defect counts and inspection frames fill the detail panel in view mode.'}
       </p>
+
+      {positions.length > 0 && (
+        <label className={styles.field}>
+          <span>Position</span>
+          <select value={position} onChange={(e) => setPosition(e.target.value)}>
+            <option value="">All positions</option>
+            {positions.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+        </label>
+      )}
+
       <label className={styles.field}>
         <span>Linked to</span>
         <select
@@ -493,11 +534,21 @@ function CameraLink({ node, onChange }) {
           onChange={(e) => onChange({ cameraId: e.target.value || undefined })}
         >
           <option value="">Not linked</option>
-          {(cameras ?? []).map((c) => (
-            <option key={c.id} value={c.code}>
+          {/* The linked camera may sit outside the current position filter —
+              it still has to appear here, or narrowing Position would look
+              like it silently cleared the existing link. */}
+          {linkedCamera && !filtered.some((c) => c.code === linkedCamera.code) && (
+            <option value={linkedCamera.code}>
+              {linkedCamera.code}
+              {linkedCamera.name ? ` — ${linkedCamera.name}` : ''}
+              {linkedCamera.location ? ` (${linkedCamera.location})` : ''}
+            </option>
+          )}
+          {filtered.map((c) => (
+            <option key={c.code} value={c.code}>
               {c.code}
               {c.name ? ` — ${c.name}` : ''}
-              {c.station_label ? ` (${c.station_label})` : ''}
+              {c.location ? ` (${c.location})` : ''}
             </option>
           ))}
         </select>

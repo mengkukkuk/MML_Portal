@@ -2536,6 +2536,84 @@ def init_cameras_table() -> None:
         conn.commit()
 
 
+def init_camera_link_settings_table() -> None:
+    """Create the singleton settings row behind the Monitor camera picker.
+
+    A mimic node's camera *link* can be chosen from this app's own `cameras`
+    table (the default, `datasource_id IS NULL`), or from a designated plant
+    datasource's own `cameras` table — e.g. a vision system that already
+    maintains its camera registry, so the picker mirrors that list live
+    instead of an admin keeping a second copy in sync by hand. Must run after
+    init_datasources_table (FK).
+
+    Defect counts and NG frames are unaffected either way: `camera_defect` and
+    `camera_snapshots` keep keying off the linked camera's `code` against this
+    app's own tables, same as before this setting existed.
+    """
+    with get_connection() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS camera_link_settings (
+                id            INTEGER PRIMARY KEY DEFAULT 1,
+                datasource_id INTEGER REFERENCES datasources(id) ON DELETE SET NULL,
+                updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+                CONSTRAINT camera_link_settings_singleton CHECK (id = 1)
+            )"""
+        )
+        conn.execute(
+            "INSERT INTO camera_link_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING"
+        )
+        conn.commit()
+
+
+def get_camera_link_source() -> dict[str, Any] | None:
+    """The datasource designated as the camera-link picker's source, or a row
+    with `datasource_id: None` when the picker still reads this app's own
+    `cameras` table (the default on a fresh install)."""
+    with get_connection() as conn:
+        row = conn.execute(
+            """SELECT s.datasource_id, d.name AS datasource_name
+               FROM camera_link_settings s
+               LEFT JOIN datasources d ON d.id = s.datasource_id
+               WHERE s.id = 1"""
+        ).fetchone()
+    return row
+
+
+def set_camera_link_source(datasource_id: int | None) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        conn.execute(
+            """UPDATE camera_link_settings
+               SET datasource_id = %s, updated_at = now()
+               WHERE id = 1""",
+            (datasource_id,),
+        )
+        conn.commit()
+    return get_camera_link_source()
+
+
+def list_remote_camera_options(datasource_id: int) -> list[dict[str, Any]]:
+    """Camera identity rows read live from a plant datasource's own `cameras`
+    table, for the link picker only — never for defect counts or frames.
+
+    Not routed through the generic table/schema picker (schema.py / the
+    describe_table family): `cameras` sits in that path's SENSITIVE_TABLES
+    denylist, because reading it *locally* would expose this app's own camera
+    config as a chartable table. Rather than punch a name-based hole in that
+    denylist, this is a purpose-built, fixed-shape read of one specific
+    connection an admin has deliberately designated for exactly this.
+    """
+    with _table_source_conn(datasource_id) as (conn, schema):
+        rows = conn.execute(
+            sql.SQL(
+                """SELECT id, code, name, station_code, station_label, location, enabled
+                   FROM {tbl}
+                   WHERE enabled
+                   ORDER BY location NULLS LAST, code"""
+            ).format(tbl=sql.Identifier(schema, "cameras"))
+        ).fetchall()
+    return rows
+
+
 def init_camera_defect_table() -> None:
     """Create the camera_defect table if it doesn't exist"""
     with get_connection() as conn:

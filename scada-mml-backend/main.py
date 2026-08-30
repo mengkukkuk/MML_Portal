@@ -107,6 +107,7 @@ def _create_tables() -> bool:
         db.init_cameras_table()
         db.init_camera_defect_table()
         db.init_camera_snapshots_table()
+        db.init_camera_link_settings_table()
     except psycopg.Error as e:
         # psycopg.Error, not just OperationalError: an unreachable host is only
         # one way this fails. DDL against a *live* server can raise

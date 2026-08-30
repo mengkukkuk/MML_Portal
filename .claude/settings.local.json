@@ -116,7 +116,9 @@
       "Bash(powershell -NoProfile -Command \"Test-Path ''HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\Session Manager\\\\PendingFileRenameOperations''\")",
       "Bash(powershell -NoProfile -Command \"\\(Get-ItemProperty ''HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Component Based Servicing\\\\RebootPending'' -ErrorAction SilentlyContinue\\) -ne $null\")",
       "Bash(powershell -NoProfile -Command \"Test-Path ''C:\\\\Windows\\\\Temp\\\\hyperv_enable.log''\")",
-      "Bash(~/.claude/bin/codeagent-wrapper --lite:*)"
+      "Bash(~/.claude/bin/codeagent-wrapper --lite:*)",
+      "Bash(TaskOutput)",
+      "Bash(PGPASSWORD='P@ssw0rd' psql -h 127.0.0.1 -p 5432 -U postgres -d mmldata -c \"\\\\d vision_data.cameras\")"
     ]
   }
 }

@@ -25,6 +25,7 @@ import hashlib
 from datetime import datetime
 from typing import Any
 
+import psycopg
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -47,6 +48,87 @@ def _bad(detail: str) -> HTTPException:
 
 def _not_found(what: str = "Camera") -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{what} not found")
+
+
+def _detail(e: Exception) -> str:
+    text = str(e).strip()
+    return text.splitlines()[0] if text else "Database error"
+
+
+# --- Link picker source --------------------------------------------------------
+# Which table backs the "Linked to" dropdown in the Monitor symbol inspector.
+# Declared before the /{camera_id} routes below: FastAPI/Starlette matches by
+# declaration order, and PUT /api/cameras/link-source would otherwise be
+# captured by PUT /api/cameras/{camera_id} and 422 on the int conversion —
+# same reasoning as datasources.py's /selection routes.
+#
+# Separate from the CRUD below: an admin can point the *picker* at a plant
+# datasource's own camera registry (e.g. a vision system) without touching how
+# defect counts or NG frames are stored — those keep reading this app's own
+# `camera_defect` / `camera_snapshots`, keyed by the linked camera's code.
+class CameraLinkSourceOut(BaseModel):
+    datasource_id: int | None = None
+    datasource_name: str | None = None
+
+
+class CameraLinkSourceIn(BaseModel):
+    datasource_id: int | None = None
+
+
+@router.get("/link-source", response_model=CameraLinkSourceOut)
+def camera_link_source(_user: dict = Depends(get_current_user)):
+    return db.get_camera_link_source() or CameraLinkSourceOut()
+
+
+@router.put("/link-source", response_model=CameraLinkSourceOut)
+def set_camera_link_source(body: CameraLinkSourceIn, _admin: dict = Depends(require_admin)):
+    if body.datasource_id is not None and db.get_datasource(body.datasource_id) is None:
+        raise _not_found("Datasource")
+    return db.set_camera_link_source(body.datasource_id)
+
+
+class CameraLinkOptionOut(BaseModel):
+    code: str
+    name: str
+    station_code: str | None = None
+    station_label: str | None = None
+    location: str | None = None
+    enabled: bool = True
+
+
+class CameraLinkOptionsOut(BaseModel):
+    # "local" — no datasource designated, reading this app's own `cameras`.
+    # "datasource" — reading the designated plant datasource's `cameras` table.
+    source: str
+    datasource_id: int | None = None
+    datasource_name: str | None = None
+    cameras: list[CameraLinkOptionOut]
+
+
+@router.get("/link-options", response_model=CameraLinkOptionsOut)
+def camera_link_options(_user: dict = Depends(get_current_user)):
+    """Candidate cameras for the Monitor link picker, position (location) and
+    code being the two fields the picker filters on.
+
+    Falls back to this app's own `cameras` table when no datasource has been
+    designated in Settings, so a fresh install still has a working picker.
+    """
+    settings = db.get_camera_link_source()
+    ds_id = settings["datasource_id"] if settings else None
+    if ds_id is None:
+        return {
+            "source": "local", "datasource_id": None, "datasource_name": None,
+            "cameras": db.list_cameras(),
+        }
+    try:
+        cameras = db.list_remote_camera_options(ds_id)
+    except (ValueError, psycopg.Error) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_detail(e))
+    return {
+        "source": "datasource", "datasource_id": ds_id,
+        "datasource_name": settings.get("datasource_name"),
+        "cameras": cameras,
+    }
 
 
 # --- camera config -----------------------------------------------------------

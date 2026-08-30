@@ -24,6 +24,7 @@ import { useAuthStore } from '@/stores/auth'
 import {
   fetchDatasources, createDatasource, updateDatasource, deleteDatasource, testDatasource,
 } from '@/api/datasources'
+import { fetchCameraLinkSource, updateCameraLinkSource } from '@/api/cameras'
 import styles from './SettingsPage.module.css'
 
 /**
@@ -100,7 +101,9 @@ export default function SettingsPage() {
   const role = useAuthStore((s) => s.user?.role ?? null)
   const isAdmin = role === 'admin'
 
-  const [collapsed, setCollapsed] = useState({ appearance: true, acquisition: true, datasources: true })
+  const [collapsed, setCollapsed] = useState({
+    appearance: true, acquisition: true, datasources: true, cameraSource: true,
+  })
   function toggle(key) {
     setCollapsed((c) => ({ ...c, [key]: !c[key] }))
   }
@@ -284,6 +287,24 @@ export default function SettingsPage() {
   function confirmDeleteDs() {
     if (deleteTarget) deleteMutation.mutate(deleteTarget.id)
   }
+
+  // --- Camera link source ------------------------------------------------
+  // Which saved connection backs the Monitor "Linked to" camera picker.
+  // `datasource_id: null` means the picker keeps reading this app's own
+  // `cameras` table — the default, and the only option before this existed.
+  const { data: cameraSource } = useQuery({
+    queryKey: ['camera-link-source'],
+    queryFn: fetchCameraLinkSource,
+  })
+  const cameraSourceMutation = useMutation({
+    mutationFn: updateCameraLinkSource,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['camera-link-source'] })
+      queryClient.invalidateQueries({ queryKey: ['camera-link-options'] })
+      notify('Camera source updated.')
+    },
+    onError: (e) => notify(e?.response?.data?.detail || 'Failed to update camera source.', 'error'),
+  })
 
   return (
     <div className={styles.cfg}>
@@ -500,6 +521,53 @@ export default function SettingsPage() {
                 </p>
               )
             )}
+          </div>
+        )}
+      </section>
+
+      {/* ── Module 4 · Camera source ───────────────────────────────────── */}
+      <section className={`${styles.mod} ${collapsed.cameraSource ? styles.modCollapsed : ''}`}>
+        <header className={styles.modHead} onClick={() => toggle('cameraSource')}>
+          <span className={styles.modTag}>Camera source</span>
+          <span className={styles.modSub}>Where the Monitor camera picker reads from</span>
+          <ChevronRightRounded
+            className={`${styles.modChevron} ${!collapsed.cameraSource ? styles.modChevronOpen : ''}`}
+          />
+        </header>
+        {!collapsed.cameraSource && (
+          <div className={styles.modBody}>
+            <p className={styles.fldHint}>
+              The Monitor page&apos;s camera link picker (position, then code) reads
+              its list from this app&apos;s own Cameras table by default. Point it at
+              a saved connection instead to read live from that system&apos;s own
+              camera registry — e.g. a vision system that already maintains one.
+              Defect counts and NG frames are unaffected either way.
+            </p>
+            {!isAdmin && (
+              <p className={styles.dsReadonly}>
+                <span className={styles.led} /> Only administrators can change this.
+              </p>
+            )}
+            <div className={styles.acqRow}>
+              <div className={styles.acqLabel}>
+                <p className={styles.fldLabel}>Camera list source</p>
+              </div>
+              <div className={styles.acqCtl}>
+                <FormControl size="small" sx={{ minWidth: 260 }}>
+                  <Select
+                    value={cameraSource?.datasource_id ?? ''}
+                    disabled={!isAdmin || cameraSourceMutation.isPending}
+                    displayEmpty
+                    onChange={(e) => cameraSourceMutation.mutate(e.target.value || null)}
+                  >
+                    <MenuItem value="">Local — this app&apos;s Cameras table</MenuItem>
+                    {datasources.map((ds) => (
+                      <MenuItem key={ds.id} value={ds.id}>{ds.name}</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </div>
+            </div>
           </div>
         )}
       </section>

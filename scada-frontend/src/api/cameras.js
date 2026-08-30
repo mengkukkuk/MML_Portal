@@ -30,6 +30,32 @@ export async function deleteCamera(id) {
 }
 
 /**
+ * Which saved connection backs the Monitor "Linked to" camera picker.
+ * `datasource_id: null` means the picker reads this app's own `cameras`
+ * table (the default) rather than a plant datasource's camera registry.
+ */
+export async function fetchCameraLinkSource() {
+  const { data } = await apiClient.get('/cameras/link-source')
+  return data // { datasource_id, datasource_name }
+}
+
+/** Admin only — designate (or clear, with `datasourceId: null`) the source. */
+export async function updateCameraLinkSource(datasourceId) {
+  const { data } = await apiClient.put('/cameras/link-source', { datasource_id: datasourceId })
+  return data
+}
+
+/**
+ * Candidate cameras for the link picker, filtered by position (`location`)
+ * and `code` — read live from the designated datasource's own `cameras`
+ * table, or from this app's own table when nothing is designated.
+ */
+export async function fetchCameraLinkOptions() {
+  const { data } = await apiClient.get('/cameras/link-options')
+  return data // { source: 'local'|'datasource', datasource_id, datasource_name, cameras: [...] }
+}
+
+/**
  * The newest batch of defect counts, slot by slot — drives the rail's bars.
  * `batch_id: null` means nothing has ever been recorded for this camera, which
  * the rail shows differently from a batch that counted zero.
