@@ -49,7 +49,8 @@ C:\dev\
 │   ├── nssm.exe                    ← vendored NSSM binary
 │   ├── init_db.sql                 ← aspirational multi-schema reference (not loaded today)
 │   ├── tests\                      ← pytest suite
-│   ├── requirements.txt
+│   ├── requirements.txt            ← runtime deps only (this is what the installer bundles)
+│   ├── requirements-dev.txt        ← requirements.txt + pytest, for local dev/test
 │   ├── .env.example                ← copy to .env and fill JWT_SECRET (+ ENCRYPTION_KEY, Brevo/SMTP)
 │   ├── .env                        ← LOCAL SECRETS — do NOT commit
 │   ├── logs\                       ← NSSM stdout/stderr (installer creates this)

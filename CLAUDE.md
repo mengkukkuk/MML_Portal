@@ -25,7 +25,7 @@ cd scada-mml-backend
 
 # Setup (first time)
 py -3.14 -m venv venv
-.\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\python.exe -m pip install -r requirements-dev.txt   # adds pytest on top of requirements.txt
 .\venv\Scripts\python.exe seed_users.py   # migrate users table + seed mock users
 
 # Dev server (0.0.0.0:8088)

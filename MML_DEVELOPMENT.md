@@ -126,7 +126,8 @@ C:\dev\
 │   ├── nssm.exe                  # Vendored NSSM binary used by install.ps1
 │   ├── init_db.sql               # Aspirational multi-schema reference design (not loaded today)
 │   ├── tests\                    # pytest suite
-│   ├── requirements.txt
+│   ├── requirements.txt          # Runtime deps only — this is what the installer bundles
+│   ├── requirements-dev.txt      # requirements.txt + pytest, for local dev/test
 │   ├── .env                      # Local secrets (NOT committed)
 │   ├── .env.example
 │   ├── logs\                     # NSSM stdout/stderr (in addition to C:\inetpub\mml-api\logs)
@@ -192,7 +193,7 @@ cd C:\dev\scada-mml-backend
 
 # 1. (first time) install dependencies into the venv
 py -3.14 -m venv venv
-.\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\python.exe -m pip install -r requirements-dev.txt   # adds pytest on top of requirements.txt
 
 # 2. configure environment — copy the example and fill JWT_SECRET.
 #    The app/config database is hardcoded to localhost; .env does not configure it.

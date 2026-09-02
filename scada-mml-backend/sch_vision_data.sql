@@ -1,7 +1,7 @@
-CREATE SCHEMA IF NOT EXISTS vision_data2;
+CREATE SCHEMA IF NOT EXISTS vision_data;
 
 -- 1. Table: cameras
-CREATE TABLE IF NOT EXISTS vision_data2.cameras
+CREATE TABLE IF NOT EXISTS vision_data.cameras
 (
     id             serial PRIMARY KEY,
     code           text NOT NULL UNIQUE,
@@ -15,10 +15,10 @@ CREATE TABLE IF NOT EXISTS vision_data2.cameras
     updated_at     timestamptz DEFAULT now() NOT NULL
 );
 
-ALTER TABLE vision_data2.cameras OWNER TO postgres;
+ALTER TABLE vision_data.cameras OWNER TO postgres;
 
 -- 2. Table: camera_defect (Current State)
-CREATE TABLE IF NOT EXISTS vision_data2.camera_defect
+CREATE TABLE IF NOT EXISTS vision_data.camera_defect
 (
     id            serial PRIMARY KEY,
     code          text NOT NULL UNIQUE,
@@ -32,16 +32,16 @@ CREATE TABLE IF NOT EXISTS vision_data2.camera_defect
     updated_at    timestamptz DEFAULT now() NOT NULL
 );
 
-ALTER TABLE vision_data2.camera_defect OWNER TO postgres;
+ALTER TABLE vision_data.camera_defect OWNER TO postgres;
 
 CREATE INDEX IF NOT EXISTS idx_camera_defect_code_batch
-    ON vision_data2.camera_defect (lower(code) ASC, batch_id DESC);
+    ON vision_data.camera_defect (lower(code) ASC, batch_id DESC);
 
 -- 3. Table: camera_defect_logs (Historian Log)
-CREATE TABLE IF NOT EXISTS vision_data2.camera_defect_logs
+CREATE TABLE IF NOT EXISTS vision_data.camera_defect_logs
 (
     id            bigserial PRIMARY KEY,
-    camera_id     integer REFERENCES vision_data2.camera_defect(id) ON DELETE CASCADE,
+    camera_id     integer REFERENCES vision_data.camera_defect(id) ON DELETE CASCADE,
     code          text NOT NULL,
     name          text NOT NULL,
     station_code  text,
@@ -53,13 +53,32 @@ CREATE TABLE IF NOT EXISTS vision_data2.camera_defect_logs
     updated_at    timestamptz DEFAULT now() NOT NULL
 );
 
-ALTER TABLE vision_data2.camera_defect_logs OWNER TO postgres;
+ALTER TABLE vision_data.camera_defect_logs OWNER TO postgres;
+
+--4.
+create table vision_data.camera_batch_work
+(
+    batch_id   bigint                   default nextval('vision_data.trn_batch_work_batch_id_seq'::regclass) not null
+    constraint camera_batch_work_pk
+    primary key,
+    status     text,
+    created_at timestamp with time zone default now(),
+    updated_at timestamp with time zone default now(),
+    camera_1   jsonb,
+    camera_2   jsonb,
+    camera_3   jsonb,
+    camera_4   jsonb,
+    camera_5   jsonb
+);
+
+alter table vision_data.camera_batch_work
+    owner to postgres;
 
 CREATE INDEX IF NOT EXISTS idx_camera_defect_logs_code_batch
-    ON vision_data2.camera_defect_logs (lower(code) ASC, batch_id DESC);
+    ON vision_data.camera_defect_logs (lower(code) ASC, batch_id DESC);
 
--- 4. Shared Trigger Function: set_updated_at
-CREATE OR REPLACE FUNCTION vision_data2.set_updated_at()
+-- Shared Trigger Function: set_updated_at
+CREATE OR REPLACE FUNCTION vision_data.set_updated_at()
     RETURNS TRIGGER AS $$
 BEGIN
     NEW.updated_at = NOW();
@@ -67,7 +86,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-ALTER FUNCTION vision_data2.set_updated_at() OWNER TO postgres;
+ALTER FUNCTION vision_data.set_updated_at() OWNER TO postgres;
 
 -- Dynamic Trigger Binding updated_at
 DO $$
@@ -77,29 +96,29 @@ DO $$
         FOR t IN
             SELECT table_name
             FROM information_schema.columns
-            WHERE table_schema = 'vision_data2'
+            WHERE table_schema = 'vision_data'
               AND column_name = 'updated_at'
-              AND table_name IN ('cameras', 'camera_defect', 'camera_defect_logs')
+              AND table_name IN ('cameras', 'camera_defect', 'camera_defect_logs','camera_batch_work')
             LOOP
                 EXECUTE format('
-                DROP TRIGGER IF EXISTS trg_set_updated_at ON vision_data2.%I;
+                DROP TRIGGER IF EXISTS trg_set_updated_at ON vision_data.%I;
                 CREATE TRIGGER trg_set_updated_at
-                    BEFORE UPDATE ON vision_data2.%I
+                    BEFORE UPDATE ON vision_data.%I
                     FOR EACH ROW
-                    EXECUTE FUNCTION vision_data2.set_updated_at();
+                    EXECUTE FUNCTION vision_data.set_updated_at();
             ', t, t);
             END LOOP;
     END;
 $$;
 
--- 5. Historian Trigger Function
-CREATE OR REPLACE FUNCTION vision_data2.fn_log_camera_defect_history()
+-- Historian Trigger Function
+CREATE OR REPLACE FUNCTION vision_data.fn_log_camera_defect_history()
     RETURNS TRIGGER AS $$
 DECLARE
     arr_len integer;
 BEGIN
     IF NEW.batch_id IS DISTINCT FROM OLD.batch_id THEN
-        INSERT INTO vision_data2.camera_defect_logs (
+        INSERT INTO vision_data.camera_defect_logs (
             camera_id, code, name, station_code, station_label, location,
             batch_id, defect_array, created_at, updated_at
         )
@@ -120,45 +139,24 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-ALTER FUNCTION vision_data2.fn_log_camera_defect_history() OWNER TO postgres;
+ALTER FUNCTION vision_data.fn_log_camera_defect_history() OWNER TO postgres;
 
 -- Historian Trigger
-DROP TRIGGER IF EXISTS trg_camera_defect_history ON vision_data2.camera_defect;
+DROP TRIGGER IF EXISTS trg_camera_defect_history ON vision_data.camera_defect;
 CREATE TRIGGER trg_camera_defect_history
-    BEFORE UPDATE ON vision_data2.camera_defect
+    BEFORE UPDATE ON vision_data.camera_defect
     FOR EACH ROW
-EXECUTE FUNCTION vision_data2.fn_log_camera_defect_history();
+EXECUTE FUNCTION vision_data.fn_log_camera_defect_history();
 
 -- VIEW .v_camera_defect_live
---
--- A convenience/reporting view. The application does NOT read it: `defects` is
--- keyed by label, which throws away the slot index, and NG frames on disk live
--- at <root>/<code>/NG/defect_<slot>/ -- so the camera rail reads the two arrays
--- directly and pairs them by position instead.
---
--- Invariant maintained here: the values of `defects` always sum to
--- `total_defects`. Three ways that could break, and how each is handled:
---   1. camera_defect row with no matching cameras row -> defect_labels is NULL.
---      Driving the join off generate_series (not off unnest(defect_labels))
---      means idx is never NULL, so the 'defect_' || idx fallback is never NULL
---      either. A NULL jsonb key would abort the query for EVERY camera, not
---      just the orphan.
---   2. Two slots sharing a label -> their counts are SUMmed into one key rather
---      than one silently overwriting the other.
---   3. defect_array longer than defect_labels (they are separate columns on
---      separate tables, with no constraint tying their lengths) -> the series
---      runs to the longer of the two, so trailing counts still get a key.
-CREATE OR REPLACE VIEW vision_data2.v_camera_defect_live AS
+CREATE OR REPLACE VIEW vision_data.v_camera_defect_live AS
 WITH slot AS (
-    -- แตก Label และ Count ตามลำดับ Index (1, 2, 3, ...)
-    -- Out-of-range subscripts return NULL, which is what the COALESCEs absorb:
-    -- an unnamed slot falls back to 'defect_N', an uncounted one to 0.
     SELECT
         d.id                                      AS camera_defect_id,
         COALESCE(c.defect_labels[s.idx], 'defect_' || s.idx) AS label_name,
         COALESCE(d.defect_array[s.idx], 0)        AS defect_count
-    FROM vision_data2.camera_defect d
-             LEFT JOIN vision_data2.cameras c ON c.code = d.code
+    FROM vision_data.camera_defect d
+             LEFT JOIN vision_data.cameras c ON c.code = d.code
              CROSS JOIN LATERAL generate_series(
             1,
             GREATEST(
@@ -181,29 +179,53 @@ SELECT
     d.code AS camera_code,
     d.name AS camera_name,
     d.batch_id,
-    -- '{}' when both arrays are empty: generate_series(1, 0) yields no rows, so
-    -- there is no `defects` row to join. A camera with nothing recorded is a
-    -- normal camera and must still appear in the view.
+   --mapping defect_labels to defects
     COALESCE(j.defects, '{}'::jsonb) AS defects,
-    -- คำนวณผลรวม Defect ทั้งหมดใน Batch นี้ให้อัตโนมัติ
+
     (SELECT COALESCE(SUM(s), 0) FROM unnest(d.defect_array) s) AS total_defects,
     d.updated_at
-FROM vision_data2.camera_defect d
+FROM vision_data.camera_defect d
          LEFT JOIN defects j ON j.camera_defect_id = d.id;
 
--- INSERT EXAMPLE DATA
-INSERT INTO vision_data2.cameras (code, name, station_code, station_label, location, enabled)
-VALUES ('CAM001-9', 'Camera 1', 'STATION001', 'Station 1', 'Line 9', true),
-       ('CAM002-9', 'Camera 2', 'STATION002', 'Station 2', 'Line 9', true),
-       ('CAM003-9', 'Camera 3', 'STATION003', 'Station 3', 'Line 9', true),
-       ('CAM004-9', 'Camera 4', 'STATION004', 'Station 4', 'Line 9', true),
-       ('CAM005-9', 'Camera 5', 'STATION005', 'Station 5', 'Line 9', true);
+-- Batch Work Trigger Function
+CREATE OR REPLACE FUNCTION vision_data.fn_sync_camera_batch_work()
+    RETURNS TRIGGER AS $$
+DECLARE
+    v_col_name TEXT;
+    v_json_data JSONB;
+BEGIN
+    v_col_name := LOWER(REPLACE(NEW.name, ' ', '_'));
+    v_json_data := to_jsonb(NEW.defect_array);
 
--- insert to defect_array
-insert into vision_data2.camera_defect (code, name, station_code, station_label, location)
-VALUES ('CAM001-9', 'Camera 1', 'STATION001', 'Station 1', 'Line 9'),
-       ('CAM002-9', 'Camera 2', 'STATION002', 'Station 2', 'Line 9'),
-       ('CAM003-9', 'Camera 3', 'STATION003', 'Station 3', 'Line 9'),
-       ('CAM004-9', 'Camera 4', 'STATION004', 'Station 4', 'Line 9'),
-       ('CAM005-9', 'Camera 5', 'STATION005', 'Station 5', 'Line 9');
+    EXECUTE format('
+        INSERT INTO vision_data.camera_batch_work (batch_id, %I, updated_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (batch_id) DO UPDATE
+        SET %I = EXCLUDED.%I,
+            updated_at = NOW();
+    ', v_col_name, v_col_name, v_col_name)
+        USING NEW.batch_id, v_json_data;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_sync_camera_batch_work
+    AFTER INSERT ON camera_defect_logs
+    FOR EACH ROW
+EXECUTE FUNCTION fn_sync_camera_batch_work();
+
+-- insert to cameras
+INSERT INTO vision_data.cameras (code, name, station_code, station_label, location, enabled)
+VALUES ('CAM001-9', 'Camera 1', 'STATION001', 'Station 1', 'Line 13', true),
+       ('CAM002-9', 'Camera 2', 'STATION002', 'Station 2', 'Line 13', true),
+       ('CAM003-9', 'Camera 3', 'STATION003', 'Station 3', 'Line 13', true),
+       ('CAM004-9', 'Camera 4', 'STATION004', 'Station 4', 'Line 13', true);
+
+-- insert to camera_defect
+insert into vision_data.camera_defect (code, name, station_code, station_label, location)
+VALUES ('CAM001-9', 'Camera 1', 'STATION001', 'Station 1', 'Line 13'),
+       ('CAM002-9', 'Camera 2', 'STATION002', 'Station 2', 'Line 13'),
+       ('CAM003-9', 'Camera 3', 'STATION003', 'Station 3', 'Line 13'),
+       ('CAM004-9', 'Camera 4', 'STATION004', 'Station 4', 'Line 13');
 

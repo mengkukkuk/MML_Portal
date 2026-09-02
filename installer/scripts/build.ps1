@@ -12,6 +12,8 @@
       2. Build the frontend (npm run build) -> installer\staging\static\
       3. Assemble a self-contained Python: unzip the embeddable distribution, enable
          site-packages, bootstrap pip, `pip install -r requirements.txt` straight into it.
+         requirements.txt is runtime-only (pytest lives in requirements-dev.txt and is never
+         installed here), so the shipped bundle carries no test framework.
          No venv layer  -  the folder itself is portable. -> installer\staging\python\
       4. Copy backend source (excluding venv/.env/logs/tests/__pycache__) -> installer\staging\backend\
       5. Compile installer\staging\backend\ to bytecode-only (.pyc) and delete the .py
