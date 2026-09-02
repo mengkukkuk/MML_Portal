@@ -217,15 +217,15 @@ EXECUTE FUNCTION fn_sync_camera_batch_work();
 
 -- insert to cameras
 INSERT INTO vision_data.cameras (code, name, station_code, station_label, location, enabled)
-VALUES ('CAM001-9', 'Camera 1', 'STATION001', 'Station 1', 'Line 13', true),
-       ('CAM002-9', 'Camera 2', 'STATION002', 'Station 2', 'Line 13', true),
-       ('CAM003-9', 'Camera 3', 'STATION003', 'Station 3', 'Line 13', true),
-       ('CAM004-9', 'Camera 4', 'STATION004', 'Station 4', 'Line 13', true);
+VALUES ('CAM001-13', 'Camera 1', 'STATION001', 'Station 1', 'Line 13', true),
+       ('CAM002-13', 'Camera 2', 'STATION002', 'Station 2', 'Line 13', true),
+       ('CAM003-13', 'Camera 3', 'STATION003', 'Station 3', 'Line 13', true),
+       ('CAM004-13', 'Camera 4', 'STATION004', 'Station 4', 'Line 13', true);
 
 -- insert to camera_defect
 insert into vision_data.camera_defect (code, name, station_code, station_label, location)
-VALUES ('CAM001-9', 'Camera 1', 'STATION001', 'Station 1', 'Line 13'),
-       ('CAM002-9', 'Camera 2', 'STATION002', 'Station 2', 'Line 13'),
-       ('CAM003-9', 'Camera 3', 'STATION003', 'Station 3', 'Line 13'),
-       ('CAM004-9', 'Camera 4', 'STATION004', 'Station 4', 'Line 13');
+VALUES ('CAM001-13', 'Camera 1', 'STATION001', 'Station 1', 'Line 13'),
+       ('CAM002-13', 'Camera 2', 'STATION002', 'Station 2', 'Line 13'),
+       ('CAM003-13', 'Camera 3', 'STATION003', 'Station 3', 'Line 13'),
+       ('CAM004-13', 'Camera 4', 'STATION004', 'Station 4', 'Line 13');
 
