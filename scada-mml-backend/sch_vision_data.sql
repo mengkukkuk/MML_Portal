@@ -37,6 +37,26 @@ ALTER TABLE vision_data.camera_defect OWNER TO postgres;
 CREATE INDEX IF NOT EXISTS idx_camera_defect_code_batch
     ON vision_data.camera_defect (lower(code) ASC, batch_id DESC);
 
+CREATE OR REPLACE FUNCTION set_created_at()
+    RETURNS TRIGGER AS $$
+BEGIN
+    -- Check if batch_id was actually modified to a different value
+    IF NEW.batch_id IS DISTINCT FROM OLD.batch_id THEN
+        NEW.created_at = NOW();
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 2. Create the BEFORE UPDATE trigger on your table
+DROP TRIGGER IF EXISTS trigger_set_created_at ON camera_defect;
+
+CREATE TRIGGER trigger_set_created_at
+    BEFORE UPDATE OF batch_id ON camera_defect
+    FOR EACH ROW
+EXECUTE FUNCTION set_created_at();
+
 -- 3. Table: camera_defect_logs (Historian Log)
 CREATE TABLE IF NOT EXISTS vision_data.camera_defect_logs
 (
@@ -58,9 +78,7 @@ ALTER TABLE vision_data.camera_defect_logs OWNER TO postgres;
 --4.
 create table vision_data.camera_batch_work
 (
-    batch_id   bigint                   default nextval('vision_data.trn_batch_work_batch_id_seq'::regclass) not null
-    constraint camera_batch_work_pk
-    primary key,
+    batch_id   bigint constraint camera_batch_work_pk primary key,
     status     text,
     created_at timestamp with time zone default now(),
     updated_at timestamp with time zone default now(),
@@ -98,7 +116,8 @@ DO $$
             FROM information_schema.columns
             WHERE table_schema = 'vision_data'
               AND column_name = 'updated_at'
-              AND table_name IN ('cameras', 'camera_defect', 'camera_defect_logs','camera_batch_work')
+              AND table_name IN ('cameras', 'camera_defect', 'camera_defect_logs'
+                ,'camera_batch_work', 'camera_count_speed', 'camera_defect_speed')
             LOOP
                 EXECUTE format('
                 DROP TRIGGER IF EXISTS trg_set_updated_at ON vision_data.%I;
@@ -229,3 +248,72 @@ VALUES ('CAM001-13', 'Camera 1', 'STATION001', 'Station 1', 'Line 13'),
        ('CAM003-13', 'Camera 3', 'STATION003', 'Station 3', 'Line 13'),
        ('CAM004-13', 'Camera 4', 'STATION004', 'Station 4', 'Line 13');
 
+-- defect speed and count speed table
+CREATE TABLE camera_defect_speed (
+                                     id BIGSERIAL PRIMARY KEY,
+                                     code VARCHAR(50) NOT NULL unique,
+                                     location text NOT NULL,
+                                     createdAt TIMESTAMPTZ DEFAULT NOW(),
+                                     updatedAt TIMESTAMPTZ DEFAULT NOW(),
+                                     defect_1 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_1, 1) = 6 ),
+                                     defect_2 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_2, 1) = 6 ),
+                                     defect_3 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_3, 1) = 6 ),
+                                     defect_4 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_4, 1) = 6 ),
+                                     defect_5 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_5, 1) = 6 )
+);
+
+CREATE TABLE camera_count_speed (
+                                    id BIGSERIAL PRIMARY KEY,
+                                    code VARCHAR(50) NOT NULL unique,
+                                    location text NOT NULL,
+                                    createdAt TIMESTAMPTZ DEFAULT NOW(),
+                                    updatedAt TIMESTAMPTZ DEFAULT NOW(),
+                                    count_spd1 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd1, 1) = 6 ),
+                                    count_spd2 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd2, 1) = 6 ),
+                                    count_spd3 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd3, 1) = 6 ),
+                                    count_spd4 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd4, 1) = 6 ),
+                                    count_spd5 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd5, 1) = 6 )
+);
+
+--INSERT
+INSERT INTO camera_defect_speed (code,location)
+VALUES  ('CAM001-13','Line 13'),
+        ('CAM002-13','Line 13'),
+        ('CAM003-13','Line 13'),
+        ('CAM004-13','Line 13')
+ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO camera_count_speed (code,location)
+VALUES  ('CAM001-13','Line 13'),
+        ('CAM002-13','Line 13'),
+        ('CAM003-13','Line 13'),
+        ('CAM004-13','Line 13')
+ON CONFLICT (code) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION array_sum(arr int[])
+    RETURNS int AS $$
+SELECT COALESCE(SUM(x)::int, 0) FROM unnest(arr) AS x;
+$$ LANGUAGE sql IMMUTABLE STRICT;
+
+-- Add 'speed_in_time' as an INT[] storing array sums
+ALTER TABLE camera_count_speed
+    ADD COLUMN speed_in_time INT[] GENERATED ALWAYS AS (
+        ARRAY[
+            array_sum(count_spd1),
+            array_sum(count_spd2),
+            array_sum(count_spd3),
+            array_sum(count_spd4),
+            array_sum(count_spd5)
+            ]
+        ) STORED;
+
+ALTER TABLE camera_defect_speed
+    ADD COLUMN speed_in_time INT[] GENERATED ALWAYS AS (
+        ARRAY[
+            array_sum(defect_1),
+            array_sum(defect_2),
+            array_sum(defect_3),
+            array_sum(defect_4),
+            array_sum(defect_5)
+            ]
+        ) STORED;

@@ -221,6 +221,23 @@ cd C:\dev\scada-frontend
 npm install
 npm run build           # writes scada-frontend\dist\ (includes web.config)
 ```
+### 3.6a Frontend — install Node.js if bug in `npm install`
+
+```powershell
+
+```powershell
+cd scada-frontend
+& "C:\Program Files\nodejs\npm.cmd" install
+```
+
+Or enable the normal command for the current terminal:
+
+```powershell
+$env:Path = "C:\Program Files\nodejs;$env:Path"
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+cd scada-frontend
+npm install
+```
 
 For local dev instead: `npm run dev` → `http://localhost:5173` (the dev server proxies
 `/api` and `/ws` to `127.0.0.1:8088`).
