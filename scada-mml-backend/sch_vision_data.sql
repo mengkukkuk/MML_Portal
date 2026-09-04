@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS vision_data.camera_defect
     batch_id      integer DEFAULT 0 NOT NULL,
     defect_array  integer[] DEFAULT '{0,0,0,0,0}'::integer[],
     created_at    timestamptz DEFAULT now() NOT NULL,
-    updated_at    timestamptz DEFAULT now() NOT NULL
+    updated_at    timestamptz DEFAULT now() NOT NULL,
+    image_path    text
 );
 
 ALTER TABLE vision_data.camera_defect OWNER TO postgres;
@@ -239,40 +240,42 @@ INSERT INTO vision_data.cameras (code, name, station_code, station_label, locati
 VALUES ('CAM001-13', 'Camera 1', 'STATION001', 'Station 1', 'Line 13', true),
        ('CAM002-13', 'Camera 2', 'STATION002', 'Station 2', 'Line 13', true),
        ('CAM003-13', 'Camera 3', 'STATION003', 'Station 3', 'Line 13', true),
-       ('CAM004-13', 'Camera 4', 'STATION004', 'Station 4', 'Line 13', true);
+       ('CAM004-13', 'Camera 4', 'STATION004', 'Station 4', 'Line 13', true)
+ON CONFLICT (code) DO NOTHING;
 
 -- insert to camera_defect
 insert into vision_data.camera_defect (code, name, station_code, station_label, location)
 VALUES ('CAM001-13', 'Camera 1', 'STATION001', 'Station 1', 'Line 13'),
        ('CAM002-13', 'Camera 2', 'STATION002', 'Station 2', 'Line 13'),
        ('CAM003-13', 'Camera 3', 'STATION003', 'Station 3', 'Line 13'),
-       ('CAM004-13', 'Camera 4', 'STATION004', 'Station 4', 'Line 13');
+       ('CAM004-13', 'Camera 4', 'STATION004', 'Station 4', 'Line 13')
+ON CONFLICT (code) DO NOTHING;
 
 -- defect speed and count speed table
 CREATE TABLE camera_defect_speed (
-                                     id BIGSERIAL PRIMARY KEY,
-                                     code VARCHAR(50) NOT NULL unique,
-                                     location text NOT NULL,
-                                     createdAt TIMESTAMPTZ DEFAULT NOW(),
-                                     updatedAt TIMESTAMPTZ DEFAULT NOW(),
-                                     defect_1 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_1, 1) = 6 ),
-                                     defect_2 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_2, 1) = 6 ),
-                                     defect_3 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_3, 1) = 6 ),
-                                     defect_4 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_4, 1) = 6 ),
-                                     defect_5 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_5, 1) = 6 )
+     id BIGSERIAL PRIMARY KEY,
+     code VARCHAR(50) NOT NULL unique,
+     location text NOT NULL,
+     created_at TIMESTAMPTZ DEFAULT NOW(),
+     updated_at TIMESTAMPTZ DEFAULT NOW(),
+     defect_1 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_1, 1) = 6 ),
+     defect_2 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_2, 1) = 6 ),
+     defect_3 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_3, 1) = 6 ),
+     defect_4 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_4, 1) = 6 ),
+     defect_5 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_5, 1) = 6 )
 );
 
 CREATE TABLE camera_count_speed (
-                                    id BIGSERIAL PRIMARY KEY,
-                                    code VARCHAR(50) NOT NULL unique,
-                                    location text NOT NULL,
-                                    createdAt TIMESTAMPTZ DEFAULT NOW(),
-                                    updatedAt TIMESTAMPTZ DEFAULT NOW(),
-                                    count_spd1 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd1, 1) = 6 ),
-                                    count_spd2 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd2, 1) = 6 ),
-                                    count_spd3 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd3, 1) = 6 ),
-                                    count_spd4 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd4, 1) = 6 ),
-                                    count_spd5 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd5, 1) = 6 )
+    id BIGSERIAL PRIMARY KEY,
+    code VARCHAR(50) NOT NULL unique,
+    location text NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    count_spd1 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd1, 1) = 6 ),
+    count_spd2 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd2, 1) = 6 ),
+    count_spd3 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd3, 1) = 6 ),
+    count_spd4 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd4, 1) = 6 ),
+    count_spd5 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd5, 1) = 6 )
 );
 
 --INSERT
