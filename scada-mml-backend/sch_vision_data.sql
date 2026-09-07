@@ -320,3 +320,80 @@ ALTER TABLE camera_defect_speed
             array_sum(defect_5)
             ]
         ) STORED;
+
+-- Create table camera_defect_ratio
+create table if not exists vision_data.camera_defect_ratio (
+       id serial primary key,
+       code text not null unique,
+       updated_at timestamptz default current_timestamp,
+       defect_1_pct double precision default 0.0,
+       defect_2_pct double precision default 0.0,
+       defect_3_pct double precision default 0.0,
+       defect_4_pct double precision default 0.0,
+       defect_5_pct double precision default 0.0
+);
+
+-- 1. Create Function
+create or replace function vision_data.sync_camera_defect_ratio()
+    returns trigger as $$
+begin
+    insert into vision_data.camera_defect_ratio (
+        code,
+        updated_at,
+        defect_1_pct,
+        defect_2_pct,
+        defect_3_pct,
+        defect_4_pct,
+        defect_5_pct
+    )
+    select
+        c.code::text as code,
+        now() as updated_at,
+        case
+            when c.speed_in_time[1] = 0 or c.speed_in_time[1] is null then 0
+            else (coalesce(d.speed_in_time[1], 0)::double precision / c.speed_in_time[1]::double precision) * 100
+            end as defect_1_pct,
+        case
+            when c.speed_in_time[2] = 0 or c.speed_in_time[2] is null then 0
+            else (coalesce(d.speed_in_time[2], 0)::double precision / c.speed_in_time[2]::double precision) * 100
+            end as defect_2_pct,
+        case
+            when c.speed_in_time[3] = 0 or c.speed_in_time[3] is null then 0
+            else (coalesce(d.speed_in_time[3], 0)::double precision / c.speed_in_time[3]::double precision) * 100
+            end as defect_3_pct,
+        case
+            when c.speed_in_time[4] = 0 or c.speed_in_time[4] is null then 0
+            else (coalesce(d.speed_in_time[4], 0)::double precision / c.speed_in_time[4]::double precision) * 100
+            end as defect_4_pct,
+        case
+            when c.speed_in_time[5] = 0 or c.speed_in_time[5] is null then 0
+            else (coalesce(d.speed_in_time[5], 0)::double precision / c.speed_in_time[5]::double precision) * 100
+            end as defect_5_pct
+    from vision_data.camera_count_speed c
+             left join vision_data.camera_defect_speed d on c.id = d.id
+    where c.id = NEW.id
+    on conflict (code) do update set
+                                 updated_at = excluded.updated_at,
+                                 defect_1_pct = excluded.defect_1_pct,
+                                 defect_2_pct = excluded.defect_2_pct,
+                                 defect_3_pct = excluded.defect_3_pct,
+                                 defect_4_pct = excluded.defect_4_pct,
+                                 defect_5_pct = excluded.defect_5_pct;
+
+    return NEW;
+end;
+$$ language plpgsql;
+
+-- 2. Attach Trigger to camera_count_speed
+drop trigger if exists trg_sync_defect_ratio_count on camera_count_speed;
+create trigger trg_sync_defect_ratio_count
+    after insert or update on camera_count_speed
+    for each row
+execute function sync_camera_defect_ratio();
+
+-- 3. Attach Trigger to camera_defect_speed
+drop trigger if exists trg_sync_defect_ratio_defect on camera_defect_speed;
+create trigger trg_sync_defect_ratio_defect
+    after insert or update on camera_defect_speed
+    for each row
+execute function sync_camera_defect_ratio();

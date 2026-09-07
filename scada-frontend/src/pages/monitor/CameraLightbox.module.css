@@ -1,0 +1,132 @@
+/* CameraLightbox — the "actual size" viewer for one stored frame. Same
+ * bordered-panel language as the rest of the app (radius-lg + shadow-2 over
+ * a dimmed backdrop), with a footer that echoes CameraRail's sprocket-rail
+ * strip so the two views read as one system rather than a generic modal
+ * bolted onto a Thai-only panel.
+ */
+
+.paper {
+  width: min(1200px, 92vw);
+  height: min(840px, 88vh);
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+  overflow: hidden;
+}
+
+.paperOk {
+  border-color: color-mix(in srgb, var(--ok) 40%, var(--border));
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border-soft);
+  flex: 0 0 auto;
+}
+
+.headText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.label {
+  font-family: var(--font-thai);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.meta {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.closeBtn {
+  flex: none;
+  color: var(--fg-muted);
+}
+
+.closeBtn:hover {
+  color: var(--fg);
+}
+
+.stage {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: color-mix(in srgb, var(--bg-app) 70%, black);
+}
+
+.navBtn {
+  flex: none;
+  align-self: center;
+  margin: 0 var(--space-2);
+  color: var(--fg-muted);
+}
+
+.navBtn:hover {
+  color: var(--fg);
+}
+
+/* Centers a smaller-than-viewport image; for a larger one, the auto margin
+ * resolves to real space instead of a negative offset, so the full frame
+ * stays reachable by scroll/drag rather than clipping at the near edge —
+ * the classic pitfall of `justify-content: center` on scrollable flex. */
+.viewport {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  overflow: auto;
+}
+
+.img {
+  margin: auto;
+  display: block;
+  max-width: none;
+}
+
+.loading {
+  margin: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2) 0;
+  flex: 0 0 auto;
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--fg) 20%, transparent) 1.1px, transparent 1.2px);
+  background-size: 10px 100%;
+  background-repeat: repeat-x;
+  background-position: center;
+}
+
+.count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  background: var(--bg-panel);
+  padding: 2px var(--space-3);
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+}

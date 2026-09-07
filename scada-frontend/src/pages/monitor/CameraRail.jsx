@@ -1,12 +1,14 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
+import ZoomInIcon from '@mui/icons-material/ZoomIn'
 import IconButton from '@mui/material/IconButton'
 import {
   fetchCameraLinkOptions, fetchCameraDefects, fetchCameraFrames, OK_SLOT,
 } from '@/api/cameras'
 import useCameraFrameUrl from '@/components/mimic/useCameraFrameUrl'
+import CameraLightbox from './CameraLightbox'
 import styles from './CameraRail.module.css'
 
 /**
@@ -47,6 +49,7 @@ const T = {
   okWord: 'ผ่าน',
   okEmpty: 'ยังไม่มีภาพที่ผ่านของกล้องนี้',
   frames: 'ภาพ',
+  viewActual: 'ดูขนาดจริง',
   loading: 'กำลังโหลด…',
   sourceUnavailable: 'ไม่สามารถโหลดแหล่งข้อมูลกล้องได้',
   sourceUnavailableHint: 'ตรวจสอบ Camera source ใน Settings และการเชื่อมต่อฐานข้อมูล',
@@ -66,7 +69,7 @@ const EMPTY_CAMERAS = []
  * comes from a file mtime — both are plant-local already. Rendering them in the
  * viewer's zone would move a 09:42 reject to a time it did not happen.
  */
-function clockTime(ts) {
+export function clockTime(ts) {
   if (!ts) return ''
   const d = new Date(ts)
   if (Number.isNaN(d.getTime())) return ''
@@ -77,14 +80,34 @@ function slotLabel(slot) {
   return slot.label || T.slotFallback(slot.slot)
 }
 
-function Frame({ cameraCode, slot, frame, label }) {
+function Frame({
+  cameraCode, slot, frame, label, onOpen,
+}) {
   const url = useCameraFrameUrl(cameraCode, slot, frame.index, frame.mtime_ns)
   const isOk = slot === OK_SLOT
+
+  function activate(e) {
+    e.preventDefault()
+    onOpen()
+  }
+
   return (
     <figure className={styles.frame}>
-      <div className={`${styles.frameImg} ${isOk ? styles.frameImgOk : ''}`}>
+      <div
+        className={`${styles.frameImg} ${isOk ? styles.frameImgOk : ''}`}
+        role={url ? 'button' : undefined}
+        tabIndex={url ? 0 : undefined}
+        aria-label={url ? T.viewActual : undefined}
+        onClick={url ? activate : undefined}
+        onKeyDown={url ? (evt) => { if (evt.key === 'Enter' || evt.key === ' ') activate(evt) } : undefined}
+      >
         {url
-          ? <img src={url} alt="" />
+          ? (
+            <>
+              <img src={url} alt="" />
+              <ZoomInIcon className={styles.frameZoom} aria-hidden="true" fontSize="small" />
+            </>
+          )
           : (
             <span className={`${styles.frameLoading} ${isOk ? styles.frameLoadingOk : ''}`}>
               {isOk ? 'OK' : 'NG'}
@@ -110,9 +133,24 @@ function Frame({ cameraCode, slot, frame, label }) {
  */
 const MIN_POLL_MS = 2000
 
-export default function CameraRail({ node, tag, pollMs = 5000 }) {
+export default function CameraRail({
+  node, tag, pollMs = 5000, container,
+}) {
   const [slotFilter, setSlotFilter] = useState(null)
+  const [slideIndex, setSlideIndex] = useState(0)
+  const [lightboxIndex, setLightboxIndex] = useState(null)
   const stripRef = useRef(null)
+
+  // A new cause (or the OK toggle) is a different frame set entirely —
+  // position zero and no lightbox, rather than carrying over an index that
+  // may not exist in the new listing. Keyed on slotFilter alone, never on
+  // the frames themselves, so a background poll refreshing the same slot
+  // does not yank the view back to frame one while someone is looking at it.
+  useEffect(() => {
+    setSlideIndex(0)
+    setLightboxIndex(null)
+    if (stripRef.current) stripRef.current.scrollLeft = 0
+  }, [slotFilter])
 
   const refetchInterval = Math.max(pollMs, MIN_POLL_MS)
 
@@ -202,6 +240,8 @@ export default function CameraRail({ node, tag, pollMs = 5000 }) {
   const showingOk = slotFilter === OK_SLOT
   const activeSlot = showingOk ? null : (slots.find((s) => s.slot === slotFilter) ?? null)
   const stripFrames = framesAreStale ? null : frames
+  const frameCount = stripFrames?.length ?? 0
+  const activeLabel = showingOk ? T.okWord : activeSlot ? slotLabel(activeSlot) : ''
 
   const statusClass = STATUS_CLASS[tag?.status] || styles.pillStale
   const statusWord = T.statusWord[tag?.status] || T.statusWord.stale
@@ -210,10 +250,38 @@ export default function CameraRail({ node, tag, pollMs = 5000 }) {
     setSlotFilter((cur) => (cur === slot ? null : slot))
   }
 
-  function scrollStrip(dir) {
+  /** Slides exactly one frame per step — each frame is now full-width. */
+  function goToSlide(i) {
     const el = stripRef.current
-    if (!el) return
-    el.scrollBy({ left: dir * (el.clientWidth - 24), behavior: 'smooth' })
+    const clamped = Math.max(0, Math.min(i, frameCount - 1))
+    setSlideIndex(clamped)
+    el?.scrollTo({ left: clamped * el.clientWidth, behavior: 'smooth' })
+  }
+
+  function scrollStrip(dir) {
+    goToSlide(slideIndex + dir)
+  }
+
+  /** Keeps the position readout and the chevrons honest after a touch swipe,
+   * which moves scrollLeft without going through goToSlide. */
+  function handleStripScroll(e) {
+    const el = e.currentTarget
+    if (!el.clientWidth) return
+    setSlideIndex((cur) => {
+      const next = Math.round(el.scrollLeft / el.clientWidth)
+      return next === cur ? cur : next
+    })
+  }
+
+  function closeLightbox() {
+    setLightboxIndex(null)
+  }
+
+  /** Navigating inside the lightbox moves the rail's slide too, so closing
+   * it lands back on the frame that was actually being viewed. */
+  function navigateLightbox(i) {
+    setLightboxIndex(i)
+    goToSlide(i)
   }
 
   if (camerasLoading) {
@@ -353,10 +421,23 @@ export default function CameraRail({ node, tag, pollMs = 5000 }) {
             >
               {T.okToggle}
             </button>
-            <IconButton size="small" aria-label={T.scrollLeft} onClick={() => scrollStrip(-1)}>
+            {frameCount > 0 && (
+              <span className={styles.stripPos}>{`${slideIndex + 1}/${frameCount}`}</span>
+            )}
+            <IconButton
+              size="small"
+              aria-label={T.scrollLeft}
+              disabled={slideIndex <= 0}
+              onClick={() => scrollStrip(-1)}
+            >
               <ChevronLeftIcon fontSize="small" />
             </IconButton>
-            <IconButton size="small" aria-label={T.scrollRight} onClick={() => scrollStrip(1)}>
+            <IconButton
+              size="small"
+              aria-label={T.scrollRight}
+              disabled={slideIndex >= frameCount - 1}
+              onClick={() => scrollStrip(1)}
+            >
               <ChevronRightIcon fontSize="small" />
             </IconButton>
           </span>
@@ -368,14 +449,15 @@ export default function CameraRail({ node, tag, pollMs = 5000 }) {
           ) : stripFrames == null ? (
             <p className={styles.stripEmpty}>{T.loading}</p>
           ) : stripFrames.length ? (
-            <div className={styles.strip} ref={stripRef}>
-              {stripFrames.map((f) => (
+            <div className={styles.strip} ref={stripRef} onScroll={handleStripScroll}>
+              {stripFrames.map((f, i) => (
                 <Frame
                   key={`${f.index}-${f.mtime_ns}`}
                   cameraCode={camera.code}
                   slot={slotFilter}
                   frame={f}
-                  label={showingOk ? T.okWord : activeSlot ? slotLabel(activeSlot) : ''}
+                  label={activeLabel}
+                  onOpen={() => setLightboxIndex(i)}
                 />
               ))}
             </div>
@@ -385,6 +467,19 @@ export default function CameraRail({ node, tag, pollMs = 5000 }) {
           <div className={styles.sprocket} aria-hidden="true" />
         </div>
       </div>
+
+      {lightboxIndex != null && frameCount > 0 && (
+        <CameraLightbox
+          cameraCode={camera.code}
+          slot={slotFilter}
+          frames={stripFrames}
+          index={lightboxIndex}
+          label={activeLabel}
+          container={container}
+          onClose={closeLightbox}
+          onNavigate={navigateLightbox}
+        />
+      )}
     </aside>
   )
 }

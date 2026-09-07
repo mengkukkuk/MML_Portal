@@ -289,6 +289,14 @@
   color: var(--fg);
 }
 
+.stripPos {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  padding: 0 2px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* The OK toggle borrows the clear button's shape, and takes the pass colour
  * when engaged so the control and the strip's tint agree at a glance. */
 .okBtn {
@@ -316,31 +324,40 @@
   background-position: center;
 }
 
+/* One frame fills the well; scroll-snap plus the hidden native scrollbar is
+ * what makes this "slide to view" — a swipe or the chevrons above move
+ * exactly one frame, never a partial page of two. */
 .strip {
   display: flex;
   gap: var(--space-2);
   overflow-x: auto;
   scroll-snap-type: x mandatory;
   padding: var(--space-2) var(--space-2) 4px;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+.strip::-webkit-scrollbar {
+  display: none;
 }
 
 .frame {
-  flex: 0 0 calc((100% - var(--space-2)) / 2);
+  flex: 0 0 100%;
   min-width: 0;
   margin: 0;
   scroll-snap-align: start;
 }
 
 .frameImg {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 16 / 10;
   border-radius: var(--radius-sm);
   overflow: hidden;
   background: color-mix(in srgb, var(--crit) 14%, var(--bg-elev));
   border: 1px solid color-mix(in srgb, var(--crit) 35%, var(--border));
+  cursor: zoom-in;
 }
 
 .frameImgOk {
@@ -348,11 +365,37 @@
   border-color: color-mix(in srgb, var(--ok) 35%, var(--border));
 }
 
+.frameImg:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .frameImg img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  /* The strip is a preview, not the measurement — show the whole frame
+   * uncropped rather than filling the box and hiding an edge of it. Real
+   * pixels come from clicking through to the lightbox. */
+  object-fit: contain;
   display: block;
+}
+
+.frameZoom {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--bg-app) 55%, transparent);
+  border-radius: 999px;
+  padding: 3px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+
+.frameImg:hover .frameZoom,
+.frameImg:focus-visible .frameZoom {
+  opacity: 1;
 }
 
 .frameLoading {

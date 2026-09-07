@@ -84,7 +84,7 @@ def _resolve_secret_value(name: str, value: str) -> str:
 DB_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
 
 # --- Application / configuration database ----------------------------------
-APP_DB_HOST = "localhost"
+APP_DB_HOST = os.getenv("APP_DB_HOST", '127.0.0.1')
 APP_DB_PORT = 5432
 APP_DB_NAME = os.getenv("APP_DB_NAME", "postgres")
 APP_DB_USER = os.getenv("APP_DB_USER", "postgres")
