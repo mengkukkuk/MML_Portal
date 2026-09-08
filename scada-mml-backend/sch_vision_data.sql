@@ -258,11 +258,11 @@ CREATE TABLE camera_defect_speed (
      location text NOT NULL,
      created_at TIMESTAMPTZ DEFAULT NOW(),
      updated_at TIMESTAMPTZ DEFAULT NOW(),
-     defect_1 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_1, 1) = 6 ),
-     defect_2 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_2, 1) = 6 ),
-     defect_3 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_3, 1) = 6 ),
-     defect_4 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_4, 1) = 6 ),
-     defect_5 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_5, 1) = 6 )
+     defect_1 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_1, 1) = 7 ),
+     defect_2 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_2, 1) = 7 ),
+     defect_3 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_3, 1) = 7 ),
+     defect_4 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_4, 1) = 7 ),
+     defect_5 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_5, 1) = 7 )
 );
 
 CREATE TABLE camera_count_speed (
@@ -271,11 +271,11 @@ CREATE TABLE camera_count_speed (
     location text NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    count_spd1 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd1, 1) = 6 ),
-    count_spd2 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd2, 1) = 6 ),
-    count_spd3 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd3, 1) = 6 ),
-    count_spd4 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd4, 1) = 6 ),
-    count_spd5 INT[] default array[0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd5, 1) = 6 )
+    count_spd1 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd1, 1) = 7 ),
+    count_spd2 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd2, 1) = 7 ),
+    count_spd3 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd3, 1) = 7 ),
+    count_spd4 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd4, 1) = 7 ),
+    count_spd5 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd5, 1) = 7 )
 );
 
 --INSERT
@@ -298,6 +298,41 @@ CREATE OR REPLACE FUNCTION array_sum(arr int[])
 SELECT COALESCE(SUM(x)::int, 0) FROM unnest(arr) AS x;
 $$ LANGUAGE sql IMMUTABLE STRICT;
 
+-- speed in time using diff method
+CREATE OR REPLACE FUNCTION calc_speed_in_time_dif(arr integer[])
+    RETURNS integer AS $$
+SELECT CASE
+           WHEN arr IS NULL OR array_length(arr, 1) IS NULL OR array_length(arr, 1) < 2 THEN 0
+           ELSE arr[1] - arr[array_length(arr, 1)]
+           END;
+$$ LANGUAGE sql IMMUTABLE;
+
+ALTER TABLE camera_defect_speed
+    ADD COLUMN speed_in_time INTEGER[]
+        GENERATED ALWAYS AS (
+            ARRAY[
+                calc_speed_in_time_dif(defect_1),
+                calc_speed_in_time_dif(defect_2),
+                calc_speed_in_time_dif(defect_3),
+                calc_speed_in_time_dif(defect_4),
+                calc_speed_in_time_dif(defect_5)
+                ]
+            ) STORED;
+
+ALTER TABLE camera_count_speed
+    ADD COLUMN speed_in_time INTEGER[]
+        GENERATED ALWAYS AS (
+            ARRAY[
+                calc_speed_in_time_dif(count_spd1),
+                calc_speed_in_time_dif(count_spd2),
+                calc_speed_in_time_dif(count_spd3),
+                calc_speed_in_time_dif(count_spd4),
+                calc_speed_in_time_dif(count_spd5)
+                ]
+            )STORED;
+
+
+-- speed_in_time old version
 -- Add 'speed_in_time' as an INT[] storing array sums
 ALTER TABLE camera_count_speed
     ADD COLUMN speed_in_time INT[] GENERATED ALWAYS AS (

@@ -82,7 +82,9 @@ UPDATE camera_defect_speed SET defect_1 = ARRAY [
     defect_1[3],
     defect_1[4],
     defect_1[5],
-    defect_1[6] ]
+    defect_1[6],
+    defect_1[7]
+    ]
 WHERE code = 'CAM001-13';
 
 -- Shift []-> every interval time (10s)
@@ -92,5 +94,7 @@ UPDATE camera_defect_speed SET defect_1 = ARRAY [
     defect_1[2],
     defect_1[3],
     defect_1[4],
-    defect_1[5] ]
+    defect_1[5],
+    defect_1[6]
+    ]
 WHERE code = 'CAM001-13';
