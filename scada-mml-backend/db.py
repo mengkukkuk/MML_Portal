@@ -1289,6 +1289,36 @@ _TEXT_TYPES = (
     "character",
 )
 
+# Postgres array udt_names whose *elements* are numeric -- see _table_columns,
+# which substitutes udt_name for the useless 'ARRAY' data_type.
+#
+# Reported separately from _NUMERIC_TYPES for the same reason _TEXT_TYPES is: a
+# gauge, a threshold and a Live trend all need one number, and folding arrays
+# into the list every picker reads would offer a four-slot column to a tile that
+# can only draw a scalar. The consumer that understands array semantics asks for
+# them by name.
+_NUMERIC_ARRAY_UDTS = (
+    "_float4",
+    "_float8",
+    "_int2",
+    "_int4",
+    "_int8",
+    "_numeric",
+)
+
+
+def _is_array_type(data_type: str) -> bool:
+    """Whether a type string from `_table_columns` denotes an array.
+
+    Relies on that function's udt_name substitution: Postgres names every array
+    type after its element with a leading underscore, and no scalar data_type
+    starts with one. Broader than _NUMERIC_ARRAY_UDTS on purpose — a text[] is
+    no more usable as a filter than a float[] is, and asking
+    distinct_column_values for one returns literal '{a,b,c}' strings.
+    """
+    return data_type.startswith("_")
+
+
 # Postgres date/time data_types usable as a panel's timestamp/x-axis column.
 _TS_TYPES = (
     "timestamp without time zone",
@@ -1391,13 +1421,21 @@ def _table_columns(conn, schema: str, table: str) -> dict[str, str]:
     if table not in _allowed_tables(conn, schema):
         raise ValueError(f"Table not allowed: {table!r}")
     rows = conn.execute(
-        """SELECT column_name, data_type
+        """SELECT column_name, data_type, udt_name
            FROM information_schema.columns
            WHERE table_schema = %s AND table_name = %s
            ORDER BY ordinal_position""",
         (schema, table),
     ).fetchall()
-    return {r["column_name"]: r["data_type"] for r in rows}
+    # information_schema reports every array as the bare string 'ARRAY' -- the
+    # element type only survives in udt_name ('_float8', '_int4'). Substituting
+    # it keeps the flat {col: type} shape every caller already expects while
+    # making an array distinguishable from any other, so describe_table can
+    # categorize it instead of sweeping it into the leftovers.
+    return {
+        r["column_name"]: (r["udt_name"] if r["data_type"] == "ARRAY" else r["data_type"])
+        for r in rows
+    }
 
 
 def _safe_identifiers(conn, schema: str, table: str, *cols: str | None) -> dict[str, str]:
@@ -1438,14 +1476,26 @@ def describe_table(table: str, datasource_id: int | None = None) -> dict[str, li
         # named `id` (some SCADA log tables carry an `id` with no PK constraint).
         skip = _primary_key_columns(conn, schema, table) | {"id"}
     value_columns = [c for c, t in columns.items() if t in _NUMERIC_TYPES and c not in skip]
+    # A numeric array is one column carrying several related readings -- a
+    # measured value with its setpoint and limits, say. Nothing that plots a
+    # single line can use it, so it is offered on its own rather than mixed in.
+    array_value_columns = [
+        c for c, t in columns.items() if t in _NUMERIC_ARRAY_UDTS and c not in skip
+    ]
     ts_columns = [c for c, t in columns.items() if t in _TS_TYPES]
     datetime_columns = [c for c, t in columns.items() if t in _DATETIME_TYPES]
     # A status/description column: readable by symbols that print words, useless
     # to anything that scales or plots. `skip` applies here too — a text primary
     # key names the row rather than reporting anything about it.
     text_columns = [c for c, t in columns.items() if t in _TEXT_TYPES and c not in skip]
+    # Excluded from `filter_columns` below, alongside the scalar value columns.
+    # Every array, not just the numeric ones: none of them names a row.
+    not_a_filter = set(value_columns) | {
+        c for c, t in columns.items() if _is_array_type(t)
+    }
     return {
         "value_columns": value_columns,
+        "array_value_columns": array_value_columns,
         "ts_columns": ts_columns,
         "datetime_columns": datetime_columns,
         "text_columns": text_columns,
@@ -1453,7 +1503,13 @@ def describe_table(table: str, datasource_id: int | None = None) -> dict[str, li
         # useful as a filter so they're excluded to keep the list focused. Text
         # columns stay in: naming the device is what they are usually for, and a
         # column being printable somewhere else does not stop it identifying a row.
-        "filter_columns": [c for c in columns if c not in value_columns],
+        #
+        # Arrays are excluded too. Before udt_name was read they had no type this
+        # function recognised, so they fell through to this list by negation and
+        # were offered as filter candidates -- a four-slot reading dressed up as a
+        # device selector, which `distinct_column_values` would happily answer with
+        # literal '{1.2,3.4}' strings.
+        "filter_columns": [c for c in columns if c not in not_a_filter],
     }
 
 
@@ -1523,6 +1579,7 @@ def table_series(
     ts_col: str,
     minutes: int,
     datasource_id: int | None = None,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """Time-ordered rows over the last `minutes` (requires a timestamp column).
 
@@ -1534,12 +1591,23 @@ def table_series(
     Gated on the source actually being sampled, not on it being the app DB: a
     source the buffer loop never polls would otherwise render a permanently
     blank chart, which is worse than a slower live query returning one point.
+
+    `limit` caps the result at the *newest* N rows. Omitted, the SQL is exactly
+    what it always was — a Live tile asks for minutes, not rows, and a
+    quarter-hour window needs no ceiling. It exists because the window is now
+    selectable up to a week, and a week of a fast-logging table is unbounded.
     """
     if (
         table == "variables_tag"
         and filter_col == "tag_name"
         and filter_val is not None
         and is_tag_buffered(datasource_id)
+        # The buffer only carries the fields discovery found, and discovery is
+        # numeric-scalar only — an array column is invisible to it. Serving one
+        # from here would answer every request with an empty series, forever and
+        # without an error, which is strictly worse than the live query this
+        # short-circuit exists to improve on.
+        and value_col in tag_fields(datasource_id)
     ):
         return buffered_tag_series(filter_val, value_col, minutes, datasource_id)
     with _table_source_conn(datasource_id) as (conn, schema):
@@ -1556,7 +1624,19 @@ def table_series(
         if filter_col and filter_val is not None:
             query += sql.SQL(" AND {}::text = %s").format(sql.Identifier(filter_col))
             params.append(filter_val)
-        query += sql.SQL(" ORDER BY {} ASC").format(sql.Identifier(ts_col))
+        if limit is None:
+            query += sql.SQL(" ORDER BY {} ASC").format(sql.Identifier(ts_col))
+        else:
+            # Newest N, then put them back in reading order. Keeping the *oldest*
+            # N would clip the right-hand edge — the end a trend is read from.
+            query = (
+                sql.SQL("SELECT w.value, w.ts FROM (")
+                + query
+                + sql.SQL(" ORDER BY {} DESC LIMIT %s) AS w ORDER BY w.ts ASC").format(
+                    sql.Identifier(ts_col)
+                )
+            )
+            params.append(limit)
         rows = conn.execute(query, params).fetchall()
     return rows
 

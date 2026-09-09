@@ -187,14 +187,27 @@ def test_latest_tag_is_a_404_when_no_plant_has_it(monkeypatch):
 
 
 # --- Schema (Live panels) ---------------------------------------------------
+def _series(table, value_col, *, datasource_id=None, ts_col="ts", minutes=15,
+            limit=5000):
+    """Call the route by keyword — its query params are not a positional API.
+
+    Every `Query(...)` default has to be supplied: calling the function directly
+    skips the resolution that would otherwise turn them into plain values.
+    """
+    return schema_router.get_series(
+        table=table, value_col=value_col, ts_col=ts_col,
+        filter_col=None, filter_val=None, minutes=minutes, limit=limit,
+        datasource_id=datasource_id, _user=USER, datasource_ids=SOURCES,
+    )
+
+
 def test_schema_series_is_one_entry_per_source(monkeypatch):
     """Separate series, not merged points: two plants' readings from the same
     table are unrelated measurements and one line through both is a lie."""
     now = datetime(2026, 1, 1)
-    monkeypatch.setattr(db, "table_series", lambda *a: [
+    monkeypatch.setattr(db, "table_series", lambda *a, **k: [
         {"ts": now, "value": 1.0}, {"ts": now, "value": 2.0}])
-    body = schema_router.get_series("variables_tag", "current_value", "ts",
-                                    None, None, 15, None, USER, SOURCES)
+    body = _series("variables_tag", "current_value")
     assert [s["datasource_id"] for s in body["series"]] == [1, 2]
     assert len(body["series"][0]["points"]) == 2
 
@@ -204,8 +217,8 @@ def test_schema_series_defaults_to_the_header_when_no_datasource_is_pinned(monke
     selection — a dashboard can still be pointed at another plant without
     editing every panel."""
     seen = []
-    monkeypatch.setattr(db, "table_series", lambda *a: seen.append(a[-1]) or [])
-    schema_router.get_series("t", "v", "ts", None, None, 15, None, USER, SOURCES)
+    monkeypatch.setattr(db, "table_series", lambda *a, **k: seen.append(a[-1]) or [])
+    _series("t", "v")
     assert sorted(seen) == [1, 2]
 
 
@@ -213,8 +226,8 @@ def test_schema_series_honours_an_explicit_pinned_datasource(monkeypatch):
     """A symbol pinned to one plant keeps reading it, bypassing the header
     selection entirely — the same existence-only rule the catalogue routes use."""
     seen = []
-    monkeypatch.setattr(db, "table_series", lambda *a: seen.append(a[-1]) or [])
-    schema_router.get_series("t", "v", "ts", None, None, 15, 2, USER, SOURCES)
+    monkeypatch.setattr(db, "table_series", lambda *a, **k: seen.append(a[-1]) or [])
+    _series("t", "v", datasource_id=2)
     assert seen == [2]
 
 

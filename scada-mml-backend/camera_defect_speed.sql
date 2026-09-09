@@ -77,7 +77,7 @@ ALTER TABLE camera_defect_speed
 
 --UPDATE at index[1]+1 when any defect_n is counted
 UPDATE camera_defect_speed SET defect_1 = ARRAY [
-    defect_1[1] + 1,
+    defect_1[1] + 3,
     defect_1[2],
     defect_1[3],
     defect_1[4],
@@ -89,7 +89,7 @@ WHERE code = 'CAM001-13';
 
 -- Shift []-> every interval time (10s)
 UPDATE camera_defect_speed SET defect_1 = ARRAY [
-    0,
+    defect_1[1],
     defect_1[1],
     defect_1[2],
     defect_1[3],

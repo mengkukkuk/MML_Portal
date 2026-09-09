@@ -15,6 +15,8 @@ import { fetchDefaultTemplate, fetchTemplate, fetchTemplates, runReport } from '
 import { useAuthStore } from '@/stores/auth'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import ReportFilterBar from '@/components/report/ReportFilterBar'
+import TrendRail from '@/components/report/TrendRail'
+import EnvelopeTrend from '@/components/report/blocks/EnvelopeTrend'
 import SourceStatus from '@/components/SourceStatus/SourceStatus'
 import {
   DEFAULT_PRESET,
@@ -23,6 +25,14 @@ import {
   paramsFromFilters,
   resolveRange,
 } from '@/components/report/reportRange'
+import {
+  FILTER_KEYS,
+  TREND_KEYS,
+  isPlottable,
+  mergeParams,
+  paramsFromTrend,
+  trendFromParams,
+} from '@/components/report/trendParams'
 import KpiStrip from '@/components/report/blocks/KpiStrip'
 import StateTimeline from '@/components/report/blocks/StateTimeline'
 import DowntimePareto from '@/components/report/blocks/DowntimePareto'
@@ -44,7 +54,12 @@ import styles from './ReportPage.module.css'
  *    disagreeing — which they would if each block fetched independently.
  *
  * The raw-log block is the deliberate exception: it pages server-side against
- * unclassified rows, which /run never returns.
+ * unclassified rows, which /run never returns. The signal trend is the second —
+ * it plots a reading straight off a plant table, which /run has no projection
+ * for and never will.
+ *
+ * Both filter sets share one query string, so each writer merges rather than
+ * replaces: picking a date range must not silently clear the chart binding.
  */
 
 const BLOCK_COMPONENTS = {
@@ -111,12 +126,39 @@ export default function ReportPage() {
     setFilters((f) => ({ ...f, preset: fallback }))
   }, [template, searchParams])
 
+  const [trend, setTrend] = useState(() => trendFromParams(searchParams))
+
   const updateFilters = useCallback(
     (next) => {
       setFilters(next)
-      setSearchParams(paramsFromFilters(next), { replace: true })
+      setSearchParams(
+        (curr) => mergeParams(curr, paramsFromFilters(next), FILTER_KEYS),
+        { replace: true },
+      )
     },
     [setSearchParams],
+  )
+
+  const updateTrend = useCallback(
+    (next) => {
+      setTrend(next)
+      setSearchParams(
+        (curr) => mergeParams(curr, paramsFromTrend(next), TREND_KEYS),
+        { replace: true },
+      )
+    },
+    [setSearchParams],
+  )
+
+  const toggleIndex = useCallback(
+    (index) =>
+      updateTrend({
+        ...trend,
+        indexes: trend.indexes.includes(index)
+          ? trend.indexes.filter((i) => i !== index)
+          : [...trend.indexes, index].sort((a, b) => a - b),
+      }),
+    [trend, updateTrend],
   )
 
   const blocks = useMemo(() => template?.blocks ?? [], [template])
@@ -268,8 +310,23 @@ export default function ReportPage() {
           </div>
         </header>
 
+        {/* The signal trend sits above the OEE report and is bound separately:
+            it reads a plant table directly, on its own window, and answers a
+            different question. Its controls lead because the chart below them
+            has nothing to draw until they are filled in. */}
+        <TrendRail trend={trend} onChange={updateTrend} />
+
+        {isPlottable(trend) ? (
+          <EnvelopeTrend trend={trend} onToggleIndex={toggleIndex} />
+        ) : (
+          <p className={styles.empty}>
+            Pick a table, a reading and a timestamp above to plot a signal.
+          </p>
+        )}
+
         {/* Printed output loses the interactive controls, so the window it
-            covers has to be stated on the page itself. */}
+            covers has to be stated on the page itself. This one describes the
+            OEE report below, not the trend — so it sits with its own filters. */}
         <p className={styles.range}>
           {describeRange(start, end)}
           <span className={styles.rangeNote}> · plant server local time</span>

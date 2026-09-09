@@ -53,7 +53,7 @@ export async function fetchSchemaLatest({
 }
 
 export async function fetchSchemaSeries({
-  table, valueCol, tsCol, filterCol, filterVal, minutes = 15, datasourceId,
+  table, valueCol, tsCol, filterCol, filterVal, minutes = 15, limit, datasourceId,
 }) {
   const { data } = await apiClient.get('/schema/series', {
     params: {
@@ -63,10 +63,16 @@ export async function fetchSchemaSeries({
       filter_col: filterCol || undefined,
       filter_val: filterVal ?? undefined,
       minutes,
+      // Omitted keeps the server's own default. Only a caller that can offer a
+      // week-long window needs to think about the ceiling.
+      limit: limit ?? undefined,
       datasource_id: datasourceId ?? undefined,
     },
   })
-  return data // { series: [{ points: [{ ts, value }], datasource_id, datasource_name }], sources }
+  // { series: [{ points: [{ ts, value }], truncated, datasource_id, datasource_name }], sources }
+  // `value` is a number, or an array of them when value_col is a numeric-array
+  // column — several readings taken at one instant.
+  return data
 }
 
 /**

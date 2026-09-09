@@ -50,7 +50,8 @@
   .app-shell__aside,
   .app-shell__header,
   .report-controls,
-  .report-filters {
+  .report-filters,
+  .report-trend-controls {
     display: none !important;
   }
 

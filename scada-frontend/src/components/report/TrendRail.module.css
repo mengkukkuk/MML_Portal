@@ -1,0 +1,72 @@
+/* One rail, not a row of step cards. It reads as a single sentence being
+   completed left to right, which is what the dependent cascade actually is. */
+.rail {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.select {
+  min-width: 150px;
+  max-width: 230px;
+}
+
+/* The reading is the thing being chosen; column names in these tables run long
+   and truncating the one that carries the meaning is the wrong economy. */
+.selectWide {
+  min-width: 190px;
+  max-width: 300px;
+}
+
+/* Both take the full rail width so they land on their own line rather than
+   wedging between two controls. */
+.hint,
+.error {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12px;
+}
+
+.hint {
+  color: var(--fg-muted);
+}
+
+.error {
+  color: var(--crit);
+}
+
+/* Narrow enough that the rail is a stack, not a row. The fields shrink rather
+   than hold a fixed basis, so the controls stay inside the card instead of
+   pushing a horizontal scrollbar onto the page. */
+@media (max-width: 900px) {
+  .field {
+    flex: 1 1 220px;
+  }
+
+  .select,
+  .selectWide {
+    flex: 1;
+    min-width: 0;
+    max-width: none;
+  }
+}

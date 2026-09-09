@@ -63,6 +63,11 @@ class TableOut(BaseModel):
 
 class ColumnsOut(BaseModel):
     value_columns: list[str]
+    # Numeric-array columns — one column carrying several related readings, e.g.
+    # a measured value with its setpoint and limits. Defaulted so a client that
+    # predates them is unaffected and kept out of `value_columns` because every
+    # existing consumer of that list can only draw a scalar.
+    array_value_columns: list[str] = []
     ts_columns: list[str]
     datetime_columns: list[str] = []
     text_columns: list[str] = []
@@ -92,11 +97,20 @@ class LatestListOut(BaseModel):
 
 class Point(BaseModel):
     ts: datetime
-    value: float
+    # A point is one number, or the several a numeric-array column reports at
+    # that instant. `float` stays first for the same reason it does on
+    # `LatestOut.value` — lax coercion still resolves a Decimal to a number,
+    # while a list matches only the list member. Not optional at the top level:
+    # `plottable()` drops a NULL reading before it ever reaches this model.
+    value: float | list[float | None]
 
 
 class SeriesOut(BaseModel):
     points: list[Point]
+    # Whether the row cap bit. A clipped week reads exactly like a complete one
+    # on a chart, so the caller is told rather than left to infer it — the same
+    # reason /api/reports/logs reports it.
+    truncated: bool = False
     datasource_id: int | None = None
     datasource_name: str | None = None
 
@@ -222,6 +236,7 @@ def get_series(
     filter_col: str | None = Query(None),
     filter_val: str | None = Query(None),
     minutes: int = Query(15, ge=1, le=10080),
+    limit: int = Query(5000, ge=1, le=50000),
     datasource_id: int | None = Query(None),
     _user: dict = Depends(get_current_user),
     datasource_ids: list[int | None] = Depends(active_datasources),
@@ -237,15 +252,37 @@ def get_series(
 
     An explicit `datasource_id` bypasses the header selection entirely, same as
     `/latest` above.
+
+    `limit` bounds the newest N rows per source. The window is selectable up to
+    a week and this query has no natural ceiling, so an unlucky binding could
+    otherwise stream a plant's entire history into a chart.
     """
-    def plottable(v):
+    def scalar(v):
         return isinstance(v, (int, float, Decimal)) and not isinstance(v, bool)
 
+    def plottable(v):
+        # A numeric array is plottable too: it is several readings taken at one
+        # instant, and the caller decides what each slot means. NULL slots ride
+        # through as gaps — a missing limit should break that one band, not
+        # discard the measured value recorded beside it.
+        if isinstance(v, list):
+            return bool(v) and all(e is None or scalar(e) for e in v)
+        return scalar(v)
+
     def one(ds):
+        # One row beyond the cap, then trimmed: asking for exactly `limit` makes
+        # "clipped" and "happened to return a full page" the same answer, and a
+        # complete window would then tell the reader to shorten it.
         rows = db.table_series(table, value_col, filter_col, filter_val, ts_col,
-                               minutes, ds)
-        return [{"points": [{"ts": r["ts"], "value": r["value"]}
-                            for r in rows if plottable(r["value"])]}]
+                               minutes, ds, limit=limit + 1)
+        truncated = len(rows) > limit
+        if truncated:
+            rows = rows[-limit:]
+        return [{
+            "points": [{"ts": r["ts"], "value": r["value"]}
+                       for r in rows if plottable(r["value"])],
+            "truncated": truncated,
+        }]
 
     targets = [datasource_id] if datasource_id is not None else datasource_ids
     series, reports = db.fan_out_rows(targets, one, label="table series")
