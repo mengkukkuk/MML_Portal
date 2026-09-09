@@ -27,7 +27,7 @@ export const DEFAULT_MINUTES = 480
 // The two vocabularies sharing the query string. Listed together here because
 // coexistence is this module's job: each writer clears its own keys and leaves
 // the other's alone, and neither has to import the other to do it.
-export const TREND_KEYS = ['tbl', 'vcol', 'tscol', 'fcol', 'fval', 'win', 'idx']
+export const TREND_KEYS = ['tbl', 'vcol', 'tscol', 'fcol', 'fval', 'win', 'idx', 'tstart', 'tend']
 export const FILTER_KEYS = ['preset', 'start', 'end', 'location', 'tag']
 
 export const EMPTY_TREND = {
@@ -68,20 +68,27 @@ export function trendFromParams(params) {
     tsCol: params.get('tscol') ?? '',
     filterCol: params.get('fcol') ?? '',
     filterVal: params.get('fval') ?? '',
-    minutes: Number.isFinite(minutes) && minutes > 0 ? minutes : DEFAULT_MINUTES,
+    minutes: params.get('win') === 'custom' ? 'custom'
+      : [10, 30, 60, 480, 1440, 10080].includes(minutes) ? minutes : DEFAULT_MINUTES,
+    start: params.get('tstart') ?? '',
+    end: params.get('tend') ?? '',
     indexes: parseIndexes(params.get('idx')),
   }
 }
 
 export function paramsFromTrend(trend) {
   const out = new URLSearchParams()
-  if (!trend?.table) return out
-  out.set('tbl', trend.table)
+  if (!trend) return out
+  if (trend.table) out.set('tbl', trend.table)
   if (trend.valueCol) out.set('vcol', trend.valueCol)
   if (trend.tsCol) out.set('tscol', trend.tsCol)
   if (trend.filterCol) out.set('fcol', trend.filterCol)
   if (trend.filterVal) out.set('fval', trend.filterVal)
   if (trend.minutes !== DEFAULT_MINUTES) out.set('win', String(trend.minutes))
+  if (trend.minutes === 'custom') {
+    if (trend.start) out.set('tstart', trend.start)
+    if (trend.end) out.set('tend', trend.end)
+  }
   // Only when it differs from "show everything", so the common case stays a
   // short link.
   const idx = trend.indexes ?? ALL_INDEXES

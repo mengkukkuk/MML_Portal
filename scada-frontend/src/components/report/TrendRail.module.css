@@ -18,6 +18,11 @@
   min-width: 0;
 }
 
+.picker {
+  width: 230px;
+  max-width: 100%;
+}
+
 .label {
   font-size: 11px;
   text-transform: uppercase;

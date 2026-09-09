@@ -1580,8 +1580,14 @@ def table_series(
     minutes: int,
     datasource_id: int | None = None,
     limit: int | None = None,
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
 ) -> list[dict[str, Any]]:
-    """Time-ordered rows over the last `minutes` (requires a timestamp column).
+    """Time-ordered rows in explicit bounds, or over the last `minutes`.
+
+    Explicit bounds are aware datetimes validated by the series route. Naive
+    plant columns use the connection's timezone and are returned as instants.
 
     variables_tag is a special case: it has no real row history (overwritten
     in place — see snapshot_variables_tag's docstring), so a panel bound
@@ -1609,18 +1615,39 @@ def table_series(
         # short-circuit exists to improve on.
         and value_col in tag_fields(datasource_id)
     ):
-        return buffered_tag_series(filter_val, value_col, minutes, datasource_id)
+        if start is None:
+            return buffered_tag_series(filter_val, value_col, minutes, datasource_id)
+        # Explicit historical bounds must include samples older than the usual
+        # relative window, while still using the source's sampled history.
+        buffered_minutes = max(1, int((datetime.now(timezone.utc) - start).total_seconds() / 60) + 1)
+        rows = [r for r in buffered_tag_series(filter_val, value_col, buffered_minutes, datasource_id)
+                if start <= r["ts"] <= end]
+        return rows[-limit:] if limit else rows
     with _table_source_conn(datasource_id) as (conn, schema):
-        _safe_identifiers(conn, schema, table, value_col, filter_col, ts_col)
+        columns = _safe_identifiers(conn, schema, table, value_col, filter_col, ts_col)
+        timestamp = sql.Identifier(ts_col)
+        if start is not None and columns[ts_col] == "timestamp without time zone":
+            timestamp = sql.SQL("({} AT TIME ZONE current_setting('TimeZone'))").format(timestamp)
         query = sql.SQL(
             "SELECT {val} AS value, {ts} AS ts FROM {tbl} WHERE {ts} >= "
             "now() - make_interval(mins => %s)"
         ).format(
             val=sql.Identifier(value_col),
-            ts=sql.Identifier(ts_col),
+            ts=timestamp,
             tbl=sql.Identifier(schema, table),
         )
         params: list[Any] = [minutes]
+        if start is not None:
+            # Convert bounds rather than the indexed column in the predicate.
+            bound = sql.SQL("%s")
+            if columns[ts_col] == "timestamp without time zone":
+                bound = sql.SQL("(%s::timestamptz AT TIME ZONE current_setting('TimeZone'))")
+            query = sql.SQL(
+                "SELECT {val} AS value, {ts} AS ts FROM {tbl} "
+                "WHERE {clock} >= {bound} AND {clock} <= {bound}"
+            ).format(val=sql.Identifier(value_col), ts=timestamp,
+                     tbl=sql.Identifier(schema, table), clock=sql.Identifier(ts_col), bound=bound)
+            params = [start, end]
         if filter_col and filter_val is not None:
             query += sql.SQL(" AND {}::text = %s").format(sql.Identifier(filter_col))
             params.append(filter_val)

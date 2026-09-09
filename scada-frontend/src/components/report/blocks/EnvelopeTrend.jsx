@@ -6,6 +6,7 @@ import SourceStatus from '@/components/SourceStatus/SourceStatus'
 import { fetchSchemaSeries } from '@/api/schema'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { ROLES, isPlottable } from '../trendParams'
+import { windowError, trendTimeAxis } from '../trendWindow'
 import styles from './blocks.module.css'
 import chart from './EnvelopeTrend.module.css'
 
@@ -50,15 +51,16 @@ const fmt = (n) =>
     maximumFractionDigits: 3,
   })
 
-export default function EnvelopeTrend({ trend, onToggleIndex }) {
+export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
   const selected = useDatasourceSelectionStore((s) => s.selected)
   const primary = selected?.[0]
-  const ready = isPlottable(trend)
+  const rangeError = windowError(range.start, range.end)
+  const ready = isPlottable(trend) && !rangeError
 
   const query = useQuery({
     queryKey: [
       'trend', 'series', primary?.id ?? 'app', trend.table, trend.valueCol,
-      trend.tsCol, trend.filterCol, trend.filterVal, trend.minutes,
+      trend.tsCol, trend.filterCol, trend.filterVal, range.start, range.end,
     ],
     queryFn: () =>
       fetchSchemaSeries({
@@ -67,7 +69,8 @@ export default function EnvelopeTrend({ trend, onToggleIndex }) {
         tsCol: trend.tsCol,
         filterCol: trend.filterCol || undefined,
         filterVal: trend.filterVal || undefined,
-        minutes: trend.minutes,
+        start: range.start,
+        end: range.end,
         limit: MAX_POINTS,
         datasourceId: primary?.id ?? undefined,
       }),
@@ -103,8 +106,8 @@ export default function EnvelopeTrend({ trend, onToggleIndex }) {
   const isShown = (key) => shown.some((r) => r.key === key)
 
   const option = useMemo(
-    () => buildOption(points, shown),
-    [points, shown],
+    () => buildOption(points, shown, range),
+    [points, shown, range],
   )
 
   const latest = points.length ? points[points.length - 1] : null
@@ -158,7 +161,8 @@ export default function EnvelopeTrend({ trend, onToggleIndex }) {
         </p>
       )}
 
-      {!points.length ? (
+      {rangeError ? <p className={styles.warning}>{rangeError}</p> : !points.length ? (
+        <>
         <p className={styles['block__empty']}>
           {query.isLoading
             ? 'Loading readings…'
@@ -166,6 +170,8 @@ export default function EnvelopeTrend({ trend, onToggleIndex }) {
               ? 'No readings to plot.'
               : 'No readings in this window.'}
         </p>
+        <EChart option={option} height="320px" />
+        </>
       ) : !shown.length ? (
         // An empty chart frame states nothing and offers nothing. The readings
         // are there; the reader has switched them all off, and the way back is
@@ -230,7 +236,7 @@ function Readout({ latest, shown }) {
   )
 }
 
-function buildOption(points, shown) {
+function buildOption(points, shown, range) {
   const has = (key) => shown.some((r) => r.key === key)
   const at = (p, i) => (p.v[i] == null ? null : Number(p.v[i]))
   const series = []
@@ -284,7 +290,7 @@ function buildOption(points, shown) {
       data: points.map((p) => [p.t, at(p, index)]),
       lineStyle: { color: EDGE, width: 1 },
       itemStyle: { color: EDGE },
-      symbol: 'none',
+      symbol: points.length === 1 ? 'circle' : 'none',
       z: 2,
     })
   }
@@ -298,7 +304,7 @@ function buildOption(points, shown) {
       data: points.map((p) => [p.t, at(p, 1)]),
       lineStyle: { color: RULE, width: 1, type: 'dashed' },
       itemStyle: { color: RULE },
-      symbol: 'none',
+      symbol: points.length === 1 ? 'circle' : 'none',
       z: 3,
     })
   }
@@ -332,7 +338,7 @@ function buildOption(points, shown) {
       data: points.map((p, i) => [p.t, v[i]]),
       lineStyle: { color: INK, width: 2 },
       itemStyle: { color: INK },
-      symbol: 'none',
+      symbol: points.length === 1 ? 'circle' : 'none',
       z: 4,
     })
 
@@ -367,7 +373,7 @@ function buildOption(points, shown) {
       textStyle: { color: '#e6edf7', fontSize: 12 },
     },
     xAxis: {
-      type: 'time',
+      ...trendTimeAxis(range),
       axisLabel: { color: AXIS, fontSize: 10 },
       axisLine: { lineStyle: { color: 'rgba(255,255,255,0.12)' } },
       splitLine: { show: false },
@@ -380,7 +386,7 @@ function buildOption(points, shown) {
     },
     // Scroll and pinch only. A slider would add a second row of chrome to a
     // chart whose whole point is that it reads at a glance.
-    dataZoom: [{ type: 'inside' }],
+    dataZoom: [{ type: 'inside', start: 0, end: 100 }],
     series,
   }
 }

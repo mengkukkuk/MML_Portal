@@ -17,6 +17,7 @@ import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import ReportFilterBar from '@/components/report/ReportFilterBar'
 import TrendRail from '@/components/report/TrendRail'
 import EnvelopeTrend from '@/components/report/blocks/EnvelopeTrend'
+import { resolveTrendWindow } from '@/components/report/trendWindow'
 import SourceStatus from '@/components/SourceStatus/SourceStatus'
 import {
   DEFAULT_PRESET,
@@ -127,6 +128,16 @@ export default function ReportPage() {
   }, [template, searchParams])
 
   const [trend, setTrend] = useState(() => trendFromParams(searchParams))
+  const [windowRevision, setWindowRevision] = useState(0)
+  const trendRange = useMemo(() => resolveTrendWindow(trend),
+    [trend.minutes, trend.start, trend.end, windowRevision])
+
+  useEffect(() => {
+    setTrend(trendFromParams(searchParams))
+    const next = filtersFromParams(searchParams, template?.default_filters?.preset ?? DEFAULT_PRESET)
+    setFilters((current) => paramsFromFilters(current).toString() === paramsFromFilters(next).toString()
+      ? current : next)
+  }, [searchParams, template?.default_filters?.preset])
 
   const updateFilters = useCallback(
     (next) => {
@@ -160,6 +171,14 @@ export default function ReportPage() {
       }),
     [trend, updateTrend],
   )
+
+  const applyWindow = useCallback((patch) => {
+    setWindowRevision((n) => n + 1)
+    updateTrend({ ...trend, ...patch,
+      start: patch.minutes === 'custom' ? patch.start : '',
+      end: patch.minutes === 'custom' ? patch.end : '',
+    })
+  }, [trend, updateTrend])
 
   const blocks = useMemo(() => template?.blocks ?? [], [template])
 
@@ -314,10 +333,10 @@ export default function ReportPage() {
             it reads a plant table directly, on its own window, and answers a
             different question. Its controls lead because the chart below them
             has nothing to draw until they are filled in. */}
-        <TrendRail trend={trend} onChange={updateTrend} />
+        <TrendRail trend={trend} range={trendRange} onApplyWindow={applyWindow} onChange={updateTrend} />
 
         {isPlottable(trend) ? (
-          <EnvelopeTrend trend={trend} onToggleIndex={toggleIndex} />
+          <EnvelopeTrend trend={trend} range={trendRange} onToggleIndex={toggleIndex} />
         ) : (
           <p className={styles.empty}>
             Pick a table, a reading and a timestamp above to plot a signal.

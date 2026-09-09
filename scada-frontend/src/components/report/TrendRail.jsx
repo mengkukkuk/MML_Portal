@@ -1,4 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import dayjs from 'dayjs'
+import Button from '@mui/material/Button'
+import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker'
+import { windowError } from './trendWindow'
 import { useQuery } from '@tanstack/react-query'
 import FormControl from '@mui/material/FormControl'
 import MenuItem from '@mui/material/MenuItem'
@@ -26,7 +30,21 @@ import styles from './TrendRail.module.css'
  * on top of each other — three tolerance bands for one device.
  */
 
-export default function TrendRail({ trend, onChange }) {
+export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
+  const [draft, setDraft] = useState(() => ({ minutes: trend.minutes, start: dayjs(range.start), end: dayjs(range.end) }))
+  useEffect(() => {
+    setDraft({ minutes: trend.minutes, start: dayjs(range.start), end: dayjs(range.end) })
+  }, [trend.minutes, range.start, range.end])
+  const dateString = (date) => date?.isValid() ? date.second(0).format('YYYY-MM-DDTHH:mm:ssZ') : ''
+  const rangeError = windowError(dateString(draft.start), dateString(draft.end))
+
+  function pickWindow(minutes) {
+    if (minutes === 'custom') {
+      setDraft((d) => ({ ...d, minutes }))
+    } else {
+      onApplyWindow({ minutes, start: '', end: '' })
+    }
+  }
   const selected = useDatasourceSelectionStore((s) => s.selected)
   const primaryId = selected?.[0]?.id
 
@@ -192,14 +210,33 @@ export default function TrendRail({ trend, onChange }) {
 
       <Field label="Window">
         <Select
-          value={trend.minutes}
-          onChange={(e) => set({ minutes: e.target.value })}
+          value={draft.minutes}
+          onChange={(e) => pickWindow(e.target.value)}
         >
           {TIME_RANGES.map((r) => (
             <MenuItem key={r.value} value={r.value}>{r.label}</MenuItem>
           ))}
+          <MenuItem value="custom">Custom</MenuItem>
         </Select>
       </Field>
+
+      {['start', 'end'].map((key) => (
+        <DateTimePicker
+          key={key}
+          label={key === 'start' ? 'Start' : 'End'}
+          value={draft[key]}
+          onChange={(value) => setDraft((d) => ({ ...d, minutes: 'custom', [key]: value }))}
+          format="DD/MM/YYYY HH:mm"
+          ampm={false}
+          slotProps={{ textField: { size: 'small', className: styles.picker } }}
+        />
+      ))}
+      <Button size="small" variant="outlined" disabled={!!rangeError}
+        onClick={() => onApplyWindow({ minutes: draft.minutes,
+          start: dateString(draft.start), end: dateString(draft.end) })}>
+        Apply
+      </Button>
+      {rangeError && <p className={styles.error} role="alert">{rangeError}</p>}
 
       {noArrays && (
         <p className={styles.hint}>

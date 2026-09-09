@@ -23,7 +23,7 @@ information_schema allowlist in db.py, per connection, so a plant database's own
 catalogue governs what may be read from it (sensitive tables are denylisted
 there); filter values are always parameterized.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -240,8 +240,12 @@ def get_series(
     datasource_id: int | None = Query(None),
     _user: dict = Depends(get_current_user),
     datasource_ids: list[int | None] = Depends(active_datasources),
+    start: datetime | None = None,
+    end: datetime | None = None,
 ):
     """One time-series window per source — seeds real history on load.
+
+    Paired timezone-aware start/end bounds override minutes (at most seven days).
 
     Non-numeric readings are dropped rather than 400ing the request. A text
     column has no trend to draw, but it is a legitimate binding for a symbol
@@ -257,6 +261,14 @@ def get_series(
     a week and this query has no natural ceiling, so an unlucky binding could
     otherwise stream a plant's entire history into a chart.
     """
+    if (start is None) != (end is None):
+        raise HTTPException(422, "Provide both start and end")
+    if start is not None:
+        if start.utcoffset() is None or end.utcoffset() is None:
+            raise HTTPException(422, "Start and end must include a timezone offset")
+        if not timedelta(0) < end - start <= timedelta(days=7):
+            raise HTTPException(422, "Range must be greater than zero and at most seven days")
+
     def scalar(v):
         return isinstance(v, (int, float, Decimal)) and not isinstance(v, bool)
 
@@ -273,8 +285,9 @@ def get_series(
         # One row beyond the cap, then trimmed: asking for exactly `limit` makes
         # "clipped" and "happened to return a full page" the same answer, and a
         # complete window would then tell the reader to shorten it.
+        bounds = {"start": start, "end": end} if start is not None else {}
         rows = db.table_series(table, value_col, filter_col, filter_val, ts_col,
-                               minutes, ds, limit=limit + 1)
+                               minutes, ds, limit=limit + 1, **bounds)
         truncated = len(rows) > limit
         if truncated:
             rows = rows[-limit:]
