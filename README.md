@@ -524,6 +524,53 @@ network that needs to browse to `http://<hostname>/` must get its own `hosts` fi
 at this server's real LAN IP, not `127.0.0.1`) or a DNS A record — that step is outside the
 installer's reach.
 
+#### Access through Radmin VPN
+
+Radmin VPN can provide the network path when the client is not on the server's physical LAN.
+Install Radmin VPN on the IIS server and each client, then join every machine to the same Radmin
+network. In the examples below, replace `26.45.67.89` with the IIS server's address shown in
+Radmin VPN.
+
+On each Windows client, open
+`C:\Windows\System32\drivers\etc\hosts` as Administrator and add:
+
+```text
+26.45.67.89 mmlportal.local
+```
+
+Flush the client's resolver cache and verify that the IIS server is reachable through ports 80 and 443:
+
+```powershell
+ipconfig /flushdns
+Test-NetConnection 26.45.67.89 -Port 80
+Test-NetConnection 26.45.67.89 -Port 443
+```
+
+The IIS HTTP and HTTPS bindings must use `mmlportal.local` as the host name and **All Unassigned**
+as the IP address. Windows Firewall must permit inbound TCP 80/443 on the Radmin VPN adapter; that
+adapter may use the Public firewall profile. Keep the FastAPI/NSSM service bound to
+`127.0.0.1:8088`: Radmin clients connect to IIS, and IIS proxies `/api/*` to FastAPI locally.
+
+Configure the deployed `scada-mml-backend\.env` with the browser origins rather than hard-coding
+deployment hostnames in `main.py`:
+
+```dotenv
+CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://mmlportal.local,https://mmlportal.local
+APP_BASE_URL=https://mmlportal.local
+COOKIE_SECURE=true
+```
+
+Then restart the backend service:
+
+```powershell
+Restart-Service mml-api
+```
+
+The `CORS_ORIGINS` fallback in `main.py` should remain limited to the Vite development origins;
+the environment variable overrides it in production. When HTTPS is enabled, its certificate must
+contain `mmlportal.local` in the Subject Alternative Name and every Radmin client must trust the
+certificate's issuing CA. With `COOKIE_SECURE=true`, authenticated use should go through HTTPS.
+
 Uninstalling (Control Panel → Programs, or `installer\scripts\uninstall.ps1` directly) stops and
 removes the NSSM service and IIS site, but deliberately leaves PostgreSQL, `.env`, and `logs\` in
 place — same data-safety stance as `scada-mml-backend\uninstall.ps1`.
