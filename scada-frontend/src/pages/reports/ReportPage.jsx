@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import Button from '@mui/material/Button'
@@ -34,6 +34,7 @@ import {
   paramsFromTrend,
   trendFromParams,
 } from '@/components/report/trendParams'
+import { readStoredTrend, writeStoredTrend } from '@/components/report/trendStorage'
 import KpiStrip from '@/components/report/blocks/KpiStrip'
 import StateTimeline from '@/components/report/blocks/StateTimeline'
 import DowntimePareto from '@/components/report/blocks/DowntimePareto'
@@ -128,6 +129,29 @@ export default function ReportPage() {
   }, [template, searchParams])
 
   const [trend, setTrend] = useState(() => trendFromParams(searchParams))
+
+  // A binding to fall back on when the URL carries none — arriving at /reports
+  // from the sidebar, or reopening the app. Read once, on the first render, so
+  // a later clear can't be undone by the restore firing again.
+  const storedTrend = useMemo(
+    () => (TREND_KEYS.some((k) => searchParams.has(k)) ? null : readStoredTrend()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  )
+  const restored = useRef(false)
+
+  // Restored *into the URL*, not into state: the sync effect below rewrites
+  // `trend` from the query string on every render pass, so a state-only restore
+  // would be stomped before it ever reached the rail.
+  useEffect(() => {
+    if (restored.current || !storedTrend) return
+    restored.current = true
+    setSearchParams(
+      (curr) => mergeParams(curr, paramsFromTrend(storedTrend), TREND_KEYS),
+      { replace: true },
+    )
+  }, [storedTrend, setSearchParams])
+
   const [windowRevision, setWindowRevision] = useState(0)
   const trendRange = useMemo(() => resolveTrendWindow(trend),
     [trend.minutes, trend.start, trend.end, windowRevision])
@@ -153,6 +177,7 @@ export default function ReportPage() {
   const updateTrend = useCallback(
     (next) => {
       setTrend(next)
+      writeStoredTrend(next)
       setSearchParams(
         (curr) => mergeParams(curr, paramsFromTrend(next), TREND_KEYS),
         { replace: true },
@@ -267,7 +292,10 @@ export default function ReportPage() {
   // Canonicalise /reports → /reports/:id so the URL a user shares is stable
   // even if the default flag moves later.
   if (!templateId && defaultQuery.data) {
-    const search = searchParams.toString()
+    const search = (storedTrend
+      ? mergeParams(searchParams, paramsFromTrend(storedTrend), TREND_KEYS)
+      : searchParams
+    ).toString()
     return (
       <Navigate
         to={`/reports/${defaultQuery.data.id}${search ? `?${search}` : ''}`}

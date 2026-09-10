@@ -4,6 +4,7 @@ import { useForm } from 'react-hook-form'
 import IconButton from '@mui/material/IconButton'
 import MenuIcon from '@mui/icons-material/Menu'
 import MenuOpenIcon from '@mui/icons-material/MenuOpen'
+import RefreshIcon from '@mui/icons-material/Refresh'
 import PersonOutlined from '@mui/icons-material/PersonOutlined'
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown'
 import Menu from '@mui/material/Menu'
@@ -24,9 +25,9 @@ import styles from './AppHeader.module.css'
 
 /**
  * AppHeader — top navigation bar rendered inside AppShell.
- * Shows the current page title (from the matched route's handle.title), the
- * DatasourcePicker, the ConnectionPill, and a user menu with "Change password"
- * and "Sign out".
+ * Shows the current page title (from the matched route's handle.title), a
+ * reload button, the DatasourcePicker, the ConnectionPill, and a user menu with
+ * "Change password" and "Sign out".
  * Props: collapsed (Boolean) — mirrors sidebar state to show Menu/MenuOpen icon.
  * onToggle() — requests sidebar collapse/expand from AppShell.
  */
@@ -95,6 +96,20 @@ export default function AppHeader({ collapsed, onToggle }) {
         <h1 className={styles.title}>{pageTitle}</h1>
       </div>
       <div className={styles.right}>
+        {/* A full document reload, not a refetch: the same thing F5 does, in
+            reach on a panel-mounted touch screen that has no keyboard. It
+            carries no confirmation of its own — /monitor installs a
+            beforeunload guard while its drawing is dirty, and that is what
+            protects unsaved work here too. */}
+        <IconButton
+          className={styles.refresh}
+          size="small"
+          aria-label="Refresh page"
+          title="Refresh"
+          onClick={() => window.location.reload()}
+        >
+          <RefreshIcon fontSize="small" />
+        </IconButton>
         <DatasourcePicker />
         <ConnectionPill />
         <Button

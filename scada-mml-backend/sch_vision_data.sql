@@ -331,6 +331,52 @@ ALTER TABLE camera_count_speed
                 ]
             )STORED;
 
+-- Reset defects speed when batch_id changes
+CREATE OR REPLACE FUNCTION reset_defect_counts_on_batch_change()
+    RETURNS TRIGGER AS $$
+BEGIN
+    -- Check if batch_id_str or batch_id_int has changed (handles NULL-safe comparison)
+    IF (NEW.batch_id_str IS DISTINCT FROM OLD.batch_id_str) OR
+       (NEW.batch_id IS DISTINCT FROM OLD.batch_id) THEN
+
+        NEW.defect_1 := '{0,0,0,0,0,0,0}';
+        NEW.defect_2 := '{0,0,0,0,0,0,0}';
+        NEW.defect_3 := '{0,0,0,0,0,0,0}';
+        NEW.defect_4 := '{0,0,0,0,0,0,0}';
+        NEW.defect_5 := '{0,0,0,0,0,0,0}';
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Reset counts speed when batch_id changes
+CREATE TRIGGER trigger_reset_defects
+    BEFORE UPDATE ON camera_defect_speed
+    FOR EACH ROW
+EXECUTE FUNCTION reset_defect_counts_on_batch_change();
+
+CREATE OR REPLACE FUNCTION reset_total_counts_on_batch_change()
+    RETURNS TRIGGER AS $$
+BEGIN
+    IF (NEW.batch_id_str IS DISTINCT FROM OLD.batch_id_str) OR
+       (NEW.batch_id IS DISTINCT FROM OLD.batch_id) THEN
+
+        NEW.count_spd1 := '{0,0,0,0,0,0,0}';
+        NEW.count_spd2 := '{0,0,0,0,0,0,0}';
+        NEW.count_spd3 := '{0,0,0,0,0,0,0}';
+        NEW.count_spd4 := '{0,0,0,0,0,0,0}';
+        NEW.count_spd5 := '{0,0,0,0,0,0,0}';
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_reset_defects
+    BEFORE UPDATE ON camera_count_speed
+    FOR EACH ROW
+EXECUTE FUNCTION reset_total_counts_on_batch_change();
 
 -- speed_in_time old version
 -- Add 'speed_in_time' as an INT[] storing array sums
