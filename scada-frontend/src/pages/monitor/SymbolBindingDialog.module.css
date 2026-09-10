@@ -199,3 +199,10 @@
 .spacer {
   flex: 1 1 auto;
 }
+
+/* Narrows a long native <select> in place. Sits directly above the list it
+   filters, sized to match it, so the pair reads as one control. */
+.filter {
+  margin-bottom: 4px;
+  font-size: 12px;
+}

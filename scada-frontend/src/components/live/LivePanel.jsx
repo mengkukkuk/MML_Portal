@@ -100,8 +100,15 @@ export default function LivePanel({
   // the client can't predict the source ids).
   const specs = resolvedSpecs || seriesSpecs
   const seriesList = useMemo(
-    () => buildSeriesList(specs, { seriesPoints, seriesLatest, unitFor, deviceUnit: unit }),
-    [specs, seriesPoints, seriesLatest, unitFor, unit],
+    () => buildSeriesList(specs, {
+      seriesPoints,
+      seriesLatest,
+      unitFor,
+      deviceUnit: unit,
+      boolCols: opts.boolCols,
+      boolLabels: opts.boolLabels,
+    }),
+    [specs, seriesPoints, seriesLatest, unitFor, unit, opts.boolCols, opts.boolLabels],
   )
   const isMulti = seriesList.length > 1
 
@@ -297,12 +304,12 @@ export default function LivePanel({
             seriesList.map((s, i) => (
               <span key={s.key} className={styles.panel__chip}>
                 <span className={styles.panel__chipdot} style={{ background: colorAt(i) }} />
-                {s.label}: {s.latest ? fmtValue(s.latest.value, opts.decimals) : '—'}{s.unit ? ` ${s.unit}` : ''}
+                {s.label}: {s.latest ? fmtValue(s.latest.value, opts.decimals, s.labels) : '—'}{s.unit ? ` ${s.unit}` : ''}
               </span>
             ))
           ) : (
             <>
-              <span className={styles.panel__num}>{firstLatest ? fmtValue(firstLatest.value, opts.decimals) : '—'}</span>
+              <span className={styles.panel__num}>{firstLatest ? fmtValue(firstLatest.value, opts.decimals, seriesList[0]?.labels) : '—'}</span>
               <span className={styles.panel__unit}>{headerUnit}</span>
             </>
           )
@@ -325,7 +332,7 @@ export default function LivePanel({
                 className={styles.panel__statnum}
                 style={{ color: s.latest ? thresholdColor(s.latest.value, colorAt(i), opts.warn, opts.crit) : 'var(--fg)' }}
               >
-                {s.latest ? fmtValue(s.latest.value, opts.decimals) : '—'}
+                {s.latest ? fmtValue(s.latest.value, opts.decimals, s.labels) : '—'}
                 <span className={styles.panel__statunit}>{s.unit}</span>
               </div>
               {isMulti && (

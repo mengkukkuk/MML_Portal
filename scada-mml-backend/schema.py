@@ -68,10 +68,19 @@ class ColumnsOut(BaseModel):
     # predates them is unaffected and kept out of `value_columns` because every
     # existing consumer of that list can only draw a scalar.
     array_value_columns: list[str] = []
+    # Boolean columns — offerable as a value, reported as 0/1, but kept out of
+    # `value_columns` so a consumer can tell a flag from a measurement. A gauge
+    # scaled 0-100 and a warn/crit threshold both mean something different
+    # against one, and only the editor that knows the kind can say so.
+    bool_columns: list[str] = []
     ts_columns: list[str]
     datetime_columns: list[str] = []
     text_columns: list[str] = []
     filter_columns: list[str]
+    # Short display token per column ('int8', 'float8', 'bool', 'float8[]'…),
+    # for every column including the ones no list above claims. Defaulted, so a
+    # picker built against the older shape simply renders no badge.
+    column_types: dict[str, str] = {}
 
 
 class LatestOut(BaseModel):
@@ -269,17 +278,38 @@ def get_series(
         if not timedelta(0) < end - start <= timedelta(days=7):
             raise HTTPException(422, "Range must be greater than zero and at most seven days")
 
-    def scalar(v):
+    def number(v):
         return isinstance(v, (int, float, Decimal)) and not isinstance(v, bool)
+
+    def scalar(v):
+        # A boolean is a reading here, drawn as a 0/1 step line. `/latest`
+        # already reports one as 1.0 (pydantic resolves bool against the float
+        # member of LatestOut.value), so excluding it here made the two
+        # endpoints disagree about the same column: a live number beside a
+        # permanently empty chart.
+        return number(v) or isinstance(v, bool)
 
     def plottable(v):
         # A numeric array is plottable too: it is several readings taken at one
         # instant, and the caller decides what each slot means. NULL slots ride
         # through as gaps — a missing limit should break that one band, not
         # discard the measured value recorded beside it.
+        #
+        # Elements are held to `number`, not the widened `scalar`: a boolean[]
+        # is not a numeric array (no _bool in _NUMERIC_ARRAY_UDTS, so no picker
+        # offers one), and admitting bool at the top level must not sweep it in
+        # by accident.
         if isinstance(v, list):
-            return bool(v) and all(e is None or scalar(e) for e in v)
+            return bool(v) and all(e is None or number(e) for e in v)
         return scalar(v)
+
+    def point_value(v):
+        # Booleans become 0/1 at the edge rather than in SQL or db.py.
+        # `table_latest` short-circuits to the in-memory tag buffer and never
+        # reaches SQL, so a `::int` cast there would reintroduce the very
+        # disagreement above; and db.table_series is shared with /rows, which
+        # renders true/false in the mimic table symbol on purpose.
+        return int(v) if isinstance(v, bool) else v
 
     def one(ds):
         # One row beyond the cap, then trimmed: asking for exactly `limit` makes
@@ -292,7 +322,7 @@ def get_series(
         if truncated:
             rows = rows[-limit:]
         return [{
-            "points": [{"ts": r["ts"], "value": r["value"]}
+            "points": [{"ts": r["ts"], "value": point_value(r["value"])}
                        for r in rows if plottable(r["value"])],
             "truncated": truncated,
         }]

@@ -1289,6 +1289,16 @@ _TEXT_TYPES = (
     "character",
 )
 
+# Postgres boolean data_types a picker may offer as a value/metric source.
+#
+# Separate from _NUMERIC_TYPES for the opposite reason _TEXT_TYPES is separate:
+# a flag *can* be plotted -- it is reported as 0/1 and draws a perfectly good
+# step line -- but it is not a measurement. A gauge scaled 0-100, a production
+# counter's delta and a warn/crit threshold all mean something different against
+# a flag than against a reading, and the editor can only say so if the kind
+# survives to the client. Folding booleans into value_columns would erase it.
+_BOOL_TYPES = ("boolean",)
+
 # Postgres array udt_names whose *elements* are numeric -- see _table_columns,
 # which substitutes udt_name for the useless 'ARRAY' data_type.
 #
@@ -1317,6 +1327,48 @@ def _is_array_type(data_type: str) -> bool:
     distinct_column_values for one returns literal '{a,b,c}' strings.
     """
     return data_type.startswith("_")
+
+
+# Short type tokens the column pickers print beside a column name, so an admin
+# can tell a counter from a flag from a timestamp before binding one.
+#
+# A projection for display only. `_table_columns` keeps returning raw
+# information_schema `data_type` strings, because `table_series` compares them
+# literally ("timestamp without time zone") to decide whether a naive column
+# needs converting -- substituting tokens at the source would break that
+# silently.
+_TYPE_BADGES = {
+    "smallint": "int2",
+    "integer": "int4",
+    "bigint": "int8",
+    "real": "float4",
+    "double precision": "float8",
+    "numeric": "numeric",
+    "decimal": "numeric",
+    "boolean": "bool",
+    "text": "text",
+    "character varying": "varchar",
+    "character": "char",
+    "timestamp with time zone": "timestamptz",
+    "timestamp without time zone": "timestamp",
+    "date": "date",
+    "time with time zone": "timetz",
+    "time without time zone": "time",
+}
+
+
+def _type_badge(data_type: str) -> str:
+    """A short display token for one column's type.
+
+    Unknown types pass through verbatim rather than becoming an empty string:
+    a plant with an enum or a domain type should read "mood" in the picker, not
+    nothing at all. Arrays are rendered from their element type, relying on
+    `_table_columns`' udt_name substitution ('_float8' -> 'float8[]').
+    """
+    if data_type.startswith("_"):
+        element = data_type[1:]
+        return f"{_TYPE_BADGES.get(element, element)}[]"
+    return _TYPE_BADGES.get(data_type, data_type)
 
 
 # Postgres date/time data_types usable as a panel's timestamp/x-axis column.
@@ -1467,7 +1519,7 @@ def _primary_key_columns(conn, schema: str, table: str) -> set[str]:
     return {r["column_name"] for r in rows}
 
 
-def describe_table(table: str, datasource_id: int | None = None) -> dict[str, list[str]]:
+def describe_table(table: str, datasource_id: int | None = None) -> dict[str, Any]:
     """Categorize a table's columns for the panel editor's pickers."""
     with _table_source_conn(datasource_id) as (conn, schema):
         columns = _table_columns(conn, schema, table)
@@ -1488,6 +1540,10 @@ def describe_table(table: str, datasource_id: int | None = None) -> dict[str, li
     # to anything that scales or plots. `skip` applies here too — a text primary
     # key names the row rather than reporting anything about it.
     text_columns = [c for c, t in columns.items() if t in _TEXT_TYPES and c not in skip]
+    # A flag: plottable as 0/1, but not a measurement. `skip` applies for the
+    # same reason it does to text_columns -- a boolean primary key identifies
+    # the row rather than reporting anything about it.
+    bool_columns = [c for c, t in columns.items() if t in _BOOL_TYPES and c not in skip]
     # Excluded from `filter_columns` below, alongside the scalar value columns.
     # Every array, not just the numeric ones: none of them names a row.
     not_a_filter = set(value_columns) | {
@@ -1496,13 +1552,25 @@ def describe_table(table: str, datasource_id: int | None = None) -> dict[str, li
     return {
         "value_columns": value_columns,
         "array_value_columns": array_value_columns,
+        "bool_columns": bool_columns,
         "ts_columns": ts_columns,
         "datetime_columns": datetime_columns,
         "text_columns": text_columns,
+        # Every column, categorised or not -- the badge answers "what kind of
+        # thing is this" in the picker, which is a different question from
+        # "may this be bound here". A column excluded from every list above
+        # still shows up as a filter, and still deserves to say what it is.
+        "column_types": {c: _type_badge(t) for c, t in columns.items()},
         # Any column may identify a series; numeric value columns are the least
         # useful as a filter so they're excluded to keep the list focused. Text
         # columns stay in: naming the device is what they are usually for, and a
         # column being printable somewhere else does not stop it identifying a row.
+        #
+        # Booleans stay in for the same reason, and deliberately so even now
+        # that they are offerable as values: `enabled = true` is a legitimate
+        # way to partition a series, distinct_column_values already casts
+        # ::text so it answers 't'/'f' sensibly, and dropping them would break
+        # every saved binding that filters on one today.
         #
         # Arrays are excluded too. Before udt_name was read they had no type this
         # function recognised, so they fell through to this list by negation and

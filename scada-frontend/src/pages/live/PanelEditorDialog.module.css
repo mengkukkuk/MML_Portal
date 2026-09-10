@@ -265,3 +265,43 @@
   display: flex;
   gap: 4px;
 }
+
+/* --- column pickers ------------------------------------------------------ */
+
+/* One menu row: the name takes the space, the type badge sits hard right so a
+   column list reads as two aligned columns rather than ragged text. */
+.colOption {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.colName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Deliberately a span, not a Chip: a chip's padding makes every row taller,
+   and a dozen of them turn a scannable list into a scroll. */
+.colBadge {
+  flex: none;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1;
+  color: var(--fg-muted);
+  opacity: 0.75;
+}
+
+/* Pinned above the options, so it stays put while the list under it scrolls. */
+.colSearch {
+  padding: var(--space-2);
+  background: var(--panel);
+}
+
+.boolColName {
+  min-width: 140px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  color: var(--fg-muted);
+}

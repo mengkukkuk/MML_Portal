@@ -9,13 +9,18 @@ export default function buildStateTimelineOption(seriesList, opts = {}) {
   if (!list.length) return { series: [] }
   const round = opts.roundValues !== false
 
-  function stateKey(v) {
+  // A band's key is also its legend entry, so a boolean series' two bands read
+  // OFF and ON rather than 0 and 1 -- the viz this matters most on, since a
+  // flag over time is exactly what a state timeline is for. Rounding still
+  // applies first: the label pair is indexed by the value, not by its text.
+  function stateKey(v, labels) {
+    if (labels && (v === 0 || v === 1)) return labels[v]
     return round ? String(Math.round(v ?? 0)) : fmtValue(v, opts.decimals)
   }
 
   const stateSet = new Set()
   for (const s of list) {
-    for (const [, v] of s.points) stateSet.add(stateKey(v))
+    for (const [, v] of s.points) stateSet.add(stateKey(v, s.labels))
   }
   const stateList = [...stateSet]
   const stateColors = stateList.map((_, i) => colorAt(i))
@@ -28,10 +33,10 @@ export default function buildStateTimelineOption(seriesList, opts = {}) {
     const pts = s.points
     if (!pts.length) return
     let segStart = pts[0][0]
-    let segK = stateKey(pts[0][1])
+    let segK = stateKey(pts[0][1], s.labels)
     for (let i = 1; i < pts.length; i++) {
       const [t, v] = pts[i]
-      const k = stateKey(v)
+      const k = stateKey(v, s.labels)
       if (k !== segK) {
         segments.push([segStart, t, yi, stateList.indexOf(segK)])
         segStart = t

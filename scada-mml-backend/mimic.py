@@ -71,6 +71,10 @@ CUSTOM_NODE_TYPE = "custom"
 # How a binding turns a number into a run/stop state.
 VALID_STATE_MODES = {"threshold", "map"}
 
+# How a bound column is *presented*. Absent means a plain number, which is
+# every binding written before flags were offerable.
+VALID_VALUE_KINDS = {"number", "bool", "text"}
+
 
 # --- Schemas ---------------------------------------------------------------
 class MimicSummary(BaseModel):
@@ -116,10 +120,10 @@ def _bad(detail: str) -> HTTPException:
 
 
 def _describe_cached(
-    cache: dict[tuple[int | None, str], dict[str, list[str]]],
+    cache: dict[tuple[int | None, str], dict[str, Any]],
     table: str,
     datasource_id: int | None,
-) -> dict[str, list[str]]:
+) -> dict[str, Any]:
     """``db.describe_table`` memoised for the lifetime of one request.
 
     Every miss opens a fresh libpq connection (``db._table_source_conn``, which
@@ -137,7 +141,7 @@ def _describe_cached(
 def _validate_binding(
     binding: dict[str, Any],
     where: str,
-    cache: dict[tuple[int | None, str], dict[str, list[str]]],
+    cache: dict[tuple[int | None, str], dict[str, Any]],
 ) -> None:
     """Confirm one node's binding points at something that actually exists."""
     ds_id = binding.get("datasource_id")
@@ -163,13 +167,21 @@ def _validate_binding(
         first = str(e).strip().splitlines()[0] if str(e).strip() else "connection error"
         raise _bad(f"{where}: could not reach the selected connection: {first}")
 
-    # Numeric *or* text. This validator's job is "the column exists and can be
-    # read", not "this symbol can draw it" — the same line the symbol-type
+    # Numeric, boolean *or* text. This validator's job is "the column exists and
+    # can be read", not "this symbol can draw it" — the same line the symbol-type
     # allowlist was removed along. A display box or an annunciator legend binds
     # to a status column holding 'RUN'/'FAULT', and which symbols offer that is
-    # decided in symbols/index.js, where adding a symbol already lives.
-    if value_col not in cols["value_columns"] and value_col not in cols["text_columns"]:
-        raise _bad(f"{where}: value_col must be a numeric or text column of {table!r}")
+    # decided in symbols/index.js, where adding a symbol already lives. A flag
+    # reads as 0/1 and is drawn through the same state/map machinery a coded
+    # beacon already uses.
+    if (
+        value_col not in cols["value_columns"]
+        and value_col not in cols["text_columns"]
+        and value_col not in cols.get("bool_columns", [])
+    ):
+        raise _bad(
+            f"{where}: value_col must be a numeric, boolean or text column of {table!r}"
+        )
 
     ts_col = binding.get("ts_col")
     if ts_col and ts_col not in cols["ts_columns"]:
@@ -189,6 +201,17 @@ def _validate_binding(
             "and value to identify one device"
         )
 
+    # Presentation, not a projection: the editor writes it because /latest
+    # reports a boolean as a number and the kind is otherwise unrecoverable at
+    # render time. Validated for the same reason state.mode is — a typo here
+    # fails silently, as a symbol that quietly prints 1 instead of RUNNING.
+    kind = binding.get("value_kind")
+    if kind is not None and kind not in VALID_VALUE_KINDS:
+        raise _bad(
+            f"{where}: binding.value_kind must be one of: "
+            f"{', '.join(sorted(VALID_VALUE_KINDS))}"
+        )
+
     st = binding.get("state")
     if st is not None:
         if not isinstance(st, dict):
@@ -203,7 +226,7 @@ def _validate_binding(
 
 def _validate_production_log(
     binding: dict[str, Any],
-    cache: dict[tuple[int | None, str], dict[str, list[str]]],
+    cache: dict[tuple[int | None, str], dict[str, Any]],
 ) -> None:
     """Validate the two-counter stream behind the hourly stage drawer."""
     where = "doc.productionLog"
@@ -232,6 +255,11 @@ def _validate_production_log(
         value = binding.get(key)
         if not value or not isinstance(value, str):
             raise _bad(f"{where}: {key} is required")
+        # Numeric only, deliberately — unlike a symbol binding above. These are
+        # monotonic counters and the report is built from their hourly *delta*
+        # (db.production_log_hourly). Subtracting two flags is meaningless, and
+        # a 0/1 delta would print a plausible-looking wrong production figure
+        # rather than failing.
         if value not in cols["value_columns"]:
             raise _bad(f"{where}: {key} must be a numeric column of {table!r}")
     if binding["produced_col"] == binding["rejected_col"]:

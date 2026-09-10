@@ -24,6 +24,15 @@
   color: var(--fg-muted);
 }
 
+.refresh {
+  font-size: 18px;
+  color: var(--fg-muted);
+}
+
+.refresh:hover {
+  color: var(--fg);
+}
+
 .user {
   color: var(--fg);
   display: flex;

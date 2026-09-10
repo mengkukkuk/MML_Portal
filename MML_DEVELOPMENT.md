@@ -626,7 +626,7 @@ database and external datasources (see `/api/datasources`).
 | Method | Path              | Query                                             | Success response |
 |--------|-------------------|---------------------------------------------------|------------------|
 | GET    | `/api/schema/tables` | `datasource_id?` (external DB; omit for app DB) | `[{table, label}, ...]` — safe public tables only |
-| GET    | `/api/schema/columns` | `table`, `datasource_id?`                       | `{value_columns: [...], ts_columns: [...], filter_columns: [...]}` |
+| GET    | `/api/schema/columns` | `table`, `datasource_id?`                       | `{value_columns, bool_columns, array_value_columns, ts_columns, datetime_columns, text_columns, filter_columns, column_types}` |
 | GET    | `/api/schema/values` | `table`, `column`, `limit?` (1–2000, def 500), `datasource_id?` | `[distinct values]` — populates filter dropdown |
 | GET    | `/api/schema/latest` | `table`, `value_col`, `filter_col?`, `filter_val?`, `ts_col?`, `datasource_id?` | `{value, ts}` — newest matching row; **404** if none |
 | GET    | `/api/schema/series` | `table`, `value_col`, `ts_col`, `filter_col?`, `filter_val?`, `minutes` (1–10080, def 15), `datasource_id?` | `{points: [{ts, value}, ...]}` — time window |

@@ -13,7 +13,7 @@ export default function buildTableRows(seriesList, opts = {}) {
   for (let k = 0; k < Math.min(max, longest); k++) {
     const cells = cols.map((s) => {
       const p = s.points[s.points.length - 1 - k]
-      return p ? fmtValue(p[1], opts.decimals) : '—'
+      return p ? fmtValue(p[1], opts.decimals, s.labels) : '—'
     })
     let t = ''
     for (const s of cols) {

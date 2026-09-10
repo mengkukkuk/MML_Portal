@@ -14,9 +14,19 @@
 export const WARN_COLOR = '#e6a23c'
 export const CRIT_COLOR = '#f56c6c'
 
-/** Format a raw value for display; `decimals == null` means "as-is". */
-export function fmtValue(v, decimals) {
+/** Format a raw value for display; `decimals == null` means "as-is".
+ *
+ * `labels` is the ['OFF', 'ON'] pair a boolean-bound series carries. The
+ * column is reported as 0/1 so the chart can draw a step line; this is where
+ * that number turns back into the word wherever a single value is *printed*.
+ *
+ * Guarded on the value rather than trusting the pair: if a column someone
+ * bound as a flag later becomes an integer, out-of-range readings print as
+ * numbers instead of falling off the end of a two-element array.
+ */
+export function fmtValue(v, decimals, labels) {
   if (v == null) return '—'
+  if (labels && (v === 0 || v === 1)) return labels[v]
   return decimals == null ? `${v}` : Number(v).toFixed(decimals)
 }
 
@@ -85,8 +95,9 @@ export function tooltipAxis(seriesList, decimals) {
       const head = arr[0].axisValueLabel || new Date(arr[0].axisValue).toLocaleTimeString()
       const rows = arr.map((p) => {
         const v = Array.isArray(p.value) ? p.value[1] : p.value
-        const u = seriesList[p.seriesIndex]?.unit || ''
-        return `${p.marker}${p.seriesName}: ${fmtValue(v, decimals)}${u ? ' ' + u : ''}`
+        const series = seriesList[p.seriesIndex]
+        const u = series?.unit || ''
+        return `${p.marker}${p.seriesName}: ${fmtValue(v, decimals, series?.labels)}${u ? ' ' + u : ''}`
       })
       return [head, ...rows].join('<br/>')
     },

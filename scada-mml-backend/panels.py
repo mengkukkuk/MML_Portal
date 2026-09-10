@@ -154,10 +154,15 @@ def _validate(body: PanelIn) -> None:
                 detail=f"Could not reach the selected connection: "
                        f"{str(e).strip().splitlines()[0] if str(e).strip() else 'connection error'}",
             )
-        if body.metric not in cols["value_columns"]:
+        # Booleans count as values: they arrive from /schema/series as 0/1 and
+        # draw a step line. Kept out of `value_columns` upstream so the editor
+        # can still tell a flag from a measurement, so the union is spelled
+        # here rather than widened there.
+        pickable = set(cols["value_columns"]) | set(cols.get("bool_columns", []))
+        if body.metric not in pickable:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"metric must be a numeric column of {body.table_name!r}",
+                detail=f"metric must be a numeric or boolean column of {body.table_name!r}",
             )
         if body.filter_col and body.filter_col not in cols["filter_columns"]:
             raise HTTPException(
@@ -172,7 +177,7 @@ def _validate(body: PanelIn) -> None:
         # Extra value columns ride in options.value_cols so the panel can chart
         # several columns from the same table as separate series. The primary
         # column stays in `metric` for back-compat; each extra must also be a
-        # valid numeric column.
+        # valid numeric or boolean column.
         extra = body.options.get("value_cols") if isinstance(body.options, dict) else None
         if extra is not None:
             if not isinstance(extra, list) or any(not isinstance(c, str) for c in extra):
@@ -181,10 +186,11 @@ def _validate(body: PanelIn) -> None:
                     detail="options.value_cols must be a list of column names",
                 )
             for c in extra:
-                if c not in cols["value_columns"]:
+                if c not in pickable:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"options.value_cols[{c!r}] is not a numeric column of {body.table_name!r}",
+                        detail=f"options.value_cols[{c!r}] is not a numeric or boolean "
+                               f"column of {body.table_name!r}",
                     )
 
 
