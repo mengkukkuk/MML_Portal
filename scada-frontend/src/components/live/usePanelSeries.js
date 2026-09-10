@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from 'react'
 import { compileExpr } from '@/utils/mathExpr'
 import { colorAt } from '@/utils/seriesPalette'
+import { DEFAULT_BOOL_LABELS } from '@/utils/columnKinds'
 import { alertingSeries } from '@/utils/alertConditions'
 import { GENERIC_VIZ_TYPES, HEADER_VALUE_VIZ_TYPES } from './options'
 
@@ -152,7 +153,11 @@ export function usePanelSeries(panel, { filterOverride = null } = {}) {
  * latest). Exported as a plain function (not a hook) so LivePanel.jsx can
  * wrap it in its own useMemo alongside the polling data it depends on.
  */
-export function buildSeriesList(seriesSpecs, { seriesPoints, seriesLatest, unitFor, deviceUnit }) {
+export function buildSeriesList(
+  seriesSpecs,
+  { seriesPoints, seriesLatest, unitFor, deviceUnit, boolCols, boolLabels },
+) {
+  const flags = new Set(boolCols || [])
   return seriesSpecs.map((s, i) => ({
     key: s.key,
     label: s.label,
@@ -160,6 +165,17 @@ export function buildSeriesList(seriesSpecs, { seriesPoints, seriesLatest, unitF
     valueCol: s.valueCol,
     unitKey: s.unitKey,
     unit: unitFor(s, deviceUnit),
+    // Keyed by column, not by series key, unlike `unit` just above: one flag
+    // charted across forty devices is forty series of the same column, and
+    // they all print the same two words.
+    //
+    // `boolCols` is what says the column is a flag; `boolLabels` only carries
+    // the words *if someone changed them*. Defaulting here rather than at save
+    // is what stops a panel saved straight past the editor's pre-filled
+    // OFF/ON from drawing a bare 1.
+    labels: flags.has(s.valueCol)
+      ? (boolLabels?.[s.valueCol] ?? DEFAULT_BOOL_LABELS)
+      : undefined,
     points: seriesPoints[s.key] || [],
     latest: seriesLatest[s.key] || null,
   }))

@@ -40,6 +40,9 @@ import { colorAt } from '@/utils/seriesPalette'
 import { COMPARATOR_OPS } from '@/utils/alertConditions'
 import { UNIT_GROUPS } from '@/utils/units'
 import {
+  DEFAULT_BOOL_LABELS, badgeFor, filterGroups, groupColumns, pickableColumns,
+} from '@/utils/columnKinds'
+import {
   VIZ_TYPE_META, PARAM_SCHEMA, POLL_INTERVAL_OPTIONS, CONNECTORS,
   defaultOptions, toNullableNumber, legacyBinding, buildPanelPayload,
 } from './panelPayload'
@@ -64,7 +67,22 @@ const VIZ_ICONS = {
   candlestick: CandlestickChartOutlinedIcon,
 }
 
-const EMPTY_COLS = { value_columns: [], ts_columns: [], filter_columns: [] }
+// The shape a picker holds before its first answer, or after one that failed.
+// Every list the dialog reads must be present, or a `.includes` on the clamp
+// path throws instead of clamping.
+const EMPTY_COLS = {
+  value_columns: [], bool_columns: [], ts_columns: [], filter_columns: [], column_types: {},
+}
+
+// What may be bound as a panel's value. Numeric first — it is what a tile
+// usually means — with flags offered beside it, drawn as a 0/1 step line.
+// Arrays and text are absent on purpose: nothing on this page can draw either.
+const VALUE_KINDS = ['value_columns', 'bool_columns']
+
+// Options that only mean something against a measurement. Hidden -- not
+// cleared -- when every bound column is a flag: a stored warn on a panel
+// someone later re-points at a real reading should still be there.
+const BOOL_HIDDEN_PARAMS = new Set(['warn', 'crit', 'decimals'])
 
 function blankValues() {
   return {
@@ -75,6 +93,7 @@ function blankValues() {
     value_cols: [],
     units: {},
     gaugeSeries: {},
+    boolLabels: {},
     filter_col: null,
     filters: [],
     ts_col: null,
@@ -133,10 +152,30 @@ export default function PanelEditorDialog({
   const conditions = watch('conditions') || []
   const gaugeSeriesMap = watch('gaugeSeries') || {}
   const unitsMap = watch('units') || {}
+  const boolLabelsMap = watch('boolLabels') || {}
 
   const allValueCols = useMemo(() => [metric, ...valueCols].filter(Boolean), [metric, valueCols])
   const conditionSeriesOptions = allValueCols
-  const currentSchema = PARAM_SCHEMA[chartType] || []
+
+  const valueGroups = useMemo(
+    () => groupColumns(schemaCols, VALUE_KINDS),
+    [schemaCols],
+  )
+  // Which of the *bound* columns are flags. Saved on the panel so the tile can
+  // print a word for a 0/1 without re-reading the catalogue at render time.
+  const boolCols = useMemo(
+    () => allValueCols.filter((c) => (schemaCols.bool_columns || []).includes(c)),
+    [allValueCols, schemaCols],
+  )
+  // Warn/crit compare a reading against a limit. Against a flag there is no
+  // limit to set -- every threshold is either always or never crossed -- so the
+  // fields come off rather than sitting there inviting a rule that cannot fire.
+  const allBool = boolCols.length > 0 && boolCols.length === allValueCols.length
+  const currentSchema = useMemo(
+    () => (PARAM_SCHEMA[chartType] || [])
+      .filter((f) => !(allBool && BOOL_HIDDEN_PARAMS.has(f.key))),
+    [chartType, allBool],
+  )
   const dialogTitle = editingPanel ? 'Edit panel' : 'Add panel'
 
   const loadTablesFor = useCallback(async (dsId) => {
@@ -185,9 +224,13 @@ export default function PanelEditorDialog({
       schemaColsCacheRef.current.set(cacheKey, cols)
     }
     setSchemaCols(cols)
-    const newMetric = cols.value_columns.includes(m) ? m : (cols.value_columns[0] ?? null)
+    // Clamped against exactly the list the picker draws, booleans included —
+    // clamping against `value_columns` alone would let a boolean metric save
+    // and then silently vanish the next time this dialog opened it.
+    const pickable = pickableColumns(cols, VALUE_KINDS)
+    const newMetric = pickable.includes(m) ? m : (pickable[0] ?? null)
     setValue('metric', newMetric)
-    const newValueCols = (value_cols || []).filter((c) => cols.value_columns.includes(c) && c !== newMetric)
+    const newValueCols = (value_cols || []).filter((c) => pickable.includes(c) && c !== newMetric)
     setValue('value_cols', newValueCols)
     const newTs = ts_col && cols.ts_columns.includes(ts_col) ? ts_col : (cols.ts_columns[0] ?? null)
     setValue('ts_col', newTs)
@@ -234,6 +277,7 @@ export default function PanelEditorDialog({
         const {
           // eslint-disable-next-line no-unused-vars
           tags: _t, filters: _f, value_cols: _v, mathExpr: _m, units: _u, gaugeSeries: _g, conditions: _c, layout: _l,
+          boolCols: _bc, boolLabels: _bl,
           ...vizOpts
         } = panel.options || {}
         const chart_type = panel.chart_type === 'line' ? 'timeseries' : panel.chart_type
@@ -243,6 +287,7 @@ export default function PanelEditorDialog({
           datasource_id: panel.datasource_id ?? null,
           units: { ...(panel.options?.units || {}) },
           gaugeSeries: { ...(panel.options?.gaugeSeries || {}) },
+          boolLabels: { ...(panel.options?.boolLabels || {}) },
           mathExpr: panel.options?.mathExpr || '',
           conditions: JSON.parse(JSON.stringify(panel.options?.conditions || [])),
           window_minutes: panel.window_minutes,
@@ -314,7 +359,7 @@ export default function PanelEditorDialog({
   // --- value-column management -----------------------------------------
   function firstUnusedValueCol() {
     const used = new Set(allValueCols)
-    return (schemaCols.value_columns || []).find((c) => !used.has(c)) ?? null
+    return pickableColumns(schemaCols, VALUE_KINDS).find((c) => !used.has(c)) ?? null
   }
   function addValueCol() {
     const c = firstUnusedValueCol()
@@ -332,6 +377,24 @@ export default function PanelEditorDialog({
     setValue('value_cols', cols)
     const stillUsed = new Set([metric, ...cols].filter(Boolean))
     if (col && !stillUsed.has(col)) setUnit(col, null)
+  }
+  // A flag reads 0 or 1. A dial still scaled 0-100 would pin the needle at
+  // the floor forever and look exactly like a dead signal, so picking one
+  // rescales the tile to the range it actually reports.
+  function onMetricChange(col) {
+    setValue('metric', col)
+    if (!(schemaCols.bool_columns || []).includes(col)) return
+    const opts = getValues('options') || {}
+    if ('min' in opts) setValue('options.min', 0)
+    if ('max' in opts) setValue('options.max', 1)
+    if ('decimals' in opts) setValue('options.decimals', 0)
+  }
+
+  function setBoolLabel(col, slot, text) {
+    const cur = boolLabelsMap[col] || DEFAULT_BOOL_LABELS
+    const next = [...cur]
+    next[slot] = text
+    setValue('boolLabels', { ...boolLabelsMap, [col]: next })
   }
   function setUnit(key, val) {
     if (!key) return
@@ -426,7 +489,9 @@ export default function PanelEditorDialog({
   async function onSubmit(values) {
     setSaveError('')
     const result = buildPanelPayload({
-      form: values, editingPanel, activeDashboardId, panelsLength, nextLayout,
+      // `boolCols` is derived from the live catalogue rather than typed, so it
+      // is not an RHF field -- it joins the form only here, on the way out.
+      form: { ...values, boolCols }, editingPanel, activeDashboardId, panelsLength, nextLayout,
     })
     if (!result.ok) { setSaveError(result.error); return }
     try {
@@ -487,14 +552,13 @@ export default function PanelEditorDialog({
                 <div className={styles.taglist}>
                   <div className={styles.taglistRow}>
                     <span className={styles.swatch} style={{ background: colorAt(0) }} />
-                    <FormControl size="small" className={styles.taglistSelect}>
-                      <Select value={metric ?? ''} onChange={(e) => setValue('metric', e.target.value)} displayEmpty>
-                        <MenuItem value="" disabled>Value</MenuItem>
-                        {(schemaCols.value_columns || []).map((c) => (
-                          <MenuItem key={c} value={c}>{c}</MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
+                    <ColumnSelect
+                      className={styles.taglistSelect}
+                      value={metric}
+                      onChange={onMetricChange}
+                      groups={valueGroups}
+                      searchable
+                    />
                     {!filterCol && (
                       <UnitPicker className={styles.taglistUnit} value={unitsMap[metric] || ''} onChange={(v) => setUnit(metric, v)} />
                     )}
@@ -504,14 +568,13 @@ export default function PanelEditorDialog({
                     // eslint-disable-next-line react/no-array-index-key
                     <div key={i} className={styles.taglistRow}>
                       <span className={styles.swatch} style={{ background: colorAt(i + 1) }} />
-                      <FormControl size="small" className={styles.taglistSelect}>
-                        <Select value={c ?? ''} onChange={(e) => updateValueCol(i, e.target.value)} displayEmpty>
-                          <MenuItem value="" disabled>Value</MenuItem>
-                          {(schemaCols.value_columns || []).map((opt) => (
-                            <MenuItem key={opt} value={opt}>{opt}</MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
+                      <ColumnSelect
+                        className={styles.taglistSelect}
+                        value={c}
+                        onChange={(v) => updateValueCol(i, v)}
+                        groups={valueGroups}
+                        searchable
+                      />
                       {!filterCol && (
                         <UnitPicker className={styles.taglistUnit} value={unitsMap[c] || ''} onChange={(v) => setUnit(c, v)} />
                       )}
@@ -524,6 +587,33 @@ export default function PanelEditorDialog({
                 </div>
               </div>
 
+              {boolCols.length > 0 && (
+                <div className={styles.field}>
+                  <span className={styles.fieldLabel}>On/off labels</span>
+                  {/* A flag plots as 0 and 1, which is what a chart needs and
+                      what nobody wants to read on a stat tile. These are the
+                      two words that stand in for it wherever a single value is
+                      printed -- the number itself is what still gets drawn. */}
+                  {boolCols.map((c) => (
+                    <div key={c} className={styles.taglistRow}>
+                      <span className={styles.boolColName}>{c}</span>
+                      <TextField
+                        size="small"
+                        label="Off (0)"
+                        value={(boolLabelsMap[c] || DEFAULT_BOOL_LABELS)[0]}
+                        onChange={(e) => setBoolLabel(c, 0, e.target.value)}
+                      />
+                      <TextField
+                        size="small"
+                        label="On (1)"
+                        value={(boolLabelsMap[c] || DEFAULT_BOOL_LABELS)[1]}
+                        onChange={(e) => setBoolLabel(c, 1, e.target.value)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className={styles.pair}>
                 <FormControl fullWidth size="small">
                   <InputLabel id="pde-ts-label">Timestamp</InputLabel>
@@ -535,7 +625,10 @@ export default function PanelEditorDialog({
                   >
                     <MenuItem value="">None</MenuItem>
                     {(schemaCols.ts_columns || []).map((c) => (
-                      <MenuItem key={c} value={c}>{c}</MenuItem>
+                      <MenuItem key={c} value={c} className={styles.colOption}>
+                        <span className={styles.colName}>{c}</span>
+                        <span className={styles.colBadge}>{badgeFor(schemaCols, c)}</span>
+                      </MenuItem>
                     ))}
                   </Select>
                 </FormControl>
@@ -549,7 +642,10 @@ export default function PanelEditorDialog({
                   >
                     <MenuItem value="">None</MenuItem>
                     {(schemaCols.filter_columns || []).map((c) => (
-                      <MenuItem key={c} value={c}>{c}</MenuItem>
+                      <MenuItem key={c} value={c} className={styles.colOption}>
+                        <span className={styles.colName}>{c}</span>
+                        <span className={styles.colBadge}>{badgeFor(schemaCols, c)}</span>
+                      </MenuItem>
                     ))}
                   </Select>
                 </FormControl>
@@ -563,14 +659,13 @@ export default function PanelEditorDialog({
                       // eslint-disable-next-line react/no-array-index-key
                       <div key={i} className={styles.taglistRow}>
                         <span className={styles.swatch} style={{ background: colorAt(i) }} />
-                        <FormControl size="small" className={styles.taglistSelect}>
-                          <Select value={v ?? ''} onChange={(e) => updateFilter(i, e.target.value)} displayEmpty>
-                            <MenuItem value="" disabled>Value</MenuItem>
-                            {filterValues.map((opt) => (
-                              <MenuItem key={opt} value={opt}>{opt}</MenuItem>
-                            ))}
-                          </Select>
-                        </FormControl>
+                        <ColumnSelect
+                          className={styles.taglistSelect}
+                          value={v}
+                          onChange={(nv) => updateFilter(i, nv)}
+                          options={filterValues}
+                          searchable
+                        />
                         <UnitPicker className={styles.taglistUnit} value={unitsMap[v] || ''} onChange={(nv) => setUnit(v, nv)} />
                         <IconButton size="small" disabled={filters.length <= 1} title="Remove series" onClick={() => removeFilter(i)}>
                           <CloseIcon fontSize="inherit" />
@@ -768,6 +863,75 @@ export default function PanelEditorDialog({
         </DialogActions>
       </form>
     </Dialog>
+  )
+}
+
+/**
+ * A column dropdown that says what kind of column each option is.
+ *
+ * Two things it does that a bare <Select> did not. It groups by kind and prints
+ * a type badge, because `enabled` and `enabled_count` are indistinguishable by
+ * name and picking the wrong one is only discovered after the tile draws. And
+ * it filters, because a plant historian's table runs to dozens of columns and a
+ * device list is capped at five hundred -- a flat menu that long is a scroll,
+ * not a choice.
+ *
+ * `options` may be a flat array of strings (device values, which have no kind)
+ * or pre-grouped column options; both render through the same filter.
+ */
+function ColumnSelect({
+  value, onChange, groups, options, placeholder = 'Value', className, searchable = false,
+}) {
+  const [query, setQuery] = useState('')
+  const resolved = groups
+    ?? [{ key: '_', label: '', options: (options || []).map((name) => ({ name, badge: '' })) }]
+  const total = resolved.reduce((n, g) => n + g.options.length, 0)
+  // Below a screenful there is nothing to search for, and an input that appears
+  // and disappears as the table changes is worse than one that is never there.
+  const withSearch = searchable && total > 8
+  const shown = withSearch ? filterGroups(resolved, query) : resolved
+  const grouped = resolved.length > 1
+
+  return (
+    <FormControl size="small" className={className}>
+      <Select
+        value={value ?? ''}
+        displayEmpty
+        onChange={(e) => onChange(e.target.value)}
+        onClose={() => setQuery('')}
+        renderValue={(v) => v || placeholder}
+      >
+        <MenuItem value="" disabled>{placeholder}</MenuItem>
+        {withSearch && (
+          // Inside a ListSubheader so Select does not treat it as an option, and
+          // swallowing keystrokes so Select's own typeahead does not steal them
+          // and jump the highlight while someone is typing a filter.
+          <ListSubheader className={styles.colSearch}>
+            <TextField
+              size="small"
+              fullWidth
+              autoFocus
+              placeholder="Filter..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key !== 'Escape') e.stopPropagation() }}
+            />
+          </ListSubheader>
+        )}
+        {shown.flatMap((g) => [
+          ...(grouped && g.label ? [<ListSubheader key={`h:${g.key}`}>{g.label}</ListSubheader>] : []),
+          ...g.options.map((o) => (
+            <MenuItem key={`${g.key}:${o.name}`} value={o.name} className={styles.colOption}>
+              <span className={styles.colName}>{o.name}</span>
+              {o.badge && <span className={styles.colBadge}>{o.badge}</span>}
+            </MenuItem>
+          )),
+        ])}
+        {withSearch && shown.length === 0 && (
+          <MenuItem disabled>No match for &quot;{query}&quot;</MenuItem>
+        )}
+      </Select>
+    </FormControl>
   )
 }
 

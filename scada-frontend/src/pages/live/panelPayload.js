@@ -313,6 +313,16 @@ export function buildPanelPayload({
     for (const k of unitKeys) if (form.gaugeSeries?.[k]) gaugeMap[k] = { ...form.gaugeSeries[k] }
   }
 
+  // Which bound columns are flags, and the words they print.
+  //
+  // Keyed by *column* name, deliberately unlike `units` and `gaugeSeries` just
+  // above: a unit is a property of the series, so it follows the filter value
+  // when there is one. Boolean-ness is a property of the column itself, and one
+  // flag charted across forty devices must not need forty identical entries.
+  const boolCols = (form.boolCols || []).filter((c) => allValueCols.includes(c))
+  const boolLabels = {}
+  for (const c of boolCols) if (form.boolLabels?.[c]) boolLabels[c] = [...form.boolLabels[c]]
+
   // Preserve the panel's layout when editing; seed a bottom slot when creating.
   const layoutOpt = editingPanel
     ? (editingPanel.options?.layout ? { layout: editingPanel.options.layout } : {})
@@ -336,6 +346,8 @@ export function buildPanelPayload({
       ...((form.value_cols || []).length ? { value_cols: [...form.value_cols] } : {}),
       ...(Object.keys(unitMap).length ? { units: unitMap } : {}),
       ...(Object.keys(gaugeMap).length ? { gaugeSeries: gaugeMap } : {}),
+      ...(boolCols.length ? { boolCols } : {}),
+      ...(Object.keys(boolLabels).length ? { boolLabels } : {}),
       ...extraOpts,
       ...condOpts,
       ...layoutOpt,

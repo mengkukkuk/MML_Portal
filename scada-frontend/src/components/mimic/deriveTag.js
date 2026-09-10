@@ -93,8 +93,18 @@ export function deriveTag({
   // number", already understood by formatValue, stateColor and isFlowing. So a
   // text column joins the drawing through machinery that was there for mapped
   // beacons, instead of every symbol growing a second way to be a word.
+  //
+  // A flag joins through the same door, but it has to be asked of the
+  // *binding* rather than of the reading. `/api/schema/latest` types a boolean
+  // as a number (1.0) on purpose, so that endpoint and `/series` agree about
+  // the same column — which means by the time the reading arrives here, "this
+  // is a flag" only exists in `value_kind`, written when the column was bound.
+  // Left to `round()`, a flag would display as a bare 0 or 1: the reading,
+  // never the answer. Nulling `display` hands it to formatValue, which prints
+  // the mapped word instead.
   const isText = typeof value === 'string'
-  const display = isText ? null : round(value, decimals)
+  const isBool = b.value_kind === 'bool'
+  const display = isText || isBool ? null : round(value, decimals)
   const state = isText ? value : deriveState(b.state, value)
 
   // What a case rule or an alarm condition's `a` actually tests. Usually the
@@ -108,7 +118,7 @@ export function deriveTag({
   // A threshold-derived run/stop is deliberately excluded: that tag's number
   // is still the more likely thing a rule wants (`a > 20` on a pump's amps),
   // and 'run'/'stop' already has its own drawing convention Led reads directly.
-  const mapped = !isText && b.state?.mode === 'map'
+  const mapped = !isText && b.state?.mode === 'map'    // a flag lands here too
   const condValue = value == null || mapped ? (state ?? value) : value
 
   // Two ways to go stale: the poll returned nothing, or the row it returned is

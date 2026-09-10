@@ -21,7 +21,7 @@ export default function buildBarGaugeOption(seriesList, opts = {}) {
         position: vertical ? 'top' : 'right',
         color: '#e6edf7',
         fontSize: 12,
-        formatter: () => `${fmtValue(v, opts.decimals)}${s.unit ? ' ' + s.unit : ''}`,
+        formatter: () => `${fmtValue(v, opts.decimals, s.labels)}${s.unit ? ' ' + s.unit : ''}`,
       },
     }
   })

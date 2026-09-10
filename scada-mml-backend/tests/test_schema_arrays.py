@@ -146,10 +146,14 @@ def test_scalar_readings_are_unaffected(monkeypatch):
     assert _series(rows, monkeypatch)["points"][0]["value"] == Decimal("3.5")
 
 
-@pytest.mark.parametrize("value", ["RUN", True, [], ["a", "b"], [1.0, "x"], None])
+@pytest.mark.parametrize("value", ["RUN", [], ["a", "b"], [1.0, "x"], [True, False], None])
 def test_unplottable_readings_are_dropped(value, monkeypatch):
     # Dropped rather than rejected — a text column is a legitimate binding for a
     # symbol that prints words, and those share this seed path.
+    #
+    # A scalar bool is deliberately absent: it is plottable now, as 0/1 (see
+    # test_schema_booleans.py). A bool *array* is not — no _bool in
+    # _NUMERIC_ARRAY_UDTS, so no picker offers one.
     assert _series([{"ts": TS, "value": value}], monkeypatch)["points"] == []
 
 

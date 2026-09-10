@@ -7,6 +7,7 @@ import DialogActions from '@mui/material/DialogActions'
 import Button from '@mui/material/Button'
 import Alert from '@mui/material/Alert'
 import { fetchDatasources } from '@/api/datasources'
+import { badgeFor, groupColumns, pickableColumns } from '@/utils/columnKinds'
 import { fetchSchemaTables, fetchSchemaColumns, fetchSchemaValues, fetchSchemaLatest, fromPrimarySource } from '@/api/schema'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { symbolDef } from '@/components/mimic/symbols'
@@ -19,11 +20,35 @@ import styles from './SymbolBindingDialog.module.css'
 /** Beacon-style symbols map a coded number onto a named state. */
 const DEFAULT_MAP = { 0: 'green', 1: 'amber', 2: 'red' }
 
+// What a flag says when nobody has typed better words. Seeded into the same
+// `state.map` a coded beacon uses rather than into a mechanism of its own --
+// 0/1 is just a two-entry code, and the drawing already knows how to print one.
+const DEFAULT_BOOL_MAP = { 0: 'OFF', 1: 'ON' }
+
+// What may be bound as a symbol's value, in the order the picker offers it.
+// Text is appended only for symbols that print words (see `allowsText`).
+const VALUE_KINDS = ['value_columns', 'bool_columns']
+
 /** Six is where a float's honest precision runs out for plant instrumentation. */
 const DECIMAL_CHOICES = [0, 1, 2, 3, 4, 5, 6]
 
 const num = (v) => (v === '' || v == null ? null : Number(v))
 const str = (v) => (v === '' || v == null ? null : v)
+
+/**
+ * Seed the two words a flag prints, the moment one is picked.
+ *
+ * A boolean has nothing to round, scale or compare — what it needs is a label
+ * per state, which is exactly what `state.map` already is. Left at mode 'none'
+ * a flag would draw as a bare 0 or 1, which is the reading, not the answer.
+ *
+ * A binding already on 'map' is left alone: those are somebody's own words.
+ */
+function withBoolDefaults(f, cols) {
+  if (!f.valueCol || !(cols?.bool_columns || []).includes(f.valueCol)) return f
+  if (f.stateMode === 'map') return f
+  return { ...f, stateMode: 'map', map: DEFAULT_BOOL_MAP, decimals: 0 }
+}
 
 /** Blank form for an unbound symbol — every field empty, nothing assumed. */
 function emptyForm(node) {
@@ -45,6 +70,7 @@ function emptyForm(node) {
     warnHi: '',
     critLo: '',
     critHi: '',
+    valueKind: '',
     stateMode: 'none',
     runAbove: 0.5,
     invert: false,
@@ -74,6 +100,9 @@ function formFromNode(node) {
     warnHi: lim.warnHi ?? '',
     critLo: lim.critLo ?? '',
     critHi: lim.critHi ?? '',
+    // Carried purely so a save made before the columns query resolves cannot
+    // drop it. `kind` below re-derives from the catalogue as soon as it lands.
+    valueKind: b.value_kind ?? '',
     stateMode: b.state?.mode ?? 'none',
     runAbove: b.state?.runAbove ?? 0.5,
     invert: b.state?.invert ?? false,
@@ -84,31 +113,43 @@ function formFromNode(node) {
 /**
  * Form → the `binding` object the server stores.
  *
- * `isText` is passed in rather than inferred, because only the dialog knows the
- * catalogue. Everything numeric is written out empty for a text column instead
- * of being carried along unused: a stored `critHi: 80` against a status column
- * is a rule that will never fire, and the next person to open the drawing would
- * have to work out for themselves that it was dead.
+ * `kind` is passed in rather than inferred, because only the dialog knows the
+ * catalogue. Everything numeric is written out empty for a text or boolean
+ * column instead of being carried along unused: a stored `critHi: 80` against
+ * a status column is a rule that will never fire, and the next person to open
+ * the drawing would have to work out for themselves that it was dead. For a
+ * flag that is not merely tidy -- `analogStatus` compares `false` against a
+ * stored `critLo: 0` and reads it as critical, so a blank `limits` is what
+ * stops a flag alarming the moment it goes off.
+ *
+ * `value_kind` is persisted because the reading cannot carry it: `/latest`
+ * types a boolean as a number (1.0), by design, so both endpoints agree. By
+ * the time a reading reaches the canvas, "this is a flag" only exists here.
  */
-function bindingFromForm(f, isText = false) {
-  const hasRange = !isText && f.rangeLo !== '' && f.rangeHi !== ''
+function bindingFromForm(f, kind = 'number') {
+  const isText = kind === 'text'
+  const isBool = kind === 'bool'
+  const plain = !isText && !isBool
+  const hasRange = plain && f.rangeLo !== '' && f.rangeHi !== ''
   return {
+    ...(plain ? {} : { value_kind: kind }),
     datasource_id: f.datasourceId === '' ? null : Number(f.datasourceId),
     table: f.table,
     value_col: f.valueCol,
     ts_col: str(f.tsCol),
     filter_col: str(f.filterCol),
     filter_val: f.filterCol ? str(f.filterVal) : null,
-    expr: isText ? '' : (f.expr || ''),
-    unit: isText ? '' : (f.unit || ''),
-    decimals: isText ? 0 : (Number(f.decimals) || 0),
+    expr: plain ? (f.expr || '') : '',
+    unit: plain ? (f.unit || '') : '',
+    decimals: plain ? (Number(f.decimals) || 0) : 0,
     range: hasRange ? [Number(f.rangeLo), Number(f.rangeHi)] : null,
-    limits: isText ? {} : {
+    limits: plain ? {
       warnLo: num(f.warnLo), warnHi: num(f.warnHi),
       critLo: num(f.critLo), critHi: num(f.critHi),
-    },
+    } : {},
     // A text column *is* the state — deriving one from a number it does not
-    // have would be a mode that cannot run.
+    // have would be a mode that cannot run. A flag is the opposite: its state
+    // is the whole point, and `map` is how it gets one.
     state: isText || f.stateMode === 'none' ? null : {
       mode: f.stateMode,
       runAbove: Number(f.runAbove) || 0,
@@ -178,22 +219,54 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
 
   const cols = columnsQuery.data
   const tables = tablesQuery.data || []
+
+  const [deviceQuery, setDeviceQuery] = useState('')
+  const deviceValues = valuesQuery.data || []
+  const shownDevices = useMemo(() => {
+    const q = deviceQuery.trim().toLowerCase()
+    if (!q) return deviceValues
+    // The current selection is kept regardless, or narrowing the list would
+    // silently unselect the device this symbol is already pointed at.
+    return deviceValues.filter((v) => v === form.filterVal || v.toLowerCase().includes(q))
+  }, [deviceValues, deviceQuery, form.filterVal])
   const textCols = allowsText ? (cols?.text_columns || []) : []
+  const boolCols = cols?.bool_columns || []
+
+  // The kinds this symbol may bind, in picker order. Numeric leads because a
+  // table carrying both is overwhelmingly a reading table with flags beside it.
+  const valueKinds = useMemo(
+    () => (allowsText ? [...VALUE_KINDS, 'text_columns'] : VALUE_KINDS),
+    [allowsText],
+  )
+  const valueGroups = useMemo(
+    () => groupColumns(cols, valueKinds),
+    [cols, valueKinds],
+  )
 
   // Which kind of reading is bound *right now*. Everything downstream of the
   // value picker asks this rather than asking the symbol: a display box may
   // legitimately be pointed at a number, and then decimals and limits are as
   // meaningful for it as for anything else.
-  const isText = !!form.valueCol && textCols.includes(form.valueCol)
+  //
+  // Falls back to what was stored until the catalogue arrives. `valid` does not
+  // wait on `cols`, so a save in that window would otherwise re-derive 'number'
+  // and strip the kind — and unlike text, which deriveTag reads off the reading
+  // every tick, a lost `value_kind` never comes back: the symbol prints 1
+  // forever.
+  const kind = !cols ? (form.valueKind || 'number')
+    : !form.valueCol ? 'number'
+      : boolCols.includes(form.valueCol) ? 'bool'
+        : textCols.includes(form.valueCol) ? 'text'
+          : 'number'
+  const isText = kind === 'text'
+  const isBool = kind === 'bool'
 
   // Clamp every downstream field to what the newly loaded level actually
   // offers. Without this a table switch leaves the previous table's column
   // selected and the save 400s with a column that isn't there.
   useEffect(() => {
     if (!cols) return
-    const pickable = allowsText
-      ? [...cols.value_columns, ...(cols.text_columns || [])]
-      : cols.value_columns
+    const pickable = pickableColumns(cols, valueKinds)
     setForm((f) => {
       const next = { ...f }
       if (f.valueCol && !pickable.includes(f.valueCol)) next.valueCol = ''
@@ -205,9 +278,9 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
         next.filterCol = ''
         next.filterVal = ''
       }
-      return next
+      return withBoolDefaults(next, cols)
     })
-  }, [cols, allowsText])
+  }, [cols, valueKinds])
 
   const exprError = useMemo(() => {
     const r = compileExpr(form.expr)
@@ -253,8 +326,8 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
     y: 0,
     tagId: form.tagId || node.tagId,
     label: form.label || node.label,
-    binding: bindingFromForm(form, isText),
-  } : null), [node, form, isText])
+    binding: bindingFromForm(form, kind),
+  } : null), [node, form, kind])
 
   const previewTag = useMemo(() => {
     if (!previewNode || previewQuery.data?.value == null) return null
@@ -275,7 +348,7 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
     onSave({
       tagId: form.tagId.trim() || null,
       label: form.label.trim() || node.label,
-      binding: bindingFromForm(form, isText),
+      binding: bindingFromForm(form, kind),
     })
   }
 
@@ -345,28 +418,33 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
 
             <label className={styles.field}>
               <span>Value column</span>
-              {/* Grouped, not merged, when both kinds are on offer. The choice
+              {/* Grouped, and badged with the actual Postgres type. The choice
                   changes what half this dialog can do — decimals, limits and the
-                  expression all go away for a word — so the list has to say
-                  which kind a column is before it is picked, not after. */}
+                  expression all go away for a word or a flag — so the list has
+                  to say which kind a column is before it is picked, not after.
+                  `enabled` and `enabled_count` are the case that made this
+                  necessary: indistinguishable by name, and the mistake only
+                  shows up once the drawing is live. An <option> carries no
+                  markup, so the badge rides in the text. */}
               <select
                 value={form.valueCol}
                 disabled={!cols}
-                onChange={(e) => set({ valueCol: e.target.value })}
+                onChange={(e) => setForm((f) => withBoolDefaults(
+                  { ...f, valueCol: e.target.value }, cols,
+                ))}
               >
                 <option value="">—</option>
-                {textCols.length === 0
-                  ? (cols?.value_columns || []).map((c) => <option key={c} value={c}>{c}</option>)
-                  : (
-                    <>
-                      <optgroup label="Numeric — measured">
-                        {(cols?.value_columns || []).map((c) => <option key={c} value={c}>{c}</option>)}
-                      </optgroup>
-                      <optgroup label="Text — printed as written">
-                        {textCols.map((c) => <option key={c} value={c}>{c}</option>)}
-                      </optgroup>
-                    </>
-                  )}
+                {valueGroups.length === 1
+                  ? valueGroups[0].options.map((o) => (
+                    <option key={o.name} value={o.name}>{o.name} · {o.badge}</option>
+                  ))
+                  : valueGroups.map((g) => (
+                    <optgroup key={g.key} label={g.label}>
+                      {g.options.map((o) => (
+                        <option key={o.name} value={o.name}>{o.name} · {o.badge}</option>
+                      ))}
+                    </optgroup>
+                  ))}
               </select>
             </label>
 
@@ -379,6 +457,15 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
               </p>
             )}
 
+            {isBool && (
+              <p className={styles.note}>
+                A boolean is read as 0 and 1, so it still trends as a step line —
+                but there is nothing to scale, round or compare. Give each state
+                a word under State and the symbol prints that instead of the
+                number.
+              </p>
+            )}
+
             <label className={styles.field}>
               <span>Timestamp column</span>
               <select
@@ -387,7 +474,9 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
                 onChange={(e) => set({ tsCol: e.target.value })}
               >
                 <option value="">None — current value only</option>
-                {(cols?.ts_columns || []).map((c) => <option key={c} value={c}>{c}</option>)}
+                {(cols?.ts_columns || []).map((c) => (
+                  <option key={c} value={c}>{c} · {badgeFor(cols, c)}</option>
+                ))}
               </select>
             </label>
 
@@ -399,19 +488,37 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
                 onChange={(e) => set({ filterCol: e.target.value, filterVal: '' })}
               >
                 <option value="">None — whole table</option>
-                {(cols?.filter_columns || []).map((c) => <option key={c} value={c}>{c}</option>)}
+                {(cols?.filter_columns || []).map((c) => (
+                  <option key={c} value={c}>{c} · {badgeFor(cols, c)}</option>
+                ))}
               </select>
             </label>
 
             <label className={styles.field}>
               <span>Device</span>
+              {/* The one list here that is genuinely long — the server caps it
+                  at five hundred, and scrolling that in a native select is not
+                  a choice. Filtered in memory: the values are all here already,
+                  so narrowing them costs nothing and asks the server nothing.
+                  Shown only once there is enough to be worth narrowing. */}
+              {deviceValues.length > 8 && (
+                <input
+                  type="search"
+                  className={styles.filter}
+                  placeholder="Filter devices…"
+                  value={deviceQuery}
+                  onChange={(e) => setDeviceQuery(e.target.value)}
+                />
+              )}
               <select
                 value={form.filterVal}
                 disabled={!form.filterCol || valuesQuery.isPending}
                 onChange={(e) => set({ filterVal: e.target.value })}
               >
                 <option value="">—</option>
-                {(valuesQuery.data || []).map((v) => <option key={v} value={v}>{v}</option>)}
+                {/* The selected device stays listed even when the filter would
+                    hide it, or narrowing the list would silently unselect it. */}
+                {shownDevices.map((v) => <option key={v} value={v}>{v}</option>)}
               </select>
             </label>
 
@@ -453,13 +560,45 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
                 against. A word has none of that, so for a text column they are
                 not disabled but absent: a greyed-out row of four limit boxes
                 reads as "fill these in later", which is never. */}
-            {isText ? (
-              <p className={styles.note}>
-                <span className={styles.mono}>{form.valueCol}</span> is text, so
-                there is nothing to scale, round or compare numerically. The
-                symbol prints the word and its own colour or alarm rules decide
-                the rest.
-              </p>
+            {isText || isBool ? (
+              <>
+                <p className={styles.note}>
+                  <span className={styles.mono}>{form.valueCol}</span> is
+                  {isBool ? ' a flag' : ' text'}, so there is nothing to scale,
+                  round or compare numerically. The symbol prints
+                  {isBool ? ' the word you give each state' : ' the word'} and its
+                  own colour or alarm rules decide the rest.
+                </p>
+
+                {/* The whole presentation a flag has. Written into the same
+                    `state.map` a coded beacon uses, so the word reaches the
+                    canvas through machinery that was already there — and a
+                    colour case or an annunciator rule can then be written
+                    against the word an admin can see (a == 'RUNNING') rather
+                    than against the 1 underneath it.
+
+                    Shown whatever the symbol's `binding` kind says, unlike the
+                    numeric State block below: `supportsState` decides whether a
+                    *derived* run/stop makes sense for a symbol, but a flag has
+                    no other way to say what it is. */}
+                {isBool && (
+                  <>
+                    <h4 className={styles.colTitle}>State</h4>
+                    <div className={styles.row}>
+                      {['0', '1'].map((k) => (
+                        <label className={styles.field} key={k}>
+                          <span>{k === '0' ? 'Off (false)' : 'On (true)'}</span>
+                          <input
+                            value={form.map?.[k] ?? DEFAULT_BOOL_MAP[k]}
+                            onChange={(e) => set({ map: { ...form.map, [k]: e.target.value } })}
+                            placeholder={DEFAULT_BOOL_MAP[k]}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
             ) : (
               <>
                 <label className={styles.field}>
