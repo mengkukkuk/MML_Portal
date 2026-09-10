@@ -7,7 +7,8 @@ import { useQuery } from '@tanstack/react-query'
 import FormControl from '@mui/material/FormControl'
 import MenuItem from '@mui/material/MenuItem'
 import Select from '@mui/material/Select'
-import { fetchSchemaColumns, fetchSchemaTables, fetchSchemaValues } from '@/api/schema'
+import { fetchSchemaTables, fetchSchemaValues } from '@/api/schema'
+import { useTrendColumns } from './useTrendColumns'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { TIME_RANGES } from '@/components/live/usePanelSeries'
 import styles from './TrendRail.module.css'
@@ -54,12 +55,7 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
     staleTime: 5 * 60_000,
   })
 
-  const columnsQuery = useQuery({
-    queryKey: ['trend', 'columns', primaryId ?? 'app', trend.table],
-    queryFn: () => fetchSchemaColumns(trend.table, primaryId ?? undefined),
-    enabled: !!trend.table,
-    staleTime: 5 * 60_000,
-  })
+  const { query: columnsQuery, groups } = useTrendColumns(trend.table, primaryId)
 
   const valuesQuery = useQuery({
     queryKey: ['trend', 'values', primaryId ?? 'app', trend.table, trend.filterCol],
@@ -74,6 +70,9 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
   const tsCols = useMemo(() => cols?.ts_columns ?? [], [cols])
   const filterCols = useMemo(() => cols?.filter_columns ?? [], [cols])
   const deviceValues = valuesQuery.data ?? []
+  const hasGroups = groups.some((group) => group.key)
+  const activeGroup = groups.find((group) => group.options.some((option) => option.value === trend.valueCol))
+  const readingOptions = hasGroups ? (activeGroup?.options ?? []) : (groups[0]?.options ?? [])
 
   const set = useCallback((patch) => onChange({ ...trend, ...patch }), [onChange, trend])
 
@@ -148,16 +147,36 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
         </Select>
       </Field>
 
+      {hasGroups && (
+        <Field label="Group">
+          <Select
+            value={activeGroup?.key ?? ''}
+            displayEmpty
+            inputProps={{ 'aria-label': 'Reading group' }}
+            renderValue={() => activeGroup?.label ?? 'Choose a group'}
+            onChange={(e) => {
+              const group = groups.find((item) => item.key === e.target.value)
+              set({ valueCol: group.options[0].value })
+            }}
+          >
+            {groups.map((group) => (
+              <MenuItem key={group.key} value={group.key}>{group.label}</MenuItem>
+            ))}
+          </Select>
+        </Field>
+      )}
+
       <Field label="Reading" wide>
         <Select
           value={arrayCols.includes(trend.valueCol) ? trend.valueCol : ''}
           displayEmpty
           disabled={!trend.table || noArrays}
+          inputProps={{ 'aria-label': 'Reading' }}
           onChange={(e) => set({ valueCol: e.target.value })}
-          renderValue={(v) => v || (noArrays ? 'None available' : 'Choose a column')}
+          renderValue={(v) => readingOptions.find((option) => option.value === v)?.label || (noArrays ? 'None available' : 'Choose a column')}
         >
-          {arrayCols.map((c) => (
-            <MenuItem key={c} value={c}>{c}</MenuItem>
+          {readingOptions.map((option) => (
+            <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
           ))}
         </Select>
       </Field>

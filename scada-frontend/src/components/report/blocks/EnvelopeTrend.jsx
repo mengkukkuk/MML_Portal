@@ -7,6 +7,8 @@ import { fetchSchemaSeries } from '@/api/schema'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { ROLES, isPlottable } from '../trendParams'
 import { windowError, trendTimeAxis } from '../trendWindow'
+import { useTrendColumns } from '../useTrendColumns'
+import { readingTitle } from '../readingGroups'
 import styles from './blocks.module.css'
 import chart from './EnvelopeTrend.module.css'
 
@@ -54,6 +56,7 @@ const fmt = (n) =>
 export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
   const selected = useDatasourceSelectionStore((s) => s.selected)
   const primary = selected?.[0]
+  const { groups } = useTrendColumns(trend.table, primary?.id)
   const rangeError = windowError(range.start, range.end)
   const ready = isPlottable(trend) && !rangeError
 
@@ -118,7 +121,7 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
   ].filter(Boolean).join(' · ')
 
   const title = trend.valueCol
-    ? `${trend.valueCol}${trend.filterVal ? ` · ${trend.filterVal}` : ''}`
+    ? `${readingTitle(groups, trend.valueCol)}${trend.filterVal ? ` · ${trend.filterVal}` : ''}`
     : 'Signal trend'
 
   return (

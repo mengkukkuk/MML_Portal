@@ -118,7 +118,7 @@ DO $$
             WHERE table_schema = 'vision_data'
               AND column_name = 'updated_at'
               AND table_name IN ('cameras', 'camera_defect', 'camera_defect_logs'
-                ,'camera_batch_work', 'camera_count_speed', 'camera_defect_speed')
+                ,'camera_batch_work', 'camera_count_speed', 'camera_defect_speed','camera_defect_ratio')
             LOOP
                 EXECUTE format('
                 DROP TRIGGER IF EXISTS trg_set_updated_at ON vision_data.%I;
