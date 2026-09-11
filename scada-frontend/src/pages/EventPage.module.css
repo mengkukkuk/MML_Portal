@@ -179,6 +179,23 @@
   gap: var(--space-2);
 }
 
+/* One name family's cluster of tag cards (e.g. every CAM001-13-count_n /
+   CAM001-13-defect_n card under one CAM001-13 heading). No accent border —
+   the location header above already carries that, this is a sub-level. */
+.evt__family {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.evt__family-head {
+  padding-left: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
 /* Liquid Crystal faceplate — frosted card, iridescent accent bloom and a
    specular top rim. See LIQCRYS.md. */
 .evt__tag {

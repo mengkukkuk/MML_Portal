@@ -42,7 +42,7 @@ import { COMPARATOR_OPS } from '@/utils/alertConditions'
 import { UNIT_GROUPS } from '@/utils/units'
 import { buildDefectLabelsByCode, resolveTagLabel } from '@/utils/defectLabels'
 import {
-  DEFAULT_BOOL_LABELS, badgeFor, filterGroups, groupColumns, pickableColumns,
+  DEFAULT_BOOL_LABELS, badgeFor, familyGroups, filterGroups, groupColumns, pickableColumns,
 } from '@/utils/columnKinds'
 import {
   VIZ_TYPE_META, PARAM_SCHEMA, POLL_INTERVAL_OPTIONS, CONNECTORS,
@@ -945,15 +945,29 @@ function ColumnSelect({
             />
           </ListSubheader>
         )}
-        {shown.flatMap((g) => [
-          ...(grouped && g.label ? [<ListSubheader key={`h:${g.key}`}>{g.label}</ListSubheader>] : []),
-          ...g.options.map((o) => (
+        {shown.flatMap((g) => {
+          const families = familyGroups(g.options)
+          // A single '' bucket means nothing grouped by name within this kind —
+          // render flat, exactly as before family-detection existed.
+          const nameGrouped = families.length > 1 || families[0]?.key
+          const option = (o) => (
             <MenuItem key={`${g.key}:${o.name}`} value={o.name} className={styles.colOption}>
               <span className={styles.colName}>{labelFor(o.name)}</span>
               {o.badge && <span className={styles.colBadge}>{o.badge}</span>}
             </MenuItem>
-          )),
-        ])}
+          )
+          return [
+            ...(grouped && g.label ? [<ListSubheader key={`h:${g.key}`}>{g.label}</ListSubheader>] : []),
+            ...(nameGrouped
+              ? families.flatMap((fam) => [
+                ...(fam.key
+                  ? [<ListSubheader key={`f:${g.key}:${fam.key}`} className={styles.colFamilyHeader}>{fam.key}</ListSubheader>]
+                  : []),
+                ...fam.options.map(option),
+              ])
+              : g.options.map(option)),
+          ]
+        })}
         {withSearch && shown.length === 0 && (
           <MenuItem disabled>No match for &quot;{query}&quot;</MenuItem>
         )}

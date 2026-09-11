@@ -19,6 +19,8 @@
  * broken.
  */
 
+import { groupByFamily } from './nameFamilies.js'
+
 /** Group headings, keyed by the field of the columns envelope they read.
  *
  * The wording says what the column *is for*, not what type it is — the badge
@@ -77,6 +79,26 @@ export function groupColumns(cols, kinds) {
  */
 export function pickableColumns(cols, kinds) {
   return kinds.flatMap((key) => cols?.[key] ?? [])
+}
+
+/**
+ * Split one kind group's options into name families (e.g. every
+ * `CAM001-13-count_n`/`CAM001-13-defect_n` option clustered under a
+ * `CAM001-13` bucket), via the shared `groupByFamily`. Options with no
+ * detected family land in a single `key: ''` bucket — a caller sees just one
+ * bucket back when nothing groups, so it can fall back to rendering `options`
+ * flat exactly as before this existed.
+ *
+ * Returns `[{ key, label, options: [{ name, badge }] }]`, the same option
+ * shape as `groupColumns`, just re-bucketed by name instead of kind.
+ */
+export function familyGroups(options = []) {
+  const byName = new Map(options.map((o) => [o.name, o]))
+  return groupByFamily(options.map((o) => o.name)).map(({ key, names }) => ({
+    key,
+    label: key,
+    options: names.map((name) => byName.get(name)),
+  }))
 }
 
 /**

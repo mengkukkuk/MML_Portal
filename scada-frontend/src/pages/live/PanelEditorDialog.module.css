@@ -293,6 +293,17 @@
   opacity: 0.75;
 }
 
+/* A name-family heading nested under a kind's ListSubheader (e.g. "CAM001-13"
+   clustering its own count_n/defect_n readings) — smaller and indented so it
+   reads as a sub-level, not a second kind group. */
+.colFamilyHeader {
+  min-height: unset;
+  padding-left: calc(var(--space-4) + var(--space-2));
+  font-size: 11px;
+  line-height: 2;
+  color: var(--fg-dim);
+}
+
 /* Pinned above the options, so it stays put while the list under it scrolls. */
 .colSearch {
   padding: var(--space-2);

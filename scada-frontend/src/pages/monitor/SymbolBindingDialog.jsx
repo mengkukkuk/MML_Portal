@@ -8,7 +8,8 @@ import Button from '@mui/material/Button'
 import Alert from '@mui/material/Alert'
 import { fetchDatasources } from '@/api/datasources'
 import { fetchCameraLinkOptions } from '@/api/cameras'
-import { badgeFor, groupColumns, pickableColumns } from '@/utils/columnKinds'
+import { badgeFor, familyGroups, groupColumns, pickableColumns } from '@/utils/columnKinds'
+import { groupByFamily } from '@/utils/nameFamilies'
 import { fetchSchemaTables, fetchSchemaColumns, fetchSchemaValues, fetchSchemaLatest, fromPrimarySource } from '@/api/schema'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { symbolDef } from '@/components/mimic/symbols'
@@ -50,6 +51,60 @@ function withBoolDefaults(f, cols) {
   if (!f.valueCol || !(cols?.bool_columns || []).includes(f.valueCol)) return f
   if (f.stateMode === 'map') return f
   return { ...f, stateMode: 'map', map: DEFAULT_BOOL_MAP, decimals: 0 }
+}
+
+/**
+ * The value-column `<select>`'s children: kind groups split further by name
+ * family (via `familyGroups`), so `CAM001-13-count_1`/`CAM001-13-defect_1`
+ * cluster under one `<optgroup>` instead of listing every numbered reading
+ * flat. A native `<select>` cannot nest `<optgroup>`s, so a kind's family
+ * split flattens to one level: real families each get their own optgroup
+ * (prefixed by the kind label only when more than one kind is offered),
+ * their ungrouped leftovers render as bare options. A kind with no detected
+ * family falls back to exactly today's behaviour — flat when it is the only
+ * kind on offer, one optgroup when there are several.
+ */
+function valueColumnOptions(valueGroups, labelFor) {
+  const option = (o) => <option key={o.name} value={o.name}>{labelFor(o.name)} · {o.badge}</option>
+  return valueGroups.flatMap((g) => {
+    const families = familyGroups(g.options)
+    const hasFamily = families.length > 1 || !!families[0]?.key
+    if (!hasFamily) {
+      return valueGroups.length === 1
+        ? g.options.map(option)
+        : [<optgroup key={g.key} label={g.label}>{g.options.map(option)}</optgroup>]
+    }
+    return families.map((fam) => (
+      fam.key
+        ? (
+          <optgroup key={`${g.key}:${fam.key}`} label={valueGroups.length > 1 ? `${g.label} · ${fam.key}` : fam.key}>
+            {fam.options.map(option)}
+          </optgroup>
+        )
+        : fam.options.map(option)
+    )).flat()
+  })
+}
+
+/**
+ * The Device `<select>`'s children: the raw filter-column values (e.g. every
+ * `CAM001-13-count_n`/`CAM001-13-defect_n` tag a camera datasource exposes)
+ * clustered by name family via `groupByFamily`, same treatment as the
+ * value-column picker above. No kind dimension here — these are plain filter
+ * values, not typed columns — so a real family becomes one `<optgroup>`,
+ * with ungrouped leftovers as bare options; no family detected falls back to
+ * exactly today's flat list.
+ */
+function deviceOptions(devices, labelFor) {
+  const option = (v) => <option key={v} value={v}>{labelFor(v)}</option>
+  const families = groupByFamily(devices)
+  const hasFamily = families.length > 1 || !!families[0]?.key
+  if (!hasFamily) return devices.map(option)
+  return families.flatMap((fam) => (
+    fam.key
+      ? [<optgroup key={fam.key} label={fam.key}>{fam.names.map(option)}</optgroup>]
+      : fam.names.map(option)
+  ))
 }
 
 /** Blank form for an unbound symbol — every field empty, nothing assumed. */
@@ -458,17 +513,7 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
                 ))}
               >
                 <option value="">—</option>
-                {valueGroups.length === 1
-                  ? valueGroups[0].options.map((o) => (
-                    <option key={o.name} value={o.name}>{labelFor(o.name)} · {o.badge}</option>
-                  ))
-                  : valueGroups.map((g) => (
-                    <optgroup key={g.key} label={g.label}>
-                      {g.options.map((o) => (
-                        <option key={o.name} value={o.name}>{labelFor(o.name)} · {o.badge}</option>
-                      ))}
-                    </optgroup>
-                  ))}
+                {valueColumnOptions(valueGroups, labelFor)}
               </select>
             </label>
 
@@ -542,7 +587,7 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
                 <option value="">—</option>
                 {/* The selected device stays listed even when the filter would
                     hide it, or narrowing the list would silently unselect it. */}
-                {shownDevices.map((v) => <option key={v} value={v}>{labelFor(v)}</option>)}
+                {deviceOptions(shownDevices, labelFor)}
               </select>
             </label>
 

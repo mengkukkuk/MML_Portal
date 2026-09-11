@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Button from '@mui/material/Button'
 import FormControl from '@mui/material/FormControl'
@@ -12,6 +12,7 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import { fetchRecentAlarms, fetchActiveAlarms, acknowledgeAlarm } from '@/api/alarms'
 import { fetchCameraLinkOptions } from '@/api/cameras'
 import { buildDefectLabelsByCode, resolveTagLabel } from '@/utils/defectLabels'
+import { groupByFamily } from '@/utils/nameFamilies'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import SourceStatus from '@/components/SourceStatus/SourceStatus.jsx'
 import styles from './AlarmsPage.module.css'
@@ -146,6 +147,16 @@ export default function AlarmsPage() {
   )
   const hasActive = filteredActiveAlarms.length > 0
 
+  // Clusters the active-alarm cards by tag-name family (e.g. every
+  // CAM001-13-count_n / CAM001-13-defect_n card grouped under one heading),
+  // same technique as the historical tag stack below.
+  const activeFamilies = useMemo(() => (
+    groupByFamily(filteredActiveAlarms.map((al) => al.tag_name)).map((fam) => ({
+      key: fam.key,
+      alarms: fam.names.flatMap((name) => filteredActiveAlarms.filter((al) => al.tag_name === name)),
+    }))
+  ), [filteredActiveAlarms])
+
   // Distinct location values for the Line filter dropdown
   const locationOptions = useMemo(() => {
     const set = new Set(alarms.map((a) => a.location ?? UNKNOWN))
@@ -211,10 +222,13 @@ export default function AlarmsPage() {
       if (!row.acknowledged) tag.unacked += 1
       loc.alarmCount += 1
     }
-    return [...byLocation.values()].map((loc) => ({
-      ...loc,
-      tags: [...loc.tags.values()],
-    }))
+    return [...byLocation.values()].map((loc) => {
+      const tags = [...loc.tags.values()]
+      const byName = new Map(tags.map((tag) => [tag.tag_name, tag]))
+      const families = groupByFamily(tags.map((tag) => tag.tag_name))
+        .map((fam) => ({ key: fam.key, tags: fam.names.map((name) => byName.get(name)) }))
+      return { ...loc, tags, families }
+    })
   }, [alarms, filterRows])
 
   const hasActiveFilters = !!(filterStartDate || filterEndDate || filterLocation || filterTagName)
@@ -225,6 +239,126 @@ export default function AlarmsPage() {
 
   function toggleCard(key) {
     setExpanded((cur) => (cur === key ? null : key))
+  }
+
+  function renderActiveCard(al) {
+    return (
+      <article
+        key={`${al.datasource_id ?? ''}::${al.location}::${al.tag_name}::${al.alarm_no}`}
+        className={`${styles['alm__active-card']} ${styles[`alm__active-card--${al.severity || 'info'}`]}`}
+      >
+        <div className={styles['alm__active-card-top']}>
+          <span className={`${styles['alm__sev-pill']} ${styles[`alm__sev-pill--${al.severity || 'info'}`]}`}>
+            {sevLabel(al.severity)}
+          </span>
+          <span className={styles['alm__active-value']}>{al.alarm_value ?? '—'}</span>
+        </div>
+        <span className={styles['alm__active-tag']}>
+          {resolveTagLabel(al.tag_name, al.location, labelsByCode) ?? '—'}
+        </span>
+        <span className={styles['alm__active-loc']}>
+          {al.location ?? '—'}
+          {multiSource && al.datasource_name ? ` · ${al.datasource_name}` : ''}
+        </span>
+        <p className={styles['alm__active-msg']}>{al.alarm ?? '—'}</p>
+        <time className={styles['alm__active-time']}>{fmtTime(al.at_date_time)}</time>
+      </article>
+    )
+  }
+
+  function renderTagCard(tag, loc) {
+    const key = tag.key
+    const isOpen = expanded === key
+    return (
+      <article
+        key={key}
+        className={`${styles['alm__tag']} ${styles[`alm__tag--${tag.severity}`]} ${
+          !isOpen ? styles['alm__tag--collapsed'] : ''
+        }`}
+      >
+        <header className={styles['alm__tag-head']} onClick={() => toggleCard(key)}>
+          <span className={`${styles['alm__sev-pill']} ${styles[`alm__sev-pill--${tag.severity}`]}`}>
+            {sevLabel(tag.severity)}
+          </span>
+          <span className={styles['alm__tag-name']}>
+            {resolveTagLabel(tag.tag_name, loc.location, labelsByCode)}
+          </span>
+          <div className={styles['alm__tag-actions']}>
+            {tag.unacked > 0 && (
+              <span
+                className={`${styles['alm__badge']} ${styles['alm__badge--unacked']}`}
+                title={`${tag.unacked} unacknowledged`}
+              >
+                {tag.unacked}
+              </span>
+            )}
+            <span className={styles['alm__badge']}>{tag.alarms.length}</span>
+            <button
+              type="button"
+              className={styles['alm__minimize']}
+              aria-label={isOpen ? 'Minimize' : 'Expand'}
+              onClick={(e) => {
+                e.stopPropagation()
+                toggleCard(key)
+              }}
+            >
+              {isOpen ? '−' : '+'}
+            </button>
+          </div>
+        </header>
+        {isOpen && (
+          <ol className={styles['alm__timeline']}>
+            {tag.alarms.map((al, i) => {
+              const isPending =
+                ackMutation.isPending &&
+                ackMutation.variables?.id === al.id &&
+                ackMutation.variables?.datasource_id === al.datasource_id
+              return (
+                <li
+                  key={`${al.datasource_id ?? ''}::${al.id}`}
+                  className={`${styles['alm__item']} ${styles[`alm__item--${al.severity || 'info'}`]} ${
+                    i === 0 ? styles['alm__item--latest'] : ''
+                  }`}
+                >
+                  <span className={styles['alm__node']} aria-hidden="true" />
+                  <div className={styles['alm__body']}>
+                    <div className={styles['alm__row']}>
+                      <span className={styles['alm__text']}>{al.alarm ?? '—'}</span>
+                      {al.acknowledged ? (
+                        <span
+                          className={styles['alm__ack-pill']}
+                          title={
+                            al.acknowledged_at
+                              ? `Acknowledged ${fmtTime(al.acknowledged_at)}`
+                              : 'Acknowledged'
+                          }
+                        >
+                          Ack
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className={styles['alm__ack-btn']}
+                          disabled={isPending}
+                          onClick={() => ackMutation.mutate(al)}
+                        >
+                          {isPending ? (
+                            <CircularProgress size={10} color="inherit" />
+                          ) : (
+                            'Acknowledge'
+                          )}
+                        </button>
+                      )}
+                    </div>
+                    <time className={styles['alm__time']}>{fmtTime(al.at_date_time)}</time>
+                  </div>
+                </li>
+              )
+            })}
+          </ol>
+        )}
+      </article>
+    )
   }
 
   function handleRefresh() {
@@ -346,27 +480,13 @@ export default function AlarmsPage() {
             <span className={styles['alm__active-count']}>{filteredActiveAlarms.length} active</span>
           </header>
           <div className={styles['alm__active-grid']}>
-            {filteredActiveAlarms.map((al) => (
-              <article
-                key={`${al.datasource_id ?? ''}::${al.location}::${al.tag_name}::${al.alarm_no}`}
-                className={`${styles['alm__active-card']} ${styles[`alm__active-card--${al.severity || 'info'}`]}`}
-              >
-                <div className={styles['alm__active-card-top']}>
-                  <span className={`${styles['alm__sev-pill']} ${styles[`alm__sev-pill--${al.severity || 'info'}`]}`}>
-                    {sevLabel(al.severity)}
-                  </span>
-                  <span className={styles['alm__active-value']}>{al.alarm_value ?? '—'}</span>
-                </div>
-                <span className={styles['alm__active-tag']}>
-                  {resolveTagLabel(al.tag_name, al.location, labelsByCode) ?? '—'}
-                </span>
-                <span className={styles['alm__active-loc']}>
-                  {al.location ?? '—'}
-                  {multiSource && al.datasource_name ? ` · ${al.datasource_name}` : ''}
-                </span>
-                <p className={styles['alm__active-msg']}>{al.alarm ?? '—'}</p>
-                <time className={styles['alm__active-time']}>{fmtTime(al.at_date_time)}</time>
-              </article>
+            {activeFamilies.map((fam) => (
+              <Fragment key={fam.key || '_'}>
+                {fam.key && (
+                  <div className={styles['alm__active-family-head']}>{fam.key}</div>
+                )}
+                {fam.alarms.map((al) => renderActiveCard(al))}
+              </Fragment>
             ))}
           </div>
         </section>
@@ -398,100 +518,16 @@ export default function AlarmsPage() {
           </header>
 
           <div className={styles['alm__stack']}>
-            {loc.tags.map((tag) => {
-              const key = tag.key
-              const isOpen = expanded === key
-              return (
-                <article
-                  key={key}
-                  className={`${styles['alm__tag']} ${styles[`alm__tag--${tag.severity}`]} ${
-                    !isOpen ? styles['alm__tag--collapsed'] : ''
-                  }`}
-                >
-                  <header className={styles['alm__tag-head']} onClick={() => toggleCard(key)}>
-                    <span className={`${styles['alm__sev-pill']} ${styles[`alm__sev-pill--${tag.severity}`]}`}>
-                      {sevLabel(tag.severity)}
-                    </span>
-                    <span className={styles['alm__tag-name']}>
-                      {resolveTagLabel(tag.tag_name, loc.location, labelsByCode)}
-                    </span>
-                    <div className={styles['alm__tag-actions']}>
-                      {tag.unacked > 0 && (
-                        <span
-                          className={`${styles['alm__badge']} ${styles['alm__badge--unacked']}`}
-                          title={`${tag.unacked} unacknowledged`}
-                        >
-                          {tag.unacked}
-                        </span>
-                      )}
-                      <span className={styles['alm__badge']}>{tag.alarms.length}</span>
-                      <button
-                        type="button"
-                        className={styles['alm__minimize']}
-                        aria-label={isOpen ? 'Minimize' : 'Expand'}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          toggleCard(key)
-                        }}
-                      >
-                        {isOpen ? '−' : '+'}
-                      </button>
-                    </div>
-                  </header>
-                  {isOpen && (
-                    <ol className={styles['alm__timeline']}>
-                      {tag.alarms.map((al, i) => {
-                        const isPending =
-                          ackMutation.isPending &&
-                          ackMutation.variables?.id === al.id &&
-                          ackMutation.variables?.datasource_id === al.datasource_id
-                        return (
-                          <li
-                            key={`${al.datasource_id ?? ''}::${al.id}`}
-                            className={`${styles['alm__item']} ${styles[`alm__item--${al.severity || 'info'}`]} ${
-                              i === 0 ? styles['alm__item--latest'] : ''
-                            }`}
-                          >
-                            <span className={styles['alm__node']} aria-hidden="true" />
-                            <div className={styles['alm__body']}>
-                              <div className={styles['alm__row']}>
-                                <span className={styles['alm__text']}>{al.alarm ?? '—'}</span>
-                                {al.acknowledged ? (
-                                  <span
-                                    className={styles['alm__ack-pill']}
-                                    title={
-                                      al.acknowledged_at
-                                        ? `Acknowledged ${fmtTime(al.acknowledged_at)}`
-                                        : 'Acknowledged'
-                                    }
-                                  >
-                                    Ack
-                                  </span>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    className={styles['alm__ack-btn']}
-                                    disabled={isPending}
-                                    onClick={() => ackMutation.mutate(al)}
-                                  >
-                                    {isPending ? (
-                                      <CircularProgress size={10} color="inherit" />
-                                    ) : (
-                                      'Acknowledge'
-                                    )}
-                                  </button>
-                                )}
-                              </div>
-                              <time className={styles['alm__time']}>{fmtTime(al.at_date_time)}</time>
-                            </div>
-                          </li>
-                        )
-                      })}
-                    </ol>
-                  )}
-                </article>
+            {loc.families.map((fam) => (
+              fam.key ? (
+                <div key={fam.key} className={styles['alm__family']}>
+                  <div className={styles['alm__family-head']}>{fam.key}</div>
+                  {fam.tags.map((tag) => renderTagCard(tag, loc))}
+                </div>
+              ) : (
+                fam.tags.map((tag) => renderTagCard(tag, loc))
               )
-            })}
+            ))}
           </div>
         </section>
       ))}

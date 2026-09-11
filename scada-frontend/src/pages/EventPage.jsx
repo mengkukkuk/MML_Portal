@@ -11,6 +11,7 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import { fetchRecentEvents } from '@/api/events'
 import { fetchCameraLinkOptions } from '@/api/cameras'
 import { buildDefectLabelsByCode, resolveTagLabel } from '@/utils/defectLabels'
+import { groupByFamily } from '@/utils/nameFamilies'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import SourceStatus from '@/components/SourceStatus/SourceStatus.jsx'
 import styles from './EventPage.module.css'
@@ -157,10 +158,13 @@ export default function EventPage() {
       tag.events.push(row)
       loc.eventCount += 1
     }
-    return [...byLocation.values()].map((loc) => ({
-      ...loc,
-      tags: [...loc.tags.values()],
-    }))
+    return [...byLocation.values()].map((loc) => {
+      const tags = [...loc.tags.values()]
+      const byName = new Map(tags.map((tag) => [tag.tag_name, tag]))
+      const families = groupByFamily(tags.map((tag) => tag.tag_name))
+        .map((fam) => ({ key: fam.key, tags: fam.names.map((name) => byName.get(name)) }))
+      return { ...loc, tags, families }
+    })
   }, [events, filterStartDate, filterEndDate, filterLocation, filterTagName])
 
   const hasActiveFilters = !!(filterStartDate || filterEndDate || filterLocation || filterTagName)
@@ -171,6 +175,53 @@ export default function EventPage() {
 
   function toggleCard(key) {
     setExpanded((cur) => (cur === key ? null : key))
+  }
+
+  function renderTagCard(tag, loc) {
+    const key = tag.key
+    const isOpen = expanded === key
+    return (
+      <article
+        key={key}
+        className={`${styles['evt__tag']} ${!isOpen ? styles['evt__tag--collapsed'] : ''}`}
+      >
+        <header className={styles['evt__tag-head']} onClick={() => toggleCard(key)}>
+          <span className={styles['evt__tag-name']}>
+            {resolveTagLabel(tag.tag_name, loc.location, labelsByCode)}
+          </span>
+          <div className={styles['evt__tag-actions']}>
+            <span className={styles['evt__badge']}>{tag.events.length}</span>
+            <button
+              type="button"
+              className={styles['evt__minimize']}
+              aria-label={isOpen ? 'Minimize' : 'Expand'}
+              onClick={(e) => {
+                e.stopPropagation()
+                toggleCard(key)
+              }}
+            >
+              {isOpen ? '−' : '+'}
+            </button>
+          </div>
+        </header>
+        {isOpen && (
+          <ol className={styles['evt__timeline']}>
+            {tag.events.map((ev, i) => (
+              <li
+                key={`${ev.at_date_time}::${ev.event}::${i}`}
+                className={`${styles['evt__item']} ${i === 0 ? styles['evt__item--latest'] : ''}`}
+              >
+                <span className={styles['evt__node']} aria-hidden="true" />
+                <div className={styles['evt__body']}>
+                  <span className={styles['evt__text']}>{ev.event ?? '—'}</span>
+                  <time className={styles['evt__time']}>{fmtTime(ev.at_date_time)}</time>
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
+      </article>
+    )
   }
 
   function clearFilters() {
@@ -304,52 +355,16 @@ export default function EventPage() {
             </header>
 
             <div className={styles['evt__stack']}>
-              {loc.tags.map((tag) => {
-                const key = tag.key
-                const isOpen = expanded === key
-                return (
-                  <article
-                    key={key}
-                    className={`${styles['evt__tag']} ${!isOpen ? styles['evt__tag--collapsed'] : ''}`}
-                  >
-                    <header className={styles['evt__tag-head']} onClick={() => toggleCard(key)}>
-                      <span className={styles['evt__tag-name']}>
-                        {resolveTagLabel(tag.tag_name, loc.location, labelsByCode)}
-                      </span>
-                      <div className={styles['evt__tag-actions']}>
-                        <span className={styles['evt__badge']}>{tag.events.length}</span>
-                        <button
-                          type="button"
-                          className={styles['evt__minimize']}
-                          aria-label={isOpen ? 'Minimize' : 'Expand'}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            toggleCard(key)
-                          }}
-                        >
-                          {isOpen ? '−' : '+'}
-                        </button>
-                      </div>
-                    </header>
-                    {isOpen && (
-                      <ol className={styles['evt__timeline']}>
-                        {tag.events.map((ev, i) => (
-                          <li
-                            key={`${ev.at_date_time}::${ev.event}::${i}`}
-                            className={`${styles['evt__item']} ${i === 0 ? styles['evt__item--latest'] : ''}`}
-                          >
-                            <span className={styles['evt__node']} aria-hidden="true" />
-                            <div className={styles['evt__body']}>
-                              <span className={styles['evt__text']}>{ev.event ?? '—'}</span>
-                              <time className={styles['evt__time']}>{fmtTime(ev.at_date_time)}</time>
-                            </div>
-                          </li>
-                        ))}
-                      </ol>
-                    )}
-                  </article>
+              {loc.families.map((fam) => (
+                fam.key ? (
+                  <div key={fam.key} className={styles['evt__family']}>
+                    <div className={styles['evt__family-head']}>{fam.key}</div>
+                    {fam.tags.map((tag) => renderTagCard(tag, loc))}
+                  </div>
+                ) : (
+                  fam.tags.map((tag) => renderTagCard(tag, loc))
                 )
-              })}
+              ))}
             </div>
           </section>
         ))}

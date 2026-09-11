@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { badgeFor, filterGroups, groupColumns, pickableColumns } from './columnKinds.js'
+import { badgeFor, familyGroups, filterGroups, groupColumns, pickableColumns } from './columnKinds.js'
 
 /**
  * The picker's job is to answer "what kind of column is this" *before* it is
@@ -84,6 +84,28 @@ test('search is case-insensitive and drops groups it empties', () => {
 test('a blank query returns the groups untouched', () => {
   const groups = groupColumns(COLS, ['value_columns', 'bool_columns'])
   assert.equal(filterGroups(groups, '   '), groups)
+})
+
+test('familyGroups clusters numbered siblings under their camera base', () => {
+  const [numeric] = groupColumns(
+    { value_columns: ['CAM001-13', 'CAM001-13-count_1', 'CAM001-13-count_2', 'Pressure1'] },
+    ['value_columns'],
+  )
+  const groups = familyGroups(numeric.options)
+  assert.deepEqual(groups.map((g) => g.key), ['CAM001-13', ''])
+  assert.deepEqual(groups[0].options, [
+    { name: 'CAM001-13', badge: '' },
+    { name: 'CAM001-13-count_1', badge: '' },
+    { name: 'CAM001-13-count_2', badge: '' },
+  ])
+  assert.deepEqual(groups[1].options, [{ name: 'Pressure1', badge: '' }])
+})
+
+test('familyGroups returns a single ungrouped bucket when nothing detected', () => {
+  const [bools] = groupColumns({ bool_columns: ['enabled', 'running'] }, ['bool_columns'])
+  const groups = familyGroups(bools.options)
+  assert.deepEqual(groups.map((g) => g.key), [''])
+  assert.deepEqual(groups[0].options, bools.options)
 })
 
 test('search also matches a caller-supplied display label, not just the raw name', () => {
