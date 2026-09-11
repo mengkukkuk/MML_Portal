@@ -379,6 +379,13 @@
   box-shadow: 0 0 14px color-mix(in srgb, #f56c6c 30%, transparent);
 }
 
+/* Paper is a light background — the dark themes' pale-pink alert text
+   (#ffd7d7) is unreadable on it, so swap to the theme's own --crit red.
+   Dark themes keep the literal pale pink above, unchanged. */
+:global(html[data-theme='paper']) .panel__alert {
+  color: var(--crit);
+}
+
 .panel__chart {
   width: 100%;
   height: 220px;

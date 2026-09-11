@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react'
-import { createBrowserRouter } from 'react-router-dom'
+import { createBrowserRouter, Navigate } from 'react-router-dom'
 import RequireAuth from './RequireAuth.jsx'
 import AppShell from '../layouts/AppShell.jsx'
 
@@ -59,7 +59,12 @@ export const router = createBrowserRouter(
           handle: { requiresAuth: true },
           children: [
             {
+              // Landing page — bare '/' now lands on Monitor instead of A&P.
               index: true,
+              element: <Navigate to="monitor" replace />,
+            },
+            {
+              path: 'ap',
               element: page(APPage),
               handle: { title: 'A&P', icon: SpeedOutlined },
             },

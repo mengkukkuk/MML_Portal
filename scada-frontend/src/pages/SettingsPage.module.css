@@ -130,7 +130,7 @@
 /* ── Signature: theme faceplates ────────────────────────────────────── */
 .plates {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: var(--space-4);
 }
 .plate {
@@ -210,12 +210,6 @@
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--fg);
-}
-.plateHex {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--fg-dim);
 }
 .plateBlurb {
   font-size: 12px;

@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Line 1 — จอมอนิเตอร์สายการผลิต</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#EDEFF0; --card:#F7F8F8; --ink:#161D21; --ink-2:#5C686E; --ink-3:#8A9599;
+  --rule:#C6CDD0; --rule-2:#DDE2E3; --steel:#C9D0D2; --steel-dark:#8E9A9E; --blue:#2B5C8A;
+  --ok:#2E7D5B; --warn:#B8810F; --fault:#BE3B2B;
+  --ok-bg:#E2EEE8; --warn-bg:#F6EDD8; --fault-bg:#F6E2DF;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--paper);color:var(--ink);font-family:"IBM Plex Sans Thai","IBM Plex Sans",system-ui,sans-serif;font-size:15px;line-height:1.6;padding:18px}
+.mono{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
+.eyebrow{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+
+.bar{display:flex;align-items:center;gap:18px;flex-wrap:wrap;border-top:2px solid var(--ink);border-bottom:1px solid var(--rule);padding:12px 2px 14px}
+.bar h1{font-size:19px;font-weight:600;margin:0;letter-spacing:-.01em}
+.bar .sub{font-size:12px;color:var(--ink-2);margin-top:-2px}
+.spacer{flex:1}
+.clock{font-size:22px;font-weight:500;letter-spacing:.02em}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:2px;font-size:13px;font-weight:500;border:1px solid}
+.pill.sm{padding:2px 9px;font-size:11px;gap:6px}
+.pill.ok{background:var(--ok-bg);border-color:#A9CBBB;color:#1D5B41}
+.pill.warn{background:var(--warn-bg);border-color:#DEC38A;color:#7E590A}
+.pill.fault{background:var(--fault-bg);border-color:#E0AFA8;color:#8E2A1D}
+.dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:none}
+.pill.sm .dot{width:6px;height:6px}
+
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1px;background:var(--rule-2);margin:16px 0;border:1px solid var(--rule-2);border-radius:3px;overflow:hidden}
+.kpi{background:var(--card);padding:13px 16px}
+.kpi .v{font-family:"IBM Plex Mono",monospace;font-size:29px;font-weight:500;letter-spacing:-.02em;line-height:1.15;font-variant-numeric:tabular-nums}
+.kpi .l{font-size:12px;color:var(--ink-2)}
+.kpi .t{font-size:11px;color:var(--ink-3);font-family:"IBM Plex Mono",monospace;margin-top:3px}
+.kpi .v.warn{color:var(--warn)}
+
+.grid.solo{grid-template-columns:minmax(0,1fr)}
+.closebtn{font:inherit;font-size:11px;font-family:"IBM Plex Mono",monospace;background:none;border:1px solid var(--rule);border-radius:2px;padding:2px 9px;cursor:pointer;color:var(--ink-2)}
+.closebtn:hover{background:#E7EAEB;color:var(--ink)}
+.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(330px,1fr);gap:16px;align-items:start}
+.col{display:grid;gap:16px;min-width:0}
+.panel{background:var(--card);border:1px solid var(--rule-2);border-radius:3px}
+.panel-hd{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:11px 14px;border-bottom:1px solid var(--rule-2)}
+.panel-hd h2{font-size:14px;font-weight:600;margin:0}
+.panel-bd{padding:14px}
+
+#mimic{display:block;width:100%;height:auto}
+.legend{display:flex;gap:16px;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--rule-2);font-size:12px;color:var(--ink-2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:10px;height:10px;border-radius:50%;flex:none}
+.cammark{cursor:pointer}
+.cammark:focus{outline:none}
+.cammark:focus-visible .hit{stroke:var(--blue);stroke-width:2;stroke-dasharray:3 3}
+.cammark:hover .node{stroke:var(--ink);stroke-width:2.5}
+.flow{animation:march 1.4s linear infinite}
+@keyframes march{to{stroke-dashoffset:-40}}
+.beat{animation:beat 1.6s ease-out infinite}
+@keyframes beat{0%{r:15;opacity:.55}70%{r:28;opacity:0}100%{opacity:0}}
+@media (prefers-reduced-motion:reduce){.flow,.beat{animation:none}}
+
+.camhead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.camhead h3{margin:0;font-size:17px;font-weight:600}
+.camhead h3 i{font-style:normal;font-family:"IBM Plex Mono",monospace;color:var(--ink-3);margin-right:8px;font-size:15px}
+.note{font-size:13px;color:var(--ink-2);margin:0 0 14px}
+.big b{display:block;font-family:"IBM Plex Mono",monospace;font-size:44px;font-weight:500;line-height:1.05;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.big span{font-size:13px;color:var(--ink-2)}
+.rowset{border-top:1px solid var(--rule-2);margin-top:14px}
+.row{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--rule-2);font-size:13px}
+.row span:first-child{color:var(--ink-2)}
+.row span:last-child{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;font-weight:500}
+.causes{margin-top:16px}
+.causes-hd{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--ink-2);margin-bottom:8px}
+.causes-hd span:last-child{font-family:"IBM Plex Mono",monospace;font-weight:500;color:var(--ink);white-space:nowrap}
+button.cause{display:block;width:100%;text-align:left;background:none;border:0;font:inherit;cursor:pointer;padding:5px 6px;margin:0 -6px 3px;border-radius:2px}
+button.cause:hover{background:#E7EAEB}
+button.cause.on{background:#E1E9F1}
+button.cause.on .cause-t span:first-child{color:var(--blue);font-weight:600}
+.cause-t{display:flex;justify-content:space-between;gap:10px;font-size:13px;margin-bottom:3px}
+.cause-t span:last-child{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink-2);white-space:nowrap}
+.cause-t span:last-child b{font-weight:500;font-size:13px;color:var(--ink)}
+.track{display:block;height:4px;background:#E1E5E6;border-radius:2px;overflow:hidden}
+.track i{display:block;height:4px}
+#stripCount{font-family:"IBM Plex Mono",monospace;font-weight:500;color:var(--ink);margin-left:2px}
+.strip-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:16px 0 8px;font-size:12px;color:var(--ink-2)}
+.strip-nav{display:flex;gap:6px}
+.strip-nav button{font:inherit;font-size:15px;line-height:1;background:#fff;border:1px solid var(--rule);border-radius:2px;width:26px;height:26px;cursor:pointer;color:var(--ink)}
+.strip-nav button.clear{width:auto;padding:0 9px;font-size:11px;font-family:"IBM Plex Mono",monospace}
+.strip-nav button:hover{background:#E7EAEB}
+.strip{display:flex;gap:8px;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:6px;scrollbar-width:thin}
+.strip::-webkit-scrollbar{height:6px}
+.strip::-webkit-scrollbar-thumb{background:var(--rule);border-radius:3px}
+.shot{flex:0 0 calc((100% - 16px)/3);min-width:0;margin:0;scroll-snap-align:start}
+.shot .ph{display:flex;align-items:center;justify-content:center;aspect-ratio:4/3;background:var(--fault-bg);border:1px solid var(--fault);font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:600;color:var(--fault)}
+.shot figcaption{font-size:11px;overflow-wrap:anywhere;line-height:1.4;color:var(--ink-2);margin-top:5px}
+.shot figcaption em{display:block;font-style:normal;font-family:"IBM Plex Mono",monospace;color:var(--ink-3)}
+.switch{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:14px;font-size:12px;color:var(--ink-3)}
+.switch button{font:inherit;font-size:12px;background:#fff;border:1px solid var(--rule);border-radius:2px;padding:4px 10px;cursor:pointer;color:var(--ink)}
+.switch button:hover{background:#E7EAEB}
+.sim{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--rule-2);font-size:11px;color:var(--ink-3)}
+.sim button{font:inherit;font-size:11px;background:none;border:1px solid var(--rule-2);border-radius:2px;padding:3px 9px;cursor:pointer;color:var(--ink-2)}
+.sim button:hover{background:#EEF0F1;color:var(--ink)}
+
+.q{display:block;border-left:3px solid var(--rule);padding:8px 0 8px 11px;margin-bottom:10px}
+.q.fault{border-left-color:var(--fault)}
+.q.warn{border-left-color:var(--warn)}
+.q{padding-bottom:12px;margin-bottom:14px}
+.q-hd{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.q b{display:block;font-size:13px;font-weight:500}
+.q i{display:block;font-style:normal;font-size:12px;color:var(--ink-2);margin-bottom:8px}
+.q em{font-style:normal;font-family:"IBM Plex Mono",monospace;font-size:11px;white-space:nowrap}
+.q.fault em{color:var(--fault)}
+.q.warn em{color:var(--warn)}
+.fix-hd{display:block;font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin-top:2px}
+.guesses{display:block;margin-top:6px}
+.g{display:block;margin-bottom:7px}
+.g-t{display:flex;align-items:baseline;justify-content:space-between;gap:10px;font-size:12.5px;font-weight:500}
+.lv{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.1em;color:var(--ink-2);white-space:nowrap}
+.g-w{display:block;font-size:11.5px;line-height:1.5;color:var(--ink-2)}
+.disc{margin:0 0 12px;font-size:11.5px;line-height:1.5;color:var(--ink-3);border-left:2px solid var(--rule);padding-left:9px}
+.others{margin:10px 0 0;font-size:11.5px;color:var(--ink-3);border-top:1px dashed var(--rule);padding-top:9px}
+.empty{font-size:13px;color:var(--ink-2)}
+
+.readout{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:12px}
+.readout .h{font-family:"IBM Plex Mono",monospace;font-size:13px;font-weight:600;padding:2px 8px;background:#E4E8E9;border-radius:2px}
+.readout dl{display:flex;gap:14px;margin:0;flex-wrap:wrap}
+.readout div{display:flex;align-items:baseline;gap:6px}
+.readout dt{font-size:12px;color:var(--ink-2)}
+.readout dd{margin:0;font-family:"IBM Plex Mono",monospace;font-size:16px;font-weight:500;font-variant-numeric:tabular-nums}
+.readout dd.ng{color:var(--fault)}
+.chart{display:flex;align-items:flex-end;gap:4px;height:120px;border-bottom:1px solid var(--rule)}
+.bar-col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;cursor:pointer;background:none;border:0;padding:0;min-width:0}
+.bar-col .ng{background:var(--fault);min-height:0}
+.bar-col .good{background:var(--steel-dark)}
+.bar-col:hover .good{background:#77858A}
+.bar-col.on .good{background:var(--blue)}
+.bar-col.on .ng{background:var(--fault)}
+.bar-col.empty-h .good{background:#DFE3E4;height:2px}
+.xax{display:flex;gap:4px;margin-top:6px}
+.xax span{flex:1;text-align:center;font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-3);min-width:0}
+.xax span.on{color:var(--ink);font-weight:600}
+@media (max-width:900px){.grid{grid-template-columns:minmax(0,1fr)}body{padding:12px}.big b{font-size:38px}}
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <div>
+    <div class="eyebrow">line 01 · อาคาร a</div>
+    <h1>สายบรรจุและจัดพาเลท</h1>
+    <div class="sub">กะเช้า 08:00–17:00 · หัวหน้ากะ: สมชาย ป.</div>
+  </div>
+  <div class="spacer"></div>
+  <div style="text-align:right">
+    <div class="eyebrow">เวลาเดินเครื่อง</div>
+    <div class="clock mono" id="clock">10:14:22</div>
+  </div>
+  <div class="pill fault" id="linePill"><span class="dot"></span><span id="linePillText">1 กล้องหยุด</span></div>
+</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="l">ผลิตได้วันนี้</div><div class="v" id="kOut">3,645</div><div class="t">เป้ากะ 9,000</div></div>
+  <div class="kpi"><div class="l">ของเสียวันนี้</div><div class="v" id="kNgQty">55</div><div class="t">จากทั้งหมด <span id="kTotal">3,700</span> ชิ้น</div></div>
+  <div class="kpi"><div class="l">อัตราของเสีย</div><div class="v warn" id="kNg">1.51%</div><div class="t">เกณฑ์ ไม่เกิน 1.00%</div></div>
+</div>
+
+<div class="grid solo" id="grid">
+
+  <div class="col" id="colLeft">
+    <div class="panel">
+      <div class="panel-hd">
+        <h2>ผังไลน์ตามเวลาจริง</h2>
+        <span class="eyebrow">คลิกที่กล้องเพื่อเปิดรายละเอียด · คลิกซ้ำเพื่อปิด</span>
+      </div>
+      <svg id="mimic" viewBox="0 0 860 545" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="ผังสายการผลิตแสดงสถานะกล้องตรวจสอบ 5 ตัว ตู้ควบคุม และหุ่นจัดพาเลท">
+        <g stroke="#A8B2B5" fill="#DFE3E4">
+          <rect x="196" y="452" width="46" height="38"/><rect x="196" y="492" width="46" height="38"/>
+          <rect x="248" y="492" width="46" height="38"/><rect x="296" y="492" width="46" height="38"/>
+          <rect x="170" y="212" width="80" height="56" fill="#E8DCCB"/>
+          <rect x="262" y="256" width="84" height="44" fill="#DCE3EA"/>
+          <rect x="350" y="366" width="58" height="70" fill="#EFE9CD"/>
+          <rect x="356" y="258" width="32" height="28" fill="#EFE9CD"/>
+        </g>
+        <g fill="none" stroke="#8E7A6B" stroke-width="2.5">
+          <rect x="716" y="28" width="112" height="118"/>
+          <path d="M716 60 h112 M716 96 h112"/>
+        </g>
+        <g fill="none" stroke="var(--steel)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M196 508 H372 V296 H252 V196 H258 V116 H352 V68 H716"/>
+        </g>
+        <g fill="none" stroke="var(--steel-dark)" stroke-width="11" stroke-linecap="butt" stroke-dasharray="7 33" class="flow">
+          <path d="M196 508 H372 V296 H252 V196 H258 V116 H352 V68 H716"/>
+        </g>
+        <g font-family="IBM Plex Mono, monospace" font-size="11" fill="#6C777C">
+          <text x="396" y="277">CTRL-01 ตู้ควบคุม</text>
+          <text x="716" y="163">PLT-01 หุ่นจัดพาเลท</text>
+          <text x="248" y="248">M-02 เครื่องแรปฟิล์มใส ซองเดี่ยว</text>
+          <text x="416" y="404">M-01 เครื่องบรรจุซองและติดแสตมป์</text>
+          <text x="246" y="205" text-anchor="end">M-03 เครื่องแรปฟิล์มใสคาร์ตัน</text>
+        </g>
+        <g stroke="#9AA4A8" stroke-width="1" fill="none">
+          <path d="M300 486 L250 444 L182 444"/>
+          <path d="M394 320 L470 288 L540 288"/>
+          <path d="M241 143 L241 84 L336 84"/>
+        </g>
+        <g id="stationLabels"></g>
+        <g id="cameras"></g>
+      </svg>
+      <div class="legend">
+        <span><i class="sw" style="background:var(--ok)"></i>ปกติ</span>
+        <span><i class="sw" style="background:var(--warn)"></i>เฝ้าระวัง</span>
+        <span><i class="sw" style="background:var(--fault)"></i>หยุด / ต้องเข้าแก้</span>
+        <span><i class="sw" style="background:var(--steel-dark)"></i>ลำเลียงกำลังเดิน</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-hd"><h2>ผลผลิตรายชั่วโมง</h2><span class="eyebrow">แตะที่แท่งเพื่อดูตัวเลข</span></div>
+      <div class="panel-bd">
+        <div class="readout">
+          <span class="h" id="rHour">13:00</span>
+          <dl>
+            <div><dt>ผลิต</dt><dd id="rGood">180</dd></div>
+            <div><dt>เสีย</dt><dd class="ng" id="rNg">6</dd></div>
+            <div><dt>อัตราเสีย</dt><dd id="rPct">3.23%</dd></div>
+          </dl>
+        </div>
+        <div class="chart" id="chart"></div>
+        <div class="xax" id="xax"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col" id="colRight">
+    <div class="panel" id="panelCam">
+      <div class="panel-hd"><h2>กล้องที่เลือก</h2>
+        <span style="display:flex;align-items:center;gap:10px">
+          <span class="eyebrow mono" id="camSt">st-02</span>
+          <button class="closebtn" id="camClose" aria-label="ปิดรายละเอียด">ปิด</button>
+        </span>
+      </div>
+      <div class="panel-bd" id="camBody"></div>
+      <div class="sim" id="camSim"></div>
+    </div>
+
+    <div class="panel" id="panelQueue">
+      <div class="panel-hd"><h2>สิ่งที่ต้องจัดการ</h2><span class="eyebrow mono" id="qCount">—</span></div>
+      <div class="panel-bd"><p class="disc">แสดงเฉพาะรายการของกล้องที่เลือก สาเหตุที่แสดงเป็นการคาดการณ์จากรูปแบบข้อมูล ต้องยืนยันที่หน้าเครื่องก่อนลงมือแก้</p><div id="queue"></div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const ST={
+  st1:{code:"ST-01",label:"จุดตรวจ 1",name:"ตรวจมวนบุหรี่",x:300,y:508,lx:176,ly:440,anchor:"end",last:"07:58 น."},
+  st2:{code:"ST-02",label:"จุดตรวจ 2",name:"ตรวจ Date Code และฟอยล์/แสตมป์",x:372,y:332,lx:540,ly:282,anchor:"start",last:"09:12 น."},
+  st3:{code:"ST-03",label:"จุดตรวจ 3",name:"ตรวจความสมบูรณ์ของการแรปคาร์ตัน",x:258,y:158,lx:340,ly:54,anchor:"end",last:"10:06 น."}
+};
+const CAM={
+  cam01:{code:"CAM-01",st:"st1",name:"ตรวจมวนบุหรี่",status:"ok",total:1861,ng:9,cycle:2.1,
+    note:"ตรวจมวนได้ครบทุกมวนในรอบชั่วโมงล่าสุด",
+    causes:[["ปลายมวนหลวม",5],["ตะเข็บกระดาษไม่ตรงแนว",3],["ความยาวมวนเกินพิกัด",1]],
+    guess:[["ลูกกลิ้งอัดยาสูบตั้งค่าหลวมเกินไป",3,"ปลายมวนหลวมเป็นสาเหตุอันดับ 1 และเกิดกับมวนฝั่งเดียวกัน"],
+      ["กาวติดตะเข็บจ่ายไม่สม่ำเสมอ",2,"มีตะเข็บไม่ตรงแนวปนมาเป็นช่วง ไม่ต่อเนื่อง"],
+      ["ใบมีดตัดมวนเริ่มสึก",1,"ความยาวเกินพิกัดยังพบน้อยมาก ยังไม่ใช่อาการหลัก"]]},
+  cam02:{code:"CAM-02",st:"st2",name:"ตรวจ Date Code",status:"ok",total:1857,ng:12,cycle:2.2,
+    note:"อ่าน Date Code ได้ครบทุกซอง ไม่มีการอ่านซ้ำ",
+    causes:[["ตัวอักษรเบลออ่านไม่ออก",7],["พิมพ์ไม่ครบตัวอักษร",3],["ไม่มี Date Code",2]],
+    guess:[["หัวพิมพ์อิงค์เจ็ตเริ่มตัน",3,"ตัวอักษรเบลอเป็นสาเหตุอันดับ 1 และเบลอตำแหน่งเดิมทุกซอง"],
+      ["ระยะห่างหัวพิมพ์กับซองคลาดเคลื่อน",2,"มีเคสพิมพ์ไม่ครบตัวอักษรปนมาเป็นช่วง"],
+      ["เซ็นเซอร์จับซองสั่งพิมพ์ไม่ทัน",1,"เคสไม่มี Date Code ยังพบน้อย"]]},
+  cam03:{code:"CAM-03",st:"st2",name:"ตรวจฟอยล์และแสตมป์",status:"warn",total:1855,ng:24,cycle:2.3,
+    note:"แสตมป์ติดเบี้ยวถี่ขึ้นต่อเนื่อง 40 นาที ใกล้ขอบพิกัดที่ยอมรับได้",
+    causes:[["แสตมป์ติดเบี้ยว",15],["ฟอยล์ฉีกขาด",6],["แสตมป์ซ้อนกัน",3]],
+    guess:[["ตัวป้อนแสตมป์เลื่อนออกจากแนว",3,"แสตมป์เบี้ยวไปทางเดียวกันทุกซอง ไม่ได้สุ่มทิศ"],
+      ["กาวติดแสตมป์จ่ายไม่สม่ำเสมอ",2,"มีเคสแสตมป์ซ้อนกันแทรกมาเป็นระยะ"],
+      ["ล็อตฟอยล์บางกว่าปกติ",1,"ฟอยล์ฉีกขาดเริ่มพบหลังเปลี่ยนล็อตเมื่อ 09:20"]]},
+  cam04:{code:"CAM-04",st:"st3",name:"ตรวจฟิล์มหุ้มและมุมกล่อง",status:"ok",total:1849,ng:4,cycle:1.9,
+    note:"ฟิล์มคลุมครบทุกด้าน ไม่พบรอยย่นเกินพิกัด",
+    causes:[["ฟิล์มย่นเป็นรอย",2],["ฟิล์มไม่คลุมมุมกล่อง",1],["ฟิล์มขาด",1]],
+    guess:[["ความตึงของม้วนฟิล์มไม่คงที่",3,"ฟิล์มย่นเป็นรอยเป็นสาเหตุอันดับ 1 และย่นด้านเดียวกัน"],
+      ["ชุดพับมุมตั้งระยะไม่ตรงกับขนาดคาร์ตัน",2,"มีเคสฟิล์มไม่คลุมมุมกล่องปนมา"],
+      ["ม้วนฟิล์มใกล้หมดทำให้แรงดึงเปลี่ยน",1,"ฟิล์มขาดยังพบน้อยมาก"]]},
+  cam05:{code:"CAM-05",st:"st3",name:"ตรวจรอยซีลฟิล์ม",status:"fault",total:1842,ng:31,cycle:2.4,
+    note:"รอยซีลไม่ติดสนิท 3 ครั้งติดกัน ระบบหยุดรอการตรวจสอบ",
+    causes:[["รอยซีลไม่ติดสนิท",18],["ฟิล์มย่นบริเวณรอยซีล",9],["ซีลไหม้จนทะลุ",4]],
+    guess:[["อุณหภูมิแท่งซีลต่ำกว่าค่าที่ตั้งไว้",3,"รอยซีลไม่ติดสนิท 18 จาก 31 เคส และเกิดที่ตำแหน่งเดิมทุกกล่อง"],
+      ["แรงกดของแท่งซีลตก",2,"มีฟิล์มย่นบริเวณรอยซีล 9 ครั้งในวันเดียว สูงกว่าปกติ"],
+      ["สายพานเดินเร็วกว่าจังหวะซีล",1,"เกิดถี่ขึ้นเฉพาะชั่วโมงที่ผลิตสูงสุด"]]}
+};
+const COLOR={ok:"var(--ok)",warn:"var(--warn)",fault:"var(--fault)"};
+const WORD={ok:"ปกติ",warn:"เฝ้าระวัง",fault:"หยุด"};
+const RANK={ok:0,warn:1,fault:2};
+let sel=null;
+let camFilter=null;
+
+const camsOf=sid=>Object.keys(CAM).filter(c=>CAM[c].st===sid);
+
+function pos(cid){
+  const c=CAM[cid], s=ST[c.st], list=camsOf(c.st);
+  const i=list.indexOf(cid);
+  return {x:s.x+(i-(list.length-1)/2)*34, y:s.y};
+}
+
+function drawMap(){
+  document.getElementById("stationLabels").innerHTML=Object.entries(ST).map(([sid,s])=>{
+    const list=camsOf(sid);
+    return `<text x="${s.lx}" y="${s.ly}" text-anchor="${s.anchor}" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" fill="#161D21">${s.code} ${s.label}</text>
+      <text x="${s.lx}" y="${s.ly+15}" text-anchor="${s.anchor}" font-family="IBM Plex Sans Thai, sans-serif" font-size="12" fill="#5C686E">${s.name} · ${list.length} กล้อง</text>`;
+  }).join("");
+
+  document.getElementById("cameras").innerHTML=Object.keys(CAM).map(cid=>{
+    const c=CAM[cid], p=pos(cid), col=COLOR[c.status];
+    const ring=c.status==="fault"?`<circle class="beat" cx="${p.x}" cy="${p.y}" r="15" fill="none" stroke="${col}" stroke-width="2"/>`:"";
+    const sr=cid===sel?`<circle cx="${p.x}" cy="${p.y}" r="21" fill="none" stroke="var(--blue)" stroke-width="1.5" stroke-dasharray="4 3"/>`:"";
+    return `<g class="cammark" data-id="${cid}" tabindex="0" role="button" aria-label="${c.code} ${c.name} สถานะ${WORD[c.status]}">
+      <circle class="hit" cx="${p.x}" cy="${p.y}" r="23" fill="transparent"/>
+      ${ring}${sr}
+      <circle class="node" cx="${p.x}" cy="${p.y}" r="14" fill="${col}" stroke="#F7F8F8" stroke-width="2"/>
+      <text x="${p.x}" y="${p.y+4}" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" fill="#fff">${c.code.slice(4)}</text>
+    </g>`;
+  }).join("");
+
+  document.querySelectorAll(".cammark").forEach(el=>{
+    el.addEventListener("click",()=>select(el.dataset.id));
+    el.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();select(el.dataset.id)}});
+  });
+}
+
+function buildEvents(){
+  Object.entries(CAM).forEach(([id,c])=>{
+    let seed=id.charCodeAt(4)*137+29;
+    const rnd=()=>{seed=(seed*9301+49297)%233280;return seed/233280;};
+    const pool=[];
+    c.causes.forEach(([name,n])=>{for(let i=0;i<n;i++)pool.push(name);});
+    for(let i=pool.length-1;i>0;i--){const j=Math.floor(rnd()*(i+1));[pool[i],pool[j]]=[pool[j],pool[i]];}
+    let t=10*60+8;
+    c.events=pool.slice(0,24).map(name=>{
+      t-=Math.floor(rnd()*11)+3;
+      const hh=String(Math.floor(t/60)).padStart(2,"0"), mm=String(t%60).padStart(2,"0");
+      return {cause:name,time:hh+":"+mm};
+    });
+  });
+}
+
+function causeRows(c){
+  const list=[...c.causes].sort((a,b)=>b[1]-a[1]);
+  const top=list.length?list[0][1]:0;
+  return list.map(([name,n],i)=>`
+    <button class="cause${camFilter===name?" on":""}" data-cause="${name}">
+      <span class="cause-t"><span>${name}</span><span><b>${n}</b> ครั้ง · ${c.ng?Math.round(n/c.ng*100):0}%</span></span>
+      <span class="track"><i style="width:${top?n/top*100:0}%;background:${i===0?COLOR[c.status]:"var(--steel-dark)"}"></i></span>
+    </button>`).join("");
+}
+
+function shotStrip(c){
+  const list=(c.events||[]).filter(e=>!camFilter||e.cause===camFilter).slice(0,10);
+  if(!list.length)return `<p class="empty">ยังไม่มีภาพ NG ของสาเหตุนี้</p>`;
+  return list.map(e=>`
+    <figure class="shot">
+      <span class="ph">NG</span>
+      <figcaption>${e.cause}<em>${e.time} น.</em></figcaption>
+    </figure>`).join("");
+}
+
+function drawCam(){
+  if(!sel)return;
+  const c=CAM[sel], s=ST[c.st], sib=camsOf(c.st).filter(x=>x!==sel);
+  camSt.textContent=s.code.toLowerCase()+" · "+s.label;
+  camBody.innerHTML=`
+    <div class="camhead">
+      <h3><i>${c.code}</i>${c.name}</h3>
+      <span class="pill ${c.status}"><span class="dot"></span>${WORD[c.status]}</span>
+    </div>
+    <p class="note">${c.note}</p>
+    <div class="big">
+      <b style="color:${c.status==="ok"?"var(--ink)":COLOR[c.status]}">${(c.ng/c.total*100).toFixed(2)}%</b>
+      <span>ไม่ผ่าน ${c.ng} จาก ${c.total.toLocaleString()} ชิ้น</span>
+    </div>
+    <div class="rowset">
+      <div class="row"><span>จุดติดตั้ง</span><span>${s.label} · ${s.name}</span></div>
+    </div>
+    <div class="causes">
+      <div class="causes-hd"><span>สาเหตุที่ไม่ผ่าน วันนี้ · แตะเพื่อกรองภาพ</span><span>${c.ng} ครั้ง</span></div>
+      ${causeRows(c)}
+    </div>
+    <div class="strip-hd">
+      <span>${camFilter?"ภาพ NG · "+camFilter:"ภาพ NG ล่าสุด"} <b id="stripCount"></b></span>
+      <span class="strip-nav">
+        ${camFilter?`<button class="clear" data-clear="1">แสดงทุกสาเหตุ</button>`:""}
+        <button data-d="-1" aria-label="เลื่อนไปทางซ้าย">&lsaquo;</button>
+        <button data-d="1" aria-label="เลื่อนไปทางขวา">&rsaquo;</button>
+      </span>
+    </div>
+    <div class="strip" id="strip">${shotStrip(c)}</div>
+    ${sib.length?`<div class="switch"><span>กล้องอื่นที่จุดนี้:</span>${sib.map(x=>`<button data-id="${x}">${CAM[x].code} ${CAM[x].name}</button>`).join("")}</div>`:""}`;
+
+  camBody.querySelectorAll(".cause").forEach(b=>b.addEventListener("click",()=>{
+    camFilter=camFilter===b.dataset.cause?null:b.dataset.cause;drawCam();
+  }));
+  const strip=document.getElementById("strip");
+  const shown=(c.events||[]).filter(e=>!camFilter||e.cause===camFilter).slice(0,10).length;
+  const count=()=>{
+    if(!strip||!shown)return;
+    const w=strip.scrollWidth/shown;
+    const first=Math.round(strip.scrollLeft/w)+1;
+    stripCount.textContent=shown<=3?`${shown} ภาพ`:`${first}–${Math.min(first+2,shown)} จาก ${shown}`;
+  };
+  if(strip){strip.addEventListener("scroll",count);count();}
+  camBody.querySelectorAll(".strip-nav button").forEach(b=>b.addEventListener("click",()=>{
+    if(b.dataset.clear){camFilter=null;drawCam();return;}
+    strip.scrollBy({left:+b.dataset.d*(strip.clientWidth+8),behavior:"smooth"});
+  }));
+  camBody.querySelectorAll(".switch button").forEach(b=>b.addEventListener("click",()=>select(b.dataset.id)));
+
+  camSim.innerHTML=`<span>จำลองสถานะ:</span>
+    <button data-set="ok">ปกติ</button><button data-set="warn">เฝ้าระวัง</button><button data-set="fault">หยุด</button>`;
+  camSim.querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{
+    const cam=CAM[sel];
+    cam.status=b.dataset.set;
+    if(b.dataset.set==="ok")cam.note="ทำงานปกติ ค่าทั้งหมดอยู่ในพิกัด";
+    render();
+  }));
+}
+
+function drawQueue(){
+  const all=Object.entries(CAM).filter(([,c])=>c.status!=="ok")
+    .sort((a,b)=>RANK[b[1].status]-RANK[a[1].status]);
+  const items=all.filter(([cid])=>cid===sel);
+  const others=all.length-items.length;
+
+  qCount.textContent=items.length+" รายการ";
+  queue.innerHTML=items.length?items.map(([cid,c])=>`
+    <div class="q ${c.status}">
+      <span class="q-hd">
+        <b>${c.code} ${c.name}</b>
+        <em>${c.status==="fault"?"เข้าแก้ทันที":"เฝ้าดูอีก 30 นาที"}</em>
+      </span>
+      <i>${c.note}</i>
+      <span class="fix-hd">คาดการณ์สาเหตุเบื้องต้น</span>
+      <span class="guesses">${c.guess.map(([g,lv,why])=>`
+        <span class="g">
+          <span class="g-t"><span>${g}</span><span class="lv" title="โอกาสเป็นไปได้">${"●".repeat(lv)+"○".repeat(3-lv)}</span></span>
+          <span class="g-w">${why}</span>
+        </span>`).join("")}</span>
+    </div>`).join(""):`<p class="empty">กล้องนี้ทำงานปกติ ไม่มีรายการค้าง</p>`;
+  if(others)queue.innerHTML+=`<p class="others">อีก ${others} กล้องมีรายการค้าง กดที่จุดนั้นบนผังเพื่อดู</p>`;
+
+  const nf=all.filter(i=>i[1].status==="fault").length;
+  const worst=nf?"fault":all.length?"warn":"ok";
+  linePill.className="pill "+worst;
+  linePillText.textContent={fault:nf+" กล้องหยุด · ต้องเข้าแก้",warn:"เฝ้าระวัง "+all.length+" กล้อง",ok:"ไลน์เดินปกติทุกกล้อง"}[worst];
+}
+
+/* ── ผลผลิตรายชั่วโมง ── */
+const HOURS=[
+  {h:"08:00",good:620,ng:7},{h:"09:00",good:705,ng:9},{h:"10:00",good:688,ng:11},
+  {h:"11:00",good:742,ng:8},{h:"12:00",good:710,ng:14},{h:"13:00",good:180,ng:6},
+  {h:"14:00",good:0,ng:0},{h:"15:00",good:0,ng:0},{h:"16:00",good:0,ng:0},{h:"17:00",good:0,ng:0}
+];
+let selHour=5;
+
+function drawChart(){
+  const max=Math.max(...HOURS.map(d=>d.good+d.ng),100);
+  chart.innerHTML=HOURS.map((d,i)=>{
+    const done=d.good+d.ng>0;
+    return `<button class="bar-col${i===selHour?" on":""}${done?"":" empty-h"}" data-i="${i}"
+      aria-label="${d.h} ผลิต ${d.good} เสีย ${d.ng}">
+      <div class="ng" style="height:${d.ng/max*120}px"></div>
+      <div class="good" style="height:${done?d.good/max*120:2}px"></div>
+    </button>`;
+  }).join("");
+  xax.innerHTML=HOURS.map((d,i)=>`<span class="${i===selHour?"on":""}">${d.h.slice(0,2)}</span>`).join("");
+  chart.querySelectorAll(".bar-col").forEach(b=>{
+    const i=+b.dataset.i;
+    b.addEventListener("click",()=>{selHour=i;drawChart();});
+    b.addEventListener("mouseenter",()=>readout(i));
+    b.addEventListener("mouseleave",()=>readout(selHour));
+  });
+  readout(selHour);
+}
+function readout(i){
+  const d=HOURS[i], t=d.good+d.ng;
+  rHour.textContent=d.h;
+  rGood.textContent=t?d.good.toLocaleString():"—";
+  rNg.textContent=t?d.ng:"—";
+  rPct.textContent=t?(d.ng/t*100).toFixed(2)+"%":"—";
+}
+function drawKpis(){
+  const good=HOURS.reduce((a,d)=>a+d.good,0), ng=HOURS.reduce((a,d)=>a+d.ng,0);
+  kOut.textContent=good.toLocaleString();
+  kNgQty.textContent=ng;
+  kTotal.textContent=(good+ng).toLocaleString();
+  kNg.textContent=(ng/(good+ng)*100).toFixed(2)+"%";
+}
+
+function render(){drawMap();layout();if(sel)drawCam();drawQueue();}
+function select(id){sel=(sel===id)?null:id;camFilter=null;render();}
+
+function layout(){
+  const on=!!sel;
+  grid.classList.toggle("solo",!on);
+  colRight.style.display=on?"":"none";
+}
+
+function tick(){
+  const d=new Date();
+  clock.textContent=[d.getHours(),d.getMinutes(),d.getSeconds()].map(n=>String(n).padStart(2,"0")).join(":");
+}
+setInterval(tick,1000);tick();
+setInterval(()=>{
+  const cur=HOURS[5];
+  cur.good+=Math.round(Math.random()*4);
+  if(Math.random()>.75)cur.ng+=1;
+  Object.values(CAM).forEach(c=>{if(c.status!=="fault")c.total+=Math.round(Math.random()*3)});
+  drawKpis();drawChart();if(sel)drawCam();
+},4000);
+
+buildEvents();camClose.addEventListener("click",()=>select(sel));render();drawChart();drawKpis();
+</script>
+</body>
+</html>

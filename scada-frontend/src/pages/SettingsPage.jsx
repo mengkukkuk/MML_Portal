@@ -366,7 +366,6 @@ export default function SettingsPage() {
                   <span className={styles.plateFoot}>
                     <span className={ledClass(theme === t.id ? 'ok' : '')} />
                     <span className={styles.plateName}>{t.name}</span>
-                    <span className={styles.plateHex}>{t.preview.accent}</span>
                   </span>
                   <span className={styles.plateBlurb}>{t.blurb}</span>
                 </button>

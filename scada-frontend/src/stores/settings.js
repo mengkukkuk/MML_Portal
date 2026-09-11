@@ -25,19 +25,29 @@ export const THEMES = [
     id: 'cobalt',
     name: 'Cobalt',
     blurb: 'Deep navy control room',
+    mode: 'dark',
     preview: { bg: '#0a111f', panel: '#16213a', accent: '#3aa0ff', fg: '#e6edf7' },
   },
   {
     id: 'graphite',
     name: 'Graphite',
     blurb: 'Gunmetal + safety amber',
+    mode: 'dark',
     preview: { bg: '#15161b', panel: '#262932', accent: '#f5a524', fg: '#edeef2' },
   },
   {
     id: 'carbon',
     name: 'Carbon',
     blurb: 'Carbon black + teal HMI',
+    mode: 'dark',
     preview: { bg: '#090d0e', panel: '#17211f', accent: '#2dd4bf', fg: '#e4f0ec' },
+  },
+  {
+    id: 'paper',
+    name: 'Paper',
+    blurb: 'Warm paper + steel blue',
+    mode: 'light',
+    preview: { bg: '#edeff0', panel: '#f7f8f8', accent: '#2b5c8a', fg: '#161d21' },
   },
 ]
 

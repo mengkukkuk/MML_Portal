@@ -48,7 +48,9 @@
  * Color themes — selected via `data-theme` on <html> by the settings store.
  * `cobalt` mirrors the :root defaults above (kept here so the page can show
  * it as an explicit choice). Each block only overrides palette tokens; all
- * spacing/radius/typography is shared.
+ * spacing/radius/typography is shared. `ok`/`warn`/`crit` are shared too
+ * (defined once above) except where a theme's own background needs a
+ * different value to stay legible — see `paper` below.
  * ------------------------------------------------------------------------- */
 :root[data-theme='cobalt'] {
   --bg-app: #0a111f;
@@ -90,6 +92,28 @@
   --accent: #2dd4bf;
   --accent-soft: rgba(45, 212, 191, 0.14);
   --info: #2dd4bf;
+}
+
+/* The one light faceplate: a printed control-room binder rather than an HMI
+ * glowing in a dark room. Its ok/warn/crit are dialled down from the base
+ * :root's saturated defaults — full-brightness green/amber/red read as neon
+ * against paper the way they never do against navy — the same adjustment
+ * styles/print.css already makes for the print stylesheet. */
+:root[data-theme='paper'] {
+  --bg-app: #edeff0;
+  --bg-panel: #f7f8f8;
+  --bg-elev: #ffffff;
+  --border-soft: #dde2e3;
+  --border: #c6cdd0;
+  --fg: #161d21;
+  --fg-muted: #5c686e;
+  --fg-dim: #8a9599;
+  --accent: #2b5c8a;
+  --accent-soft: rgba(43, 92, 138, 0.12);
+  --info: #2b5c8a;
+  --ok: #2e7d5b;
+  --warn: #b8810f;
+  --crit: #be3b2b;
 }
 
 /* Re-skin the app smoothly when the operator swaps faceplates. */
