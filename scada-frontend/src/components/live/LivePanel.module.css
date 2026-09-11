@@ -102,13 +102,6 @@
   background: var(--border-soft);
 }
 
-.panel__conn {
-  font-size: 12px;
-  color: var(--fg-muted);
-  overflow-wrap: anywhere;
-  word-break: normal;
-}
-
 .panel__title {
   margin: 0;
   font-size: 15px;

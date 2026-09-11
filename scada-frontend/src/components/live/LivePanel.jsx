@@ -74,7 +74,7 @@ export default function LivePanel({
 
   const {
     vizType, opts, isTag, isTable,
-    tableValueCols, effectiveFilters, tableHasFilter, showFilterChanger,
+    effectiveFilters, showFilterChanger,
     seriesSpecs, seriesTags, mathFn, isGeneric, showHeaderValue, unitFor,
   } = usePanelSeries(panel, { filterOverride })
 
@@ -286,25 +286,13 @@ export default function LivePanel({
         </div>
       </header>
 
-      <span className={styles.panel__conn}>
-        {isTable && (
-          <>
-            {panel.table_name}
-            {tableHasFilter && ` · ${effectiveFilters.join(', ')}`}
-            {` · ${tableValueCols.join(', ')}`}
-          </>
-        )}
-        {!isTable && isTag && `tag · ${seriesTags.join(', ')} · ${panel.metric}`}
-        {!isTable && !isTag && `${deviceName || `device #${panel.device_id}`} · ${panel.metric}`}
-      </span>
-
       <div className={styles.panel__meta}>
         {showHeaderValue && (
           isMulti ? (
             seriesList.map((s, i) => (
               <span key={s.key} className={styles.panel__chip}>
                 <span className={styles.panel__chipdot} style={{ background: colorAt(i) }} />
-                {s.label}: {s.latest ? fmtValue(s.latest.value, opts.decimals, s.labels) : '—'}{s.unit ? ` ${s.unit}` : ''}
+                {s.latest ? fmtValue(s.latest.value, opts.decimals, s.labels) : '—'}{s.unit ? ` ${s.unit}` : ''}
               </span>
             ))
           ) : (

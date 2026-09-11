@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Button from '@mui/material/Button'
 import FormControl from '@mui/material/FormControl'
@@ -6,6 +6,9 @@ import Select from '@mui/material/Select'
 import MenuItem from '@mui/material/MenuItem'
 import CircularProgress from '@mui/material/CircularProgress'
 import RefreshIcon from '@mui/icons-material/Refresh'
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider'
+import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
+import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import { fetchRecentAlarms, fetchActiveAlarms, acknowledgeAlarm } from '@/api/alarms'
 import { fetchCameraLinkOptions } from '@/api/cameras'
 import { buildDefectLabelsByCode, resolveTagLabel } from '@/utils/defectLabels'
@@ -32,6 +35,11 @@ import styles from './AlarmsPage.module.css'
  * Acknowledge is a useMutation; per-row pending state is derived by
  * comparing the mutation's `variables` (the alarm id) against each row,
  * rather than a separate loading array/Set.
+ *
+ * Date / line / tag filters mirror EventPage exactly — client-side, since
+ * neither /alarms/recent nor /alarms/active takes filter params — and apply
+ * to both the live "Active Alarms" grid and the historical stack below it,
+ * each filtered from its own query's rows independently.
  */
 
 const POLL_MS = 30_000
@@ -53,6 +61,12 @@ export default function AlarmsPage() {
   const queryClient = useQueryClient()
   const [perCard, setPerCard] = useState(10)
   const [expanded, setExpanded] = useState(null) // key of currently open card, null = all collapsed
+
+  // Filters — same shape as EventPage's
+  const [filterStartDate, setFilterStartDate] = useState(null) // dayjs | null
+  const [filterEndDate, setFilterEndDate] = useState(null) // dayjs | null
+  const [filterLocation, setFilterLocation] = useState('')
+  const [filterTagName, setFilterTagName] = useState('')
 
   // In the key rather than only invalidated on change: rows are merged from the
   // selected plants, so a new selection is a different result set.
@@ -102,7 +116,57 @@ export default function AlarmsPage() {
     ? recentQuery.error?.response?.data?.detail || recentQuery.error?.message || String(recentQuery.error)
     : ''
 
-  const hasActive = activeAlarms.length > 0
+  // Same four filters power both the live snapshot and the historical stack
+  // below, so picking a Line/Tag/Date narrows what "currently in alarm" means,
+  // not just what "recently happened" means.
+  const filterRows = useCallback((rows) => {
+    let out = rows
+    if (filterStartDate) {
+      const start = filterStartDate.toDate()
+      start.setHours(0, 0, 0, 0)
+      out = out.filter((r) => new Date(r.at_date_time) >= start)
+    }
+    if (filterEndDate) {
+      const end = filterEndDate.toDate()
+      end.setHours(23, 59, 59, 999)
+      out = out.filter((r) => new Date(r.at_date_time) <= end)
+    }
+    if (filterLocation) {
+      out = out.filter((r) => (r.location ?? UNKNOWN) === filterLocation)
+    }
+    if (filterTagName) {
+      out = out.filter((r) => (r.tag_name ?? UNKNOWN) === filterTagName)
+    }
+    return out
+  }, [filterStartDate, filterEndDate, filterLocation, filterTagName])
+
+  const filteredActiveAlarms = useMemo(
+    () => filterRows(activeAlarms),
+    [filterRows, activeAlarms],
+  )
+  const hasActive = filteredActiveAlarms.length > 0
+
+  // Distinct location values for the Line filter dropdown
+  const locationOptions = useMemo(() => {
+    const set = new Set(alarms.map((a) => a.location ?? UNKNOWN))
+    return [...set].sort()
+  }, [alarms])
+
+  // Distinct tag_name values — scoped to the selected location when set
+  const tagOptions = useMemo(() => {
+    const rows = filterLocation
+      ? alarms.filter((a) => (a.location ?? UNKNOWN) === filterLocation)
+      : alarms
+    const set = new Set(rows.map((a) => a.tag_name ?? UNKNOWN))
+    return [...set].sort()
+  }, [alarms, filterLocation])
+
+  // When location changes, reset tag filter if it no longer applies
+  useEffect(() => {
+    if (filterTagName && !tagOptions.includes(filterTagName)) {
+      setFilterTagName('')
+    }
+  }, [filterLocation, tagOptions, filterTagName])
 
   // Keyed by source *and* location. Two plants routinely both call a line
   // "Line 1" and they are different physical lines; folding them into one band
@@ -110,8 +174,10 @@ export default function AlarmsPage() {
   // rather than the previous adjacency scan because the merged list is ordered
   // by location first, so one source's rows are not contiguous.
   const grouped = useMemo(() => {
+    const rows = filterRows(alarms)
+
     const byLocation = new Map()
-    for (const row of alarms) {
+    for (const row of rows) {
       const location = row.location ?? UNKNOWN
       const tagName = row.tag_name ?? UNKNOWN
       const locKey = `${row.datasource_id ?? ''}::${location}`
@@ -149,8 +215,9 @@ export default function AlarmsPage() {
       ...loc,
       tags: [...loc.tags.values()],
     }))
-  }, [alarms])
+  }, [alarms, filterRows])
 
+  const hasActiveFilters = !!(filterStartDate || filterEndDate || filterLocation || filterTagName)
   const isEmpty = !loading && !error && grouped.length === 0
   const updatedLabel = recentQuery.dataUpdatedAt
     ? new Date(recentQuery.dataUpdatedAt).toLocaleTimeString()
@@ -163,6 +230,13 @@ export default function AlarmsPage() {
   function handleRefresh() {
     recentQuery.refetch()
     activeQuery.refetch()
+  }
+
+  function clearFilters() {
+    setFilterStartDate(null)
+    setFilterEndDate(null)
+    setFilterLocation('')
+    setFilterTagName('')
   }
 
   return (
@@ -194,15 +268,85 @@ export default function AlarmsPage() {
         </div>
       </header>
 
+      {/* Filter bar — mirrors EventPage's exactly */}
+      <div className={styles['alm__filterbar']}>
+        <LocalizationProvider dateAdapter={AdapterDayjs}>
+          <div className={styles['alm__filter-group']}>
+            <span className={styles['alm__filter-label']}>Date</span>
+            <DatePicker
+              value={filterStartDate}
+              onChange={setFilterStartDate}
+              format="DD/MM/YYYY"
+              slotProps={{
+                textField: { size: 'small', placeholder: 'Start date', className: styles['alm__date-picker'] },
+                field: { clearable: true },
+              }}
+            />
+            <span className={styles['alm__filter-sep']}>–</span>
+            <DatePicker
+              value={filterEndDate}
+              onChange={setFilterEndDate}
+              format="DD/MM/YYYY"
+              slotProps={{
+                textField: { size: 'small', placeholder: 'End date', className: styles['alm__date-picker'] },
+                field: { clearable: true },
+              }}
+            />
+          </div>
+        </LocalizationProvider>
+
+        <div className={styles['alm__filter-group']}>
+          <span className={styles['alm__filter-label']}>Line</span>
+          <FormControl size="small" className={styles['alm__filter-select']}>
+            <Select
+              value={filterLocation}
+              displayEmpty
+              onChange={(e) => setFilterLocation(e.target.value)}
+            >
+              <MenuItem value="">All lines</MenuItem>
+              {locationOptions.map((loc) => (
+                <MenuItem key={loc} value={loc}>
+                  {loc}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </div>
+
+        <div className={styles['alm__filter-group']}>
+          <span className={styles['alm__filter-label']}>Tag</span>
+          <FormControl size="small" className={styles['alm__filter-select']}>
+            <Select
+              value={filterTagName}
+              displayEmpty
+              onChange={(e) => setFilterTagName(e.target.value)}
+            >
+              <MenuItem value="">All tags</MenuItem>
+              {tagOptions.map((tag) => (
+                <MenuItem key={tag} value={tag}>
+                  {resolveTagLabel(tag, filterLocation, labelsByCode)}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </div>
+
+        {hasActiveFilters && (
+          <Button size="small" onClick={clearFilters}>
+            Clear filters
+          </Button>
+        )}
+      </div>
+
       {hasActive && (
         <section className={styles['alm__active']}>
           <header className={styles['alm__active-head']}>
             <span className={styles['alm__active-dot']} aria-hidden="true" />
             <span className={styles['alm__active-title']}>Active Alarms</span>
-            <span className={styles['alm__active-count']}>{activeAlarms.length} active</span>
+            <span className={styles['alm__active-count']}>{filteredActiveAlarms.length} active</span>
           </header>
           <div className={styles['alm__active-grid']}>
-            {activeAlarms.map((al) => (
+            {filteredActiveAlarms.map((al) => (
               <article
                 key={`${al.datasource_id ?? ''}::${al.location}::${al.tag_name}::${al.alarm_no}`}
                 className={`${styles['alm__active-card']} ${styles[`alm__active-card--${al.severity || 'info'}`]}`}
@@ -234,7 +378,11 @@ export default function AlarmsPage() {
       {!error && loading && !alarms.length && (
         <p className={styles['page__empty']}>Loading alarms…</p>
       )}
-      {!error && isEmpty && <p className={styles['page__empty']}>No alarms recorded.</p>}
+      {!error && isEmpty && (
+        <p className={styles['page__empty']}>
+          {hasActiveFilters ? 'No alarms match the current filters.' : 'No alarms recorded.'}
+        </p>
+      )}
 
       {grouped.map((loc) => (
         <section key={loc.key} className={styles['alm__loc']}>
