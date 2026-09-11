@@ -9,6 +9,8 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider'
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
 import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import { fetchRecentEvents } from '@/api/events'
+import { fetchCameraLinkOptions } from '@/api/cameras'
+import { buildDefectLabelsByCode, resolveTagLabel } from '@/utils/defectLabels'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import SourceStatus from '@/components/SourceStatus/SourceStatus.jsx'
 import styles from './EventPage.module.css'
@@ -58,6 +60,20 @@ export default function EventPage() {
     refetchInterval: POLL_MS,
     refetchIntervalInBackground: true,
   })
+
+  // Same query key the Monitor camera rail and Reports use, so this shares
+  // one cache entry with them. An unconfigured or errored camera source just
+  // yields an empty map, and every tag keeps showing its raw defect_n name.
+  const camerasQuery = useQuery({
+    queryKey: ['camera-link-options'],
+    queryFn: fetchCameraLinkOptions,
+    staleTime: 60_000,
+    retry: false,
+  })
+  const labelsByCode = useMemo(
+    () => buildDefectLabelsByCode(camerasQuery.data?.cameras),
+    [camerasQuery.data],
+  )
 
   const events = eventsQuery.data?.events ?? []
   const sources = eventsQuery.data?.sources ?? []
@@ -248,7 +264,7 @@ export default function EventPage() {
                 <MenuItem value="">All tags</MenuItem>
                 {tagOptions.map((tag) => (
                   <MenuItem key={tag} value={tag}>
-                    {tag}
+                    {resolveTagLabel(tag, filterLocation, labelsByCode)}
                   </MenuItem>
                 ))}
               </Select>
@@ -297,7 +313,9 @@ export default function EventPage() {
                     className={`${styles['evt__tag']} ${!isOpen ? styles['evt__tag--collapsed'] : ''}`}
                   >
                     <header className={styles['evt__tag-head']} onClick={() => toggleCard(key)}>
-                      <span className={styles['evt__tag-name']}>{tag.tag_name}</span>
+                      <span className={styles['evt__tag-name']}>
+                        {resolveTagLabel(tag.tag_name, loc.location, labelsByCode)}
+                      </span>
                       <div className={styles['evt__tag-actions']}>
                         <span className={styles['evt__badge']}>{tag.events.length}</span>
                         <button

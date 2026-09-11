@@ -1,15 +1,3 @@
-/**
- * units.js — curated catalogue of common measurement units for the Live panel
- * editor's per-value-column Unit picker (Grafana-style grouped dropdown).
- *
- * Each unit's `value` is the suffix string appended after a reading when it is
- * displayed (e.g. `4.4 bar`); `label` is the human-friendly dropdown entry.
- * Units are DISPLAY-ONLY — no value conversion or auto-scaling is performed.
- * Per-panel scaling (e.g. raw count → percent) is done with the Expression field.
- *
- * Unit `value`s are de-duplicated across the whole catalogue (each suffix appears
- * exactly once, in its most natural category) so el-option keys/values stay unique.
- */
 export const UNIT_GROUPS = [
   {
     category: 'Misc',
@@ -33,7 +21,6 @@ export const UNIT_GROUPS = [
       { label: 'Pascal (Pa)', value: 'Pa' },
       { label: 'Kilopascal (kPa)', value: 'kPa' },
       { label: 'Bar (bar)', value: 'bar' },
-      { label: 'Millibar (mbar)', value: 'mbar' },
       { label: 'Pounds/sq inch (psi)', value: 'psi' },
       { label: 'Atmosphere (atm)', value: 'atm' },
       { label: 'Millimetre mercury (mmHg)', value: 'mmHg' },
@@ -85,6 +72,7 @@ export const UNIT_GROUPS = [
       { label: 'Metres/second (m/s)', value: 'm/s' },
       { label: 'Kilometres/hour (km/h)', value: 'km/h' },
       { label: 'Revolutions/minute (rpm)', value: 'rpm' },
+      { label: 'Defects/minute (dpm)', value: 'dpm' }
     ],
   },
   {

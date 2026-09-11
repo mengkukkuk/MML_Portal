@@ -7,6 +7,8 @@ import MenuItem from '@mui/material/MenuItem'
 import CircularProgress from '@mui/material/CircularProgress'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import { fetchRecentAlarms, fetchActiveAlarms, acknowledgeAlarm } from '@/api/alarms'
+import { fetchCameraLinkOptions } from '@/api/cameras'
+import { buildDefectLabelsByCode, resolveTagLabel } from '@/utils/defectLabels'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import SourceStatus from '@/components/SourceStatus/SourceStatus.jsx'
 import styles from './AlarmsPage.module.css'
@@ -69,6 +71,20 @@ export default function AlarmsPage() {
     refetchInterval: ACTIVE_POLL_MS,
     refetchIntervalInBackground: true,
   })
+
+  // Same query key the Monitor camera rail, Reports and Events use, so this
+  // shares one cache entry with them. An unconfigured or errored camera
+  // source just yields an empty map, and every tag keeps its raw defect_n name.
+  const camerasQuery = useQuery({
+    queryKey: ['camera-link-options'],
+    queryFn: fetchCameraLinkOptions,
+    staleTime: 60_000,
+    retry: false,
+  })
+  const labelsByCode = useMemo(
+    () => buildDefectLabelsByCode(camerasQuery.data?.cameras),
+    [camerasQuery.data],
+  )
 
   // The row, not the id: alarm ids come from each plant's own sequence, so the
   // acknowledge has to name which database it means.
@@ -197,7 +213,9 @@ export default function AlarmsPage() {
                   </span>
                   <span className={styles['alm__active-value']}>{al.alarm_value ?? '—'}</span>
                 </div>
-                <span className={styles['alm__active-tag']}>{al.tag_name ?? '—'}</span>
+                <span className={styles['alm__active-tag']}>
+                  {resolveTagLabel(al.tag_name, al.location, labelsByCode) ?? '—'}
+                </span>
                 <span className={styles['alm__active-loc']}>
                   {al.location ?? '—'}
                   {multiSource && al.datasource_name ? ` · ${al.datasource_name}` : ''}
@@ -246,7 +264,9 @@ export default function AlarmsPage() {
                     <span className={`${styles['alm__sev-pill']} ${styles[`alm__sev-pill--${tag.severity}`]}`}>
                       {sevLabel(tag.severity)}
                     </span>
-                    <span className={styles['alm__tag-name']}>{tag.tag_name}</span>
+                    <span className={styles['alm__tag-name']}>
+                      {resolveTagLabel(tag.tag_name, loc.location, labelsByCode)}
+                    </span>
                     <div className={styles['alm__tag-actions']}>
                       {tag.unacked > 0 && (
                         <span

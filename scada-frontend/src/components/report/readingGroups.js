@@ -1,9 +1,15 @@
+import { resolveReadingLabel } from '../../utils/defectLabels.js'
+
+const EMPTY_LABELS = new Map()
+
 /** Detect reading families from the selected table's actual column names.
  * A named base wins over an inferred prefix. Otherwise require two siblings
  * separated by a hyphen; shared letters alone are not a device identity.
- * Raw column names remain the values sent to the API and stored in URLs.
+ * Raw column names remain the values sent to the API and stored in URLs —
+ * `labelsByCode` (code -> defect_labels[]) only swaps what is *displayed* for
+ * a `defect_n` suffix when the group's key matches a configured camera.
  */
-export function groupReadings(columns = []) {
+export function groupReadings(columns = [], labelsByCode = EMPTY_LABELS) {
   const names = [...new Set(columns)]
   const known = new Set(names)
   const inferred = new Map()
@@ -33,7 +39,9 @@ export function groupReadings(columns = []) {
     if (!buckets.has(key)) buckets.set(key, { key, label: key || 'Other readings', options: [] })
     buckets.get(key).options.push({
       value,
-      label: key ? (value === key ? 'Base reading' : value.slice(key.length + 1)) : value,
+      label: key
+        ? (value === key ? 'Base reading' : resolveReadingLabel(key, value.slice(key.length + 1), labelsByCode))
+        : value,
     })
   }
   return [...buckets.values()]
