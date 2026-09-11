@@ -2,7 +2,7 @@ import {
   useCallback, useEffect, useMemo, useRef, useState,
 } from 'react'
 import { useForm } from 'react-hook-form'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import Dialog from '@mui/material/Dialog'
 import DialogTitle from '@mui/material/DialogTitle'
 import DialogContent from '@mui/material/DialogContent'
@@ -35,10 +35,12 @@ import ScatterPlotOutlinedIcon from '@mui/icons-material/ScatterPlotOutlined'
 import ViewTimelineOutlinedIcon from '@mui/icons-material/ViewTimelineOutlined'
 import CandlestickChartOutlinedIcon from '@mui/icons-material/CandlestickChartOutlined'
 import { fetchSchemaTables, fetchSchemaColumns, fetchSchemaValues } from '@/api/schema'
+import { fetchCameraLinkOptions } from '@/api/cameras'
 import { createPanel, updatePanel } from '@/api/panels'
 import { colorAt } from '@/utils/seriesPalette'
 import { COMPARATOR_OPS } from '@/utils/alertConditions'
 import { UNIT_GROUPS } from '@/utils/units'
+import { buildDefectLabelsByCode, resolveTagLabel } from '@/utils/defectLabels'
 import {
   DEFAULT_BOOL_LABELS, badgeFor, filterGroups, groupColumns, pickableColumns,
 } from '@/utils/columnKinds'
@@ -160,6 +162,23 @@ export default function PanelEditorDialog({
   const valueGroups = useMemo(
     () => groupColumns(schemaCols, VALUE_KINDS),
     [schemaCols],
+  )
+  // Same query key Reports, Events, Alarms and the Monitor camera rail use, so
+  // this shares one cache entry with them. An unconfigured or errored camera
+  // source just yields an empty map, and every column/tag keeps its raw name.
+  const camerasQuery = useQuery({
+    queryKey: ['camera-link-options'],
+    queryFn: fetchCameraLinkOptions,
+    staleTime: 60_000,
+    retry: false,
+  })
+  const labelsByCode = useMemo(
+    () => buildDefectLabelsByCode(camerasQuery.data?.cameras),
+    [camerasQuery.data],
+  )
+  const labelForColumn = useCallback(
+    (name) => resolveTagLabel(name, null, labelsByCode),
+    [labelsByCode],
   )
   // Which of the *bound* columns are flags. Saved on the panel so the tile can
   // print a word for a 0/1 without re-reading the catalogue at render time.
@@ -557,6 +576,7 @@ export default function PanelEditorDialog({
                       value={metric}
                       onChange={onMetricChange}
                       groups={valueGroups}
+                      labelFor={labelForColumn}
                       searchable
                     />
                     {!filterCol && (
@@ -573,6 +593,7 @@ export default function PanelEditorDialog({
                         value={c}
                         onChange={(v) => updateValueCol(i, v)}
                         groups={valueGroups}
+                        labelFor={labelForColumn}
                         searchable
                       />
                       {!filterCol && (
@@ -664,6 +685,7 @@ export default function PanelEditorDialog({
                           value={v}
                           onChange={(nv) => updateFilter(i, nv)}
                           options={filterValues}
+                          labelFor={labelForColumn}
                           searchable
                         />
                         <UnitPicker className={styles.taglistUnit} value={unitsMap[v] || ''} onChange={(nv) => setUnit(v, nv)} />
@@ -878,9 +900,14 @@ export default function PanelEditorDialog({
  *
  * `options` may be a flat array of strings (device values, which have no kind)
  * or pre-grouped column options; both render through the same filter.
+ *
+ * `labelFor` swaps a raw name for a human label where one is configured (a
+ * camera's `defect_n` slot, via `resolveTagLabel`) — the bound value stays the
+ * raw name in every case, only what is printed changes.
  */
 function ColumnSelect({
   value, onChange, groups, options, placeholder = 'Value', className, searchable = false,
+  labelFor = (name) => name,
 }) {
   const [query, setQuery] = useState('')
   const resolved = groups
@@ -889,7 +916,7 @@ function ColumnSelect({
   // Below a screenful there is nothing to search for, and an input that appears
   // and disappears as the table changes is worse than one that is never there.
   const withSearch = searchable && total > 8
-  const shown = withSearch ? filterGroups(resolved, query) : resolved
+  const shown = withSearch ? filterGroups(resolved, query, labelFor) : resolved
   const grouped = resolved.length > 1
 
   return (
@@ -899,7 +926,7 @@ function ColumnSelect({
         displayEmpty
         onChange={(e) => onChange(e.target.value)}
         onClose={() => setQuery('')}
-        renderValue={(v) => v || placeholder}
+        renderValue={(v) => (v ? labelFor(v) : placeholder)}
       >
         <MenuItem value="" disabled>{placeholder}</MenuItem>
         {withSearch && (
@@ -922,7 +949,7 @@ function ColumnSelect({
           ...(grouped && g.label ? [<ListSubheader key={`h:${g.key}`}>{g.label}</ListSubheader>] : []),
           ...g.options.map((o) => (
             <MenuItem key={`${g.key}:${o.name}`} value={o.name} className={styles.colOption}>
-              <span className={styles.colName}>{o.name}</span>
+              <span className={styles.colName}>{labelFor(o.name)}</span>
               {o.badge && <span className={styles.colBadge}>{o.badge}</span>}
             </MenuItem>
           )),

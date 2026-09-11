@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import Dialog from '@mui/material/Dialog'
 import DialogTitle from '@mui/material/DialogTitle'
@@ -7,6 +7,7 @@ import DialogActions from '@mui/material/DialogActions'
 import Button from '@mui/material/Button'
 import Alert from '@mui/material/Alert'
 import { fetchDatasources } from '@/api/datasources'
+import { fetchCameraLinkOptions } from '@/api/cameras'
 import { badgeFor, groupColumns, pickableColumns } from '@/utils/columnKinds'
 import { fetchSchemaTables, fetchSchemaColumns, fetchSchemaValues, fetchSchemaLatest, fromPrimarySource } from '@/api/schema'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
@@ -14,6 +15,7 @@ import { symbolDef } from '@/components/mimic/symbols'
 import InstrumentBubble from '@/components/mimic/InstrumentBubble'
 import { deriveTag } from '@/components/mimic/deriveTag'
 import { compileExpr } from '@/utils/mathExpr'
+import { buildDefectLabelsByCode, resolveTagLabel } from '@/utils/defectLabels'
 import { UNIT_GROUPS } from '@/utils/units'
 import styles from './SymbolBindingDialog.module.css'
 
@@ -217,6 +219,25 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
     enabled: open && !!form.table && !!form.filterCol,
   })
 
+  // Same query key Reports, Events, Alarms and the Live panel editor use, so
+  // this shares one cache entry with them. An unconfigured or errored camera
+  // source just yields an empty map, and every column/device keeps its raw name.
+  const camerasQuery = useQuery({
+    queryKey: ['camera-link-options'],
+    queryFn: fetchCameraLinkOptions,
+    enabled: open,
+    staleTime: 60_000,
+    retry: false,
+  })
+  const labelsByCode = useMemo(
+    () => buildDefectLabelsByCode(camerasQuery.data?.cameras),
+    [camerasQuery.data],
+  )
+  const labelFor = useCallback(
+    (name) => resolveTagLabel(name, null, labelsByCode),
+    [labelsByCode],
+  )
+
   const cols = columnsQuery.data
   const tables = tablesQuery.data || []
 
@@ -226,9 +247,12 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
     const q = deviceQuery.trim().toLowerCase()
     if (!q) return deviceValues
     // The current selection is kept regardless, or narrowing the list would
-    // silently unselect the device this symbol is already pointed at.
-    return deviceValues.filter((v) => v === form.filterVal || v.toLowerCase().includes(q))
-  }, [deviceValues, deviceQuery, form.filterVal])
+    // silently unselect the device this symbol is already pointed at. Matches
+    // the raw value or its mapped label, so typing a camera's configured
+    // defect name finds it as readily as typing the raw defect_n.
+    return deviceValues.filter((v) => v === form.filterVal
+      || v.toLowerCase().includes(q) || labelFor(v).toLowerCase().includes(q))
+  }, [deviceValues, deviceQuery, form.filterVal, labelFor])
   const textCols = allowsText ? (cols?.text_columns || []) : []
   const boolCols = cols?.bool_columns || []
 
@@ -436,12 +460,12 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
                 <option value="">—</option>
                 {valueGroups.length === 1
                   ? valueGroups[0].options.map((o) => (
-                    <option key={o.name} value={o.name}>{o.name} · {o.badge}</option>
+                    <option key={o.name} value={o.name}>{labelFor(o.name)} · {o.badge}</option>
                   ))
                   : valueGroups.map((g) => (
                     <optgroup key={g.key} label={g.label}>
                       {g.options.map((o) => (
-                        <option key={o.name} value={o.name}>{o.name} · {o.badge}</option>
+                        <option key={o.name} value={o.name}>{labelFor(o.name)} · {o.badge}</option>
                       ))}
                     </optgroup>
                   ))}
@@ -518,7 +542,7 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
                 <option value="">—</option>
                 {/* The selected device stays listed even when the filter would
                     hide it, or narrowing the list would silently unselect it. */}
-                {shownDevices.map((v) => <option key={v} value={v}>{v}</option>)}
+                {shownDevices.map((v) => <option key={v} value={v}>{labelFor(v)}</option>)}
               </select>
             </label>
 

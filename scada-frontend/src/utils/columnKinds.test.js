@@ -85,3 +85,16 @@ test('a blank query returns the groups untouched', () => {
   const groups = groupColumns(COLS, ['value_columns', 'bool_columns'])
   assert.equal(filterGroups(groups, '   '), groups)
 })
+
+test('search also matches a caller-supplied display label, not just the raw name', () => {
+  const cols = { value_columns: ['CAM001-13-defect_1', 'CAM001-13-count_1'] }
+  const groups = groupColumns(cols, ['value_columns'])
+  const labelFor = (name) => (name === 'CAM001-13-defect_1' ? 'CAM001-13-Roll NG' : name)
+  assert.deepEqual(filterGroups(groups, 'roll', labelFor)[0].options, [
+    { name: 'CAM001-13-defect_1', badge: '' },
+  ])
+  // The raw name still matches too, independently of the label.
+  assert.deepEqual(filterGroups(groups, 'count_1', labelFor)[0].options, [
+    { name: 'CAM001-13-count_1', badge: '' },
+  ])
+})

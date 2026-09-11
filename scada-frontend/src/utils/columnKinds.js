@@ -82,14 +82,23 @@ export function pickableColumns(cols, kinds) {
 /**
  * Narrow grouped options to those matching a search string.
  *
- * Matches the column name only, not the badge: typing "int" to mean the word in
- * `print_head` and getting every integer column back is worse than no search.
- * An empty or blank query returns the groups untouched.
+ * Matches the column name and, when given, its display label — not the badge:
+ * typing "int" to mean the word in `print_head` and getting every integer
+ * column back is worse than no search. `labelFor` lets a caller that renders
+ * a mapped label (e.g. a camera's `defect_n` slot shown as its configured
+ * name) be searched by that name too, without this module knowing anything
+ * about where the mapping comes from. An empty or blank query returns the
+ * groups untouched.
  */
-export function filterGroups(groups, query) {
+export function filterGroups(groups, query, labelFor = (name) => name) {
   const q = query.trim().toLowerCase()
   if (!q) return groups
   return groups
-    .map((g) => ({ ...g, options: g.options.filter((o) => o.name.toLowerCase().includes(q)) }))
+    .map((g) => ({
+      ...g,
+      options: g.options.filter(
+        (o) => o.name.toLowerCase().includes(q) || labelFor(o.name).toLowerCase().includes(q),
+      ),
+    }))
     .filter((g) => g.options.length > 0)
 }
