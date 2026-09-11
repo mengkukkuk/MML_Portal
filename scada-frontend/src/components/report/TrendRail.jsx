@@ -4,21 +4,28 @@ import Button from '@mui/material/Button'
 import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker'
 import { windowError } from './trendWindow'
 import { useQuery } from '@tanstack/react-query'
+import Checkbox from '@mui/material/Checkbox'
 import FormControl from '@mui/material/FormControl'
 import MenuItem from '@mui/material/MenuItem'
 import Select from '@mui/material/Select'
-import { fetchSchemaTables, fetchSchemaValues } from '@/api/schema'
+import { fetchSchemaTables } from '@/api/schema'
 import { useTrendColumns } from './useTrendColumns'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { TIME_RANGES } from '@/components/live/usePanelSeries'
 import styles from './TrendRail.module.css'
 
 /**
- * TrendRail — pick a signal: table, reading, clock, device, window.
+ * TrendRail — pick a signal: table, reading(s), window.
  *
  * A dependent cascade, and the disabled state of each control is what says so.
  * There is no step numbering: the order is not a procedure someone has to
  * remember, it is a data dependency the controls already enforce.
+ *
+ * Three controls this once carried are deliberately gone. The timestamp column
+ * is chosen for the reader — a table has one clock and picking it was a
+ * question with one answer. The device filter went with it: on these tables the
+ * device is already in the reading's own name (`CAM001-13-defect_1`), so
+ * filtering by it again asked the reader to say the same thing twice.
  *
  * Everything is clamped rather than trusted, the same way the Live panel
  * editor's `applyBinding` does it. These selections arrive from a URL that may
@@ -57,22 +64,24 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
 
   const { query: columnsQuery, groups } = useTrendColumns(trend.table, primaryId)
 
-  const valuesQuery = useQuery({
-    queryKey: ['trend', 'values', primaryId ?? 'app', trend.table, trend.filterCol],
-    queryFn: () => fetchSchemaValues(trend.table, trend.filterCol, 500, primaryId ?? undefined),
-    enabled: !!(trend.table && trend.filterCol),
-    staleTime: 60_000,
-  })
-
   const tables = tablesQuery.data ?? []
   const cols = columnsQuery.data
   const arrayCols = useMemo(() => cols?.array_value_columns ?? [], [cols])
   const tsCols = useMemo(() => cols?.ts_columns ?? [], [cols])
-  const filterCols = useMemo(() => cols?.filter_columns ?? [], [cols])
-  const deviceValues = valuesQuery.data ?? []
+  const valueCols = useMemo(() => trend.valueCols ?? [], [trend.valueCols])
   const hasGroups = groups.some((group) => group.key)
-  const activeGroup = groups.find((group) => group.options.some((option) => option.value === trend.valueCol))
+  // The group a *selection* belongs to is the group of its first reading. The
+  // rest are held to that group by `pickGroup` below, so there is never a
+  // second answer to disagree with.
+  const activeGroup = groups.find((group) => group.options.some((option) => option.value === valueCols[0]))
   const readingOptions = hasGroups ? (activeGroup?.options ?? []) : (groups[0]?.options ?? [])
+  // What the picker can currently render. A reading outside it would plot a
+  // line with no entry in the list that is supposed to control it.
+  const shownValueCols = useMemo(
+    () => valueCols.filter((col) => readingOptions.some((option) => option.value === col)),
+    [valueCols, readingOptions],
+  )
+  const labelFor = (value) => readingOptions.find((option) => option.value === value)?.label ?? value
 
   const set = useCallback((patch) => onChange({ ...trend, ...patch }), [onChange, trend])
 
@@ -88,7 +97,7 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
     if (!tablesQuery.data || !trend.table) return
     if (!tables.some((t) => t.table === trend.table)) {
       clampedFor.current = null
-      set({ table: '', valueCol: '', tsCol: '', filterCol: '', filterVal: '' })
+      set({ table: '', valueCols: [], tsCol: '' })
     }
   }, [tablesQuery.data, tables, trend.table, set])
 
@@ -102,31 +111,39 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
     if (clampedFor.current === stamp) return
     clampedFor.current = stamp
 
-    const valueCol = arrayCols.includes(trend.valueCol) ? trend.valueCol : (arrayCols[0] ?? '')
+    // Each named reading is kept or dropped on its own — a link naming four
+    // columns of which one has since been dropped is three quarters good, and
+    // discarding the lot would be the harsher reading of the same URL.
+    const kept = valueCols.filter((col) => arrayCols.includes(col))
+    const nextCols = kept.length ? kept : (arrayCols[0] ? [arrayCols[0]] : [])
     const tsCol = tsCols.includes(trend.tsCol) ? trend.tsCol : (tsCols[0] ?? '')
-    const filterCol = filterCols.includes(trend.filterCol) ? trend.filterCol : ''
-    // A device value that no longer belongs to a column can't be validated
-    // until that column's own values load, so it is dropped with the column.
-    const filterVal = filterCol ? trend.filterVal : ''
-    if (
-      valueCol !== trend.valueCol || tsCol !== trend.tsCol ||
-      filterCol !== trend.filterCol || filterVal !== trend.filterVal
-    ) {
-      set({ valueCol, tsCol, filterCol, filterVal })
+    // Compared by content: `valueCols` is a fresh array on every parse of the
+    // query string, so identity would report a change that never happened.
+    if (nextCols.join(' ') !== valueCols.join(' ') || tsCol !== trend.tsCol) {
+      set({ valueCols: nextCols, tsCol })
     }
-  }, [cols, arrayCols, tsCols, filterCols, trend, primaryId, set])
-
-  // Same for the device: a link naming a machine this column has never reported
-  // would otherwise hold the chart empty with no hint why.
-  useEffect(() => {
-    if (!valuesQuery.data || !trend.filterVal) return
-    if (!deviceValues.includes(trend.filterVal)) set({ filterVal: '' })
-  }, [valuesQuery.data, deviceValues, trend.filterVal, set])
+  }, [cols, arrayCols, tsCols, valueCols, trend, primaryId, set])
 
   function pickTable(table) {
     // Everything downstream describes the old table's columns.
     clampedFor.current = null
-    set({ table, valueCol: '', tsCol: '', filterCol: '', filterVal: '' })
+    set({ table, valueCols: [], tsCol: '' })
+  }
+
+  // Switching group replaces the selection rather than adding to it. A reading
+  // held over from the previous group would be plotted by a chart whose picker
+  // no longer lists it — on screen, but unreachable by the control that is
+  // supposed to govern it.
+  function pickGroup(key) {
+    const first = groups.find((item) => item.key === key)?.options?.[0]?.value
+    set({ valueCols: first ? [first] : [] })
+  }
+
+  // At least one reading, always: an empty selection is the chart asking to be
+  // filled in, and unticking the last box is never that request — it is someone
+  // swapping which single reading they are looking at.
+  function pickReadings(next) {
+    if (next.length) set({ valueCols: next })
   }
 
   const noArrays = !!cols && arrayCols.length === 0
@@ -154,10 +171,7 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
             displayEmpty
             inputProps={{ 'aria-label': 'Reading group' }}
             renderValue={() => activeGroup?.label ?? 'Choose a group'}
-            onChange={(e) => {
-              const group = groups.find((item) => item.key === e.target.value)
-              set({ valueCol: group.options[0].value })
-            }}
+            onChange={(e) => pickGroup(e.target.value)}
           >
             {groups.map((group) => (
               <MenuItem key={group.key} value={group.key}>{group.label}</MenuItem>
@@ -166,66 +180,34 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
         </Field>
       )}
 
-      <Field label="Reading" wide>
+      {/* Multiple by default, singular in effect until a second box is ticked:
+          one reading is the ordinary case and still reads as one name, so the
+          control does not announce a capability the reader has not asked for. */}
+      <Field label={shownValueCols.length > 1 ? 'Readings' : 'Reading'} wide>
         <Select
-          value={arrayCols.includes(trend.valueCol) ? trend.valueCol : ''}
+          multiple
+          value={shownValueCols}
           displayEmpty
           disabled={!trend.table || noArrays}
           inputProps={{ 'aria-label': 'Reading' }}
-          onChange={(e) => set({ valueCol: e.target.value })}
-          renderValue={(v) => readingOptions.find((option) => option.value === v)?.label || (noArrays ? 'None available' : 'Choose a column')}
+          onChange={(e) => pickReadings(
+            typeof e.target.value === 'string' ? e.target.value.split(',') : e.target.value,
+          )}
+          renderValue={(picked) =>
+            !picked.length ? (noArrays ? 'None available' : 'Choose a column')
+              : picked.length <= 2 ? picked.map(labelFor).join(', ')
+                // Past two names the control is wider than the answer is useful.
+                // The chart's own legend below names every line in full.
+                : `${picked.length} readings`}
         >
           {readingOptions.map((option) => (
-            <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+            <MenuItem key={option.value} value={option.value} className={styles.option}>
+              <Checkbox size="small" checked={shownValueCols.includes(option.value)} />
+              {option.label}
+            </MenuItem>
           ))}
         </Select>
       </Field>
-
-      <Field label="Time">
-        <Select
-          value={tsCols.includes(trend.tsCol) ? trend.tsCol : ''}
-          displayEmpty
-          disabled={!trend.table || !tsCols.length}
-          onChange={(e) => set({ tsCol: e.target.value })}
-          renderValue={(v) => v || 'Choose a column'}
-        >
-          {tsCols.map((c) => (
-            <MenuItem key={c} value={c}>{c}</MenuItem>
-          ))}
-        </Select>
-      </Field>
-
-      <Field label="Device">
-        <Select
-          value={filterCols.includes(trend.filterCol) ? trend.filterCol : ''}
-          displayEmpty
-          disabled={!trend.table}
-          onChange={(e) => set({ filterCol: e.target.value, filterVal: '' })}
-          renderValue={(v) => v || 'Whole table'}
-        >
-          <MenuItem value="">Whole table</MenuItem>
-          {filterCols.map((c) => (
-            <MenuItem key={c} value={c}>{c}</MenuItem>
-          ))}
-        </Select>
-      </Field>
-
-      {!!trend.filterCol && (
-        <Field label="Is">
-          <Select
-            value={deviceValues.includes(trend.filterVal) ? trend.filterVal : ''}
-            displayEmpty
-            disabled={valuesQuery.isLoading}
-            onChange={(e) => set({ filterVal: e.target.value })}
-            renderValue={(v) => v || (valuesQuery.isLoading ? 'Loading…' : 'Any')}
-          >
-            <MenuItem value="">Any</MenuItem>
-            {deviceValues.map((v) => (
-              <MenuItem key={v} value={v}>{v}</MenuItem>
-            ))}
-          </Select>
-        </Field>
-      )}
 
       <Field label="Window">
         <Select

@@ -22,27 +22,47 @@ export const ROLES = [
 
 export const ALL_INDEXES = ROLES.map((r) => r.index)
 
+// Which slot a *comparison* is about. Several readings on one chart can only be
+// compared on the thing being measured — N setpoints or N limit lines overlaid
+// answer nothing — so the multi-column mode plots this slot and only this slot.
+// It is the plant's own `defect_n[1]`: Postgres subscripts from 1, JS from 0.
+export const VALUE_INDEX = 0
+
 export const DEFAULT_MINUTES = 480
 
 // The two vocabularies sharing the query string. Listed together here because
 // coexistence is this module's job: each writer clears its own keys and leaves
 // the other's alone, and neither has to import the other to do it.
+//
+// 'fcol'/'fval' are listed but no longer read or written: the device filter has
+// no control any more, and leaving them in `owns` is what purges the pair from
+// an older link rather than leaving a filter nothing on screen can undo.
 export const TREND_KEYS = ['tbl', 'vcol', 'tscol', 'fcol', 'fval', 'win', 'idx', 'tstart', 'tend']
 export const FILTER_KEYS = ['preset', 'start', 'end', 'location', 'tag']
 
 export const EMPTY_TREND = {
   table: '',
-  valueCol: '',
+  valueCols: [],
   tsCol: '',
-  filterCol: '',
-  filterVal: '',
   minutes: DEFAULT_MINUTES,
   indexes: ALL_INDEXES,
 }
 
 /** A trend is only runnable once it has somewhere to read from and a clock. */
 export function isPlottable(trend) {
-  return !!(trend?.table && trend?.valueCol && trend?.tsCol)
+  return !!(trend?.table && trend?.valueCols?.length && trend?.tsCol)
+}
+
+/**
+ * Several readings on one chart, which is a different chart.
+ *
+ * One column is an envelope — a value against its own setpoint and limits.
+ * Two or more are a comparison, and the roles stop applying: the second
+ * column's limits are not the first column's. Every consumer branches on this
+ * rather than generalising, so the one-column chart is left exactly as it was.
+ */
+export function isMultiReading(trend) {
+  return (trend?.valueCols?.length ?? 0) > 1
 }
 
 function parseIndexes(raw) {
@@ -64,10 +84,12 @@ export function trendFromParams(params) {
   const minutes = Number.parseInt(params.get('win') ?? '', 10)
   return {
     table: params.get('tbl') ?? '',
-    valueCol: params.get('vcol') ?? '',
+    // Repeated rather than comma-joined, the way `location` and `tag` already
+    // are: a column name is a plant's identifier and nothing here gets to
+    // reserve a character in it. `getAll` reads a single-`vcol` link — every
+    // link shared before this — back as a one-element selection unchanged.
+    valueCols: params.getAll('vcol').filter(Boolean),
     tsCol: params.get('tscol') ?? '',
-    filterCol: params.get('fcol') ?? '',
-    filterVal: params.get('fval') ?? '',
     minutes: params.get('win') === 'custom' ? 'custom'
       : [10, 30, 60, 480, 1440, 10080].includes(minutes) ? minutes : DEFAULT_MINUTES,
     start: params.get('tstart') ?? '',
@@ -80,10 +102,8 @@ export function paramsFromTrend(trend) {
   const out = new URLSearchParams()
   if (!trend) return out
   if (trend.table) out.set('tbl', trend.table)
-  if (trend.valueCol) out.set('vcol', trend.valueCol)
+  ;(trend.valueCols ?? []).forEach((col) => { if (col) out.append('vcol', col) })
   if (trend.tsCol) out.set('tscol', trend.tsCol)
-  if (trend.filterCol) out.set('fcol', trend.filterCol)
-  if (trend.filterVal) out.set('fval', trend.filterVal)
   if (trend.minutes !== DEFAULT_MINUTES) out.set('win', String(trend.minutes))
   if (trend.minutes === 'custom') {
     if (trend.start) out.set('tstart', trend.start)

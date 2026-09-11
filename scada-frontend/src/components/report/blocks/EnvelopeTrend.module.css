@@ -53,6 +53,27 @@
   opacity: 1;
 }
 
+/* Comparing several readings, the same row is a key rather than a filter: the
+   Reading picker above already decides which lines exist, and a second control
+   undoing its choice would be two controls doing one job. So these are plain
+   labels — same shape, no press state, nothing that looks clickable. */
+.key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px var(--space-3);
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.key .swatch {
+  opacity: 1;
+}
+
 /* The right-hand edge of a week-long chart is a few pixels wide, so the newest
    reading is also stated in words. */
 .readout {

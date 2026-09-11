@@ -43,6 +43,16 @@
   max-width: 300px;
 }
 
+/* A checkbox is taller than the text beside it, and a camera offers a dozen
+   readings at once — left at the default row height the list outgrows the
+   viewport and the picker becomes a scroll before it is a choice. */
+.option {
+  min-height: unset;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: var(--space-1);
+}
+
 /* Both take the full rail width so they land on their own line rather than
    wedging between two controls. */
 .hint,
