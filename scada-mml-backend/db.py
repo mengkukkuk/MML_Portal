@@ -19,7 +19,7 @@ from psycopg_pool import ConnectionPool, PoolTimeout
 
 import config
 import security
-from production_log import aggregate_counter_samples
+from production_log import aggregate_counter_samples, aggregate_counter_series
 
 logger = logging.getLogger("mml-api.db")
 
@@ -1741,9 +1741,20 @@ def production_log_hourly(
 ) -> dict[str, Any]:
     """Hourly good/reject counter deltas for the current plant-local shift.
 
-    One sample immediately before 08:00 is included as the baseline. The pure
-    aggregator owns reset semantics; this adapter owns identifier safety and
-    reading from the configured plant connection.
+    Two plant layouts reach this, told apart by whether the binding carries a
+    filter value *per counter*:
+
+    - **Wide** — one row per sample with a good column and a reject column side
+      by side, optionally narrowed by one shared filter. The original layout.
+    - **Tag-per-row (EAV)** — both counters in the same value column of the same
+      table, told apart by a tag column: `produced_filter_val` and
+      `rejected_filter_val` name the two tags. This is what a historian keyed by
+      tag name gives you, and no shared-filter binding can express it, because
+      the two counters need *different* values of the same column.
+
+    One sample immediately before 08:00 is included as each counter's baseline.
+    The pure aggregator owns reset semantics; this adapter owns identifier
+    safety and reading from the configured plant connection.
     """
     table = binding["table"]
     ts_col = binding["ts_col"]
@@ -1751,6 +1762,9 @@ def production_log_hourly(
     rejected_col = binding["rejected_col"]
     filter_col = binding.get("filter_col")
     filter_val = binding.get("filter_val")
+    produced_filter_val = binding.get("produced_filter_val")
+    rejected_filter_val = binding.get("rejected_filter_val")
+    per_counter = produced_filter_val is not None and rejected_filter_val is not None
 
     with _table_source_conn(datasource_id) as (conn, schema):
         # Identifier validation below queries information_schema, so establish
@@ -1760,46 +1774,69 @@ def production_log_hourly(
             conn, schema, table, ts_col, produced_col, rejected_col, filter_col
         )
         table_sql = sql.Identifier(schema, table)
-        fields = sql.SQL("{ts} AS ts, {produced} AS produced, {rejected} AS rejected").format(
-            ts=sql.Identifier(ts_col),
-            produced=sql.Identifier(produced_col),
-            rejected=sql.Identifier(rejected_col),
-        )
-        filter_sql = sql.SQL("")
-        params: list[Any] = []
-        if filter_col and filter_val is not None:
-            filter_sql = sql.SQL(" AND {}::text = %s").format(sql.Identifier(filter_col))
-            params.append(filter_val)
 
-        # Keep the three reads on one database snapshot, and use the captured
-        # plant timestamp as the upper bound.  That prevents future-dated rows
-        # (or rows committed halfway through this request) from leaking into a
+        # Keep every read on one database snapshot, and use the captured plant
+        # timestamp as the upper bound.  That prevents future-dated rows (or
+        # rows committed halfway through this request) from leaking into a
         # bucket that the response still describes as a current snapshot.
         generated_at = conn.execute("SELECT now() AS generated_at").fetchone()["generated_at"]
-        baseline = conn.execute(
-            sql.SQL(
-                "SELECT {fields} FROM {table} "
-                "WHERE {ts} < CURRENT_DATE + time '08:00'{filter} "
-                "ORDER BY {ts} DESC NULLS LAST LIMIT 1"
-            ).format(
-                fields=fields, table=table_sql, ts=sql.Identifier(ts_col), filter=filter_sql,
-            ),
-            params,
-        ).fetchone()
-        rows = conn.execute(
-            sql.SQL(
-                "SELECT {fields} FROM {table} "
-                "WHERE {ts} >= CURRENT_DATE + time '08:00' "
-                "AND {ts} < CURRENT_DATE + time '18:00' "
-                "AND {ts} <= %s{filter} "
-                "ORDER BY {ts} ASC"
-            ).format(
-                fields=fields, table=table_sql, ts=sql.Identifier(ts_col), filter=filter_sql,
-            ),
-            [generated_at, *params],
-        ).fetchall()
 
-    samples = ([baseline] if baseline else []) + list(rows)
+        def read(fields: sql.SQL, value: Any) -> tuple[Any, list[Any]]:
+            """One counter's baseline row and in-shift rows, on this snapshot."""
+            where = sql.SQL("")
+            params: list[Any] = []
+            if filter_col and value is not None:
+                where = sql.SQL(" AND {}::text = %s").format(sql.Identifier(filter_col))
+                params.append(value)
+            baseline = conn.execute(
+                sql.SQL(
+                    "SELECT {fields} FROM {table} "
+                    "WHERE {ts} < CURRENT_DATE + time '08:00'{filter} "
+                    "ORDER BY {ts} DESC NULLS LAST LIMIT 1"
+                ).format(
+                    fields=fields, table=table_sql, ts=sql.Identifier(ts_col), filter=where,
+                ),
+                params,
+            ).fetchone()
+            rows = conn.execute(
+                sql.SQL(
+                    "SELECT {fields} FROM {table} "
+                    "WHERE {ts} >= CURRENT_DATE + time '08:00' "
+                    "AND {ts} < CURRENT_DATE + time '18:00' "
+                    "AND {ts} <= %s{filter} "
+                    "ORDER BY {ts} ASC"
+                ).format(
+                    fields=fields, table=table_sql, ts=sql.Identifier(ts_col), filter=where,
+                ),
+                [generated_at, *params],
+            ).fetchall()
+            return baseline, list(rows)
+
+        def one(col: str) -> sql.SQL:
+            return sql.SQL("{ts} AS ts, {value} AS value").format(
+                ts=sql.Identifier(ts_col), value=sql.Identifier(col),
+            )
+
+        if per_counter:
+            produced_baseline, produced_rows = read(one(produced_col), produced_filter_val)
+            rejected_baseline, rejected_rows = read(one(rejected_col), rejected_filter_val)
+        else:
+            both = sql.SQL(
+                "{ts} AS ts, {produced} AS produced, {rejected} AS rejected"
+            ).format(
+                ts=sql.Identifier(ts_col),
+                produced=sql.Identifier(produced_col),
+                rejected=sql.Identifier(rejected_col),
+            )
+            baseline, rows = read(both, filter_val)
+
+    if per_counter:
+        return aggregate_counter_series(
+            ([produced_baseline] if produced_baseline else []) + produced_rows,
+            ([rejected_baseline] if rejected_baseline else []) + rejected_rows,
+            generated_at,
+        )
+    samples = ([baseline] if baseline else []) + rows
     return aggregate_counter_samples(samples, generated_at)
 
 

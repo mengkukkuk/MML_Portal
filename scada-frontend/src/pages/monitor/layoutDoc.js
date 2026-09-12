@@ -1,5 +1,6 @@
 import { SYMBOLS } from '@/components/mimic/symbols'
 import { cloneDefaultLayout, LAYOUT_VERSION } from './defaultLayout'
+import { normalizeKpis } from './kpiBoxes'
 
 /**
  * layoutDoc — validation, migration and the one-time localStorage handover.
@@ -129,6 +130,23 @@ export function migrateLayout(doc) {
     }
   }
 
+  // v3 -> v4 adds the headline KPI strip. An empty list is the honest upgrade:
+  // a drawing commissioned before the strip existed has no headline numbers,
+  // and inventing some from the production log would put figures on a wall
+  // display that nobody chose to put there.
+  if ((out.version ?? 3) < 4) {
+    out = { ...out, version: 4 }
+  }
+
+  // Repaired on the way through for *every* version, not only on the v4 bump.
+  // This function is the page's one document boundary — server load, post-save,
+  // import and revision reload all pass through it — so it is the only place
+  // that may mint a missing box id. A v4 file that arrived from someone's export
+  // with a duplicate or absent id is fixed here, once, and the render path stays
+  // a pure read. See the note on normalizeKpis for what doing this per-render
+  // would cost.
+  out = { ...out, kpis: normalizeKpis(out.kpis) }
+
   return isRenderable(out) ? out : null
 }
 
@@ -177,5 +195,6 @@ export function emptyLayout(name) {
     nodes: [],
     edges: [],
     productionLog: null,
+    kpis: [],
   }
 }

@@ -42,6 +42,9 @@ import MimicEditorToolbar from './MimicEditorToolbar'
 import MimicCommandBar from './MimicCommandBar'
 import ProductionLogDrawer from './ProductionLogDrawer'
 import ProductionLogDialog from './ProductionLogDialog'
+import KpiStrip from './KpiStrip'
+import KpiBindingDialog from './KpiBindingDialog'
+import { blankKpi, kpiPollNodes, readKpis } from './kpiBoxes'
 import {
   ImportLayoutDialog, RevisionConflictDialog, UnsavedChangesDialog,
 } from './EditorDialogs'
@@ -224,6 +227,26 @@ export default function MonitorPage() {
 
   const nodes = useMemo(() => layout?.nodes ?? [], [layout])
 
+  // The headline strip. A pure read: `migrateLayout` already repaired this list
+  // at the document boundary, and minting an id here would mint a *new* one on
+  // every layout edit — moving the poller's query key and discarding that box's
+  // history each time an admin nudged an unrelated symbol.
+  const kpis = useMemo(() => readKpis(layout?.kpis), [layout])
+
+  /**
+   * What the plant poller is asked for: the drawing's bindings plus the
+   * strip's, in one list.
+   *
+   * The strip could have run its own query. It must not: a second clock would
+   * ignore the cadence control, and the figure above the sheet would drift a
+   * tick out of step with the symbols below it — which on a wall display is a
+   * support call about numbers that disagree.
+   */
+  const pollNodes = useMemo(
+    () => [...nodes, ...kpiPollNodes(kpis)],
+    [nodes, kpis],
+  )
+
   /**
    * Why this drawing cannot be edited here, or null.
    *
@@ -246,7 +269,7 @@ export default function MonitorPage() {
   const {
     tags: plantTags, history, events, error: dataError, sources: connSources,
   } = usePlantData({
-    nodes, pollSeconds: liveMs / 1000,
+    nodes: pollNodes, pollSeconds: liveMs / 1000,
   })
   const anySourceFailed = connSources.some((s) => !s.ok)
 
@@ -306,9 +329,13 @@ export default function MonitorPage() {
     return ids.size
   }, [nodes])
 
+  // Reduced over the *drawing's* nodes, not over every tag in the snapshot.
+  // The banner answers "is this plant in alarm", and a headline box that went
+  // stale because someone renamed a column is a strip problem, not a plant one
+  // — it must not light up the status a control room reads the page by.
   const plantStatus = useMemo(
-    () => Object.values(tags).reduce((acc, t) => worseStatus(acc, t.status), 'normal'),
-    [tags],
+    () => nodes.reduce((acc, n) => worseStatus(acc, tags[n.id]?.status ?? 'normal'), 'normal'),
+    [nodes, tags],
   )
 
   // --- selection -----------------------------------------------------------
@@ -353,6 +380,7 @@ export default function MonitorPage() {
   const [unsavedOpen, setUnsavedOpen] = useState(false)
   const [conflictOpen, setConflictOpen] = useState(false)
   const [bindingNode, setBindingNode] = useState(null)
+  const [editingKpi, setEditingKpi] = useState(null)
   // The upload/author flow. Not per-node: a library symbol is authored once
   // and then placed, so this is a property of the session, not of a selection.
   const [authoring, setAuthoring] = useState(false)
@@ -727,6 +755,35 @@ export default function MonitorPage() {
     notify(binding ? 'Production log settings updated in the draft.' : 'Production log removed from the draft.')
   }, [commitLayout, notify])
 
+  // --- headline numbers ----------------------------------------------------
+  // Every one of these goes through commitLayout, so the strip joins the same
+  // draft, undo stack and unsaved-changes guard as the drawing itself. A box is
+  // never written straight to the server.
+  const commitKpis = useCallback((next) => {
+    commitLayout((previous) => ({ ...previous, kpis: next }))
+  }, [commitLayout])
+
+  const addKpi = useCallback(() => {
+    const kpi = blankKpi()
+    commitKpis([...kpis, kpi])
+    // Opened straight away: an empty box prints an em-dash, and adding one is
+    // only ever the first half of the thing an admin came to do.
+    setEditingKpi(kpi)
+  }, [commitKpis, kpis])
+
+  const applyKpi = useCallback((next) => {
+    commitKpis(kpis.map((kpi) => (kpi.id === next.id ? next : kpi)))
+    setEditingKpi(null)
+    notify('Headline number updated in the draft.')
+  }, [commitKpis, kpis, notify])
+
+  const removeKpi = useCallback(() => {
+    if (!editingKpi) return
+    commitKpis(kpis.filter((kpi) => kpi.id !== editingKpi.id))
+    setEditingKpi(null)
+    notify('Headline number removed from the draft.')
+  }, [commitKpis, editingKpi, kpis, notify])
+
   const toggleEdit = useCallback(() => {
     if (!editMode) setEditMode(true)
   }, [editMode])
@@ -1080,6 +1137,11 @@ export default function MonitorPage() {
         <span className={styles.fsEyebrow}>Process mimic</span>
         <h2 className={styles.fsName}>{activeName}</h2>
       </div>
+      {/* Full screen drops the page header, and with it the strip. A wall
+        * display is exactly when these figures are wanted most, so the banner
+        * carries them for the same reason it carries the title and the status.
+        * Read-only here: the editor is never full screen. */}
+      <KpiStrip kpis={kpis} tags={tags} inBanner />
       {tools}
       <span className={styles.fsState}>
         <span className={`${styles.dot} ${dotClass}`} />
@@ -1245,6 +1307,20 @@ export default function MonitorPage() {
         * the generic banner only earns its place when the strip has nothing
         * to say (e.g. a stale-but-answering source). */}
       {dataError && !anySourceFailed && <Alert severity="warning">{dataError}</Alert>}
+
+      {/* The headline numbers. Suppressed in full screen only because the
+        * banner carries its own copy — two strips on one page would be two
+        * things to read before finding the drawing. */}
+      {layout && !fullscreen && (
+        <KpiStrip
+          kpis={kpis}
+          tags={tags}
+          editing={editing}
+          onEdit={setEditingKpi}
+          onAdd={addKpi}
+          onReorder={commitKpis}
+        />
+      )}
 
       {/* Only the drawing waits on the switch — the switcher itself stays put,
         * so the control you just used does not vanish under your cursor. */}
@@ -1486,6 +1562,15 @@ export default function MonitorPage() {
         container={overlayHost}
         onClose={() => setBindingNode(null)}
         onSave={applyBinding}
+      />
+
+      <KpiBindingDialog
+        open={!!editingKpi}
+        kpi={editingKpi}
+        container={overlayHost}
+        onClose={() => setEditingKpi(null)}
+        onSave={applyKpi}
+        onRemove={removeKpi}
       />
 
       <ProductionLogDialog

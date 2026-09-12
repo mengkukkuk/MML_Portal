@@ -262,8 +262,6 @@ def _validate_production_log(
         # rather than failing.
         if value not in cols["value_columns"]:
             raise _bad(f"{where}: {key} must be a numeric column of {table!r}")
-    if binding["produced_col"] == binding["rejected_col"]:
-        raise _bad(f"{where}: produced_col and rejected_col must be different")
 
     ts_col = binding.get("ts_col")
     datetime_columns = cols.get("datetime_columns", cols["ts_columns"])
@@ -274,6 +272,52 @@ def _validate_production_log(
     filter_val = binding.get("filter_val")
     if filter_col and filter_col not in cols["filter_columns"]:
         raise _bad(f"{where}: filter_col must be a column of {table!r}")
+
+    # Which of the two plant layouts this binding describes. Tag-per-row names a
+    # filter value for each counter; wide shares one (or none) between them.
+    produced_val = binding.get("produced_filter_val")
+    rejected_val = binding.get("rejected_filter_val")
+    named = [
+        key for key, value in
+        (("produced_filter_val", produced_val), ("rejected_filter_val", rejected_val))
+        if value is not None and value != ""
+    ]
+    if len(named) == 1:
+        raise _bad(
+            f"{where}: produced_filter_val and rejected_filter_val must be set "
+            "together — one counter's tag alone cannot tell the two apart"
+        )
+
+    if named:
+        # Tag-per-row. Both counters read the same column of the same table and
+        # are told apart only by this filter, so the filter is what identity
+        # *is* here — without it both series would be the whole table.
+        if not filter_col:
+            raise _bad(
+                f"{where}: filter_col is required when a filter value is given "
+                "per counter — it is the column naming which counter a row is"
+            )
+        if filter_val is not None and filter_val != "":
+            raise _bad(
+                f"{where}: filter_val cannot be combined with per-counter filter "
+                "values — the shared filter would narrow both counters to one tag"
+            )
+        if produced_val == rejected_val:
+            raise _bad(
+                f"{where}: produced_filter_val and rejected_filter_val must be "
+                "different — the same tag cannot be both counters"
+            )
+        # produced_col == rejected_col is the normal case here, not an error:
+        # one value column, two tags.
+        return
+
+    # Wide. Two counters in one row means two distinct columns, and a shared
+    # filter that is all-or-nothing.
+    if binding["produced_col"] == binding["rejected_col"]:
+        raise _bad(
+            f"{where}: produced_col and rejected_col must be different, or give "
+            "a filter value per counter if both counters share one column"
+        )
     if bool(filter_col) != (filter_val is not None and filter_val != ""):
         raise _bad(f"{where}: filter_col and filter_val must be set together")
 
