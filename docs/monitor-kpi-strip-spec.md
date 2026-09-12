@@ -299,3 +299,85 @@ The save and the rendered chart. `main.py` runs uvicorn with no reload
 answered the save `PUT /api/mimic/layouts/camera-test` with **400**. That 400 is
 itself the confirmation that the frontend sends the new shape. Restart the
 backend, then save the binding and open LOG.
+
+
+---
+
+# Fix: production-log button unreachable above 1400px
+
+Reported from a full-screen browser window: the LOG configuration button
+vanished, and came back when the window was narrowed.
+
+`MimicEditorToolbar` put three buttons in one `.drawerTools` group, and that
+group is `display: none` by default, shown only under `max-width: 1399px`
+(`EditorChrome.module.css:62,89`) — the same breakpoint that drives
+`compactEditor` (`MonitorPage.jsx:376`).
+
+Two of the three are **rail toggles** (symbol palette, inspector), and hiding
+them wide is correct: above the breakpoint both rails are permanently docked, so
+the toggles have nothing to toggle. The third opens a **dialog** and is its only
+route — so on exactly the large displays an admin is most likely to be drawing
+on, the production log could not be configured at all.
+
+Split into two groups: the production-log button now has its own always-visible
+`toolGroup`; only the rail toggles stay behind the media query.
+
+Verified both sides of the breakpoint with the button's own bounding box:
+
+| Viewport | `max-width:1399px` | Production log | Rail toggles |
+|---|---|---|---|
+| 1024 | matches | visible | visible |
+| 1600 | no match | **visible** (was hidden) | hidden |
+
+At 1600 the button also opens the dialog — asserted on `[role=dialog]`.
+
+
+---
+
+# Overview panel (collapsible)
+
+The mimic title, running state, connected-symbol count, cadence selector and the
+KPI strip were three loose rows stacked above the drawing. They are now one
+bordered panel with a disclosure toggle, in **both view and edit mode**.
+
+## What survives the fold — the only real decision here
+
+| Element | Folded |
+|---|---|
+| Drawing name (MimicSwitcher) | **stays** |
+| Running / alarm state | **stays** |
+| Edit layout | **stays** |
+| Collapse toggle | stays |
+| Connected-symbols subtitle | hides |
+| Cadence selector | hides |
+| KPI strip | hides |
+
+Name and running state stay because a control-room display that cannot say which
+plant it shows, or that it is in alarm, is worse than one with no panel at all.
+Edit layout stays because hiding the primary action behind a disclosure is how an
+admin concludes the page is broken. Everything that hides is a setting or a
+detail, one click from view.
+
+## Implementation notes
+
+- State is a **view preference**, not document state: two operators watching one
+  plant may want different amounts of chrome, and folding must never look like an
+  edit. Persisted per browser in `localStorage` under
+  `mml.monitor.overviewOpen`, read and written inside `try/catch` — a private
+  window or blocked site data makes those accessors throw, and the panel must
+  still render.
+- The detail region uses `hidden` rather than unmounting. The strip's bindings
+  ride the shared poller either way, so remounting on every fold would restart
+  its snapshot entry for nothing.
+- The strip keeps its `!fullscreen` guard inside the panel: the full-screen
+  banner carries its own copy, and two identically-labelled regions in one tree
+  is a screen-reader problem as much as a visual one.
+
+## Verified
+
+- View mode: expanded shows everything; folded leaves a slim title bar and gives
+  the drawing the space back
+- Edit mode: the `+ Add number` slot sits inside the panel, and folding hides it
+  (`detailHidden: true`, strip measured at 0 height, `stripInPanel: true`)
+- Folded state survives a reload (`aria-expanded="false"`, stored `closed`)
+- No new console errors

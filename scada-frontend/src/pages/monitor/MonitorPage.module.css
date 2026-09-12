@@ -19,11 +19,65 @@
 
 /* --- header bar --------------------------------------------------------- */
 
+/* --- overview panel ------------------------------------------------------
+ * Name, running state, cadence and the headline numbers, drawn as one plate
+ * instead of three loose rows floating above the sheet. Folded, it keeps only
+ * the identity row, so the drawing gets the space back. */
+
+.overview {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+
 .bar {
   display: flex;
   align-items: center;
   gap: var(--space-4);
   flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4);
+}
+
+/* Folded, the row carries one line of text and should read as a title bar
+   rather than a panel with its contents missing. */
+.overviewClosed .bar {
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+
+.overviewToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-app);
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.overviewToggle:hover {
+  background: var(--bg-elev);
+  color: var(--fg);
+}
+
+.overviewToggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* The strip draws its own rules and sat on the page with a margin of its own.
+   Inside the panel that margin would print a gap between two ruled edges. */
+.overview [id='mimic-overview-detail'] > * {
+  margin-bottom: 0;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: 0;
 }
 
 .titleWrap {

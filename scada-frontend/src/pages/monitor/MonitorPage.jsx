@@ -18,6 +18,8 @@ import RestartAltOutlined from '@mui/icons-material/RestartAltOutlined'
 import FullscreenOutlined from '@mui/icons-material/FullscreenOutlined'
 import FullscreenExitOutlined from '@mui/icons-material/FullscreenExitOutlined'
 import BarChartOutlined from '@mui/icons-material/BarChartOutlined'
+import ExpandLessOutlined from '@mui/icons-material/ExpandLessOutlined'
+import ExpandMoreOutlined from '@mui/icons-material/ExpandMoreOutlined'
 import { useAuthStore } from '@/stores/auth'
 import ConnectionAlarmStrip from '@/components/ConnectionAlarm/ConnectionAlarmStrip'
 import usePlantData from '@/components/mimic/usePlantData'
@@ -93,6 +95,9 @@ const FAST_CADENCES = [
 const GUARDED_FLOOR_MS = 1000
 
 const CADENCE_NOTE_ID = 'mimic-cadence-note'
+
+/** Where the overview panel remembers whether it was folded away. */
+const OVERVIEW_KEY = 'mml.monitor.overviewOpen'
 const PASTE_OFFSET = 24
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v)
@@ -349,6 +354,31 @@ export default function MonitorPage() {
   // Local to this page, like AppShell's sidebar collapse — the rail is a
   // viewing preference for this drawing, not something worth persisting.
   const [railCollapsed, setRailCollapsed] = useState(false)
+
+  /**
+   * Whether the overview panel above the drawing is open.
+   *
+   * A view preference, not part of the document: two operators watching the
+   * same plant may reasonably want different amounts of chrome, and folding the
+   * panel must never look like an edit to the drawing. Kept per browser for the
+   * same reason — and read defensively, because a private window or blocked
+   * site data makes every one of these accessors throw.
+   */
+  const [overviewOpen, setOverviewOpen] = useState(() => {
+    try {
+      return localStorage.getItem(OVERVIEW_KEY) !== 'closed'
+    } catch {
+      return true
+    }
+  })
+  const toggleOverview = useCallback(() => {
+    setOverviewOpen((open) => {
+      try {
+        localStorage.setItem(OVERVIEW_KEY, open ? 'closed' : 'open')
+      } catch { /* private mode — the preference just does not persist */ }
+      return !open
+    })
+  }, [])
   // The hand tool, in view mode. Edit mode has `toolMode` and a toolbar to set
   // it; a running mimic has neither, so the mode lives here and on one key.
   const [viewPan, setViewPan] = useState(false)
@@ -1260,42 +1290,91 @@ export default function MonitorPage() {
 
   return (
     <div className={styles.page}>
-      <header className={styles.bar}>
-        <div className={styles.titleWrap}>
-          <MimicSwitcher
-            layouts={layouts}
-            activeSlug={activeSlug}
-            activeName={activeName}
-            canManage={canEdit}
-            // A draft belongs to one server revision. Switching drawings is
-            // disabled until the administrator saves or cancels the session.
-            disabled={editMode}
-            onSelect={selectMimic}
-          />
-          <p className={styles.sub}>{subtitle}</p>
-        </div>
+      {/* The overview: which drawing this is, whether it is running, how often
+        * it polls, and the headline numbers — one panel rather than three
+        * loose rows, and foldable, because on a mimic the drawing is the point
+        * and everything above it is competing with the thing you came to see.
+        *
+        * What survives the fold is deliberate. The name and the running state
+        * stay: a control-room display that cannot say which plant it shows, or
+        * that it is in alarm, is worse than one with no panel at all. Edit
+        * layout stays because hiding the primary action behind a disclosure is
+        * how an admin concludes the page is broken. The cadence, the connected
+        * count and the KPI strip fold away — settings and detail, all of them
+        * still one click from view. */}
+      <section
+        className={`${styles.overview} ${overviewOpen ? '' : styles.overviewClosed}`}
+        aria-label="Mimic overview"
+      >
+        <header className={styles.bar}>
+          <div className={styles.titleWrap}>
+            <MimicSwitcher
+              layouts={layouts}
+              activeSlug={activeSlug}
+              activeName={activeName}
+              canManage={canEdit}
+              // A draft belongs to one server revision. Switching drawings is
+              // disabled until the administrator saves or cancels the session.
+              disabled={editMode}
+              onSelect={selectMimic}
+            />
+            {overviewOpen && <p className={styles.sub}>{subtitle}</p>}
+          </div>
 
-        <span className={styles.plantState}>
-          <span className={`${styles.dot} ${dotClass}`} />
-          {statusLabel}
-        </span>
+          <span className={styles.plantState}>
+            <span className={`${styles.dot} ${dotClass}`} />
+            {statusLabel}
+          </span>
 
-        <div className={styles.actions}>
-          {cadence}
+          <div className={styles.actions}>
+            {overviewOpen && cadence}
 
-          {canEdit && !!layout && !lock && (
-            !editMode && (
-              <Button
-                variant="outlined"
-                color="inherit"
-                onClick={toggleEdit}
-              >
-                Edit layout
-              </Button>
-            )
+            {canEdit && !!layout && !lock && (
+              !editMode && (
+                <Button
+                  variant="outlined"
+                  color="inherit"
+                  onClick={toggleEdit}
+                >
+                  Edit layout
+                </Button>
+              )
+            )}
+
+            <button
+              type="button"
+              className={styles.overviewToggle}
+              aria-expanded={overviewOpen}
+              aria-controls="mimic-overview-detail"
+              title={overviewOpen ? 'Collapse overview' : 'Expand overview'}
+              aria-label={overviewOpen ? 'Collapse overview' : 'Expand overview'}
+              onClick={toggleOverview}
+            >
+              {overviewOpen ? <ExpandLessOutlined fontSize="small" /> : <ExpandMoreOutlined fontSize="small" />}
+            </button>
+          </div>
+        </header>
+
+        {/* `hidden` rather than unmounted: the strip's bindings ride the shared
+          * poller either way, and remounting it on every fold would restart its
+          * entry in the snapshot for no gain. */}
+        <div id="mimic-overview-detail" hidden={!overviewOpen}>
+          {/* Not in full screen: the banner carries its own copy, and two
+            * strips in one tree would be two things to read before finding the
+            * drawing — and two identically-labelled regions for a screen
+            * reader. */}
+          {layout && !fullscreen && (
+            <KpiStrip
+              kpis={kpis}
+              tags={tags}
+              editing={editing}
+              onEdit={setEditingKpi}
+              onAdd={addKpi}
+              onReorder={commitKpis}
+            />
           )}
         </div>
-      </header>
+      </section>
 
       {/* Read-only, and why. Sits above the data error because it describes
         * the drawing itself rather than this tick's poll. */}
@@ -1307,20 +1386,6 @@ export default function MonitorPage() {
         * the generic banner only earns its place when the strip has nothing
         * to say (e.g. a stale-but-answering source). */}
       {dataError && !anySourceFailed && <Alert severity="warning">{dataError}</Alert>}
-
-      {/* The headline numbers. Suppressed in full screen only because the
-        * banner carries its own copy — two strips on one page would be two
-        * things to read before finding the drawing. */}
-      {layout && !fullscreen && (
-        <KpiStrip
-          kpis={kpis}
-          tags={tags}
-          editing={editing}
-          onEdit={setEditingKpi}
-          onAdd={addKpi}
-          onReorder={commitKpis}
-        />
-      )}
 
       {/* Only the drawing waits on the switch — the switcher itself stays put,
         * so the control you just used does not vanish under your cursor. */}

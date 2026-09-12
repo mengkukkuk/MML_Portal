@@ -88,7 +88,13 @@ export default function MimicEditorToolbar({
         <ToolButton label="Download PNG snapshot" onClick={onSnapshot}><PhotoCameraOutlined fontSize="small" /></ToolButton>
       </div>
 
-      <div className={`${styles.toolGroup} ${styles.drawerTools}`}>
+      {/* Kept out of `drawerTools` below, and the distinction is the whole
+        * point of the split: those two are *rail toggles*, meaningless on a
+        * wide screen where both rails are permanently docked. This one opens a
+        * dialog and is the only route to it, so hiding it above the breakpoint
+        * made the production log unconfigurable on exactly the large displays
+        * an admin is most likely to be drawing on. */}
+      <div className={styles.toolGroup}>
         <ToolButton
           label={productionLogConfigured ? 'Edit production log settings' : 'Configure production log'}
           active={productionLogConfigured}
@@ -96,6 +102,9 @@ export default function MimicEditorToolbar({
         >
           <BarChartOutlined fontSize="small" />
         </ToolButton>
+      </div>
+
+      <div className={`${styles.toolGroup} ${styles.drawerTools}`}>
         <ToolButton label="Open symbol palette" onClick={onTogglePalette}><ViewSidebarOutlined fontSize="small" /></ToolButton>
         <ToolButton label="Open inspector" onClick={onToggleInspector}><ViewSidebarOutlined fontSize="small" /></ToolButton>
       </div>
