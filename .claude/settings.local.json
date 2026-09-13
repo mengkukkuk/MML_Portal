@@ -122,7 +122,21 @@
       "Bash(powershell -NoProfile -c \"Get-Process -Id 6308 | Select-Object Id,ProcessName,StartTime | Format-List\")",
       "Bash(./venv/Scripts/python.exe -c \"import PIL; print\\(''''pillow'''', PIL.__version__\\)\")",
       "Bash(./venv/Scripts/python.exe \"C:/Users/mengk/AppData/Local/Temp/gen_cam_frames.py\" \"D:/FTP-DATA\")",
-      "Bash(powershell -NoProfile -Command \"Get-Process -Id 6308 | Select-Object Id,ProcessName,StartTime | Format-List\")"
+      "Bash(powershell -NoProfile -Command \"Get-Process -Id 6308 | Select-Object Id,ProcessName,StartTime | Format-List\")",
+      "Bash(node C:/Users/mengk/.claude/skills/archify/bin/archify.mjs validate architecture mml-runtime-architecture.json --quality showcase --json)",
+      "Bash(python -c \"import sys,json;d=json.load\\(sys.stdin\\);print\\(d[''''ok''''], d.get\\(''''checker'''',{}\\).get\\(''''composition'''',{}\\).get\\(''''summary''''\\), [c[''''name'''']+'''':''''+str\\(c[''''ok'''']\\) for c in d.get\\(''''checker'''',{}\\).get\\(''''checks'''',[]\\)]\\)\")",
+      "Bash(node C:/Users/mengk/.claude/skills/archify/bin/archify.mjs deliver architecture mml-runtime-architecture.json mml-runtime-architecture.html --quality showcase --json)",
+      "Bash(node C:/Users/mengk/.claude/skills/archify/scripts/check-update.mjs)",
+      "Bash(node C:/Users/mengk/.claude/skills/archify/bin/archify.mjs visual-check mml-runtime-architecture.html --json)",
+      "Bash(python -c \"import sys,json;d=json.load\\(sys.stdin\\);print\\(json.dumps\\({k:v for k,v in d.items\\(\\) if k not in \\(''''viewports'''',''''diagnostics''''\\)},indent=1\\)[:1500]\\)\")",
+      "Bash(node C:/Users/mengk/.claude/skills/archify/bin/archify.mjs validate workflow frontend-workflow.json --quality showcase --json)",
+      "Bash(python -c \"import sys,json;d=json.load\\(sys.stdin\\);print\\(''''ok'''',d[''''ok'''']\\);print\\([x[''''code''''] for x in d.get\\(''''diagnostics'''',[]\\)]\\);print\\(d.get\\(''''composition'''',{}\\).get\\(''''summary''''\\) or d.get\\(''''checker'''',{}\\).get\\(''''composition'''',{}\\).get\\(''''summary''''\\)\\)\")",
+      "Bash(node C:/Users/mengk/.claude/skills/archify/bin/archify.mjs deliver workflow frontend-workflow.json frontend-workflow.html --quality showcase --json)",
+      "Bash(node C:/Users/mengk/.claude/skills/archify/bin/archify.mjs visual-check frontend-workflow.html --json)",
+      "Bash(node C:/Users/mengk/.claude/skills/archify/bin/archify.mjs validate workflow frontend-workflow.json --layout-json)",
+      "Read(//c/Users/mengk/.agents/skills/archify/**)",
+      "Bash(node bin/archify.mjs deliver workflow \"G:/Code/DEV/scada-frontend/frontend-workflow.json\" \"G:/Code/DEV/scada-frontend/frontend-workflow.html\" --quality showcase --json)",
+      "Bash(node bin/archify.mjs visual-check \"G:/Code/DEV/scada-frontend/frontend-workflow.html\" --json)"
     ]
   }
 }

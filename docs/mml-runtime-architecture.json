@@ -1,0 +1,333 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "MMLPortal — Runtime Architecture",
+    "output": "mml-runtime-architecture.html",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1330,
+      660
+    ],
+    "views": [
+      {
+        "id": "primary-read",
+        "label": "Primary plant read",
+        "focus": [
+          "operator",
+          "iis",
+          "api",
+          "fanout",
+          "plantdb"
+        ],
+        "note": "Follow one operator request from the browser to a plant database."
+      },
+      {
+        "id": "config-plane",
+        "label": "Config plane",
+        "focus": [
+          "api",
+          "appdb",
+          "license",
+          "auth"
+        ],
+        "note": "Login, layouts and settings stay up even when every plant is unreachable."
+      },
+      {
+        "id": "background",
+        "label": "Background sampling",
+        "focus": [
+          "tagbuffer",
+          "fanout",
+          "plantdb"
+        ],
+        "note": "variables_tag holds only a current value, so a 5s loop builds the history buffer."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "operator",
+      "type": "external",
+      "label": "Operators",
+      "sublabel": "Browser",
+      "pos": [
+        30,
+        360
+      ],
+      "size": [
+        150,
+        70
+      ]
+    },
+    {
+      "id": "spa",
+      "type": "frontend",
+      "label": "React 19 SPA",
+      "sublabel": "Vite build → dist/",
+      "pos": [
+        290,
+        185
+      ],
+      "size": [
+        160,
+        66
+      ],
+      "tag": "JWT in memory"
+    },
+    {
+      "id": "iis",
+      "type": "cloud",
+      "label": "IIS + ARR",
+      "sublabel": "reverse proxy :443",
+      "pos": [
+        290,
+        360
+      ],
+      "size": [
+        160,
+        70
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "FastAPI",
+      "sublabel": "uvicorn :8088 (NSSM)",
+      "pos": [
+        570,
+        360
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "tag": "15 routers"
+    },
+    {
+      "id": "auth",
+      "type": "security",
+      "label": "Auth + RBAC",
+      "sublabel": "scrypt · refresh cookie",
+      "pos": [
+        570,
+        185
+      ],
+      "size": [
+        160,
+        66
+      ]
+    },
+    {
+      "id": "brevo",
+      "type": "external",
+      "label": "Brevo API / SMTP",
+      "sublabel": "password-reset mail",
+      "pos": [
+        570,
+        30
+      ],
+      "size": [
+        160,
+        66
+      ]
+    },
+    {
+      "id": "tagbuffer",
+      "type": "backend",
+      "label": "Tag buffer loop",
+      "sublabel": "5s snapshot → history",
+      "pos": [
+        850,
+        185
+      ],
+      "size": [
+        160,
+        66
+      ]
+    },
+    {
+      "id": "fanout",
+      "type": "backend",
+      "label": "Datasource fan-out",
+      "sublabel": "bounded thread pool",
+      "pos": [
+        850,
+        360
+      ],
+      "size": [
+        160,
+        70
+      ]
+    },
+    {
+      "id": "plantdb",
+      "type": "database",
+      "label": "Plant databases",
+      "sublabel": "readings · tags · events",
+      "pos": [
+        1130,
+        360
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "tag": "N plants"
+    },
+    {
+      "id": "license",
+      "type": "security",
+      "label": "Offline license",
+      "sublabel": "Ed25519, no phone-home",
+      "pos": [
+        290,
+        545
+      ],
+      "size": [
+        160,
+        66
+      ]
+    },
+    {
+      "id": "appdb",
+      "type": "database",
+      "label": "App / config DB",
+      "sublabel": "localhost:5432 postgres",
+      "pos": [
+        570,
+        545
+      ],
+      "size": [
+        160,
+        66
+      ],
+      "tag": "hardcoded"
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Windows host — IIS + mml-api service",
+      "wraps": [
+        "spa",
+        "iis",
+        "api",
+        "auth",
+        "tagbuffer",
+        "fanout",
+        "license",
+        "appdb"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "Plant / OT trust boundary",
+      "wraps": [
+        "plantdb"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "operator-to-iis",
+      "from": "operator",
+      "to": "iis",
+      "label": "HTTPS :443",
+      "variant": "emphasis"
+    },
+    {
+      "id": "iis-to-api",
+      "from": "iis",
+      "to": "api",
+      "label": "proxies /api/*",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-to-fanout",
+      "from": "api",
+      "to": "fanout",
+      "label": "active selection",
+      "variant": "emphasis"
+    },
+    {
+      "id": "fanout-to-plant",
+      "from": "fanout",
+      "to": "plantdb",
+      "label": "read-only SQL",
+      "variant": "emphasis"
+    },
+    {
+      "id": "iis-serves-spa",
+      "from": "iis",
+      "to": "spa",
+      "label": "serves dist/",
+      "variant": "dashed"
+    },
+    {
+      "id": "api-verifies-jwt",
+      "from": "api",
+      "to": "auth",
+      "label": "verify JWT",
+      "variant": "security"
+    },
+    {
+      "id": "auth-sends-reset",
+      "from": "auth",
+      "to": "brevo",
+      "label": "reset link",
+      "variant": "dashed"
+    },
+    {
+      "id": "tagbuffer-samples",
+      "from": "tagbuffer",
+      "to": "fanout",
+      "label": "5s snapshot",
+      "variant": "dashed",
+      "labelDy": 24
+    },
+    {
+      "id": "api-config-sql",
+      "from": "api",
+      "to": "appdb",
+      "label": "config SQL",
+      "labelDy": 24
+    },
+    {
+      "id": "license-gates-api",
+      "from": "license",
+      "to": "api",
+      "label": "gates tiers",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Edge and session",
+      "items": [
+        "IIS + ARR sends /api/* to uvicorn :8088 and everything else to index.html",
+        "Access JWT (30 min) stays in JS memory; the refresh JWT is an HttpOnly cookie on /api/auth",
+        "A bundled install drops IIS — FastAPI serves dist/ from the same process"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Two-database split",
+      "items": [
+        "The app/config DB is hardcoded to localhost — login and layouts survive a total plant outage",
+        "sensor_readings, variables_tag, event_logs and alarm_logs are only ever read from a plant",
+        "The header selection (max 8 plants) overrides any panel's stored datasource_id"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Fan-out and failure",
+      "items": [
+        "db.fan_out runs one bounded worker per selected plant and stamps datasource_id on every row",
+        "A failed plant is not an empty plant — each response carries a per-source ok/error report",
+        "Only an insecure JWT_SECRET aborts startup; a dead DB or missing license degrades instead"
+      ]
+    }
+  ]
+}

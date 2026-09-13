@@ -457,7 +457,7 @@ To redeploy the frontend: `npm run build` then copy `scada-frontend\dist\*` to t
 
 ### 5.3 Production verification
 
-[`C:\dev\verify_prod.ps1`](verify_prod.ps1) runs the full deployment smoke test (must be elevated):
+[`C:\dev\verify_prod.ps1`](../verify_prod.ps1) runs the full deployment smoke test (must be elevated):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File C:\dev\verify_prod.ps1

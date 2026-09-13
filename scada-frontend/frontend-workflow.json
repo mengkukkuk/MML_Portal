@@ -1,0 +1,82 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "scada-frontend — How the SPA Works Together",
+    "output": "frontend-workflow.html",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "cold-load", "label": "Cold load", "focus": ["load", "providers", "bootstrap", "guard", "shell"], "note": "One page load: theme, providers, single-flight session refresh, then the route guard." },
+      { "id": "poll-loop", "label": "Poll loop", "focus": ["page", "selection", "query", "client"], "note": "How a mounted panel turns the header selection into a repeating fetch." },
+      { "id": "recovery", "label": "Session recovery", "focus": ["client", "refresh", "relogin"], "note": "What a 401 does to an in-flight request, and where a failed refresh lands." }
+    ]
+  },
+  "lanes": [
+    { "id": "app", "label": "App — main.jsx → router → pages" },
+    { "id": "data", "label": "Data — stores · Query · axios" },
+    { "id": "recovery", "label": "Session recovery", "variant": "exception" }
+  ],
+  "phases": [
+    { "id": "coldload", "label": "Cold load", "fromCol": 0, "toCol": 1 },
+    { "id": "session", "label": "Session + route", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "runtime", "label": "Render + poll loop", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["load", "providers", "bootstrap", "guard", "shell", "page"],
+  "semanticChecks": {
+    "allowedRoots": ["load"],
+    "allowedTerminals": ["stores", "relogin"],
+    "requiredEdges": [
+      { "from": "query", "to": "client" },
+      { "from": "client", "to": "refresh" }
+    ],
+    "requiredPaths": [
+      { "from": "load", "to": "page" }
+    ]
+  },
+  "nodes": [
+    { "id": "load", "lane": "app", "col": 0, "type": "external", "label": "Browser load", "sublabel": "index.html · theme", "width": 132 },
+    { "id": "providers", "lane": "app", "col": 1, "type": "frontend", "label": "Providers", "sublabel": "MUI · QueryClient", "width": 132 },
+    { "id": "bootstrap", "lane": "app", "col": 2, "type": "frontend", "label": "Session bootstrap", "sublabel": "single-flight refresh", "tag": "gates first paint", "width": 132 },
+    { "id": "guard", "lane": "app", "col": 3, "type": "security", "label": "RequireAuth", "sublabel": "requiresAuth · role", "width": 132 },
+    { "id": "shell", "lane": "app", "col": 4, "type": "frontend", "label": "AppShell", "sublabel": "header · sidebar", "width": 132 },
+    { "id": "page", "lane": "app", "col": 5, "type": "frontend", "label": "Page + panels", "sublabel": "Live · Monitor · Reports", "width": 132 },
+    { "id": "stores", "lane": "data", "col": 2, "type": "database", "label": "Zustand stores", "sublabel": "auth · connection", "width": 132 },
+    { "id": "selection", "lane": "data", "col": 3, "type": "database", "label": "Datasource selection", "sublabel": "server-owned mirror", "width": 132 },
+    { "id": "query", "lane": "data", "col": 4, "type": "messagebus", "label": "usePanelPolling", "sublabel": "TanStack Query 5s–1h", "tag": "seed → append", "width": 132 },
+    { "id": "client", "lane": "data", "col": 5, "type": "backend", "label": "API layer", "sublabel": "src/api/* → axios", "tag": "Bearer · 10s timeout", "width": 132 },
+    { "id": "refresh", "lane": "recovery", "col": 4, "type": "security", "label": "401 → refresh", "sublabel": "queue, then replay", "width": 132 },
+    { "id": "relogin", "lane": "recovery", "col": 3, "type": "security", "label": "Refresh failed", "sublabel": "clear · go /login", "width": 132 }
+  ],
+  "edges": [
+    { "id": "load-providers", "from": "load", "to": "providers", "label": "createRoot", "variant": "emphasis" },
+    { "id": "providers-bootstrap", "from": "providers", "to": "bootstrap", "label": "render App", "variant": "emphasis" },
+    { "id": "bootstrap-guard", "from": "bootstrap", "to": "guard", "label": "first paint", "variant": "emphasis" },
+    { "id": "guard-shell", "from": "guard", "to": "shell", "label": "authorised", "variant": "emphasis" },
+    { "id": "shell-page", "from": "shell", "to": "page", "label": "Outlet", "variant": "emphasis" },
+    { "id": "bootstrap-stores", "from": "bootstrap", "to": "stores", "label": "hydrate", "variant": "dashed", "role": "branch" },
+    { "id": "shell-selection", "from": "shell", "to": "selection", "label": "header picker", "variant": "dashed", "role": "branch" },
+    { "id": "page-query", "from": "page", "to": "query", "label": "panels mount", "variant": "default", "role": "branch" },
+    { "id": "selection-query", "from": "selection", "to": "query", "label": "selectionKey", "variant": "default" },
+    { "id": "query-client", "from": "query", "to": "client", "label": "seed → poll", "variant": "emphasis" },
+    { "id": "client-refresh", "from": "client", "to": "refresh", "label": "401", "variant": "security", "role": "error" },
+    { "id": "refresh-replay", "from": "refresh", "to": "client", "label": "replay once", "variant": "dashed", "role": "return" },
+    { "id": "refresh-relogin", "from": "refresh", "to": "relogin", "label": "no cookie", "variant": "security", "role": "error" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Boot order is load-bearing", "items": [
+      "data-theme is read from localStorage before createRoot, so no palette flash",
+      "The first render waits on one single-flight /auth/refresh — no /login flash",
+      "A blocked license replaces the router instead of rendering as a route"
+    ] },
+    { "dot": "emerald", "title": "One key, one series", "items": [
+      "The header's selectionKey rides in every query key, so a new plant reseeds",
+      "First call per key seeds a window; later calls append and trim it",
+      "Series are keyed by datasource id — plants reuse the same tag names"
+    ] },
+    { "dot": "violet", "title": "Failure is handled once", "items": [
+      "A 401 refreshes once, queues the other requests, then replays them",
+      "502/503/504 gets one 1.5s retry here, so Query itself never retries",
+      "useHealthPoll polls /api/health unauthenticated every 15s"
+    ] }
+  ]
+}
