@@ -29,6 +29,9 @@
 
 .menu {
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding-top: var(--space-2);
 }
 
@@ -56,4 +59,59 @@
 
 .menuItemActive .menuIcon {
   color: var(--accent);
+}
+
+.poweredBy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+  margin: var(--space-4) var(--space-3) 0;
+  padding: var(--space-5) 0 var(--space-6);
+  border-top: 1px solid var(--border-soft);
+  text-align: center;
+}
+
+.poweredLogo {
+  display: block;
+  width: 64px;
+  height: 64px;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.poweredOrbit {
+  transform-origin: 32px 32px;
+  animation: poweredRotate 8s linear infinite;
+}
+
+.poweredCopy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.poweredCaption {
+  color: var(--fg-muted);
+  font-family: var(--font-sans);
+  font-size: 11px;
+}
+
+.poweredName {
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.poweredByCollapsed .poweredLogo {
+  width: 32px;
+  height: 32px;
+}
+
+@keyframes poweredRotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }

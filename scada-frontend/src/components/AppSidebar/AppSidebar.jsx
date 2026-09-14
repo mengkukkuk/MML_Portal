@@ -23,7 +23,7 @@ const BASE_ITEMS = [
   { path: '/monitor', title: 'Monitor', Icon: AccountTreeOutlined },
   { path: '/live', title: 'Live', Icon: PlayCircleOutlined },
   { path: '/reports', title: 'Reports', Icon: AssessmentOutlined },
-  { path: '/ap', title: 'A&P', Icon: SpeedOutlined },
+  //{ path: '/ap', title: 'A&P', Icon: SpeedOutlined },
   { path: '/events', title: 'Events', Icon: ListAltOutlined },
   { path: '/alarms', title: 'Alarms', Icon: WarningRounded },
   { path: '/devices', title: 'Devices', Icon: MemoryOutlined },
@@ -79,6 +79,23 @@ export default function AppSidebar({ collapsed }) {
           )
         })}
       </List>
+      <div
+        className={`${styles.poweredBy} ${collapsed ? styles.poweredByCollapsed : ''}`}
+        title="Powered by Engineering Off-Site"
+        aria-label={collapsed ? 'Powered by Engineering Off-Site' : undefined}
+      >
+        <svg className={styles.poweredLogo} viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <circle className={styles.poweredOrbit} cx="32" cy="32" r="27" stroke="currentColor" strokeWidth="1.5" strokeDasharray="32 10 5 10" />
+          <path d="M13 41V23L19 32L25 23V41M30 41V23L36 32L42 23V41M47 23V41H53" stroke="currentColor" strokeWidth="2.5" strokeLinecap="square" strokeLinejoin="round" />
+          <path d="M32 5V12M32 52V59" stroke="currentColor" strokeWidth="2" />
+        </svg>
+        {!collapsed && (
+          <div className={styles.poweredCopy}>
+            <span className={styles.poweredCaption}>Powered by</span>
+            <span className={styles.poweredName}>Engineering Off-Site</span>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
