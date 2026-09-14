@@ -1569,6 +1569,7 @@ export default function MonitorPage() {
               open={productionLogOpen}
               slug={activeSlug}
               configured={!!layout.productionLog}
+              mode={layout.productionLog?.mode ?? null}
               canEdit={canEdit}
               onClose={() => setProductionLogOpen(false)}
             />

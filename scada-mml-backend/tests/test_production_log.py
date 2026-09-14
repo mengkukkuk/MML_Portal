@@ -422,3 +422,90 @@ def test_wide_mode_still_reads_both_counters_from_one_row_stream(monkeypatch):
     reads = [s for s in statements if "FROM" in s]
     assert len(reads) == 2
     assert all("AS produced" in s and "AS rejected" in s for s in reads)
+
+
+# --- hourly totals ------------------------------------------------------------
+# A log table with one row per hour already holds each hour's totals. Treating
+# those as running counters would difference them and chart the change in rate.
+
+def _hourly_binding(**overrides):
+    return _binding(**{"mode": "hourly", "ts_col": "period_start",
+                       "produced_col": "count_total", "rejected_col": "defect_total", **overrides})
+
+
+HOURLY_COLUMNS = {
+    "value_columns": ["count_total", "defect_total"],
+    "text_columns": ["line_code"],
+    "ts_columns": ["period_start"],
+    "datetime_columns": ["period_start"],
+    "filter_columns": ["line_code", "period_start"],
+}
+
+
+def test_hourly_totals_are_summed_per_hour_never_differenced():
+    from production_log import aggregate_hourly_totals
+    rows = [
+        {"ts": datetime(2026, 8, 28, 7, 0), "produced": 999, "rejected": 99},   # before shift
+        {"ts": datetime(2026, 8, 28, 8, 0), "produced": 700, "rejected": 20},
+        {"ts": datetime(2026, 8, 28, 9, 0), "produced": 650, "rejected": 12},   # lower than 08: still 650
+        {"ts": datetime(2026, 8, 28, 9, 0), "produced": 50, "rejected": 3},     # second line, same hour
+        {"ts": datetime(2026, 8, 27, 10, 0), "produced": 500, "rejected": 5},   # yesterday
+    ]
+
+    result = aggregate_hourly_totals(rows, datetime(2026, 8, 28, 13, 15))
+
+    assert result["buckets"] == [
+        {"hour": 8, "produced": 700, "rejected": 20},
+        {"hour": 9, "produced": 700, "rejected": 15},
+    ]
+
+
+def test_hourly_mode_is_validated_like_the_wide_layout(monkeypatch):
+    monkeypatch.setattr(db, "describe_table", lambda table, datasource_id: HOURLY_COLUMNS)
+    mimic._validate({"nodes": [], "edges": [], "productionLog": _hourly_binding()})
+
+    with pytest.raises(HTTPException) as exc:
+        mimic._validate({"nodes": [], "edges": [], "productionLog": _hourly_binding(
+            filter_col="line_code", produced_filter_val="A", rejected_filter_val="B",
+        )})
+    assert "hourly mode" in exc.value.detail
+
+
+def test_unknown_mode_is_rejected(monkeypatch):
+    monkeypatch.setattr(db, "describe_table", lambda table, datasource_id: HOURLY_COLUMNS)
+    with pytest.raises(HTTPException) as exc:
+        mimic._validate({"nodes": [], "edges": [], "productionLog": _hourly_binding(mode="daily")})
+    assert "mode must be" in exc.value.detail
+
+
+def test_database_adapter_sums_an_hourly_log_table():
+    table = f"production_hourly_test_{id(object())}"
+    table_id = sql.Identifier(table)
+    with db.get_connection() as conn:
+        conn.execute(sql.SQL(
+            "CREATE TABLE {} (period_start timestamp, line_code text, count_total integer, defect_total integer)"
+        ).format(table_id))
+        conn.execute(sql.SQL(
+            "INSERT INTO {} VALUES "
+            "(CURRENT_DATE + time '07:00', 'A', 900, 90),"
+            "(CURRENT_DATE + time '08:00', 'A', 700, 20),"
+            "(CURRENT_DATE + time '09:00', 'A', 650, 12),"
+            "(CURRENT_DATE + time '09:00', 'B', 9999, 9999)"
+        ).format(table_id))
+        conn.commit()
+    try:
+        result = db.production_log_hourly(_hourly_binding(
+            table=table, filter_col="line_code", filter_val="A",
+        ))
+        # Rows for hours that have not started yet are excluded by the snapshot
+        # bound, so only assert on the hours that are always in the past once
+        # the test runs after 10:00 — otherwise just the hours visible so far.
+        visible = [b for b in [
+            {"hour": 8, "produced": 700, "rejected": 20},
+            {"hour": 9, "produced": 650, "rejected": 12},
+        ] if b["hour"] <= result["generated_at"].hour]
+        assert result["buckets"] == visible
+    finally:
+        with db.get_connection() as conn:
+            conn.execute(sql.SQL("DROP TABLE {}").format(table_id))
+            conn.commit()

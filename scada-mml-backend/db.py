@@ -19,7 +19,9 @@ from psycopg_pool import ConnectionPool, PoolTimeout
 
 import config
 import security
-from production_log import aggregate_counter_samples, aggregate_counter_series
+from production_log import (
+    aggregate_counter_samples, aggregate_counter_series, aggregate_hourly_totals,
+)
 
 logger = logging.getLogger("mml-api.db")
 
@@ -1751,8 +1753,11 @@ def production_log_hourly(
       `rejected_filter_val` name the two tags. This is what a historian keyed by
       tag name gives you, and no shared-filter binding can express it, because
       the two counters need *different* values of the same column.
+    - **Hourly totals** (`mode: "hourly"`) — a log table with one row per hour
+      whose timestamp is the hour's start and whose columns already hold that
+      hour's count and defect totals. Summed per hour, never differenced.
 
-    One sample immediately before 08:00 is included as each counter's baseline.
+    For the counter layouts, one sample immediately before 08:00 is included as each counter's baseline.
     The pure aggregator owns reset semantics; this adapter owns identifier
     safety and reading from the configured plant connection.
     """
@@ -1765,6 +1770,7 @@ def production_log_hourly(
     produced_filter_val = binding.get("produced_filter_val")
     rejected_filter_val = binding.get("rejected_filter_val")
     per_counter = produced_filter_val is not None and rejected_filter_val is not None
+    hourly = binding.get("mode") == "hourly"
 
     with _table_source_conn(datasource_id) as (conn, schema):
         # Identifier validation below queries information_schema, so establish
@@ -1817,7 +1823,31 @@ def production_log_hourly(
                 ts=sql.Identifier(ts_col), value=sql.Identifier(col),
             )
 
-        if per_counter:
+        if hourly:
+            # Already one row per hour: no baseline row, nothing to difference.
+            where = sql.SQL("")
+            params: list[Any] = []
+            if filter_col and filter_val is not None:
+                where = sql.SQL(" AND {}::text = %s").format(sql.Identifier(filter_col))
+                params.append(filter_val)
+            rows = conn.execute(
+                sql.SQL(
+                    "SELECT {ts} AS ts, {produced} AS produced, {rejected} AS rejected "
+                    "FROM {table} "
+                    "WHERE {ts} >= CURRENT_DATE + time '08:00' "
+                    "AND {ts} < CURRENT_DATE + time '18:00' "
+                    "AND {ts} <= %s{filter} "
+                    "ORDER BY {ts} ASC"
+                ).format(
+                    ts=sql.Identifier(ts_col),
+                    produced=sql.Identifier(produced_col),
+                    rejected=sql.Identifier(rejected_col),
+                    table=table_sql,
+                    filter=where,
+                ),
+                [generated_at, *params],
+            ).fetchall()
+        elif per_counter:
             produced_baseline, produced_rows = read(one(produced_col), produced_filter_val)
             rejected_baseline, rejected_rows = read(one(rejected_col), rejected_filter_val)
         else:
@@ -1830,6 +1860,8 @@ def production_log_hourly(
             )
             baseline, rows = read(both, filter_val)
 
+    if hourly:
+        return aggregate_hourly_totals(rows, generated_at)
     if per_counter:
         return aggregate_counter_series(
             ([produced_baseline] if produced_baseline else []) + produced_rows,

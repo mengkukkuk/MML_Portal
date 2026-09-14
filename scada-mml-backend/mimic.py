@@ -282,6 +282,18 @@ def _validate_production_log(
         (("produced_filter_val", produced_val), ("rejected_filter_val", rejected_val))
         if value is not None and value != ""
     ]
+    mode = binding.get("mode")
+    if mode not in (None, "counter", "hourly"):
+        raise _bad(f"{where}: mode must be 'counter', 'hourly' or null")
+    if mode == "hourly" and named:
+        # An hourly row carries both totals side by side, so there is no tag to
+        # tell two counters apart — per-counter filter values mean the binding
+        # was written for the tag layout.
+        raise _bad(
+            f"{where}: hourly mode reads count and defect from one row — "
+            "per-counter filter values are not supported"
+        )
+
     if len(named) == 1:
         raise _bad(
             f"{where}: produced_filter_val and rejected_filter_val must be set "

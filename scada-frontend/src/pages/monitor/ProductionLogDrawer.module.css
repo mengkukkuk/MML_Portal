@@ -104,20 +104,25 @@
   cursor: pointer;
 }
 .barSlot:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.barWell { display: flex; align-items: flex-end; min-height: 0; }
+.barWell { display: flex; align-items: flex-end; justify-content: center; gap: 2px; min-height: 0; padding-inline: 12%; }
 .bar {
   position: relative;
   display: block;
-  width: 100%;
+  flex: 1 1 0;
+  min-width: 0;
   min-height: 2px;
-  background: color-mix(in srgb, var(--fg-muted) 72%, var(--bg-panel));
+  background: color-mix(in srgb, var(--accent) 48%, var(--bg-panel));
   transition: height 180ms ease-out, background 120ms ease-out;
 }
-.rejectCap { position: absolute; top: 0; right: 0; left: 0; height: 2px; background: var(--crit); }
+.barReject { background: color-mix(in srgb, var(--crit) 55%, var(--bg-panel)); }
+.swatch { display: inline-block; width: 8px; height: 8px; margin-right: 5px; border-radius: 2px; background: color-mix(in srgb, var(--accent) 78%, var(--bg-panel)); }
+.swatchReject { background: color-mix(in srgb, var(--crit) 70%, var(--bg-panel)); }
 .hour { align-self: center; font: 10px var(--font-mono); font-variant-numeric: tabular-nums; }
-.barSlot:hover .bar { background: color-mix(in srgb, var(--accent) 52%, var(--fg-muted)); }
-.barSlotActive { color: var(--fg); }
-.barSlotActive .bar { background: color-mix(in srgb, var(--accent) 78%, var(--bg-panel)); }
+.barSlot:hover .bar:not(.barReject) { background: color-mix(in srgb, var(--accent) 52%, var(--fg-muted)); }
+.barSlot:hover .barReject,
+.barSlotActive .barReject { background: var(--crit); }
+.barSlotActive { color: var(--fg); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.barSlotActive .bar:not(.barReject) { background: color-mix(in srgb, var(--accent) 78%, var(--bg-panel)); }
 .barSlotFuture .bar { background: var(--border-soft); }
 
 .message {

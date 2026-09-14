@@ -80,6 +80,31 @@ def aggregate_counter_samples(
     )
 
 
+def aggregate_hourly_totals(
+    rows: Iterable[dict[str, Any]],
+    generated_at: datetime,
+    shift_start: int = 8,
+    shift_end: int = 18,
+) -> dict[str, Any]:
+    """Hourly figures from a table that already logs one row per hour.
+
+    The hourly layout: each row *is* an hour's total (`ts` is the start of the
+    hour it covers, so 08:00 holds 08:00–09:00), not a running counter. Nothing
+    is differenced — subtracting one hour's total from the next would report
+    the change in output rate as if it were output. Rows sharing an hour (one
+    per line, when no filter narrows them) are summed.
+    """
+    produced: dict[int, int] = defaultdict(int)
+    rejected: dict[int, int] = defaultdict(int)
+    for row in rows:
+        ts = row.get("ts")
+        if ts is None or ts.date() != generated_at.date() or not shift_start <= ts.hour < shift_end:
+            continue
+        produced[ts.hour] += _count(row.get("produced"))
+        rejected[ts.hour] += _count(row.get("rejected"))
+    return _envelope(produced, rejected, generated_at)
+
+
 def aggregate_counter_series(
     produced_samples: Iterable[dict[str, Any]],
     rejected_samples: Iterable[dict[str, Any]],

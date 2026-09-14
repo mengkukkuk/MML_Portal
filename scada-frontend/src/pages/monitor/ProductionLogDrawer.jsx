@@ -5,7 +5,7 @@ import { fetchMimicProductionLog } from '@/api/mimic'
 import { apiErrorMessage } from '@/api/client'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import {
-  defaultProductionHour, formatRejectRate, PRODUCTION_LOG_COPY,
+  defaultProductionHour, formatRejectRate, hourRangeLabel, productionLogCopy,
   productionBarHeight, productionHourIsFuture,
 } from './productionLog'
 import styles from './ProductionLogDrawer.module.css'
@@ -17,7 +17,8 @@ function bilingual(thai, english) {
   return <>{thai}<small>{english}</small></>
 }
 
-export default function ProductionLogDrawer({ open, slug, configured, canEdit, onClose }) {
+export default function ProductionLogDrawer({ open, slug, configured, mode, canEdit, onClose }) {
+  const copy = productionLogCopy(mode)
   const [selectedHour, setSelectedHour] = useState(null)
   const selectionKey = useDatasourceSelectionStore((state) => state.selectionKey)
   const query = useQuery({
@@ -38,8 +39,10 @@ export default function ProductionLogDrawer({ open, slug, configured, canEdit, o
 
   const selected = query.data?.buckets.find((bucket) => bucket.hour === selectedHour)
     ?? query.data?.buckets[0]
-  const maxProduced = useMemo(
-    () => Math.max(0, ...(query.data?.buckets ?? []).map((bucket) => bucket.produced)),
+  // One scale for both series: the point of two bars is comparing them, and
+  // scaling each to its own maximum would draw 20 defects as tall as 800 parts.
+  const maxValue = useMemo(
+    () => Math.max(0, ...(query.data?.buckets ?? []).flatMap((bucket) => [bucket.produced, bucket.rejected])),
     [query.data],
   )
   const failedSources = query.data?.sources?.filter((source) => !source.ok) ?? []
@@ -57,7 +60,7 @@ export default function ProductionLogDrawer({ open, slug, configured, canEdit, o
     >
       <header className={styles.head}>
         <div>
-          <h3>{bilingual(...PRODUCTION_LOG_COPY.heading)}</h3>
+          <h3>{bilingual(...copy.heading)}</h3>
           <p>{bilingual('แตะแท่งเพื่อดูตัวเลข', 'Select a bar to inspect the hour')}</p>
         </div>
         <button type="button" className={styles.close} onClick={onClose} aria-label="ปิด / Close production log">
@@ -90,10 +93,10 @@ export default function ProductionLogDrawer({ open, slug, configured, canEdit, o
       {configured && query.data && selected && (
         <div className={styles.content} aria-busy={query.isFetching}>
           <div className={styles.summary} aria-live="polite">
-            <time>{String(selected.hour).padStart(2, '0')}:00</time>
-            <span>{bilingual(...PRODUCTION_LOG_COPY.good)} <b>{N.format(selected.produced)}</b></span>
-            <span>{bilingual(...PRODUCTION_LOG_COPY.reject)} <b className={styles.rejectValue}>{N.format(selected.rejected)}</b></span>
-            <span>{bilingual(...PRODUCTION_LOG_COPY.rejectRate)} <b>{formatRejectRate(selected)}</b></span>
+            <time>{hourRangeLabel(selected.hour)}</time>
+            <span><i className={styles.swatch} aria-hidden="true" />{bilingual(...copy.good)} <b>{N.format(selected.produced)}</b></span>
+            <span><i className={`${styles.swatch} ${styles.swatchReject}`} aria-hidden="true" />{bilingual(...copy.reject)} <b className={styles.rejectValue}>{N.format(selected.rejected)}</b></span>
+            <span>{bilingual(...copy.rejectRate)} <b>{formatRejectRate(selected)}</b></span>
             {query.isFetching && <em>กำลังอัปเดต / Updating…</em>}
             {query.isError && <em className={styles.stale}>ข้อมูลเดิม / Last known data</em>}
             {failedSources.length > 0 && (
@@ -107,8 +110,9 @@ export default function ProductionLogDrawer({ open, slug, configured, canEdit, o
             {query.data.buckets.map((bucket) => {
               const active = bucket.hour === selected.hour
               const future = productionHourIsFuture(query.data, bucket.hour)
-              const height = productionBarHeight(bucket.produced, maxProduced)
-              const label = `${bucket.label}:00, good ${bucket.produced}, rejected ${bucket.rejected}, reject rate ${formatRejectRate(bucket)}`
+              const producedHeight = productionBarHeight(bucket.produced, maxValue)
+              const rejectedHeight = productionBarHeight(bucket.rejected, maxValue)
+              const label = `${hourRangeLabel(bucket.hour)}, ${copy.good[1]} ${bucket.produced}, ${copy.reject[1]} ${bucket.rejected}, ${copy.rejectRate[1]} ${formatRejectRate(bucket)}`
               return (
                 <button
                   key={bucket.hour}
@@ -119,9 +123,8 @@ export default function ProductionLogDrawer({ open, slug, configured, canEdit, o
                   onClick={() => setSelectedHour(bucket.hour)}
                 >
                   <span className={styles.barWell} aria-hidden="true">
-                    <span className={styles.bar} style={{ height: height ? `${height}%` : '2px' }}>
-                      {bucket.rejected > 0 && <span className={styles.rejectCap} />}
-                    </span>
+                    <span className={styles.bar} style={{ height: producedHeight ? `${producedHeight}%` : '2px' }} />
+                    <span className={`${styles.bar} ${styles.barReject}`} style={{ height: rejectedHeight ? `${rejectedHeight}%` : '2px' }} />
                   </span>
                   <span className={styles.hour}>{bucket.label}</span>
                 </button>
@@ -130,7 +133,7 @@ export default function ProductionLogDrawer({ open, slug, configured, canEdit, o
           </div>
 
           {noProduction && (
-            <p className={styles.empty}>{PRODUCTION_LOG_COPY.empty.join(' / ')}</p>
+            <p className={styles.empty}>{copy.empty.join(' / ')}</p>
           )}
         </div>
       )}

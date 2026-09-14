@@ -45,3 +45,16 @@ test('future-hour styling follows the plant timestamp rather than browser time',
   assert.equal(productionHourIsFuture(log, 8), true)
   assert.equal(productionHourIsFuture({ generated_at: '2026-08-28T18:01:00+07:00' }, 17), false)
 })
+
+test('hourRangeLabel names the span one bucket covers', async () => {
+  const { hourRangeLabel } = await import('./productionLog.js')
+  assert.equal(hourRangeLabel(8), '08:00–09:00')
+  assert.equal(hourRangeLabel(17), '17:00–18:00')
+})
+
+test('hourly totals are called count and defect', async () => {
+  const { productionLogCopy } = await import('./productionLog.js')
+  assert.equal(productionLogCopy('hourly').good[1], 'Count')
+  assert.equal(productionLogCopy('hourly').reject[1], 'Defect')
+  assert.equal(productionLogCopy(null), PRODUCTION_LOG_COPY)
+})

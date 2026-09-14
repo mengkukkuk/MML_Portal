@@ -37,6 +37,11 @@ const LAYOUTS = [
     label: 'One column, two tags / คอลัมน์เดียว สองแท็ก',
     hint: 'Both counters in one value column, told apart by a tag column — e.g. value_tag, with tag_name naming Counter1 or Counter2.',
   },
+  {
+    value: 'hourly',
+    label: 'Hourly totals / ยอดรวมรายชั่วโมง',
+    hint: 'One row per hour already holding that hour’s totals — e.g. production_hourly_log with period_start (08:00 = 08:00–09:00), count_total and defect_total. Summed per hour, not differenced.',
+  },
 ]
 
 const blank = {
@@ -50,9 +55,11 @@ function fromBinding(binding) {
   // The stored document has no layout field: which one it is *is* whether the
   // per-counter tags are there. Keeping it derived means an older binding
   // opens as exactly what it has always been.
+  // An hourly-totals table is not tellable from its columns, so that one
+  // layout is stored explicitly as `mode`.
   const tagged = binding.produced_filter_val != null && binding.rejected_filter_val != null
   return {
-    layout: tagged ? 'tag' : 'wide',
+    layout: binding.mode === 'hourly' ? 'hourly' : tagged ? 'tag' : 'wide',
     datasourceId: binding.datasource_id ?? '',
     table: binding.table ?? '',
     tsCol: binding.ts_col ?? '',
@@ -69,6 +76,7 @@ export default function ProductionLogDialog({ open, binding, container, onClose,
   const [form, setForm] = useState(() => fromBinding(binding))
   const set = (patch) => setForm((current) => ({ ...current, ...patch }))
   const tagged = form.layout === 'tag'
+  const hourly = form.layout === 'hourly'
 
   useEffect(() => { if (open) setForm(fromBinding(binding)) }, [binding, open])
 
@@ -161,6 +169,7 @@ export default function ProductionLogDialog({ open, binding, container, onClose,
   function submit() {
     onSave({
       datasource_id: datasourceId ?? null,
+      mode: hourly ? 'hourly' : null,
       table: form.table,
       ts_col: form.tsCol,
       produced_col: form.producedCol,
@@ -180,8 +189,9 @@ export default function ProductionLogDialog({ open, binding, container, onClose,
       <DialogTitle>Production Log / ตั้งค่าบันทึกผลผลิต</DialogTitle>
       <DialogContent dividers className={styles.content}>
         <p className={styles.intro}>
-          Choose two cumulative counters from the same timestamped table.
-          Hourly production is calculated from positive counter increments between 08:00 and 18:00.
+          {hourly
+            ? 'Choose an hourly log table: each row’s count and defect are that hour’s totals, shown side by side per hour between 08:00 and 18:00.'
+            : 'Choose two cumulative counters from the same timestamped table. Hourly production is calculated from positive counter increments between 08:00 and 18:00.'}
         </p>
 
         <div className={styles.grid}>
@@ -228,7 +238,7 @@ export default function ProductionLogDialog({ open, binding, container, onClose,
           </label>
 
           <label>
-            <span>Timestamp / เวลา</span>
+            <span>{hourly ? 'Hour start / เวลาเริ่มชั่วโมง' : 'Timestamp / เวลา'}</span>
             <select value={form.tsCol} onChange={(event) => set({ tsCol: event.target.value })} disabled={!columns}>
               <option value="">Select timestamp…</option>
               {timestampColumns.map((column) => <option key={column}>{column}</option>)}
@@ -236,7 +246,7 @@ export default function ProductionLogDialog({ open, binding, container, onClose,
           </label>
 
           <label>
-            <span>{tagged ? 'Counter column / คอลัมน์ค่าตัวนับ' : 'Good counter / ตัวนับผลิตดี'}</span>
+            <span>{tagged ? 'Counter column / คอลัมน์ค่าตัวนับ' : hourly ? 'Count total / ยอดผลิต' : 'Good counter / ตัวนับผลิตดี'}</span>
             <select value={form.producedCol} onChange={(event) => set({ producedCol: event.target.value })} disabled={!columns}>
               <option value="">Select counter…</option>
               {(columns?.value_columns ?? []).map((column) => <option key={column}>{column}</option>)}
@@ -245,7 +255,7 @@ export default function ProductionLogDialog({ open, binding, container, onClose,
 
           {!tagged && (
             <label>
-              <span>Reject counter / ตัวนับของเสีย</span>
+              <span>{hourly ? 'Defect total / ยอดของเสีย' : 'Reject counter / ตัวนับของเสีย'}</span>
               <select value={form.rejectedCol} onChange={(event) => set({ rejectedCol: event.target.value })} disabled={!columns}>
                 <option value="">Select counter…</option>
                 {(columns?.value_columns ?? []).map((column) => <option key={column}>{column}</option>)}
@@ -304,12 +314,12 @@ export default function ProductionLogDialog({ open, binding, container, onClose,
           </Alert>
         )}
 
-        {valid && previewQuery.isPending && <p className={styles.preview}>Checking the latest counters…</p>}
+        {valid && previewQuery.isPending && <p className={styles.preview}>Checking the latest values…</p>}
         {previewQuery.isError && <Alert severity="warning">The selected counter stream could not be read.</Alert>}
         {previewQuery.data && (
           <div className={styles.preview}>
-            <span>Latest good <b>{previewQuery.data.produced?.value ?? '—'}</b></span>
-            <span>Latest reject <b>{previewQuery.data.rejected?.value ?? '—'}</b></span>
+            <span>Latest {hourly ? 'count' : 'good'} <b>{previewQuery.data.produced?.value ?? '—'}</b></span>
+            <span>Latest {hourly ? 'defect' : 'reject'} <b>{previewQuery.data.rejected?.value ?? '—'}</b></span>
           </div>
         )}
       </DialogContent>

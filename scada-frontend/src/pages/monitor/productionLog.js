@@ -8,6 +8,25 @@ export const PRODUCTION_LOG_COPY = Object.freeze({
   empty: ['ยังไม่มีข้อมูลในกะนี้', 'No production samples in this shift.'],
 })
 
+// An hourly log table names its figures count/defect rather than good/reject.
+const HOURLY_COPY = Object.freeze({
+  ...PRODUCTION_LOG_COPY,
+  good: ['ยอดผลิต', 'Count'],
+  reject: ['ของเสีย', 'Defect'],
+  rejectRate: ['อัตราของเสีย', 'Defect rate'],
+})
+
+export function productionLogCopy(mode) {
+  return mode === 'hourly' ? HOURLY_COPY : PRODUCTION_LOG_COPY
+}
+
+
+/** `8` → `08:00–09:00`, the span one hourly bucket covers. */
+export function hourRangeLabel(hour) {
+  const pad = (value) => String(value).padStart(2, '0')
+  return `${pad(hour)}:00–${pad(hour + 1)}:00`
+}
+
 
 export function rejectRate(produced, rejected) {
   const good = Math.max(0, Number(produced) || 0)
