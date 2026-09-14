@@ -94,13 +94,13 @@
 
 .poweredCaption {
   color: var(--fg-muted);
-  font-family: var(--font-sans);
+  font-family: var(--font-sans), sans-serif;
   font-size: 11px;
 }
 
 .poweredName {
   color: var(--fg);
-  font-family: var(--font-sans);
+  font-family: var(--font-sans), sans-serif;
   font-size: 15px;
   font-weight: 600;
   line-height: 1.3;

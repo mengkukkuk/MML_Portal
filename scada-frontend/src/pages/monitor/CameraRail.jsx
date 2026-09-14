@@ -30,7 +30,7 @@ const T = {
   registeredCodes: 'รหัสกล้องที่มีอยู่',
   station: 'จุดติดตั้ง',
   linkedByLoopId: 'ผูกด้วยรหัส loop id',
-  defectTotal: 'ของเสียในล็อตล่าสุด',
+  defectTotal: 'defects ที่พบ',
   batchLine: (batchId, when) => `ล็อต ${batchId ?? '—'}${when ? ` · ${when}` : ''}`,
   noBatch: 'ยังไม่มีข้อมูลล็อต',
   noBatchHint: 'ยังไม่มีการบันทึกของเสียสำหรับกล้องนี้',
