@@ -1,10 +1,12 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Button from '@mui/material/Button'
 import FormControl from '@mui/material/FormControl'
 import Select from '@mui/material/Select'
 import MenuItem from '@mui/material/MenuItem'
 import CircularProgress from '@mui/material/CircularProgress'
+import Snackbar from '@mui/material/Snackbar'
+import Alert from '@mui/material/Alert'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider'
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
@@ -12,9 +14,11 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import { fetchRecentAlarms, fetchActiveAlarms, acknowledgeAlarm } from '@/api/alarms'
 import { fetchCameraLinkOptions } from '@/api/cameras'
 import { buildDefectLabelsByCode, resolveTagLabel } from '@/utils/defectLabels'
-import { groupByFamily } from '@/utils/nameFamilies'
+import { buildFamilies, sevRank } from '@/utils/alarmFamilies'
+import { fmtStamp, fmtTime } from '@/utils/datetime'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import SourceStatus from '@/components/SourceStatus/SourceStatus.jsx'
+import CollapseHeader, { CollapseMark } from '@/components/CollapseHeader/CollapseHeader.jsx'
 import styles from './AlarmsPage.module.css'
 
 /**
@@ -46,22 +50,34 @@ import styles from './AlarmsPage.module.css'
 const POLL_MS = 30_000
 const ACTIVE_POLL_MS = 1_000
 const UNKNOWN = 'Unknown'
-const SEV_RANK = { critical: 3, warning: 2, info: 1 }
-
-function fmtTime(value) {
-  if (!value) return '—'
-  const d = new Date(value)
-  return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString()
-}
 
 function sevLabel(s) {
   return (s || 'info').toUpperCase()
 }
 
+/** The alarm_logs id to acknowledge. /alarms/recent rows call it `id`;
+ * /alarms/active rows call the same column `alarm_id`, because there the row is
+ * a tag joined to its triggering log entry and `id` would be ambiguous. */
+function ackId(alarm) {
+  return alarm.id ?? alarm.alarm_id
+}
+
 export default function AlarmsPage() {
   const queryClient = useQueryClient()
   const [perCard, setPerCard] = useState(10)
-  const [expanded, setExpanded] = useState(null) // key of currently open card, null = all collapsed
+  // Three independent open-states, not one. The live grid and the historical
+  // stack answer different questions ("what is wrong now" vs "what happened"),
+  // so reading history must not collapse the live view out from under the
+  // operator. Within each, single-open keeps the page height bounded — that is
+  // the entire point of collapsing families in the first place.
+  const [expandedActive, setExpandedActive] = useState(null) // family key in the Active grid
+  const [expandedFamily, setExpandedFamily] = useState(null) // family key in the log stack
+  const [expanded, setExpanded] = useState(null) // tag card in the log stack
+
+  // A rejected acknowledge has to say so. The button sits in the live grid now,
+  // where the 1 Hz poll would otherwise just redraw it and the click would look
+  // like it was ignored.
+  const [ackError, setAckError] = useState('')
 
   // Filters — same shape as EventPage's
   const [filterStartDate, setFilterStartDate] = useState(null) // dayjs | null
@@ -102,10 +118,17 @@ export default function AlarmsPage() {
   )
 
   // The row, not the id: alarm ids come from each plant's own sequence, so the
-  // acknowledge has to name which database it means.
+  // acknowledge has to name which database it means. Both views feed this one
+  // mutation, and they disagree on the field name — /alarms/recent calls the
+  // log row's key `id`, /alarms/active calls the same column `alarm_id`.
   const ackMutation = useMutation({
-    mutationFn: (alarm) => acknowledgeAlarm(alarm.id, alarm.datasource_id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['alarms', 'recent'] }),
+    mutationFn: (alarm) => acknowledgeAlarm(ackId(alarm), alarm.datasource_id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alarms', 'recent'] })
+      queryClient.invalidateQueries({ queryKey: ['alarms', 'active'] })
+    },
+    onError: (e) =>
+      setAckError(e?.response?.data?.detail || e?.message || 'Could not acknowledge that alarm.'),
   })
 
   const alarms = recentQuery.data?.alarms ?? []
@@ -147,15 +170,31 @@ export default function AlarmsPage() {
   )
   const hasActive = filteredActiveAlarms.length > 0
 
-  // Clusters the active-alarm cards by tag-name family (e.g. every
-  // CAM001-13-count_n / CAM001-13-defect_n card grouped under one heading),
-  // same technique as the historical tag stack below.
-  const activeFamilies = useMemo(() => (
-    groupByFamily(filteredActiveAlarms.map((al) => al.tag_name)).map((fam) => ({
-      key: fam.key,
-      alarms: fam.names.flatMap((name) => filteredActiveAlarms.filter((al) => al.tag_name === name)),
-    }))
-  ), [filteredActiveAlarms])
+  // Every tag name the recent log knows about, used only as the stable
+  // membership superset for family detection — see alarmFamilies.js. Without
+  // it a family that drops to a single live alarm stops being a family, and
+  // this grid repolls every second.
+  const knownTagNames = useMemo(
+    () => [...new Set(alarms.map((a) => a.tag_name ?? UNKNOWN))],
+    [alarms],
+  )
+
+  // Collapses the active-alarm cards into one tile per tag-name family (every
+  // CAM001-13-count_n / CAM001-13-defect_n card behind a single CAM001-13
+  // tile), so the grid shows one row per camera instead of forty message cards.
+  // A specific Tag filter bypasses grouping: wrapping the one tag the operator
+  // explicitly asked for inside a collapsed container just adds a click.
+  const activeFamilies = useMemo(() => buildFamilies({
+    items: filteredActiveAlarms.map((al) => ({
+      name: al.tag_name ?? UNKNOWN,
+      severity: al.severity || 'info',
+      location: al.location ?? null,
+      latest: al.at_date_time,
+      alarm: al,
+    })),
+    knownNames: knownTagNames,
+    grouped: !filterTagName,
+  }), [filteredActiveAlarms, knownTagNames, filterTagName])
 
   // Distinct location values for the Line filter dropdown
   const locationOptions = useMemo(() => {
@@ -216,7 +255,7 @@ export default function AlarmsPage() {
       }
       tag.alarms.push(row)
       const sev = row.severity || 'info'
-      if ((SEV_RANK[sev] || 0) > (SEV_RANK[tag.severity] || 0)) {
+      if (sevRank(sev) > sevRank(tag.severity)) {
         tag.severity = sev
       }
       if (!row.acknowledged) tag.unacked += 1
@@ -224,12 +263,21 @@ export default function AlarmsPage() {
     }
     return [...byLocation.values()].map((loc) => {
       const tags = [...loc.tags.values()]
-      const byName = new Map(tags.map((tag) => [tag.tag_name, tag]))
-      const families = groupByFamily(tags.map((tag) => tag.tag_name))
-        .map((fam) => ({ key: fam.key, tags: fam.names.map((name) => byName.get(name)) }))
+      const families = buildFamilies({
+        items: tags.map((tag) => ({
+          name: tag.tag_name,
+          severity: tag.severity,
+          count: tag.alarms.length,
+          unacked: tag.unacked,
+          latest: tag.alarms[0]?.at_date_time ?? null,
+          tag,
+        })),
+        knownNames: knownTagNames,
+        grouped: !filterTagName,
+      })
       return { ...loc, tags, families }
     })
-  }, [alarms, filterRows])
+  }, [alarms, filterRows, knownTagNames, filterTagName])
 
   const hasActiveFilters = !!(filterStartDate || filterEndDate || filterLocation || filterTagName)
   const isEmpty = !loading && !error && grouped.length === 0
@@ -237,8 +285,163 @@ export default function AlarmsPage() {
     ? new Date(recentQuery.dataUpdatedAt).toLocaleTimeString()
     : '—'
 
+  // Selecting a single tag is an explicit "show me exactly this", so the one
+  // remaining card opens itself rather than making the operator click the
+  // thing they just asked for. Keyed on the resolved card key, so the 30s poll
+  // recomputing `grouped` does not re-open a card the operator has closed.
+  const soleTagKey = useMemo(() => {
+    if (!filterTagName) return null
+    const keys = grouped.flatMap((loc) => loc.tags.map((tag) => tag.key))
+    return keys.length === 1 ? keys[0] : null
+  }, [filterTagName, grouped])
+
+  useEffect(() => {
+    if (soleTagKey) setExpanded(soleTagKey)
+  }, [soleTagKey])
+
   function toggleCard(key) {
     setExpanded((cur) => (cur === key ? null : key))
+  }
+
+  function toggleActive(key) {
+    setExpandedActive((cur) => (cur === key ? null : key))
+  }
+
+  function toggleFamily(key) {
+    setExpandedFamily((cur) => (cur === key ? null : key))
+  }
+
+  // A family tile that clears entirely stops being rendered, which would leave
+  // expandedActive pointing at a key that no longer exists — harmless for
+  // rendering, but it would silently re-open the family if the same camera
+  // alarmed again later. Dropping the key closes it instead, per "the poll
+  // never changes what is open".
+  useEffect(() => {
+    if (expandedActive && !activeFamilies.some((fam) => fam.key === expandedActive)) {
+      setExpandedActive(null)
+    }
+  }, [activeFamilies, expandedActive])
+
+  /** Collapsed summary of one family in the Active grid. The alarm message is
+   * deliberately absent: it is what makes the expanded card 180px tall, and at
+   * the overview level the question is which camera is unhappy and how badly,
+   * not what each tag said. */
+  function renderActiveFamily(fam) {
+    const isOpen = expandedActive === fam.key
+    const panelId = `alm-active-${fam.key}`
+    return (
+      <article
+        key={fam.key}
+        className={`${styles['alm__active-group']} ${
+          styles[`alm__active-group--${fam.severity}`]
+        } ${isOpen ? styles['alm__active-group--open'] : ''}`}
+      >
+        <CollapseHeader
+          open={isOpen}
+          controls={panelId}
+          className={styles['alm__active-group-head']}
+          onToggle={() => toggleActive(fam.key)}
+        >
+          <div className={styles['alm__active-group-top']}>
+            <span className={`${styles['alm__sev-pill']} ${styles[`alm__sev-pill--${fam.severity}`]}`}>
+              {sevLabel(fam.severity)}
+            </span>
+            {fam.total > 1 && <span className={styles['alm__badge']}>{fam.total}</span>}
+            <CollapseMark open={isOpen} />
+          </div>
+          <span className={styles['alm__active-group-name']}>
+            {fam.isGroup ? fam.key : resolveTagLabel(fam.key, fam.location, labelsByCode)}
+          </span>
+          <span className={styles['alm__active-group-meta']}>
+            {fam.location ?? '—'} · {fmtTime(fam.latest)}
+          </span>
+        </CollapseHeader>
+        {isOpen && (
+          <div id={panelId} className={styles['alm__active-group-body']}>
+            {fam.members.map((member) => renderActiveCard(member.alarm))}
+          </div>
+        )}
+      </article>
+    )
+  }
+
+  /** Collapsed summary of one family in the historical log stack. */
+  function renderFamilyRow(fam, loc) {
+    const key = `${loc.key}::${fam.key}`
+    const isOpen = expandedFamily === key
+    const panelId = `alm-family-${key}`
+    return (
+      <div key={key} className={styles['alm__family']}>
+        <CollapseHeader
+          open={isOpen}
+          controls={panelId}
+          className={`${styles['alm__family-head']} ${styles[`alm__family-head--${fam.severity}`]}`}
+          onToggle={() => toggleFamily(key)}
+        >
+          <span className={`${styles['alm__sev-pill']} ${styles[`alm__sev-pill--${fam.severity}`]}`}>
+            {sevLabel(fam.severity)}
+          </span>
+          <span className={styles['alm__family-name']}>{fam.key}</span>
+          <span className={styles['alm__family-meta']}>
+            {fam.tagCount} {fam.tagCount === 1 ? 'tag' : 'tags'} · {fam.total}{' '}
+            {fam.total === 1 ? 'alarm' : 'alarms'}
+          </span>
+          <div className={styles['alm__tag-actions']}>
+            {fam.unacked > 0 && (
+              <span
+                className={`${styles['alm__badge']} ${styles['alm__badge--unacked']}`}
+                title={`${fam.unacked} unacknowledged`}
+              >
+                {fam.unacked}
+              </span>
+            )}
+            <span className={styles['alm__badge']}>{fam.total}</span>
+            <CollapseMark open={isOpen} />
+          </div>
+        </CollapseHeader>
+        {isOpen && (
+          <div id={panelId} className={styles['alm__family-body']}>
+            {fam.members.map((member) => renderTagCard(member.tag, loc))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  /** Acknowledge affordance for one alarm row, shared by the live grid and the
+   * historical timeline. Acknowledging never clears an alarm, so an acked row
+   * stays put and swaps the button for a pill rather than disappearing. */
+  function renderAckControl(al) {
+    if (al.acknowledged) {
+      return (
+        <span
+          className={styles['alm__ack-pill']}
+          title={al.acknowledged_at ? `Acknowledged ${fmtTime(al.acknowledged_at)}` : 'Acknowledged'}
+        >
+          Ack
+        </span>
+      )
+    }
+    // Compared by id *and* source: the same id is a different alarm in another
+    // plant, so matching on id alone would spin every plant's button at once.
+    const pending =
+      ackMutation.isPending &&
+      ackId(ackMutation.variables ?? {}) === ackId(al) &&
+      ackMutation.variables?.datasource_id === al.datasource_id
+    return (
+      <button
+        type="button"
+        className={styles['alm__ack-btn']}
+        disabled={pending}
+        aria-label={`Acknowledge ${al.tag_name ?? 'alarm'}`}
+        onClick={() => {
+          setAckError('')
+          ackMutation.mutate(al)
+        }}
+      >
+        {pending ? <CircularProgress size={10} color="inherit" /> : 'Acknowledge'}
+      </button>
+    )
   }
 
   function renderActiveCard(al) {
@@ -261,7 +464,14 @@ export default function AlarmsPage() {
           {multiSource && al.datasource_name ? ` · ${al.datasource_name}` : ''}
         </span>
         <p className={styles['alm__active-msg']}>{al.alarm ?? '—'}</p>
-        <time className={styles['alm__active-time']}>{fmtTime(al.at_date_time)}</time>
+        <div className={styles['alm__active-foot']}>
+          {/* Compact stamp: the full locale datetime beside the button needs ~238px,
+              and the grid's narrowest column leaves 208px, so it would always wrap. */}
+          <time className={styles['alm__active-time']} title={fmtTime(al.at_date_time)}>
+            {fmtStamp(al.at_date_time)}
+          </time>
+          {renderAckControl(al)}
+        </div>
       </article>
     )
   }
@@ -276,7 +486,12 @@ export default function AlarmsPage() {
           !isOpen ? styles['alm__tag--collapsed'] : ''
         }`}
       >
-        <header className={styles['alm__tag-head']} onClick={() => toggleCard(key)}>
+        <CollapseHeader
+          open={isOpen}
+          controls={`alm-tag-${key}`}
+          className={styles['alm__tag-head']}
+          onToggle={() => toggleCard(key)}
+        >
           <span className={`${styles['alm__sev-pill']} ${styles[`alm__sev-pill--${tag.severity}`]}`}>
             {sevLabel(tag.severity)}
           </span>
@@ -293,68 +508,28 @@ export default function AlarmsPage() {
               </span>
             )}
             <span className={styles['alm__badge']}>{tag.alarms.length}</span>
-            <button
-              type="button"
-              className={styles['alm__minimize']}
-              aria-label={isOpen ? 'Minimize' : 'Expand'}
-              onClick={(e) => {
-                e.stopPropagation()
-                toggleCard(key)
-              }}
-            >
-              {isOpen ? '−' : '+'}
-            </button>
+            <CollapseMark open={isOpen} />
           </div>
-        </header>
+        </CollapseHeader>
         {isOpen && (
-          <ol className={styles['alm__timeline']}>
-            {tag.alarms.map((al, i) => {
-              const isPending =
-                ackMutation.isPending &&
-                ackMutation.variables?.id === al.id &&
-                ackMutation.variables?.datasource_id === al.datasource_id
-              return (
-                <li
-                  key={`${al.datasource_id ?? ''}::${al.id}`}
-                  className={`${styles['alm__item']} ${styles[`alm__item--${al.severity || 'info'}`]} ${
-                    i === 0 ? styles['alm__item--latest'] : ''
-                  }`}
-                >
-                  <span className={styles['alm__node']} aria-hidden="true" />
-                  <div className={styles['alm__body']}>
-                    <div className={styles['alm__row']}>
-                      <span className={styles['alm__text']}>{al.alarm ?? '—'}</span>
-                      {al.acknowledged ? (
-                        <span
-                          className={styles['alm__ack-pill']}
-                          title={
-                            al.acknowledged_at
-                              ? `Acknowledged ${fmtTime(al.acknowledged_at)}`
-                              : 'Acknowledged'
-                          }
-                        >
-                          Ack
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          className={styles['alm__ack-btn']}
-                          disabled={isPending}
-                          onClick={() => ackMutation.mutate(al)}
-                        >
-                          {isPending ? (
-                            <CircularProgress size={10} color="inherit" />
-                          ) : (
-                            'Acknowledge'
-                          )}
-                        </button>
-                      )}
-                    </div>
-                    <time className={styles['alm__time']}>{fmtTime(al.at_date_time)}</time>
+          <ol id={`alm-tag-${key}`} className={styles['alm__timeline']}>
+            {tag.alarms.map((al, i) => (
+              <li
+                key={`${al.datasource_id ?? ''}::${al.id}`}
+                className={`${styles['alm__item']} ${styles[`alm__item--${al.severity || 'info'}`]} ${
+                  i === 0 ? styles['alm__item--latest'] : ''
+                }`}
+              >
+                <span className={styles['alm__node']} aria-hidden="true" />
+                <div className={styles['alm__body']}>
+                  <div className={styles['alm__row']}>
+                    <span className={styles['alm__text']}>{al.alarm ?? '—'}</span>
+                    {renderAckControl(al)}
                   </div>
-                </li>
-              )
-            })}
+                  <time className={styles['alm__time']}>{fmtTime(al.at_date_time)}</time>
+                </div>
+              </li>
+            ))}
           </ol>
         )}
       </article>
@@ -480,14 +655,9 @@ export default function AlarmsPage() {
             <span className={styles['alm__active-count']}>{filteredActiveAlarms.length} active</span>
           </header>
           <div className={styles['alm__active-grid']}>
-            {activeFamilies.map((fam) => (
-              <Fragment key={fam.key || '_'}>
-                {fam.key && (
-                  <div className={styles['alm__active-family-head']}>{fam.key}</div>
-                )}
-                {fam.alarms.map((al) => renderActiveCard(al))}
-              </Fragment>
-            ))}
+            {filterTagName
+              ? filteredActiveAlarms.map((al) => renderActiveCard(al))
+              : activeFamilies.map((fam) => renderActiveFamily(fam))}
           </div>
         </section>
       )}
@@ -519,18 +689,27 @@ export default function AlarmsPage() {
 
           <div className={styles['alm__stack']}>
             {loc.families.map((fam) => (
-              fam.key ? (
-                <div key={fam.key} className={styles['alm__family']}>
-                  <div className={styles['alm__family-head']}>{fam.key}</div>
-                  {fam.tags.map((tag) => renderTagCard(tag, loc))}
-                </div>
-              ) : (
-                fam.tags.map((tag) => renderTagCard(tag, loc))
-              )
+              fam.isGroup
+                ? renderFamilyRow(fam, loc)
+                : fam.members.map((member) => renderTagCard(member.tag, loc))
             ))}
           </div>
         </section>
       ))}
+
+      {/* Pinned rather than inline: the same button exists in the live grid at
+          the top and in a tag timeline far below it, so there is no one spot on
+          the page that is near whichever one the operator just clicked. */}
+      <Snackbar
+        open={!!ackError}
+        autoHideDuration={6000}
+        onClose={() => setAckError('')}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert severity="error" onClose={() => setAckError('')} sx={{ width: '100%' }}>
+          {ackError}
+        </Alert>
+      </Snackbar>
     </div>
   )
 }

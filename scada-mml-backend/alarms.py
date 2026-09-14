@@ -67,6 +67,8 @@ class ActiveAlarmOut(BaseModel):
     alarm_active: bool = False
     severity: str = "info"
     at_date_time: datetime | None = None
+    acknowledged: bool = False
+    acknowledged_at: datetime | None = None
     datasource_id: int | None = None
     datasource_name: str | None = None
 

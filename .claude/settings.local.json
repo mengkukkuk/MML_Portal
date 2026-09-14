@@ -136,7 +136,8 @@
       "Bash(node C:/Users/mengk/.claude/skills/archify/bin/archify.mjs validate workflow frontend-workflow.json --layout-json)",
       "Read(//c/Users/mengk/.agents/skills/archify/**)",
       "Bash(node bin/archify.mjs deliver workflow \"G:/Code/DEV/scada-frontend/frontend-workflow.json\" \"G:/Code/DEV/scada-frontend/frontend-workflow.html\" --quality showcase --json)",
-      "Bash(node bin/archify.mjs visual-check \"G:/Code/DEV/scada-frontend/frontend-workflow.html\" --json)"
+      "Bash(node bin/archify.mjs visual-check \"G:/Code/DEV/scada-frontend/frontend-workflow.html\" --json)",
+      "Bash(grep -n 'CREATE TABLE.*alarm' /g/code/dev/scada-mml-backend/*.py /g/code/dev/scada-mml-backend/*.sql)"
     ]
   }
 }

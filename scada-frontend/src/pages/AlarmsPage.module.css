@@ -55,19 +55,76 @@
   gap: var(--space-3);
 }
 
-/* A name family's heading inside the grid — spans the full row so it reads
-   as a divider between clusters of cards rather than taking a card's cell. */
-.alm__active-family-head {
-  grid-column: 1 / -1;
-  padding-left: var(--space-1);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--fg-dim);
+/* One collapsed tag-name family. Roughly a third the height of the card it
+   stands in for, because it carries no alarm message — that is what lets a
+   whole line's worth of cameras sit on one screen. */
+.alm__active-group {
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--bg-elev) 70%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
+  border: 1px solid var(--border-soft);
+  border-left-width: 3px;
+  border-radius: var(--radius);
 }
-.alm__active-family-head:not(:first-child) {
-  margin-top: var(--space-2);
+
+.alm__active-group--critical { border-left-color: var(--crit); }
+.alm__active-group--warning  { border-left-color: var(--warn); }
+.alm__active-group--info     { border-left-color: var(--info); }
+
+/* Two-class selectors so these reliably beat CollapseHeader's single-class
+   .head reset regardless of which CSS module the bundler emits first — the
+   reset lays out a horizontal row, and a tile needs a column. */
+.alm__active-group > .alm__active-group-head {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+}
+
+.alm__active-group-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Pushes the count badge and the +/- mark right of the severity pill. */
+.alm__active-group-top > :nth-child(2) {
+  margin-left: auto;
+}
+
+.alm__active-group-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alm__active-group-meta {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--fg-muted);
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* An open family takes the whole grid row and lays its member cards out in a
+   nested grid. Spanning in place, rather than injecting a drawer after the
+   row, avoids having to know where auto-fill decided to break rows. */
+.alm__active-group--open {
+  grid-column: 1 / -1;
+}
+
+.alm__active-group-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-3);
+  padding: 0 var(--space-3) var(--space-3);
 }
 
 .alm__active-card {
@@ -164,6 +221,18 @@
   font-size: 13px;
   color: var(--fg);
   line-height: 1.4;
+}
+
+/* Timestamp left, acknowledge right. margin-top:auto pins the row to the
+   bottom of the card, so the button lands in the same place on every card in a
+   row however many lines the alarm message ran to. */
+.alm__active-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: auto;
+  padding-top: var(--space-2);
 }
 
 .alm__active-time {
@@ -355,13 +424,47 @@
   flex-direction: column;
   gap: var(--space-2);
 }
-.alm__family-head {
-  padding-left: var(--space-2);
+/* The family row reads as a heavier sibling of the tag cards it contains —
+   same left severity border, bolder name. Hierarchy is carried by indentation
+   and weight rather than a background tint, which would fight the severity
+   colour already doing semantic work on the left border. */
+.alm__family > .alm__family-head {
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: color-mix(in srgb, var(--bg-elev) 55%, transparent);
+  border: 1px solid var(--border-soft);
+  border-left-width: 3px;
+  border-radius: var(--radius-lg);
+}
+
+.alm__family-head--critical { border-left-color: var(--crit); }
+.alm__family-head--warning  { border-left-color: var(--warn); }
+.alm__family-head--info     { border-left-color: var(--info); }
+
+.alm__family-name {
   font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--fg);
+}
+
+.alm__family-meta {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--fg-dim);
+  font-family: var(--font-mono);
+  color: var(--fg-muted);
+}
+
+.alm__family-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--border-soft);
+  margin-left: var(--space-3);
 }
 
 /* Liquid Crystal faceplate — frosted card + specular top rim. Severity is left
@@ -406,17 +509,14 @@
 .alm__tag--warning  { border-left-color: var(--warn); }
 .alm__tag--info     { border-left-color: var(--info); }
 
-.alm__tag-head {
-  display: flex;
-  align-items: center;
+.alm__tag > .alm__tag-head {
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border-soft);
-  cursor: pointer;
   user-select: none;
 }
 
-.alm__tag--collapsed .alm__tag-head {
+.alm__tag--collapsed > .alm__tag-head {
   border-bottom: none;
 }
 
@@ -472,28 +572,6 @@
 .alm__badge--unacked {
   color: var(--crit);
   background: rgba(239, 68, 68, 0.15);
-}
-
-.alm__minimize {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--fg-muted);
-  font-size: 14px;
-  line-height: 1;
-  cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
-}
-
-.alm__minimize:hover {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 /* Alarm timeline inside a card */

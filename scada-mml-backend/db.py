@@ -1088,7 +1088,13 @@ def list_recent_alarms(limit: int, datasource_id: int | None = None) -> list[dic
 
 def list_active_alarms(datasource_id: int | None = None) -> list[dict[str, Any]]:
     """Tags currently in alarm (variables_tag.alarm_no not null), joined to the
-    triggering alarm_logs row for the event text. Empty list when nothing active."""
+    triggering alarm_logs row for the event text. Empty list when nothing active.
+
+    The ack columns come along because the operator can acknowledge from the
+    active view: without them every 1 Hz poll would redraw an acknowledged alarm
+    as unacknowledged, and the second click would 404. Acknowledging does not
+    clear the alarm — `st.alarm_no` still points here, so the row stays active.
+    """
     with _table_source_conn(datasource_id) as (conn, schema):
         rows = conn.execute(
             sql.SQL(
@@ -1097,7 +1103,9 @@ def list_active_alarms(datasource_id: int | None = None) -> list[dict[str, Any]]
                           al.id            AS alarm_id,
                           al.alarm_events  AS alarm,
                           al.severity,
-                          al.created_at    AS at_date_time
+                          al.created_at    AS at_date_time,
+                          al.acknowledged,
+                          al.acknowledged_at
                    FROM {tags} st
                    JOIN {alarms} al ON al.id = st.alarm_no
                    WHERE st.alarm_no IS NOT NULL

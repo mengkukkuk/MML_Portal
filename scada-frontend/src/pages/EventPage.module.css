@@ -172,32 +172,23 @@
   color: var(--fg-muted);
 }
 
-/* Tag cards — vertical accordion stack */
+/* Tag tiles — a square grid, not a stack. auto-fill decides the column count
+   at runtime, which is why an opened tile spans the row in place (grid-column:
+   1 / -1) instead of injecting a drawer after it: nothing in JS knows where
+   the browser chose to break. */
 .evt__stack {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+  display: grid;
+  /* min() so the track can fall below 212px when the column itself is
+     narrower, instead of forcing the page to scroll sideways. */
+  grid-template-columns: repeat(auto-fill, minmax(min(212px, 100%), 1fr));
+  gap: var(--space-3);
+  align-items: start;
 }
 
-/* One name family's cluster of tag cards (e.g. every CAM001-13-count_n /
-   CAM001-13-defect_n card under one CAM001-13 heading). No accent border —
-   the location header above already carries that, this is a sub-level. */
-.evt__family {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.evt__family-head {
-  padding-left: var(--space-2);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--fg-dim);
-}
-
-/* Liquid Crystal faceplate — frosted card, iridescent accent bloom and a
-   specular top rim. See LIQCRYS.md. */
+/* One name family (every CAM001-13-count_n / -defect_n tag under one
+   CAM001-13 tile). No accent border — the location header above already
+   carries that, this is a sub-level. */
+.evt__family,
 .evt__tag {
   position: relative;
   background:
@@ -212,8 +203,19 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
     0 6px 22px rgba(0, 0, 0, 0.4);
   overflow: hidden;
+  transition: border-color 120ms ease, transform 120ms ease;
 }
 
+/* Collapsed only: an open family wraps its member tiles, so a bare :hover
+   would lift the whole panel whenever the pointer crossed a child. */
+.evt__family:not(.evt__family--open):hover,
+.evt__tag:not(.evt__tag--open):hover {
+  border-color: var(--border);
+  transform: translateY(-1px);
+}
+
+/* Specular top rim — the Liquid Crystal faceplate edge. */
+.evt__family::before,
 .evt__tag::before {
   content: '';
   position: absolute;
@@ -233,75 +235,178 @@
   pointer-events: none;
 }
 
-.evt__tag-head {
+/* Two-class selectors so the tile layout reliably beats CollapseHeader's
+   single-class .head reset regardless of which CSS module the bundler emits
+   first — the reset lays out a horizontal row, and a tile needs a column. */
+.evt__family > .evt__family-head,
+.evt__tag > .evt__tag-head {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--space-3);
+  aspect-ratio: 1;
+  padding: var(--space-4);
+}
+
+/* Opened, a tile gives up its square and takes the whole grid row so its
+   children can lay out beneath it. */
+.evt__family--open,
+.evt__tag--open {
+  grid-column: 1 / -1;
+}
+
+.evt__family--open > .evt__family-head,
+.evt__tag--open > .evt__tag-head {
+  flex-direction: row;
+  align-items: center;
+  aspect-ratio: auto;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+/* Child combinators throughout: an open family's body holds tiles with the
+   same class names, and a descendant selector would restyle those too. */
+.evt__family--open > .evt__family-head > .evt__tile-top,
+.evt__tag--open > .evt__tag-head > .evt__tile-top {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: row-reverse;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+.evt__family--open > .evt__family-head > .evt__count,
+.evt__tag--open > .evt__tag-head > .evt__count {
+  flex: none;
+  flex-direction: row;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.evt__family--open > .evt__family-head > .evt__count > .evt__count-num,
+.evt__tag--open > .evt__tag-head > .evt__count > .evt__count-num {
+  font-size: 20px;
+}
+
+.evt__family--open > .evt__family-head > .evt__sheet {
+  display: none;
+}
+
+.evt__family--open > .evt__family-head > .evt__tile-foot,
+.evt__tag--open > .evt__tag-head > .evt__tile-foot {
+  flex: none;
+}
+
+/* Tile anatomy: identity at the top, the count as the readable-across-the-room
+   figure, the signature band, then the stamp. */
+.evt__tile-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--border-soft);
-  cursor: pointer;
-  user-select: none;
+  min-width: 0;
 }
 
-.evt__tag--collapsed .evt__tag-head {
-  border-bottom: none;
-}
-
-.evt__tag-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: none;
-}
-
-.evt__minimize {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--fg-muted);
-  font-size: 14px;
-  line-height: 1;
-  cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
-}
-
-.evt__minimize:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
+.evt__family-name,
 .evt__tag-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
   font-weight: 600;
-  font-size: 14px;
+  letter-spacing: 0.04em;
   color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.evt__badge {
-  flex: none;
-  min-width: 22px;
-  padding: 0 var(--space-2);
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-radius: 999px;
+.evt__count {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
-/* Event timeline inside a card */
+/* Condensed and light, with tabular figures so a column of tiles aligns —
+   this should read as a gauge, not a marketing statistic. */
+.evt__count-num {
+  font-family: var(--font-display);
+  font-size: 34px;
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+
+.evt__count-label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+/* The signature: one cell per member tag, inked by that tag's share of the
+   family's events. Six fixed columns so a ten- or eleven-tag camera reads as
+   two tidy rows. Inline opacity is set per cell from the data. */
+.evt__sheet {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 3px;
+  width: 100%;
+  max-width: 112px;
+}
+
+.evt__sheet-cell {
+  aspect-ratio: 1;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+/* Leaf tiles carry the last thing the tag said instead of a sheet. */
+.evt__latest {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+}
+
+.evt__tile-foot {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.evt__family-body {
+  display: grid;
+  /* min() so the track can fall below 212px when the column itself is
+     narrower, instead of forcing the page to scroll sideways. */
+  grid-template-columns: repeat(auto-fill, minmax(min(212px, 100%), 1fr));
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .evt__family,
+  .evt__tag {
+    transition: none;
+  }
+
+  .evt__family:not(.evt__family--open):hover,
+  .evt__tag:not(.evt__tag--open):hover {
+    transform: none;
+  }
+}
+
+/* Event timeline inside an opened tile */
 .evt__timeline {
   list-style: none;
   margin: 0;

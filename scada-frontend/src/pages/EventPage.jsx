@@ -11,9 +11,11 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import { fetchRecentEvents } from '@/api/events'
 import { fetchCameraLinkOptions } from '@/api/cameras'
 import { buildDefectLabelsByCode, resolveTagLabel } from '@/utils/defectLabels'
-import { groupByFamily } from '@/utils/nameFamilies'
+import { buildFamilies } from '@/utils/alarmFamilies'
+import { fmtStamp, fmtTime } from '@/utils/datetime'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import SourceStatus from '@/components/SourceStatus/SourceStatus.jsx'
+import CollapseHeader, { CollapseMark } from '@/components/CollapseHeader/CollapseHeader.jsx'
 import styles from './EventPage.module.css'
 
 /**
@@ -34,15 +36,13 @@ import styles from './EventPage.module.css'
 const POLL_MS = 30_000
 const UNKNOWN = 'Unknown'
 
-function fmtTime(value) {
-  if (!value) return '—'
-  const d = new Date(value)
-  return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString()
-}
 
 export default function EventPage() {
   const [perCard, setPerCard] = useState(10)
-  const [expanded, setExpanded] = useState(null) // key of currently open card, null = all collapsed
+  // Two independent levels: one family open at a time, and within it one tag's
+  // timeline. Opening a second tag closes the first but leaves its family open.
+  const [expandedFamily, setExpandedFamily] = useState(null)
+  const [expanded, setExpanded] = useState(null) // key of currently open tag card
 
   // Filters
   const [filterStartDate, setFilterStartDate] = useState(null) // dayjs | null
@@ -158,11 +158,22 @@ export default function EventPage() {
       tag.events.push(row)
       loc.eventCount += 1
     }
+    // Family membership comes from every tag name in the fetched window, not
+    // just the filtered rows, so narrowing by date does not dissolve a family
+    // down to loose rows. A specific Tag filter bypasses grouping entirely.
+    const knownNames = [...new Set(events.map((e) => e.tag_name ?? UNKNOWN))]
     return [...byLocation.values()].map((loc) => {
       const tags = [...loc.tags.values()]
-      const byName = new Map(tags.map((tag) => [tag.tag_name, tag]))
-      const families = groupByFamily(tags.map((tag) => tag.tag_name))
-        .map((fam) => ({ key: fam.key, tags: fam.names.map((name) => byName.get(name)) }))
+      const families = buildFamilies({
+        items: tags.map((tag) => ({
+          name: tag.tag_name,
+          count: tag.events.length,
+          latest: tag.events[0]?.at_date_time ?? null,
+          tag,
+        })),
+        knownNames,
+        grouped: !filterTagName,
+      })
       return { ...loc, tags, families }
     })
   }, [events, filterStartDate, filterEndDate, filterLocation, filterTagName])
@@ -173,39 +184,122 @@ export default function EventPage() {
     ? new Date(eventsQuery.dataUpdatedAt).toLocaleTimeString()
     : '—'
 
+  // Selecting a single tag is an explicit "show me exactly this", so the one
+  // remaining card opens itself rather than making the operator click the
+  // thing they just asked for. Keyed on the resolved card key, so the 30s poll
+  // recomputing `grouped` does not re-open a card the operator has closed.
+  const soleTagKey = useMemo(() => {
+    if (!filterTagName) return null
+    const keys = grouped.flatMap((loc) => loc.tags.map((tag) => tag.key))
+    return keys.length === 1 ? keys[0] : null
+  }, [filterTagName, grouped])
+
+  useEffect(() => {
+    if (soleTagKey) setExpanded(soleTagKey)
+  }, [soleTagKey])
+
   function toggleCard(key) {
     setExpanded((cur) => (cur === key ? null : key))
   }
 
-  function renderTagCard(tag, loc) {
-    const key = tag.key
-    const isOpen = expanded === key
+  function toggleFamily(key) {
+    setExpandedFamily((cur) => (cur === key ? null : key))
+  }
+
+  /** One tag-name family as a square tile. The activity sheet is the point of
+   * the square: one cell per member tag, inked by that tag's share of the
+   * family's events, so the tile is a miniature of what opening it reveals —
+   * which of a camera's eleven tags are actually talking. The sheet is
+   * decorative to a screen reader, so the header carries the same facts as an
+   * aria-label rather than repeating them in visible text. */
+  function renderFamilyTile(fam, loc) {
+    const key = `${loc.key}::${fam.key}`
+    const isOpen = expandedFamily === key
+    const panelId = `evt-family-${key}`
+    const peak = Math.max(...fam.members.map((m) => m.count || 0), 1)
     return (
       <article
         key={key}
-        className={`${styles['evt__tag']} ${!isOpen ? styles['evt__tag--collapsed'] : ''}`}
+        className={`${styles['evt__family']} ${isOpen ? styles['evt__family--open'] : ''}`}
       >
-        <header className={styles['evt__tag-head']} onClick={() => toggleCard(key)}>
-          <span className={styles['evt__tag-name']}>
-            {resolveTagLabel(tag.tag_name, loc.location, labelsByCode)}
+        <CollapseHeader
+          open={isOpen}
+          controls={panelId}
+          className={styles['evt__family-head']}
+          onToggle={() => toggleFamily(key)}
+          aria-label={`${fam.key}, ${fam.tagCount} ${fam.tagCount === 1 ? 'tag' : 'tags'}, ${
+            fam.total
+          } ${fam.total === 1 ? 'event' : 'events'}, latest ${fmtStamp(fam.latest)}`}
+        >
+          <span className={styles['evt__tile-top']}>
+            <span className={styles['evt__family-name']}>{fam.key}</span>
+            <CollapseMark open={isOpen} />
           </span>
-          <div className={styles['evt__tag-actions']}>
-            <span className={styles['evt__badge']}>{tag.events.length}</span>
-            <button
-              type="button"
-              className={styles['evt__minimize']}
-              aria-label={isOpen ? 'Minimize' : 'Expand'}
-              onClick={(e) => {
-                e.stopPropagation()
-                toggleCard(key)
-              }}
-            >
-              {isOpen ? '−' : '+'}
-            </button>
-          </div>
-        </header>
+          <span className={styles['evt__count']}>
+            <span className={styles['evt__count-num']}>{fam.total}</span>
+            <span className={styles['evt__count-label']}>
+              {fam.total === 1 ? 'event' : 'events'}
+            </span>
+          </span>
+          {fam.members.length > 1 && (
+            <span className={styles['evt__sheet']} aria-hidden="true">
+              {fam.members.map((member) => (
+                <span
+                  key={member.name}
+                  className={styles['evt__sheet-cell']}
+                  style={{ opacity: 0.16 + 0.84 * ((member.count || 0) / peak) }}
+                />
+              ))}
+            </span>
+          )}
+          <span className={styles['evt__tile-foot']}>{fmtStamp(fam.latest)}</span>
+        </CollapseHeader>
         {isOpen && (
-          <ol className={styles['evt__timeline']}>
+          <div id={panelId} className={styles['evt__family-body']}>
+            {fam.members.map((member) => renderTagCard(member.tag, loc))}
+          </div>
+        )}
+      </article>
+    )
+  }
+
+  /** One tag as a square tile. At the leaf the payload is the last thing this
+   * tag actually said, so the message takes the space the family tile gives to
+   * the activity sheet. Opening it swaps that one line for the full timeline. */
+  function renderTagCard(tag, loc) {
+    const key = tag.key
+    const isOpen = expanded === key
+    const label = resolveTagLabel(tag.tag_name, loc.location, labelsByCode)
+    const latest = tag.events[0]
+    return (
+      <article
+        key={key}
+        className={`${styles['evt__tag']} ${isOpen ? styles['evt__tag--open'] : ''}`}
+      >
+        <CollapseHeader
+          open={isOpen}
+          controls={`evt-tag-${key}`}
+          className={styles['evt__tag-head']}
+          onToggle={() => toggleCard(key)}
+          aria-label={`${label}, ${tag.events.length} ${
+            tag.events.length === 1 ? 'event' : 'events'
+          }, latest ${fmtStamp(latest?.at_date_time)}`}
+        >
+          <span className={styles['evt__tile-top']}>
+            <span className={styles['evt__tag-name']}>{label}</span>
+            <CollapseMark open={isOpen} />
+          </span>
+          <span className={styles['evt__count']}>
+            <span className={styles['evt__count-num']}>{tag.events.length}</span>
+            <span className={styles['evt__count-label']}>
+              {tag.events.length === 1 ? 'event' : 'events'}
+            </span>
+          </span>
+          {!isOpen && <span className={styles['evt__latest']}>{latest?.event ?? '—'}</span>}
+          <span className={styles['evt__tile-foot']}>{fmtStamp(latest?.at_date_time)}</span>
+        </CollapseHeader>
+        {isOpen && (
+          <ol id={`evt-tag-${key}`} className={styles['evt__timeline']}>
             {tag.events.map((ev, i) => (
               <li
                 key={`${ev.at_date_time}::${ev.event}::${i}`}
@@ -356,14 +450,9 @@ export default function EventPage() {
 
             <div className={styles['evt__stack']}>
               {loc.families.map((fam) => (
-                fam.key ? (
-                  <div key={fam.key} className={styles['evt__family']}>
-                    <div className={styles['evt__family-head']}>{fam.key}</div>
-                    {fam.tags.map((tag) => renderTagCard(tag, loc))}
-                  </div>
-                ) : (
-                  fam.tags.map((tag) => renderTagCard(tag, loc))
-                )
+                fam.isGroup
+                  ? renderFamilyTile(fam, loc)
+                  : fam.members.map((member) => renderTagCard(member.tag, loc))
               ))}
             </div>
           </section>
