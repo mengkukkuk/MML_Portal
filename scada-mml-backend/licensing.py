@@ -45,7 +45,7 @@ _SUPPORTED_FORMAT_VERSIONS = {1}
 # 32-byte Ed25519 public key, hex-encoded. The matching private key is never
 # committed to this repo — it lives only on the vendor's offline signing
 # machine (see the ad-hoc sign_license.py reference script kept outside the repo).
-_PUBLIC_KEY_HEX = "52b4f5d4e2a6400bdf25fa270e7456d351f2f1b2b1ea1a99881a0d47920274a2"
+_PUBLIC_KEY_HEX = "a57f8e464acb9b5131564f2e9e41aedb45c41d6a4d3d33a21300a2002a0f85b1"
 _PUBLIC_KEY = Ed25519PublicKey.from_public_bytes(bytes.fromhex(_PUBLIC_KEY_HEX))
 
 

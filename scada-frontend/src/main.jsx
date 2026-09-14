@@ -5,7 +5,7 @@
 const savedTheme = localStorage.getItem('mml.theme') || 'cobalt'
 document.documentElement.dataset.theme = savedTheme
 
-import { StrictMode, useMemo } from 'react'
+import { StrictMode, useLayoutEffect, useMemo } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { StyledEngineProvider, ThemeProvider } from '@mui/material/styles'
@@ -23,15 +23,24 @@ import './styles/index.css'
 import { queryClient } from './lib/queryClient'
 import { buildMuiTheme } from './theme/muiTheme'
 import { THEMES, useSettingsStore } from './stores/settings'
+import { useLicenseStore } from './stores/license'
 import App from './App.jsx'
 import TouchKeyboard from './components/TouchKeyboard/TouchKeyboard.jsx'
 
 /** Re-derives the MUI theme when the active faceplate's mode (light/dark)
  * changes — see theme/muiTheme.js for why `mode` can't just live in CSS. */
 function ThemedApp() {
-  const theme = useSettingsStore((s) => s.theme)
+  const preferredTheme = useSettingsStore((s) => s.theme)
+  const needsActivation = useLicenseStore((s) => s.isBlocked())
+  // Activation always uses Paper, including a cold start with no license.
+  // Keep the saved preference intact so activation restores the operator's theme.
+  const theme = needsActivation ? 'paper' : preferredTheme
   const mode = THEMES.find((t) => t.id === theme)?.mode ?? 'dark'
   const muiTheme = useMemo(() => buildMuiTheme(mode), [mode])
+
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = theme
+  }, [theme])
 
   return (
     <ThemeProvider theme={muiTheme}>
