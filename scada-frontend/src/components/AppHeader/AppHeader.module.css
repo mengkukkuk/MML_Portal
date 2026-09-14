@@ -1,8 +1,9 @@
 .header {
   width: 100%;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: var(--space-3);
   align-items: center;
-  justify-content: space-between;
 }
 
 .left,
@@ -10,6 +11,26 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  min-width: 0;
+}
+
+.right {
+  justify-self: end;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.right > * {
+  flex-shrink: 0;
+}
+
+.clock {
+  justify-self: center;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .title {
@@ -17,6 +38,9 @@
   font-size: 16px;
   font-weight: 600;
   color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .toggle {

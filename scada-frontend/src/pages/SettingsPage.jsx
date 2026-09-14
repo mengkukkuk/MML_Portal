@@ -1,3 +1,4 @@
+import { useTranslation } from '@/i18n'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Controller, useForm } from 'react-hook-form'
@@ -26,6 +27,7 @@ import {
 } from '@/api/datasources'
 import { fetchCameraLinkSource, updateCameraLinkSource } from '@/api/cameras'
 import styles from './SettingsPage.module.css'
+import LanguageSelect from '@/components/LanguageSelect/LanguageSelect.jsx'
 
 /**
  * SettingsPage — the control-console for portal-wide parameters (route: /settings).
@@ -93,6 +95,7 @@ function setNotifyOnCritical(v) {
 }
 
 export default function SettingsPage() {
+  const tr = useTranslation()
   const theme = useSettingsStore((s) => s.theme)
   const applyTheme = useSettingsStore((s) => s.applyTheme)
   const pollSeconds = useSettingsStore((s) => s.pollSeconds)
@@ -236,7 +239,8 @@ export default function SettingsPage() {
       })
       setDsTest({
         state: r.ok ? 'ok' : 'error',
-        message: r.server_version ? `${r.message} · ${r.server_version}` : r.message,
+        message: r.message,
+        serverVersion: r.server_version,
       })
     } catch (e) {
       setDsTest({ state: 'error', message: e?.response?.data?.detail || 'Test failed.' })
@@ -268,7 +272,8 @@ export default function SettingsPage() {
         ...prev,
         [ds.id]: {
           state: r.ok ? 'ok' : 'error',
-          message: r.server_version ? `${r.message} · ${r.server_version}` : r.message,
+          message: r.message,
+          serverVersion: r.server_version,
         },
       }))
     } catch (e) {
@@ -313,28 +318,31 @@ export default function SettingsPage() {
       {/* ── Console header ─────────────────────────────────────────────── */}
       <header className={styles.cfgHead}>
         <div>
-          <p className={styles.cfgEyebrow}>MML · SYSTEM CONFIGURATION</p>
-          <h1 className={styles.cfgTitle}>Console Settings</h1>
+          <p className={styles.cfgEyebrow}>{tr("MML · SYSTEM CONFIGURATION")}</p>
+          <h1 className={styles.cfgTitle}>{tr("Console Settings")}</h1>
         </div>
         <div className={styles.cfgSync}>
           <span className={ledClass(dirty ? 'warn' : 'ok')} />
-          {dirty ? 'UNSAVED CHANGES' : 'CONFIG SYNCED'}
+          {dirty ? tr("UNSAVED CHANGES") : tr("CONFIG SYNCED")}
         </div>
       </header>
 
       {/* ── Module 1 · Appearance ──────────────────────────────────────── */}
       <section className={`${styles.mod} ${collapsed.appearance ? styles.modCollapsed : ''}`}>
         <header className={styles.modHead} onClick={() => toggle('appearance')}>
-          <span className={styles.modTag}>Appearance</span>
-          <span className={styles.modSub}>HMI color faceplate</span>
+          <span className={styles.modTag}>{tr("Appearance")}</span>
+          <span className={styles.modSub}>{tr("HMI color faceplate")}</span>
           <ChevronRightRounded
             className={`${styles.modChevron} ${!collapsed.appearance ? styles.modChevronOpen : ''}`}
           />
         </header>
         {!collapsed.appearance && (
           <div className={styles.modBody}>
-            <p className={styles.fldLabel}>Color theme</p>
-            <div className={styles.plates} role="group" aria-label="Color theme">
+            <p className={styles.fldLabel}>{tr('Interface language')}</p>
+            <LanguageSelect />
+            <p className={styles.fldHint}>{tr('Language applies instantly and is saved on this browser.')}</p>
+            <p className={styles.fldLabel}>{tr("Color theme")}</p>
+            <div className={styles.plates} role="group" aria-label={tr("Color theme")}>
               {THEMES.map((t) => (
                 <button
                   key={t.id}
@@ -367,7 +375,7 @@ export default function SettingsPage() {
                     <span className={ledClass(theme === t.id ? 'ok' : '')} />
                     <span className={styles.plateName}>{t.name}</span>
                   </span>
-                  <span className={styles.plateBlurb}>{t.blurb}</span>
+                  <span className={styles.plateBlurb}>{tr(t.blurb)}</span>
                 </button>
               ))}
             </div>
@@ -378,8 +386,8 @@ export default function SettingsPage() {
       {/* ── Module 2 · Acquisition ─────────────────────────────────────── */}
       <section className={`${styles.mod} ${collapsed.acquisition ? styles.modCollapsed : ''}`}>
         <header className={styles.modHead} onClick={() => toggle('acquisition')}>
-          <span className={styles.modTag}>Acquisition</span>
-          <span className={styles.modSub}>Default polling cadence</span>
+          <span className={styles.modTag}>{tr("Acquisition")}</span>
+          <span className={styles.modSub}>{tr("Default polling cadence")}</span>
           <ChevronRightRounded
             className={`${styles.modChevron} ${!collapsed.acquisition ? styles.modChevronOpen : ''}`}
           />
@@ -388,8 +396,8 @@ export default function SettingsPage() {
           <div className={styles.modBody}>
             <div className={styles.acqRow}>
               <div className={styles.acqLabel}>
-                <p className={styles.fldLabel}>Default poll interval</p>
-                <p className={styles.fldHint}>Sliding-window refresh used by Live &amp; Trends tiles.</p>
+                <p className={styles.fldLabel}>{tr("Default poll interval")}</p>
+                <p className={styles.fldHint}>{tr("Sliding-window refresh used by Live & Trends tiles.")}</p>
               </div>
               <div className={styles.acqCtl}>
                 <TextField
@@ -408,7 +416,7 @@ export default function SettingsPage() {
                     if (Number.isFinite(n)) setPollSeconds(Math.min(3600, Math.max(1, Math.round(n))))
                   }}
                 />
-                <span className={styles.acqUnit}>seconds</span>
+                <span className={styles.acqUnit}>{tr("seconds")}</span>
                 <div className={styles.chips}>
                   {POLL_PRESETS.map((p) => (
                     <button
@@ -426,8 +434,8 @@ export default function SettingsPage() {
 
             <div className={`${styles.acqRow} ${styles.acqRowDivider}`}>
               <div className={styles.acqLabel}>
-                <p className={styles.fldLabel}>Critical-alarm notifications</p>
-                <p className={styles.fldHint}>Surface a desktop toast when a critical alarm trips.</p>
+                <p className={styles.fldLabel}>{tr("Critical-alarm notifications")}</p>
+                <p className={styles.fldHint}>{tr("Surface a desktop toast when a critical alarm trips.")}</p>
               </div>
               <div className={styles.acqCtl}>
                 <span className={ledClass(notifyOnCritical ? 'crit' : '')} />
@@ -435,7 +443,7 @@ export default function SettingsPage() {
                   checked={notifyOnCritical}
                   onChange={(e) => setNotifyOnCritical(e.target.checked)}
                 />
-                <span className={styles.acqState}>{notifyOnCritical ? 'ARMED' : 'OFF'}</span>
+                <span className={styles.acqState}>{notifyOnCritical ? tr("ARMED") : tr("OFF")}</span>
               </div>
             </div>
           </div>
@@ -445,8 +453,8 @@ export default function SettingsPage() {
       {/* ── Module 3 · Data sources ────────────────────────────────────── */}
       <section className={`${styles.mod} ${collapsed.datasources ? styles.modCollapsed : ''}`}>
         <header className={styles.modHead} onClick={() => toggle('datasources')}>
-          <span className={styles.modTag}>Data sources</span>
-          <span className={styles.modSub}>Saved database connections</span>
+          <span className={styles.modTag}>{tr("Data sources")}</span>
+          <span className={styles.modSub}>{tr("Saved database connections")}</span>
           {isAdmin && (
             <Button
               className={styles.modAction}
@@ -456,9 +464,7 @@ export default function SettingsPage() {
                 e.stopPropagation()
                 openCreateDs()
               }}
-            >
-              + Add connection
-            </Button>
+            >{tr("+ Add connection")}</Button>
           )}
           <ChevronRightRounded
             className={`${styles.modChevron} ${!collapsed.datasources ? styles.modChevronOpen : ''}`}
@@ -468,12 +474,11 @@ export default function SettingsPage() {
           <div className={styles.modBody}>
             {!isAdmin && (
               <p className={styles.dsReadonly}>
-                <span className={styles.led} /> Only administrators can manage connections.
-              </p>
+                <span className={styles.led} /> {tr("Only administrators can manage connections.")}</p>
             )}
 
             {dsError && dsError?.response?.status !== 403 && (
-              <Alert severity="error">Failed to load connections.</Alert>
+              <Alert severity="error">{tr("Failed to load connections.")}</Alert>
             )}
 
             {datasources.length > 0 ? (
@@ -491,7 +496,10 @@ export default function SettingsPage() {
                         {ds.sslmode}
                       </span>
                       {rowTest[ds.id]?.message && (
-                        <span className={styles.connResult}>{rowTest[ds.id].message}</span>
+                        <span className={styles.connResult}>
+                          {tr(rowTest[ds.id].message)}
+                          {rowTest[ds.id].serverVersion && ` · ${rowTest[ds.id].serverVersion}`}
+                        </span>
                       )}
                     </div>
                     {isAdmin && (
@@ -500,15 +508,9 @@ export default function SettingsPage() {
                           size="small"
                           loading={rowTest[ds.id]?.state === 'testing'}
                           onClick={() => testRow(ds)}
-                        >
-                          Test
-                        </Button>
-                        <Button size="small" onClick={() => openEditDs(ds)}>
-                          Edit
-                        </Button>
-                        <Button size="small" color="error" onClick={() => openDeleteDs(ds)}>
-                          Delete
-                        </Button>
+                        >{tr("Test")}</Button>
+                        <Button size="small" onClick={() => openEditDs(ds)}>{tr("Edit")}</Button>
+                        <Button size="small" color="error" onClick={() => openDeleteDs(ds)}>{tr("Delete")}</Button>
                       </div>
                     )}
                   </div>
@@ -516,9 +518,7 @@ export default function SettingsPage() {
               </div>
             ) : (
               !dsLoading && (
-                <p className={styles.dsEmpty}>
-                  No saved connections yet.
-                  {isAdmin && ' Add one to make it selectable when editing a Live panel.'}
+                <p className={styles.dsEmpty}>{tr("No saved connections yet.")}{isAdmin && tr(" Add one to make it selectable when editing a Live panel.")}
                 </p>
               )
             )}
@@ -529,27 +529,22 @@ export default function SettingsPage() {
       {/* ── Module 4 · Camera source ───────────────────────────────────── */}
       <section className={`${styles.mod} ${collapsed.cameraSource ? styles.modCollapsed : ''}`}>
         <header className={styles.modHead} onClick={() => toggle('cameraSource')}>
-          <span className={styles.modTag}>Camera source</span>
-          <span className={styles.modSub}>Where Monitor camera identity reads from</span>
+          <span className={styles.modTag}>{tr("Camera source")}</span>
+          <span className={styles.modSub}>{tr("Where Monitor camera identity reads from")}</span>
           <ChevronRightRounded
             className={`${styles.modChevron} ${!collapsed.cameraSource ? styles.modChevronOpen : ''}`}
           />
         </header>
         {!collapsed.cameraSource && (
           <div className={styles.modBody}>
-            <p className={styles.fldHint}>
-              The Monitor camera picker, rail identity, and defect counts read from
-              one required saved connection. NG frame images remain in the configured
-              image folder and are matched by camera code.
-            </p>
+            <p className={styles.fldHint}>{tr("The Monitor camera picker, rail identity, and defect counts read from one required saved connection. NG frame images remain in the configured image folder and are matched by camera code.")}</p>
             {!isAdmin && (
               <p className={styles.dsReadonly}>
-                <span className={styles.led} /> Only administrators can change this.
-              </p>
+                <span className={styles.led} /> {tr("Only administrators can change this.")}</p>
             )}
             <div className={styles.acqRow}>
               <div className={styles.acqLabel}>
-                <p className={styles.fldLabel}>Camera list source</p>
+                <p className={styles.fldLabel}>{tr("Camera list source")}</p>
               </div>
               <div className={styles.acqCtl}>
                 <FormControl size="small" sx={{ minWidth: 260 }}>
@@ -559,7 +554,7 @@ export default function SettingsPage() {
                     displayEmpty
                     onChange={(e) => cameraSourceMutation.mutate(e.target.value)}
                   >
-                    <MenuItem value="" disabled>Select camera source</MenuItem>
+                    <MenuItem value="" disabled>{tr("Select camera source")}</MenuItem>
                     {datasources.map((ds) => (
                       <MenuItem key={ds.id} value={ds.id}>{ds.name}</MenuItem>
                     ))}
@@ -573,39 +568,35 @@ export default function SettingsPage() {
 
       {/* ── Commit bar (acquisition only) ──────────────────────────────── */}
       <div className={styles.cfgBar}>
-        <span className={styles.cfgBarhint}>
-          Appearance applies instantly. Connections save on their own. Acquisition needs a commit.
-        </span>
-        <Button variant="contained" disabled={!dirty} onClick={commit}>
-          Save changes
-        </Button>
+        <span className={styles.cfgBarhint}>{tr("Appearance applies instantly. Connections save on their own. Acquisition needs a commit.")}</span>
+        <Button variant="contained" disabled={!dirty} onClick={commit}>{tr("Save changes")}</Button>
       </div>
 
       {/* ── Connection editor dialog ───────────────────────────────────── */}
       <Dialog open={dsDialogOpen} onClose={() => setDsDialogOpen(false)} fullWidth maxWidth="sm">
-        <DialogTitle>{dsDialogTitle}</DialogTitle>
+        <DialogTitle>{tr(dsDialogTitle)}</DialogTitle>
         <form onSubmit={handleSubmit(onSaveDs)}>
           <DialogContent sx={{ pt: '8px !important' }}>
             <div className={styles.dsGrid}>
               <div className={`${styles.fld} ${styles.fldSpan6}`}>
                 <TextField
-                  label="Name"
-                  placeholder="e.g. Plant historian"
+                  label={tr("Name")}
+                  placeholder={tr("e.g. Plant historian")}
                   fullWidth
                   size="small"
                   error={!!errors.name}
-                  helperText={errors.name ? 'Name is required.' : ' '}
+                  helperText={errors.name ? tr("Name is required.") : ' '}
                   {...register('name', { required: true })}
                 />
               </div>
               <div className={`${styles.fld} ${styles.fldSpan2}`}>
                 <FormControl fullWidth size="small">
-                  <InputLabel id="dsf-type-label">Type</InputLabel>
+                  <InputLabel id="dsf-type-label">{tr("Type")}</InputLabel>
                   <Controller
                     name="type"
                     control={control}
                     render={({ field }) => (
-                      <Select labelId="dsf-type-label" label="Type" {...field}>
+                      <Select labelId="dsf-type-label" label={tr("Type")} {...field}>
                         {DS_TYPES.map((o) => (
                           <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
                         ))}
@@ -616,24 +607,24 @@ export default function SettingsPage() {
               </div>
               <div className={`${styles.fld} ${styles.fldSpan3}`}>
                 <TextField
-                  label="Host"
+                  label={tr("Host")}
                   placeholder="127.0.0.1"
                   fullWidth
                   size="small"
                   error={!!errors.host}
-                  helperText={errors.host ? 'Host is required.' : ' '}
+                  helperText={errors.host ? tr("Host is required.") : ' '}
                   {...register('host', { required: true })}
                 />
               </div>
               <div className={styles.fld}>
                 <TextField
-                  label="Port"
+                  label={tr("Port")}
                   type="number"
                   fullWidth
                   size="small"
                   slotProps={{ htmlInput: { min: 1, max: 65535 } }}
                   error={!!errors.port}
-                  helperText={errors.port ? 'Port must be 1–65535.' : ' '}
+                  helperText={errors.port ? tr("Port must be 1–65535.") : ' '}
                   {...register('port', {
                     required: true,
                     valueAsNumber: true,
@@ -643,18 +634,18 @@ export default function SettingsPage() {
               </div>
               <div className={`${styles.fld} ${styles.fldSpan2}`}>
                 <TextField
-                  label="Database"
+                  label={tr("Database")}
                   placeholder="mml"
                   fullWidth
                   size="small"
                   error={!!errors.database}
-                  helperText={errors.database ? 'Database is required.' : ' '}
+                  helperText={errors.database ? tr("Database is required.") : ' '}
                   {...register('database', { required: true })}
                 />
               </div>
               <div className={`${styles.fld} ${styles.fldSpan2}`}>
                 <TextField
-                  label="Schema"
+                  label={tr("Schema")}
                   placeholder="public"
                   fullWidth
                   size="small"
@@ -663,12 +654,12 @@ export default function SettingsPage() {
               </div>
               <div className={`${styles.fld} ${styles.fldSpan2}`}>
                 <FormControl fullWidth size="small">
-                  <InputLabel id="dsf-ssl-label">SSL mode</InputLabel>
+                  <InputLabel id="dsf-ssl-label">{tr("SSL mode")}</InputLabel>
                   <Controller
                     name="sslmode"
                     control={control}
                     render={({ field }) => (
-                      <Select labelId="dsf-ssl-label" label="SSL mode" {...field}>
+                      <Select labelId="dsf-ssl-label" label={tr("SSL mode")} {...field}>
                         {SSL_MODES.map((m) => (
                           <MenuItem key={m} value={m}>{m}</MenuItem>
                         ))}
@@ -679,22 +670,22 @@ export default function SettingsPage() {
               </div>
               <div className={`${styles.fld} ${styles.fldSpan3}`}>
                 <TextField
-                  label="Username"
+                  label={tr("Username")}
                   placeholder="postgres"
                   fullWidth
                   size="small"
                   error={!!errors.username}
-                  helperText={errors.username ? 'Username is required.' : ' '}
+                  helperText={errors.username ? tr("Username is required.") : ' '}
                   {...register('username', { required: true })}
                 />
               </div>
               <div className={`${styles.fld} ${styles.fldSpan3}`}>
                 <TextField
-                  label="Password"
+                  label={tr("Password")}
                   type={showPassword ? 'text' : 'password'}
                   fullWidth
                   size="small"
-                  placeholder={editingHasPassword ? '•••••• (unchanged)' : '••••••••'}
+                  placeholder={editingHasPassword ? tr("•••••• (unchanged)") : '••••••••'}
                   slotProps={{
                     input: {
                       endAdornment: (
@@ -702,7 +693,7 @@ export default function SettingsPage() {
                           <IconButton
                             size="small"
                             tabIndex={-1}
-                            aria-label={showPassword ? 'Hide password' : 'Show password'}
+                            aria-label={showPassword ? tr("Hide password") : tr("Show password")}
                             onClick={() => setShowPassword((s) => !s)}
                           >
                             {showPassword ? <VisibilityOffOutlined fontSize="small" /> : <VisibilityOutlined fontSize="small" />}
@@ -715,21 +706,22 @@ export default function SettingsPage() {
                 />
               </div>
             </div>
-            {dsDialogError && <Alert severity="error" sx={{ mt: 2 }}>{dsDialogError}</Alert>}
+            {dsDialogError && <Alert severity="error" sx={{ mt: 2 }}>{tr(dsDialogError)}</Alert>}
           </DialogContent>
 
           <DialogActions>
             <div className={styles.dsDialogFoot}>
-              <Button loading={dsTest.state === 'testing'} onClick={testInDialog}>
-                Test connection
-              </Button>
+              <Button loading={dsTest.state === 'testing'} onClick={testInDialog}>{tr("Test connection")}</Button>
               <p className={`${styles.dsStatus} ${dsTest.state !== 'idle' ? styles.dsStatusShow : ''}`}>
                 <span className={testLedClass(dsTest.state)} />
-                <span className={styles.dsMsg}>{dsTest.message}</span>
+                <span className={styles.dsMsg}>
+                  {tr(dsTest.message)}
+                  {dsTest.serverVersion && ` · ${dsTest.serverVersion}`}
+                </span>
               </p>
               <span className={styles.dsDialogSpacer} />
-              <Button onClick={() => setDsDialogOpen(false)}>Cancel</Button>
-              <Button type="submit" variant="contained" loading={savingDs}>Save</Button>
+              <Button onClick={() => setDsDialogOpen(false)}>{tr("Cancel")}</Button>
+              <Button type="submit" variant="contained" loading={savingDs}>{tr("Save")}</Button>
             </div>
           </DialogActions>
         </form>
@@ -737,28 +729,23 @@ export default function SettingsPage() {
 
       {/* Delete connection: small centred confirm dialog (matches AccountsPage / LivePage) */}
       <Dialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} fullWidth maxWidth="xs">
-        <DialogTitle>Delete connection</DialogTitle>
+        <DialogTitle>{tr("Delete connection")}</DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {deleteTarget && (
-            <p className={styles.delDialogMsg}>
-              Delete <strong>{deleteTarget.name}</strong>?
+            <p className={styles.delDialogMsg}>{tr("Delete")} <strong>{deleteTarget.name}</strong>?
             </p>
           )}
-          <p className={styles.delDialogHint}>
-            Panels bound to it fall back to the app database. This cannot be undone.
-          </p>
-          {deleteError && <Alert severity="error">{deleteError}</Alert>}
+          <p className={styles.delDialogHint}>{tr("Panels bound to it fall back to the app database. This cannot be undone.")}</p>
+          {deleteError && <Alert severity="error">{tr(deleteError)}</Alert>}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDeleteTarget(null)}>Cancel</Button>
+          <Button onClick={() => setDeleteTarget(null)}>{tr("Cancel")}</Button>
           <Button
             color="error"
             variant="contained"
             loading={deleteMutation.isPending}
             onClick={confirmDeleteDs}
-          >
-            Delete
-          </Button>
+          >{tr("Delete")}</Button>
         </DialogActions>
       </Dialog>
 
@@ -773,7 +760,7 @@ export default function SettingsPage() {
           onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
           sx={{ width: '100%' }}
         >
-          {snackbar.message}
+          {tr(snackbar.message)}
         </Alert>
       </Snackbar>
     </div>

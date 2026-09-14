@@ -116,6 +116,12 @@
   --crit: #be3b2b;
 }
 
+/* Use the bundled Thai typeface for translated labels and MUI controls. */
+:root:lang(th) {
+  --font-sans: "IBM Plex Sans Thai", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "IBM Plex Sans Thai", ui-sans-serif, system-ui, sans-serif;
+}
+
 /* Re-skin the app smoothly when the operator swaps faceplates. */
 body {
   transition: background-color 0.35s ease, color 0.35s ease;

@@ -1,3 +1,4 @@
+import { useTranslation } from '@/i18n'
 import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
@@ -13,6 +14,7 @@ import Snackbar from '@mui/material/Snackbar'
 import { useAuthStore } from '@/stores/auth'
 import { forgotPassword } from '@/api/auth'
 import MmlLogo from '@/components/MmlLogo/MmlLogo.jsx'
+import LanguageSelect from '@/components/LanguageSelect/LanguageSelect.jsx'
 import styles from './LoginPage.module.css'
 
 /**
@@ -27,6 +29,7 @@ import styles from './LoginPage.module.css'
  */
 
 export default function LoginPage() {
+  const tr = useTranslation()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
@@ -145,11 +148,11 @@ export default function LoginPage() {
       <div className={styles['login-card']}>
         {/* LEFT: MML brand */}
         <aside className={styles['brand-panel']} aria-label="MML Portal">
-          <div className={styles['brand-identity']} title="Powered by Engineering Off-Site">
+          <div className={styles['brand-identity']} title={tr("Powered by Engineering Off-Site")}>
             <MmlLogo className={styles['brand-logo']} orbitClassName={styles['brand-orbit']} />
             <h1 className={styles['brand-title']}>MML Portal</h1>
             <p className={styles['brand-credit']}>
-              <span>Powered by</span>
+              <span>{tr("Powered by")}</span>
               <strong>Engineering Off-Site</strong>
             </p>
           </div>
@@ -174,15 +177,16 @@ export default function LoginPage() {
                 <path d="M7 11V7a5 5 0 0110 0v4" />
               </svg>
             </div>
-            <h2 className={styles['form-header__title']}>System Access</h2>
-            <p className={styles['form-header__sub']}>Authorized Personnel Only</p>
+            <h2 className={styles['form-header__title']}>{tr("System Access")}</h2>
+            <p className={styles['form-header__sub']}>{tr("Authorized Personnel Only")}</p>
           </div>
+          <div className={styles['language-select']}><LanguageSelect /></div>
 
           {/* Credentials form */}
           <form onSubmit={handleSignInSubmit(handleLogin)} noValidate>
             <TextField
-              label="Username"
-              placeholder="Enter username"
+              label={tr("Username")}
+              placeholder={tr("Enter username")}
               autoComplete="username"
               size="medium"
               fullWidth
@@ -191,9 +195,9 @@ export default function LoginPage() {
             />
 
             <TextField
-              label="Password"
+              label={tr("Password")}
               type="password"
-              placeholder="Enter password"
+              placeholder={tr("Enter password")}
               autoComplete="current-password"
               size="medium"
               fullWidth
@@ -207,13 +211,11 @@ export default function LoginPage() {
 
             {authError && (
               <Alert severity="error" sx={{ mb: 2 }}>
-                {authError}
+                {tr(authError)}
               </Alert>
             )}
 
-            <Button type="submit" variant="contained" size="large" loading={authLoading} fullWidth>
-              Sign In
-            </Button>
+            <Button type="submit" variant="contained" size="large" loading={authLoading} fullWidth>{tr("Sign In")}</Button>
 
             <Button
               variant="outlined"
@@ -221,17 +223,13 @@ export default function LoginPage() {
               fullWidth
               className={styles['form-btn-register']}
               onClick={openRegister}
-            >
-              Create an Account
-            </Button>
+            >{tr("Create an Account")}</Button>
 
             <Button
               variant="text"
               className={styles['form-btn-forgot']}
               onClick={() => setForgotVisible(true)}
-            >
-              Forgot password?
-            </Button>
+            >{tr("Forgot password?")}</Button>
           </form>
         </main>
       </div>
@@ -239,7 +237,7 @@ export default function LoginPage() {
       {/* ── Dialogs ────────────────────────────────────────── */}
 
       <Dialog open={registerVisible} onClose={() => setRegisterVisible(false)} fullWidth maxWidth="xs">
-        <DialogTitle>Create an account</DialogTitle>
+        <DialogTitle>{tr("Create an account")}</DialogTitle>
         <form
           onSubmit={(e) => {
             e.preventDefault()
@@ -248,50 +246,48 @@ export default function LoginPage() {
         >
           <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '8px !important' }}>
             <TextField
-              label="Username"
-              placeholder="Choose a username"
+              label={tr("Username")}
+              placeholder={tr("Choose a username")}
               autoComplete="username"
               fullWidth
               value={registerForm.username}
               onChange={updateRegisterField('username')}
             />
             <TextField
-              label="Display name"
-              placeholder="Your full name"
+              label={tr("Display name")}
+              placeholder={tr("Your full name")}
               fullWidth
               value={registerForm.display_name}
               onChange={updateRegisterField('display_name')}
             />
             <TextField
-              label="Password"
+              label={tr("Password")}
               type="password"
-              placeholder="At least 8 characters"
+              placeholder={tr("At least 8 characters")}
               autoComplete="new-password"
               fullWidth
               value={registerForm.password}
               onChange={updateRegisterField('password')}
             />
             <TextField
-              label="Email (optional)"
+              label={tr("Email (optional)")}
               placeholder="name@example.com"
               autoComplete="email"
               fullWidth
               value={registerForm.email}
               onChange={updateRegisterField('email')}
             />
-            {registerError && <Alert severity="error">{registerError}</Alert>}
+            {registerError && <Alert severity="error">{tr(registerError)}</Alert>}
           </DialogContent>
           <DialogActions>
-            <Button onClick={() => setRegisterVisible(false)}>Cancel</Button>
-            <Button type="submit" variant="contained" loading={authLoading}>
-              Create account
-            </Button>
+            <Button onClick={() => setRegisterVisible(false)}>{tr("Cancel")}</Button>
+            <Button type="submit" variant="contained" loading={authLoading}>{tr("Create account")}</Button>
           </DialogActions>
         </form>
       </Dialog>
 
       <Dialog open={forgotVisible} onClose={() => setForgotVisible(false)} fullWidth maxWidth="xs">
-        <DialogTitle>Reset password</DialogTitle>
+        <DialogTitle>{tr("Reset password")}</DialogTitle>
         <form
           onSubmit={(e) => {
             e.preventDefault()
@@ -299,11 +295,9 @@ export default function LoginPage() {
           }}
         >
           <DialogContent>
-            <p className={styles['forgot-hint']}>
-              Enter your account email. If it matches a user, a reset link will be sent.
-            </p>
+            <p className={styles['forgot-hint']}>{tr("Enter your account email. If it matches a user, a reset link will be sent.")}</p>
             <TextField
-              label="Email"
+              label={tr("Email")}
               placeholder="name@example.com"
               autoComplete="email"
               fullWidth
@@ -312,10 +306,8 @@ export default function LoginPage() {
             />
           </DialogContent>
           <DialogActions>
-            <Button onClick={() => setForgotVisible(false)}>Cancel</Button>
-            <Button type="submit" variant="contained" loading={forgotLoading}>
-              Send reset link
-            </Button>
+            <Button onClick={() => setForgotVisible(false)}>{tr("Cancel")}</Button>
+            <Button type="submit" variant="contained" loading={forgotLoading}>{tr("Send reset link")}</Button>
           </DialogActions>
         </form>
       </Dialog>
@@ -331,7 +323,7 @@ export default function LoginPage() {
           onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
           sx={{ width: '100%' }}
         >
-          {snackbar.message}
+          {tr(snackbar.message)}
         </Alert>
       </Snackbar>
     </div>

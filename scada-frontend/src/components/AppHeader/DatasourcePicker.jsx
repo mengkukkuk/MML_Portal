@@ -1,3 +1,4 @@
+import { useTranslation } from '@/i18n'
 import { useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Chip from '@mui/material/Chip'
@@ -28,6 +29,7 @@ import styles from './DatasourcePicker.module.css'
  * store's `selectionKey` is part of those keys, which is what makes them reseed.
  */
 export default function DatasourcePicker() {
+  const tr = useTranslation()
   const queryClient = useQueryClient()
   const selected = useDatasourceSelectionStore((s) => s.selected)
   const implicit = useDatasourceSelectionStore((s) => s.implicit)
@@ -74,24 +76,24 @@ export default function DatasourcePicker() {
             data-implicit={implicit || undefined}
             title={
               implicit
-                ? 'No source chosen — showing the first saved connection.'
+                ? tr("No source chosen — showing the first saved connection.")
                 : undefined
             }
           >
             <StorageOutlined className={styles.icon} fontSize="inherit" />
             {selected.length === 0 ? (
-              <span className={styles.empty}>No data source</span>
+              <span className={styles.empty}>{tr("No data source")}</span>
             ) : (
               selected.map((d) => (
                 <Chip key={d.id} size="small" className={styles.chip} label={d.name} />
               ))
             )}
             {implicit && selected.length > 0 && (
-              <span className={styles.default}>(default)</span>
+              <span className={styles.default}>{tr("(default)")}</span>
             )}
           </span>
         )}
-        inputProps={{ 'aria-label': 'Data sources' }}
+        inputProps={{ 'aria-label': tr("Data sources") }}
         MenuProps={{ PaperProps: { style: { maxHeight: 360 } } }}
       >
         {sources.map((ds) => (

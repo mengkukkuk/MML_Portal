@@ -197,6 +197,11 @@
 }
 
 /* Button spacing */
+.language-select {
+  align-self: flex-end;
+  margin-bottom: var(--space-2);
+}
+
 .form-btn-register {
   margin-top: var(--space-3);
   margin-left: 0;

@@ -1,3 +1,4 @@
+import { useTranslation } from '@/i18n'
 import { useConnectionStore } from '@/stores/connection'
 import styles from './ConnectionPill.module.css'
 
@@ -14,15 +15,16 @@ const LABELS = {
  * Offline label. No props; purely reactive to the store.
  */
 export default function ConnectionPill() {
+  const tr = useTranslation()
   const status = useConnectionStore((s) => s.status)
-  const label = LABELS[status] || 'Unknown'
+  const label = tr(LABELS[status] || 'Unknown')
 
   return (
     <div
       className={styles.pill}
       data-status={status}
       role="status"
-      aria-label={`Connection ${label}`}
+      aria-label={tr('Connection {status}', { status: label })}
     >
       <span className={styles.dot} />
       <span className={styles.text}>{label}</span>

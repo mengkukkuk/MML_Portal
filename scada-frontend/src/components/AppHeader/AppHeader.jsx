@@ -1,3 +1,4 @@
+import { useTranslation } from '@/i18n'
 import { useState } from 'react'
 import { useMatches, useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
@@ -21,6 +22,8 @@ import ConnectionPill from '@/components/ConnectionPill/ConnectionPill.jsx'
 import { useAuthStore } from '@/stores/auth'
 import { changePassword } from '@/api/auth'
 import DatasourcePicker from './DatasourcePicker.jsx'
+import HeaderClock from './HeaderClock.jsx'
+import LanguageSelect from '@/components/LanguageSelect/LanguageSelect.jsx'
 import styles from './AppHeader.module.css'
 
 /**
@@ -32,6 +35,7 @@ import styles from './AppHeader.module.css'
  * onToggle() — requests sidebar collapse/expand from AppShell.
  */
 export default function AppHeader({ collapsed, onToggle }) {
+  const tr = useTranslation()
   const navigate = useNavigate()
   const matches = useMatches()
   const user = useAuthStore((s) => s.user)
@@ -39,7 +43,7 @@ export default function AppHeader({ collapsed, onToggle }) {
 
   const withTitle = [...matches].reverse().find((m) => m.handle?.title)
   const pageTitle = withTitle?.handle?.title || 'MML Portal'
-  const displayName = user?.display_name || user?.username || 'Operator'
+  const displayName = user?.display_name || user?.username || tr('Operator')
 
   const [anchorEl, setAnchorEl] = useState(null)
   const menuOpen = Boolean(anchorEl)
@@ -88,13 +92,14 @@ export default function AppHeader({ collapsed, onToggle }) {
         <IconButton
           className={styles.toggle}
           size="small"
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-label={collapsed ? tr("Expand sidebar") : tr("Collapse sidebar")}
           onClick={onToggle}
         >
           {collapsed ? <MenuIcon fontSize="small" /> : <MenuOpenIcon fontSize="small" />}
         </IconButton>
-        <h1 className={styles.title}>{pageTitle}</h1>
+        <h1 className={styles.title}>{tr(pageTitle)}</h1>
       </div>
+      <HeaderClock />
       <div className={styles.right}>
         {/* A full document reload, not a refetch: the same thing F5 does, in
             reach on a panel-mounted touch screen that has no keyboard. It
@@ -104,14 +109,16 @@ export default function AppHeader({ collapsed, onToggle }) {
         <IconButton
           className={styles.refresh}
           size="small"
-          aria-label="Refresh page"
-          title="Refresh"
+          aria-label={tr("Refresh page")}
+          title={tr("Refresh")}
           onClick={() => window.location.reload()}
         >
           <RefreshIcon fontSize="small" />
         </IconButton>
         <DatasourcePicker />
-        <ConnectionPill />
+        {/*<ConnectionPill />*/}
+        <LanguageSelect />
+        
         <Button
           className={styles.user}
           onClick={(e) => setAnchorEl(e.currentTarget)}
@@ -122,53 +129,51 @@ export default function AppHeader({ collapsed, onToggle }) {
           <ArrowDropDownIcon fontSize="small" />
         </Button>
         <Menu anchorEl={anchorEl} open={menuOpen} onClose={() => setAnchorEl(null)}>
-          <MenuItem onClick={openChangePassword}>Change password</MenuItem>
+          <MenuItem onClick={openChangePassword}>{tr("Change password")}</MenuItem>
           <Divider />
-          <MenuItem onClick={handleSignOut}>Sign out</MenuItem>
+          <MenuItem onClick={handleSignOut}>{tr("Sign out")}</MenuItem>
         </Menu>
       </div>
 
       <Dialog open={pwVisible} onClose={() => setPwVisible(false)} fullWidth maxWidth="xs">
-        <DialogTitle>Change password</DialogTitle>
+        <DialogTitle>{tr("Change password")}</DialogTitle>
         <form onSubmit={handleSubmit(submitChangePassword)}>
           <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '8px !important' }}>
             <TextField
-              label="Current password"
+              label={tr("Current password")}
               type="password"
               autoComplete="current-password"
               fullWidth
               {...register('oldPassword', { required: true })}
             />
             <TextField
-              label="New password"
+              label={tr("New password")}
               type="password"
-              placeholder="At least 8 characters"
+              placeholder={tr("At least 8 characters")}
               autoComplete="new-password"
               fullWidth
               error={!!errors.newPassword}
               helperText={
-                errors.newPassword ? 'New password must be at least 8 characters' : ' '
+                errors.newPassword ? tr("New password must be at least 8 characters") : ' '
               }
               {...register('newPassword', { required: true, minLength: 8 })}
             />
             <TextField
-              label="Confirm new password"
+              label={tr("Confirm new password")}
               type="password"
               autoComplete="new-password"
               fullWidth
               error={!!errors.confirmPassword}
-              helperText={errors.confirmPassword ? 'Passwords do not match' : ' '}
+              helperText={errors.confirmPassword ? tr("Passwords do not match") : ' '}
               {...register('confirmPassword', {
                 validate: (value) => value === watch('newPassword') || 'Passwords do not match',
               })}
             />
-            {pwError && <Alert severity="error">{pwError}</Alert>}
+            {pwError && <Alert severity="error">{tr(pwError)}</Alert>}
           </DialogContent>
           <DialogActions>
-            <Button onClick={() => setPwVisible(false)}>Cancel</Button>
-            <Button type="submit" variant="contained" disabled={pwLoading}>
-              Change password
-            </Button>
+            <Button onClick={() => setPwVisible(false)}>{tr("Cancel")}</Button>
+            <Button type="submit" variant="contained" disabled={pwLoading}>{tr("Change password")}</Button>
           </DialogActions>
         </form>
       </Dialog>

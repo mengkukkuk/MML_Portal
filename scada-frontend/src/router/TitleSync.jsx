@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useMatches } from 'react-router-dom'
+import { useTranslation } from '@/i18n'
 
 /**
  * TitleSync — sets document.title from the deepest matched route's
@@ -9,13 +10,14 @@ import { useMatches } from 'react-router-dom'
  * title, or the two-word fallback 'MML Portal' when it doesn't.
  */
 export default function TitleSync() {
+  const tr = useTranslation()
   const matches = useMatches()
 
   useEffect(() => {
     const withTitle = [...matches].reverse().find((m) => m.handle?.title)
     const title = withTitle?.handle?.title
-    document.title = title ? `${title} · MMLPortal` : 'MML Portal'
-  }, [matches])
+    document.title = title ? `${tr(title)} · MMLPortal` : 'MML Portal'
+  }, [matches, tr])
 
   return null
 }

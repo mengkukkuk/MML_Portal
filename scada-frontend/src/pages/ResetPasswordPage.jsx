@@ -1,3 +1,4 @@
+import { useTranslation } from '@/i18n'
 import { useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
@@ -5,6 +6,7 @@ import TextField from '@mui/material/TextField'
 import Button from '@mui/material/Button'
 import Alert from '@mui/material/Alert'
 import { resetPassword } from '@/api/auth'
+import LanguageSelect from '@/components/LanguageSelect/LanguageSelect.jsx'
 import styles from './ResetPasswordPage.module.css'
 
 /**
@@ -14,6 +16,7 @@ import styles from './ResetPasswordPage.module.css'
  * showing the form; on success redirects to /login.
  */
 export default function ResetPasswordPage() {
+  const tr = useTranslation()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const token = searchParams.get('token') || ''
@@ -44,57 +47,52 @@ export default function ResetPasswordPage() {
   return (
     <div className={styles.loginBg}>
       <div className={styles.loginBox}>
+        <LanguageSelect />
         <div className={styles.brand}>
           <span className={styles.logo}>⚙</span>
-          <h1 className={styles.title}>Reset password</h1>
+          <h1 className={styles.title}>{tr("Reset password")}</h1>
         </div>
 
         {!token ? (
-          <Alert severity="error">
-            This reset link is missing its token. Request a new one from the login page.
-          </Alert>
+          <Alert severity="error">{tr("This reset link is missing its token. Request a new one from the login page.")}</Alert>
         ) : (
           <form onSubmit={handleSubmit(handleReset)} noValidate>
             <TextField
-              label="New password"
+              label={tr("New password")}
               type="password"
-              placeholder="At least 8 characters"
+              placeholder={tr("At least 8 characters")}
               size="medium"
               fullWidth
               margin="normal"
               error={!!errors.newPassword}
-              helperText={errors.newPassword ? 'Password must be at least 8 characters' : ' '}
+              helperText={errors.newPassword ? tr("Password must be at least 8 characters") : ' '}
               {...register('newPassword', { required: true, minLength: 8 })}
             />
             <TextField
-              label="Confirm password"
+              label={tr("Confirm password")}
               type="password"
-              placeholder="Re-enter password"
+              placeholder={tr("Re-enter password")}
               size="medium"
               fullWidth
               margin="normal"
               error={!!errors.confirmPassword}
-              helperText={errors.confirmPassword ? 'Passwords do not match' : ' '}
+              helperText={errors.confirmPassword ? tr("Passwords do not match") : ' '}
               {...register('confirmPassword', {
-                validate: (value) => value === watch('newPassword') || 'Passwords do not match',
+                validate: (value) => value === watch('newPassword') || tr("Passwords do not match"),
               })}
             />
 
             {error && (
               <Alert severity="error" sx={{ mb: 2 }}>
-                {error}
+                {tr(error)}
               </Alert>
             )}
 
-            <Button type="submit" variant="contained" size="large" loading={loading} fullWidth>
-              Reset password
-            </Button>
+            <Button type="submit" variant="contained" size="large" loading={loading} fullWidth>{tr("Reset password")}</Button>
           </form>
         )}
 
-        <Link className={styles.link} to="/login">
-          Back to sign in
-        </Link>
+        <Link className={styles.link} to="/login">{tr("Back to sign in")}</Link>
       </div>
     </div>
   )

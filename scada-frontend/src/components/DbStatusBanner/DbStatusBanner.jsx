@@ -1,3 +1,4 @@
+import { useTranslation } from '@/i18n'
 import Alert from '@mui/material/Alert'
 import { useConnectionStore } from '@/stores/connection'
 
@@ -12,23 +13,19 @@ import { useConnectionStore } from '@/stores/connection'
  * screen space on a normal day.
  */
 export default function DbStatusBanner() {
+  const tr = useTranslation()
   const dbOk = useConnectionStore((s) => s.dbOk)
   const apiReachable = useConnectionStore((s) => s.apiReachable)
 
   if (!apiReachable) {
     return (
-      <Alert severity="error" square>
-        Cannot reach the server. Data on this page may be out of date.
-      </Alert>
+      <Alert severity="error" square>{tr("Cannot reach the server. Data on this page may be out of date.")}</Alert>
     )
   }
 
   if (!dbOk) {
     return (
-      <Alert severity="error" square>
-        Database unreachable — pages will not load or save until the connection
-        is restored.
-      </Alert>
+      <Alert severity="error" square>{tr("Database unreachable — pages will not load or save until the connection is restored.")}</Alert>
     )
   }
 

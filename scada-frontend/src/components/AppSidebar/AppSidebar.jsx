@@ -1,3 +1,4 @@
+import { useTranslation } from '@/i18n'
 import { useLocation, useNavigate } from 'react-router-dom'
 import List from '@mui/material/List'
 import ListItemButton from '@mui/material/ListItemButton'
@@ -38,6 +39,7 @@ const BASE_ITEMS = [
  * brand title.
  */
 export default function AppSidebar({ collapsed }) {
+  const tr = useTranslation()
   const location = useLocation()
   const navigate = useNavigate()
   const role = useAuthStore((s) => s.user?.role ?? null)
@@ -70,25 +72,27 @@ export default function AppSidebar({ collapsed }) {
               key={item.path}
               className={`${styles.menuItem} ${active ? styles.menuItemActive : ''}`}
               selected={active}
+              aria-label={tr(item.title)}
+              title={collapsed ? tr(item.title) : undefined}
               onClick={() => navigate(item.path)}
             >
               <ListItemIcon className={styles.menuIcon}>
                 <item.Icon fontSize="small" />
               </ListItemIcon>
-              {!collapsed && <ListItemText primary={item.title} />}
+              {!collapsed && <ListItemText primary={tr(item.title)} />}
             </ListItemButton>
           )
         })}
       </List>
       <div
         className={`${styles.poweredBy} ${collapsed ? styles.poweredByCollapsed : ''}`}
-        title="Powered by Engineering Off-Site"
-        aria-label={collapsed ? 'Powered by Engineering Off-Site' : undefined}
+        title={tr("Powered by Engineering Off-Site")}
+        aria-label={collapsed ? tr("Powered by Engineering Off-Site") : undefined}
       >
         <MmlLogo className={styles.poweredLogo} orbitClassName={styles.poweredOrbit} />
         {!collapsed && (
           <div className={styles.poweredCopy}>
-            <span className={styles.poweredCaption}>Powered by</span>
+            <span className={styles.poweredCaption}>{tr("Powered by")}</span>
             <span className={styles.poweredName}>Engineering Off-Site</span>
           </div>
         )}
