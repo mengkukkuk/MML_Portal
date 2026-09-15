@@ -695,36 +695,9 @@
   pointer-events: none;
 }
 
-/* The rail drops below the drawing before the viewport gets narrow: a 320px
- * column beside a 1600-unit sheet costs more legibility than it buys. It keeps
- * a share of the height rather than pushing the drawing off the bottom, and
- * scrolls inside itself. */
+/* The canvas/rail split (.body) stays a fixed 50/50 grid at every width —
+ * only the editor's palette/inspector drawers collapse below this breakpoint. */
 @media (max-width: 1399px) {
-  /* The rail's share of the height is set by the track, not by what happens to
-   * be in it: a band that changed depth as you clicked between symbols would
-   * resize the drawing under your cursor. */
-  .body {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) min(38%, 300px);
-  }
-
-  .body:has(.railColCollapsed) {
-    grid-template-rows: minmax(0, 1fr) 40px;
-  }
-
-  .body:not(:has(.railCol)) {
-    grid-template-rows: minmax(0, 1fr);
-  }
-
-  .railCol {
-    width: auto;
-    height: 100%;
-  }
-
-  .railColCollapsed {
-    width: auto;
-  }
-
   .editorWorkspace,
   .editorWorkspace:has(.editorPaletteRail.editorRailClosed),
   .editorWorkspace:has(.editorInspectorRail.editorRailClosed),
