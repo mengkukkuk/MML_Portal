@@ -1,4 +1,4 @@
-create table localbase.devices
+create table if not exists localbase.devices
 (
     id         serial
         primary key,
@@ -13,7 +13,7 @@ create table localbase.devices
 alter table localbase.devices
     owner to postgres;
 
-create table localbase.alarms
+create table if not exists localbase.alarms
 (
     id              bigserial
         primary key,
@@ -32,7 +32,7 @@ alter table localbase.alarms
 create index idx_alarms_ts
     on localbase.alarms (ts desc);
 
-create table localbase.users
+create table if not exists localbase.users
 (
     id            serial
         primary key,
@@ -58,7 +58,7 @@ create unique index uq_users_email
 create index ix_users_email
     on localbase.users (email);
 
-create table localbase.dashboards
+create table if not exists localbase.dashboards
 (
     id         serial
         primary key,
@@ -70,7 +70,7 @@ create table localbase.dashboards
 alter table localbase.dashboards
     owner to postgres;
 
-create table localbase.dashboard_panels
+create table if not exists localbase.dashboard_panels
 (
     id                    serial
         primary key,
@@ -97,7 +97,7 @@ create table localbase.dashboard_panels
 alter table localbase.dashboard_panels
     owner to postgres;
 
-create table localbase.datasources
+create table if not exists localbase.datasources
 (
     id         serial
         primary key,
@@ -120,7 +120,7 @@ alter table localbase.datasources
 
 -- Monitor camera identity and defect data stay in the selected datasource.
 -- This singleton stores only that required datasource choice in the app DB.
-create table localbase.camera_link_settings
+create table if not exists localbase.camera_link_settings
 (
     id            integer default 1 not null
         primary key,
@@ -134,7 +134,7 @@ create table localbase.camera_link_settings
 alter table localbase.camera_link_settings
     owner to postgres;
 
-create table localbase.mimic_assets
+create table if not exists localbase.mimic_assets
 (
     id          serial
         primary key,
@@ -151,7 +151,7 @@ create table localbase.mimic_assets
 alter table localbase.mimic_assets
     owner to postgres;
 
-create table localbase.mimic_symbols
+create table if not exists localbase.mimic_symbols
 (
     id         serial
         primary key,
@@ -172,7 +172,7 @@ create table localbase.mimic_symbols
 alter table localbase.mimic_symbols
     owner to postgres;
 
-create table localbase.user_datasource_selection
+create table if not exists localbase.user_datasource_selection
 (
     user_id       integer                                not null
         references localbase.users
@@ -191,7 +191,7 @@ alter table localbase.user_datasource_selection
 create index idx_uds_user
     on localbase.user_datasource_selection (user_id, position);
 
-create table localbase.mimic_layouts
+create table if not exists localbase.mimic_layouts
 (
     id         serial
         primary key,
@@ -206,7 +206,7 @@ create table localbase.mimic_layouts
 alter table localbase.mimic_layouts
     owner to postgres;
 
-create table localbase.report_templates
+create table if not exists localbase.report_templates
 (
     id              serial
         primary key,
@@ -222,7 +222,7 @@ create table localbase.report_templates
 alter table localbase.report_templates
     owner to postgres;
 
-create table localbase.report_settings
+create table if not exists localbase.report_settings
 (
     id                 integer                  default 1           not null
         primary key
@@ -236,7 +236,7 @@ create table localbase.report_settings
 alter table localbase.report_settings
     owner to postgres;
 
-create table localbase.license_events
+create table if not exists localbase.license_events
 (
     id            serial
         primary key,

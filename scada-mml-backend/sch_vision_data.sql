@@ -1,5 +1,16 @@
 CREATE SCHEMA IF NOT EXISTS vision_data;
 
+--array_max
+create or replace function vision_data.array_max(arr anyarray) returns anyelement
+    immutable
+    language sql
+as
+$$
+SELECT MAX(val) FROM UNNEST(arr) AS val;
+$$;
+
+alter function vision_data.array_max(anyarray) owner to postgres;
+
 -- 1. Table: cameras
 CREATE TABLE IF NOT EXISTS vision_data.cameras
 (
@@ -26,10 +37,11 @@ CREATE TABLE IF NOT EXISTS vision_data.camera_defect
     station_code  text,
     station_label text,
     location      text,
-    batch_id      integer DEFAULT 0 NOT NULL,
-    defect_array  integer[] DEFAULT '{0,0,0,0,0}'::integer[],
     created_at    timestamptz DEFAULT now() NOT NULL,
     updated_at    timestamptz DEFAULT now() NOT NULL,
+    batch_id      integer DEFAULT 0 NOT NULL,
+    defect_array  integer[] DEFAULT '{0,0,0,0,0}'::integer[],
+    max_defect    integer generated always as (array_max(defect_array)) stored,
     image_path    text
 );
 
@@ -51,10 +63,8 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 2. Create the BEFORE UPDATE trigger on your table
-DROP TRIGGER IF EXISTS trigger_set_created_at ON camera_defect;
-
-CREATE TRIGGER trigger_set_created_at
-    BEFORE UPDATE OF batch_id ON camera_defect
+CREATE or replace TRIGGER trigger_set_created_at
+    BEFORE UPDATE OF batch_id ON vision_data.camera_defect
     FOR EACH ROW
 EXECUTE FUNCTION set_created_at();
 
@@ -258,6 +268,7 @@ CREATE TABLE camera_defect_speed (
      location text NOT NULL,
      created_at TIMESTAMPTZ DEFAULT NOW(),
      updated_at TIMESTAMPTZ DEFAULT NOW(),
+     batch_id BIGINT default 0,
      defect_1 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_1, 1) = 7 ),
      defect_2 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_2, 1) = 7 ),
      defect_3 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_3, 1) = 7 ),
@@ -271,6 +282,8 @@ CREATE TABLE camera_count_speed (
     location text NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
+    batch_id BIGINT default 0,
+    count_total int generated always as ( count_spd1[1] ),
     count_spd1 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd1, 1) = 7 ),
     count_spd2 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd2, 1) = 7 ),
     count_spd3 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd3, 1) = 7 ),
@@ -336,8 +349,7 @@ CREATE OR REPLACE FUNCTION reset_defect_counts_on_batch_change()
     RETURNS TRIGGER AS $$
 BEGIN
     -- Check if batch_id_str or batch_id_int has changed (handles NULL-safe comparison)
-    IF (NEW.batch_id_str IS DISTINCT FROM OLD.batch_id_str) OR
-       (NEW.batch_id IS DISTINCT FROM OLD.batch_id) THEN
+    IF  (NEW.batch_id IS DISTINCT FROM OLD.batch_id) THEN
 
         NEW.defect_1 := '{0,0,0,0,0,0,0}';
         NEW.defect_2 := '{0,0,0,0,0,0,0}';
@@ -359,8 +371,7 @@ EXECUTE FUNCTION reset_defect_counts_on_batch_change();
 CREATE OR REPLACE FUNCTION reset_total_counts_on_batch_change()
     RETURNS TRIGGER AS $$
 BEGIN
-    IF (NEW.batch_id_str IS DISTINCT FROM OLD.batch_id_str) OR
-       (NEW.batch_id IS DISTINCT FROM OLD.batch_id) THEN
+    IF (NEW.batch_id IS DISTINCT FROM OLD.batch_id) THEN
 
         NEW.count_spd1 := '{0,0,0,0,0,0,0}';
         NEW.count_spd2 := '{0,0,0,0,0,0,0}';
@@ -378,31 +389,7 @@ CREATE TRIGGER trigger_reset_defects
     FOR EACH ROW
 EXECUTE FUNCTION reset_total_counts_on_batch_change();
 
--- speed_in_time old version
--- Add 'speed_in_time' as an INT[] storing array sums
-ALTER TABLE camera_count_speed
-    ADD COLUMN speed_in_time INT[] GENERATED ALWAYS AS (
-        ARRAY[
-            array_sum(count_spd1),
-            array_sum(count_spd2),
-            array_sum(count_spd3),
-            array_sum(count_spd4),
-            array_sum(count_spd5)
-            ]
-        ) STORED;
-
-ALTER TABLE camera_defect_speed
-    ADD COLUMN speed_in_time INT[] GENERATED ALWAYS AS (
-        ARRAY[
-            array_sum(defect_1),
-            array_sum(defect_2),
-            array_sum(defect_3),
-            array_sum(defect_4),
-            array_sum(defect_5)
-            ]
-        ) STORED;
-
--- Create table camera_defect_ratio
+-- Ratio table
 create table if not exists vision_data.camera_defect_ratio (
        id serial primary key,
        code text not null unique,
@@ -414,7 +401,7 @@ create table if not exists vision_data.camera_defect_ratio (
        defect_5_pct double precision default 0.0
 );
 
--- 1. Create Function
+-- Create a ratio function
 create or replace function vision_data.sync_camera_defect_ratio()
     returns trigger as $$
 begin
@@ -478,3 +465,93 @@ create trigger trg_sync_defect_ratio_defect
     after insert or update on camera_defect_speed
     for each row
 execute function sync_camera_defect_ratio();
+
+-- Production_hourly_log
+CREATE TABLE IF NOT EXISTS vision_data.production_hourly_log (
+    id            bigserial   PRIMARY KEY,
+    location      text,
+    code   text,
+    period_start  timestamp   NOT NULL,
+    period_end    timestamp   GENERATED ALWAYS AS (period_start + interval '1 hour') STORED,
+    batch_id      bigint      DEFAULT 0,
+    count_total   integer     NOT NULL DEFAULT 0 CHECK (count_total  >= 0),
+    defect_total  integer     NOT NULL DEFAULT 0 CHECK (defect_total >= 0),
+    updated_at    timestamptz NOT NULL DEFAULT now()
+
+    CONSTRAINT production_hourly_log_hour_start CHECK (date_trunc('hour', period_start) = period_start),
+    CONSTRAINT production_hourly_log_line_hour UNIQUE (code, period_start, batch_id)
+);
+
+CREATE INDEX IF NOT EXISTS production_hourly_log_period_idx
+    ON vision_data.production_hourly_log (period_start);
+
+CREATE INDEX IF NOT EXISTS production_hourly_log_batch_idx
+    ON vision_data.production_hourly_log (batch_id);
+
+-- fn_sync_production_hourly_log
+CREATE OR REPLACE FUNCTION vision_data.fn_sync_production_hourly_log()
+    RETURNS TRIGGER AS $$
+DECLARE
+    v_period_start TIMESTAMP;
+    v_location     TEXT;
+    v_code         TEXT;
+    v_batch_id     BIGINT;
+    v_count_total  INTEGER;
+    v_defect_total INTEGER;
+BEGIN
+    v_code := NEW.code;
+    v_batch_id := NEW.batch_id;
+
+    -- Truncate updated_at timestamp to the top of the hour
+    v_period_start := date_trunc('hour', NEW.updated_at);
+
+    -- Fetch current counts from camera_count_speed
+    SELECT COALESCE(cs.count_total, 0), cs.location
+    INTO v_count_total, v_location
+    FROM vision_data.camera_count_speed cs
+    WHERE cs.code = v_code;
+
+    -- Fetch current counts from camera_defect
+    SELECT COALESCE(cd.max_defect, 0)
+    INTO v_defect_total
+    FROM vision_data.camera_defect cd
+    WHERE cd.code = v_code;
+
+    -- Fallback for location if missing from camera_count_speed
+    IF v_location IS NULL AND TG_TABLE_NAME = 'camera_defect' THEN
+        v_location := NEW.location;
+    END IF;
+
+    -- Upsert targeted at composite key (code, period_start, batch_id)
+    INSERT INTO vision_data.production_hourly_log (
+        location, code, period_start, batch_id, count_total, defect_total, updated_at
+    )
+    VALUES (
+               v_location, v_code, v_period_start, v_batch_id,
+               COALESCE(v_count_total, 0), COALESCE(v_defect_total, 0), clock_timestamp()
+           )
+    ON CONFLICT (code, period_start, batch_id)
+        DO UPDATE SET
+                      location     = EXCLUDED.location,
+                      count_total  = EXCLUDED.count_total,
+                      defect_total = EXCLUDED.defect_total,
+                      updated_at   = EXCLUDED.updated_at;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger for count_speed table
+DROP TRIGGER IF EXISTS trg_sync_production_count_speed ON vision_data.camera_count_speed;
+CREATE TRIGGER trg_sync_production_count_speed
+    AFTER INSERT OR UPDATE ON vision_data.camera_count_speed
+    FOR EACH ROW
+EXECUTE FUNCTION vision_data.fn_sync_production_hourly_log();
+
+-- Trigger for defect table
+DROP TRIGGER IF EXISTS trg_sync_production_defect ON vision_data.camera_defect;
+CREATE TRIGGER trg_sync_production_defect
+    AFTER INSERT OR UPDATE ON vision_data.camera_defect
+    FOR EACH ROW
+EXECUTE FUNCTION vision_data.fn_sync_production_hourly_log();
+7

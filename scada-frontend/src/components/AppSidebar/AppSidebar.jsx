@@ -18,9 +18,7 @@ import { useLicenseStore } from '@/stores/license'
 import MmlLogo from '@/components/MmlLogo/MmlLogo.jsx'
 import styles from './AppSidebar.module.css'
 
-// Nav items ported 1:1 from AppSidebar.vue's `items` computed (Trends
-// removed — Grafana/trends are gone from this branch). Accounts is
-// appended only for admin users, same as the Vue version.
+// Nav items ported 1:1 from AppSidebar.vue's `items` computed
 const BASE_ITEMS = [
   { path: '/monitor', title: 'Monitor', Icon: AccountTreeOutlined },
   { path: '/live', title: 'Live', Icon: PlayCircleOutlined },
@@ -28,7 +26,7 @@ const BASE_ITEMS = [
   //{ path: '/ap', title: 'A&P', Icon: SpeedOutlined },
   { path: '/events', title: 'Events', Icon: ListAltOutlined },
   { path: '/alarms', title: 'Alarms', Icon: WarningRounded },
-  { path: '/devices', title: 'Devices', Icon: MemoryOutlined },
+  //{ path: '/devices', title: 'Devices', Icon: MemoryOutlined },
   { path: '/settings', title: 'Settings', Icon: SettingsOutlined },
 ]
 

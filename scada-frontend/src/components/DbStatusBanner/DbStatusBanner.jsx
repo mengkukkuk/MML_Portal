@@ -19,13 +19,13 @@ export default function DbStatusBanner() {
 
   if (!apiReachable) {
     return (
-      <Alert severity="error" square>{tr("Cannot reach the server. Data on this page may be out of date.")}</Alert>
+      <Alert severity="error" square>{tr("Cannot reach the server")}</Alert>
     )
   }
 
   if (!dbOk) {
     return (
-      <Alert severity="error" square>{tr("Database unreachable — pages will not load or save until the connection is restored.")}</Alert>
+      <Alert severity="error" square>{tr("Database unreachable")}</Alert>
     )
   }
 

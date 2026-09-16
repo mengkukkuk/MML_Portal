@@ -36,5 +36,12 @@
       <jdbc-url>jdbc:postgresql://26.201.238.39:5432/</jdbc-url>
       <working-dir>$ProjectFileDir$</working-dir>
     </data-source>
+    <data-source source="LOCAL" name="RPAdata" uuid="75de0740-1b8c-4a9d-83ea-674a7b45e12e">
+      <driver-ref>postgresql</driver-ref>
+      <synchronize>true</synchronize>
+      <jdbc-driver>org.postgresql.Driver</jdbc-driver>
+      <jdbc-url>jdbc:postgresql://26.252.139.132:5432/</jdbc-url>
+      <working-dir>$ProjectFileDir$</working-dir>
+    </data-source>
   </component>
 </project>
