@@ -84,16 +84,22 @@ class ColumnsOut(BaseModel):
 
 
 class LatestOut(BaseModel):
-    # A reading is a number *or* a word. Mimic symbols that print rather than
-    # plot — a display box, an annunciator legend — bind to status columns that
-    # hold 'RUN'/'FAULT', and typing this as `float` alone did not merely
+    # A reading is a number, a word, or a numeric-array column's bundle of
+    # related readings (value/setpoint/limits — see db.py's
+    # _NUMERIC_ARRAY_UDTS). Mimic symbols that print rather than plot — a
+    # display box, an annunciator legend — bind to status columns that hold
+    # 'RUN'/'FAULT', and typing this as `float` alone did not merely
     # inconvenience them: it made a text column a 500 rather than a rejection.
+    # The list arm exists for the same reason: a Live panel bound to an array
+    # reading (now offerable — see PanelEditorDialog's VALUE_KINDS) 500'd on
+    # `/latest` otherwise, since Postgres hands the whole array back as this
+    # row's value the same way it does on `/series`.
     #
     # `float` is listed first so lax coercion still resolves a Decimal to a
     # number. Under smart-union an actual `str` matches exactly and stays a
     # string, so a text column reading "12.5" is *not* quietly turned into a
     # float — the column's type decides, not the row's contents.
-    value: float | str | None = None
+    value: float | str | list[float | None] | None = None
     ts: datetime | None = None
     datasource_id: int | None = None
     datasource_name: str | None = None

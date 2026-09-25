@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import Popover from '@mui/material/Popover'
 import FormControl from '@mui/material/FormControl'
@@ -10,7 +10,6 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 import CloseIcon from '@mui/icons-material/Close'
 import EChart from '@/components/charts/EChart'
 import { fetchSchemaValues } from '@/api/schema'
-import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { colorAt } from '@/utils/seriesPalette'
 import {
   usePanelSeries, buildSeriesList, computeAlertSeries, POLL_INTERVALS, TIME_RANGES,
@@ -51,11 +50,6 @@ export default function LivePanel({
   onDelete,
   onPollIntervalChange,
   onUpdated,
-  // Lifts this tile's most recent per-source ok/error report to the page,
-  // which merges every panel's report into one page-wide connection alarm —
-  // a source bound to five tiles must only ever produce one alarm tile, not
-  // five duplicates flickering independently as each panel polls.
-  onSourcesReport,
 }) {
   // Time-range selector — view-only preference, not persisted to the panel
   // record, so any viewer can widen/narrow their own window independently.
@@ -70,8 +64,6 @@ export default function LivePanel({
   const gearOpen = Boolean(gearAnchor)
   const closeGear = () => setGearAnchor(null)
 
-  const selectionKey = useDatasourceSelectionStore((s) => s.selectionKey)
-
   const {
     vizType, opts, isTag, isTable,
     effectiveFilters, showFilterChanger,
@@ -81,15 +73,10 @@ export default function LivePanel({
   const pollSeconds = panel.poll_interval_seconds || 5
 
   const {
-    seriesPoints, seriesLatest, resolvedSpecs, unit, sources, error, isLoading, isFetching, isReseeding,
+    seriesPoints, seriesLatest, resolvedSpecs, unit, error, isLoading, isFetching, isReseeding,
   } = usePanelPolling({
     panel, seriesSpecs, seriesTags, isTag, isTable, mathFn, rangeMinutes, refreshSignal, onUpdated,
   })
-
-  useEffect(() => {
-    if (sources) onSourcesReport?.(panel.id, sources)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sources, panel.id])
 
   // Hydrated view model for every renderer below: one entry per series with
   // its colour, resolved unit and live points/latest.
@@ -141,12 +128,12 @@ export default function LivePanel({
 
   // Available values for the series-value changer — fetched once (view-only,
   // not polled), mirroring Vue's onMounted-only fetchSchemaValues call.
-  // The offered values come from whichever source the header resolves to, so
-  // the selection has to be in the key — otherwise switching plants would keep
-  // offering the previous plant's filter values from cache.
+  // The values come from the panel's own configured connection, so that has
+  // to be in the key — otherwise re-pointing the panel at another connection
+  // would keep offering the previous connection's filter values from cache.
   const filtersQuery = useQuery({
-    queryKey: ['live-panel-filter-values', panel.table_name, panel.filter_col, selectionKey],
-    queryFn: () => fetchSchemaValues(panel.table_name, panel.filter_col, 500),
+    queryKey: ['live-panel-filter-values', panel.table_name, panel.filter_col, panel.datasource_id],
+    queryFn: () => fetchSchemaValues(panel.table_name, panel.filter_col, 500, panel.datasource_id),
     enabled: showFilterChanger,
   })
   const availableFilters = filtersQuery.data || []

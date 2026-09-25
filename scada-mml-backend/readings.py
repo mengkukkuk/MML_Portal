@@ -118,12 +118,19 @@ def get_metrics(
 def get_latest(
     device_id: int = Query(..., ge=1),
     metric: str = Query(..., min_length=1),
+    datasource_id: int | None = Query(None),
     _user: dict = Depends(get_current_user),
     datasource_ids: list[int | None] = Depends(active_datasources),
 ):
-    """Most-recent reading per source — polled by the frontend every 5 seconds."""
+    """Most-recent reading per source — polled by the frontend every 5 seconds.
+
+    An explicit `datasource_id` bypasses the header selection entirely — a
+    panel pinned to one connection keeps reading it, same as schema.py's
+    `_catalogue_source`.
+    """
+    targets = [datasource_id] if datasource_id is not None else datasource_ids
     readings, reports = db.fan_out_rows(
-        datasource_ids,
+        targets,
         lambda ds: (
             [{"device_id": device_id, "metric": metric, **row}]
             if (row := db.latest_reading(device_id, metric, datasource_id=ds))
@@ -144,6 +151,7 @@ def get_series(
     device_id: int = Query(..., ge=1),
     metric: str = Query(..., min_length=1),
     minutes: int = Query(15, ge=1, le=10080),
+    datasource_id: int | None = Query(None),
     _user: dict = Depends(get_current_user),
     datasource_ids: list[int | None] = Depends(active_datasources),
 ):
@@ -152,7 +160,12 @@ def get_series(
     Kept as separate series rather than merged points: two plants' readings for
     "the same" device id are unrelated measurements, and interleaving them would
     draw a line through both.
+
+    An explicit `datasource_id` bypasses the header selection entirely, same
+    as `/latest` above.
     """
+    targets = [datasource_id] if datasource_id is not None else datasource_ids
+
     def one(ds):
         rows = db.reading_series(device_id, metric, minutes, datasource_id=ds)
         return [{
@@ -162,5 +175,5 @@ def get_series(
             "points": [{"ts": r["ts"], "value": r["value"]} for r in rows],
         }]
 
-    series, reports = db.fan_out_rows(datasource_ids, one, label="reading series")
+    series, reports = db.fan_out_rows(targets, one, label="reading series")
     return {"series": series, "sources": reports}

@@ -117,6 +117,7 @@ def list_fields(
 @router.get("/latest", response_model=TagLatestListOut)
 def get_latest(
     tag_name: str = Query(..., min_length=1),
+    datasource_id: int | None = Query(None),
     _user: dict = Depends(get_current_user),
     datasource_ids: list[int | None] = Depends(active_datasources),
 ):
@@ -125,9 +126,14 @@ def get_latest(
     Not a 404 when a single source lacks the tag: with several plants selected,
     "this plant has no Pump 1" is normal and must not blank the whole tile. Only
     an entirely empty result is a 404.
+
+    An explicit `datasource_id` bypasses the header selection entirely — a
+    panel pinned to one connection keeps reading it, same as schema.py's
+    `_catalogue_source`.
     """
+    targets = [datasource_id] if datasource_id is not None else datasource_ids
     tags, reports = db.fan_out_rows(
-        datasource_ids,
+        targets,
         lambda ds: ([row] if (row := db.latest_tag(tag_name, datasource_id=ds)) else []),
         label="latest tag",
     )

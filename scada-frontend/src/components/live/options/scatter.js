@@ -1,5 +1,5 @@
 import { SERIES_PALETTE, colorAt } from '@/utils/seriesPalette'
-import { legendCfg, gridTop, timeAxis, valueAxis, fmtValue, TOOLTIP_BASE } from './shared'
+import { legendCfg, gridTop, timeAxis, valueAxis, fmtValue, tooltipBase } from './shared'
 
 /** Scatter — individual data points over time, one series per colour. */
 export default function buildScatterOption(seriesList, opts = {}) {
@@ -10,7 +10,7 @@ export default function buildScatterOption(seriesList, opts = {}) {
     grid: { top: gridTop(isMulti), right: 14, bottom: 26, left: 46 },
     tooltip: {
       trigger: 'item',
-      ...TOOLTIP_BASE,
+      ...tooltipBase(),
       formatter: (p) => {
         const u = seriesList[p.seriesIndex]?.unit || ''
         return `${p.seriesName}<br/>${new Date(p.data[0]).toLocaleTimeString()}: ${fmtValue(p.data[1], opts.decimals)}${u ? ' ' + u : ''}`

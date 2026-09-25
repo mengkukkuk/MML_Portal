@@ -1,5 +1,5 @@
 import { colorAt } from '@/utils/seriesPalette'
-import { fmtValue, TOOLTIP_BASE } from './shared'
+import { fmtValue, tooltipBase, axisTextColor, axisLineColor } from './shared'
 
 const BAND_H = 22
 
@@ -48,7 +48,7 @@ export default function buildStateTimelineOption(seriesList, opts = {}) {
 
   return {
     tooltip: {
-      ...TOOLTIP_BASE,
+      ...tooltipBase(),
       formatter: (p) => {
         if (!Array.isArray(p.data)) return ''
         const [start, end, yi, si] = p.data
@@ -62,13 +62,13 @@ export default function buildStateTimelineOption(seriesList, opts = {}) {
     grid: { top: 8, right: 14, bottom: 24, left: 80 },
     xAxis: {
       type: 'time',
-      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.12)' } },
-      axisLabel: { color: '#8a99b3', fontSize: 10 },
+      axisLine: { lineStyle: { color: axisLineColor() } },
+      axisLabel: { color: axisTextColor(), fontSize: 10 },
       splitLine: { show: false },
     },
     yAxis: {
       type: 'category', data: categoryNames,
-      axisLabel: { color: '#8a99b3', fontSize: 10 },
+      axisLabel: { color: axisTextColor(), fontSize: 10 },
       axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false },
     },
     series: [{

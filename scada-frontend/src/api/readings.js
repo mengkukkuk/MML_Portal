@@ -20,16 +20,19 @@ export async function fetchMetrics(deviceId) {
   return data // { metrics: [...], sources: [...] }
 }
 
-export async function fetchLatest(deviceId, metric) {
+// `datasourceId` bypasses the header selection entirely when given — a panel
+// pinned to one connection (Live's own `panel.datasource_id`) keeps reading
+// it regardless of what's selected in the header.
+export async function fetchLatest(deviceId, metric, datasourceId) {
   const { data } = await apiClient.get('/readings/latest', {
-    params: { device_id: deviceId, metric },
+    params: { device_id: deviceId, metric, datasource_id: datasourceId ?? undefined },
   })
   return data // { readings: [{ device_id, metric, unit, ts, value, datasource_id, datasource_name }], sources }
 }
 
-export async function fetchSeries(deviceId, metric, minutes = 15) {
+export async function fetchSeries(deviceId, metric, minutes = 15, datasourceId) {
   const { data } = await apiClient.get('/readings/series', {
-    params: { device_id: deviceId, metric, minutes },
+    params: { device_id: deviceId, metric, minutes, datasource_id: datasourceId ?? undefined },
   })
   return data // { series: [{ device_id, metric, unit, points, datasource_id, datasource_name }], sources }
 }

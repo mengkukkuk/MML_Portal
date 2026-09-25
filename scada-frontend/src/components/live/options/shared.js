@@ -14,6 +14,34 @@
 export const WARN_COLOR = '#e6a23c'
 export const CRIT_COLOR = '#f56c6c'
 
+/**
+ * Theme-aware chart ink. ECharts draws to <canvas>, which can't resolve a
+ * `var(--token)` string the way DOM/CSS can, so every axis/legend/tooltip
+ * colour below has to be the *computed* value of the matching design token,
+ * read fresh at option-build time rather than cached at module scope. That's
+ * what lets a live faceplate swap (`data-theme` on <html>, no reload — see
+ * stores/settings.js) repaint charts on their next poll instead of leaving
+ * them stuck with whichever theme was active when the module first loaded.
+ *
+ * Previously these were the `cobalt` theme's literal token values inlined
+ * (`#8a99b3`, `rgba(255,255,255,0.12)`, …), which made every chart unreadable
+ * on the light `paper` theme (near-white text/gridlines on a near-white
+ * panel).
+ */
+function cssVar(name, fallback) {
+  if (typeof window === 'undefined') return fallback
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return v || fallback
+}
+
+export const axisTextColor = () => cssVar('--fg-muted', '#8a99b3')
+export const axisLineColor = () => cssVar('--border', 'rgba(255,255,255,0.12)')
+export const splitLineColor = () => cssVar('--border-soft', 'rgba(255,255,255,0.06)')
+// Gauge ticks/heatmap borders want more ink than the hairline split lines
+// above but shouldn't be the primary text colour either.
+export const tickLineColor = () => cssVar('--fg-dim', 'rgba(255,255,255,0.25)')
+export const primaryTextColor = () => cssVar('--fg', '#e6edf7')
+
 /** Format a raw value for display; `decimals == null` means "as-is".
  *
  * `labels` is the ['OFF', 'ON'] pair a boolean-bound series carries. The
@@ -44,7 +72,7 @@ export function thresholdColor(v, base, warn, crit) {
 
 export function legendCfg(isMulti) {
   return isMulti
-    ? { type: 'scroll', top: 0, textStyle: { color: '#8a99b3', fontSize: 10 }, itemWidth: 10, itemHeight: 10 }
+    ? { type: 'scroll', top: 0, textStyle: { color: axisTextColor(), fontSize: 10 }, itemWidth: 10, itemHeight: 10 }
     : undefined
 }
 
@@ -55,8 +83,8 @@ export function gridTop(isMulti) {
 export function timeAxis() {
   return {
     type: 'time',
-    axisLine: { lineStyle: { color: 'rgba(255,255,255,0.12)' } },
-    axisLabel: { color: '#8a99b3', fontSize: 10 },
+    axisLine: { lineStyle: { color: axisLineColor() } },
+    axisLabel: { color: axisTextColor(), fontSize: 10 },
     splitLine: { show: false },
   }
 }
@@ -76,19 +104,25 @@ export function valueAxis() {
     scale: false,
     max: axisMax,
     axisLine: { show: false },
-    axisLabel: { color: '#8a99b3', fontSize: 10 },
-    splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
+    axisLabel: { color: axisTextColor(), fontSize: 10 },
+    splitLine: { lineStyle: { color: splitLineColor() } },
   }
 }
 
-export const TOOLTIP_BASE = { backgroundColor: '#172238', borderColor: '#172238', textStyle: { color: '#e6edf7' } }
+// Was a module-level const with hardcoded literals; now a function so each
+// tooltip picks up the *current* theme's elevated-surface/text tokens rather
+// than whichever theme was active on first import.
+export function tooltipBase() {
+  const bg = cssVar('--bg-elev', '#172238')
+  return { backgroundColor: bg, borderColor: bg, textStyle: { color: primaryTextColor() } }
+}
 
 // Axis-trigger tooltip with a per-series unit suffix (valueFormatter can't
 // see which series a value belongs to, so the rows are built by hand).
 export function tooltipAxis(seriesList, decimals) {
   return {
     trigger: 'axis',
-    ...TOOLTIP_BASE,
+    ...tooltipBase(),
     formatter: (params) => {
       const arr = Array.isArray(params) ? params : [params]
       if (!arr.length) return ''

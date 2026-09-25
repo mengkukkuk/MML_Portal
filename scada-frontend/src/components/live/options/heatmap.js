@@ -1,4 +1,4 @@
-import { fmtValue, TOOLTIP_BASE } from './shared'
+import { fmtValue, tooltipBase, axisTextColor, axisLineColor } from './shared'
 
 /** Heatmap — time buckets x series, cell colour = average value in bucket. */
 export default function buildHeatmapOption(seriesList, opts = {}) {
@@ -49,7 +49,7 @@ export default function buildHeatmapOption(seriesList, opts = {}) {
 
   return {
     tooltip: {
-      ...TOOLTIP_BASE,
+      ...tooltipBase(),
       formatter: (p) => {
         const [xi, yi, v] = p.data
         const u = seriesList[yi]?.unit || ''
@@ -59,18 +59,18 @@ export default function buildHeatmapOption(seriesList, opts = {}) {
     grid: { top: 12, right: 60, bottom: 36, left: 80 },
     xAxis: {
       type: 'category', data: timeLabels,
-      axisLabel: { color: '#8a99b3', fontSize: 9, interval: Math.ceil(numBuckets / 8), rotate: numBuckets > 10 ? 30 : 0 },
-      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.12)' } },
+      axisLabel: { color: axisTextColor(), fontSize: 9, interval: Math.ceil(numBuckets / 8), rotate: numBuckets > 10 ? 30 : 0 },
+      axisLine: { lineStyle: { color: axisLineColor() } },
     },
     yAxis: {
       type: 'category', data: seriesLabels,
-      axisLabel: { color: '#8a99b3', fontSize: 10 },
+      axisLabel: { color: axisTextColor(), fontSize: 10 },
       axisLine: { show: false }, axisTick: { show: false },
     },
     visualMap: {
       min: vMin, max: vMax, calculable: false, orient: 'vertical',
       right: 0, top: 'center',
-      textStyle: { color: '#8a99b3', fontSize: 9 },
+      textStyle: { color: axisTextColor(), fontSize: 9 },
       inRange: { color: ['#22c55e', '#e6a23c', '#f56c6c'] },
     },
     series: [{ type: 'heatmap', data: heatData, itemStyle: { borderWidth: 1, borderColor: 'rgba(0,0,0,0.15)' } }],

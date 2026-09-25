@@ -175,14 +175,14 @@ def test_latest_tag_is_not_a_404_when_only_one_plant_has_it(monkeypatch):
         1: {"tag_name": "Pump 1", "current_value": 3.0},
         2: None,
     })
-    body = tags_router.get_latest("Pump 1", USER, SOURCES)
+    body = tags_router.get_latest("Pump 1", None, USER, SOURCES)
     assert len(body["tags"]) == 1 and body["tags"][0]["datasource_id"] == 1
 
 
 def test_latest_tag_is_a_404_when_no_plant_has_it(monkeypatch):
     _stub(monkeypatch, "latest_tag", {1: None, 2: None})
     with pytest.raises(HTTPException) as e:
-        tags_router.get_latest("nope", USER, SOURCES)
+        tags_router.get_latest("nope", None, USER, SOURCES)
     assert e.value.status_code == 404
 
 

@@ -25,8 +25,13 @@ export async function fetchTagFields() {
  * Newest row for `tagName`, one per source that has it. A source missing the tag
  * is absent from the list rather than an error — with several plants selected,
  * "this one has no Pump 1" is normal.
+ *
+ * `datasourceId` bypasses the header selection entirely when given — a panel
+ * pinned to one connection keeps reading it regardless of the header.
  */
-export async function fetchTagLatest(tagName) {
-  const { data } = await apiClient.get('/tags/latest', { params: { tag_name: tagName } })
+export async function fetchTagLatest(tagName, datasourceId) {
+  const { data } = await apiClient.get('/tags/latest', {
+    params: { tag_name: tagName, datasource_id: datasourceId ?? undefined },
+  })
   return { tags: data.tags ?? [], sources: data.sources ?? [] }
 }

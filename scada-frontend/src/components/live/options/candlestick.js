@@ -1,5 +1,5 @@
 import { SERIES_PALETTE, colorAt } from '@/utils/seriesPalette'
-import { legendCfg, gridTop, timeAxis, valueAxis, fmtValue, TOOLTIP_BASE } from './shared'
+import { legendCfg, gridTop, timeAxis, valueAxis, fmtValue, tooltipBase } from './shared'
 
 /** Candlestick — client-side OHLC aggregation into time buckets. */
 export default function buildCandlestickOption(seriesList, opts = {}) {
@@ -29,7 +29,7 @@ export default function buildCandlestickOption(seriesList, opts = {}) {
     grid: { top: gridTop(isMulti), right: 14, bottom: 26, left: 46 },
     tooltip: {
       trigger: 'axis',
-      ...TOOLTIP_BASE,
+      ...tooltipBase(),
       formatter: (params) => {
         if (!Array.isArray(params) || !params.length) return ''
         const t = new Date(params[0].data?.[0]).toLocaleTimeString()

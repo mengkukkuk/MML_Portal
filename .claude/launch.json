@@ -27,6 +27,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "scada-frontend", "run", "preview"],
       "port": 4173
+    },
+    {
+      "name": "mockups-static",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "4500", "--directory", "scada-frontend/example"],
+      "port": 4500
     }
   ]
 }

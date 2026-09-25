@@ -1,5 +1,5 @@
 import { colorAt } from '@/utils/seriesPalette'
-import { legendCfg, fmtValue, TOOLTIP_BASE } from './shared'
+import { legendCfg, fmtValue, tooltipBase, axisTextColor } from './shared'
 
 /** Pie / donut — latest value per series as proportional slices. */
 export default function buildPieOption(seriesList, opts = {}) {
@@ -14,7 +14,7 @@ export default function buildPieOption(seriesList, opts = {}) {
   return {
     tooltip: {
       trigger: 'item',
-      ...TOOLTIP_BASE,
+      ...tooltipBase(),
       formatter: (p) => {
         const u = seriesList[p.dataIndex]?.unit || ''
         return `${p.name}<br/>${fmtValue(p.value, opts.decimals)}${u ? ' ' + u : ''} (${p.percent}%)`
@@ -29,7 +29,7 @@ export default function buildPieOption(seriesList, opts = {}) {
       label: {
         show: labelPos !== 'none',
         position: labelPos === 'none' ? 'outside' : labelPos,
-        color: '#8a99b3', fontSize: 11,
+        color: axisTextColor(), fontSize: 11,
         formatter: '{b}: {d}%',
       },
       emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.4)' } },

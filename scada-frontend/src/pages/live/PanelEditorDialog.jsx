@@ -78,8 +78,14 @@ const EMPTY_COLS = {
 
 // What may be bound as a panel's value. Numeric first — it is what a tile
 // usually means — with flags offered beside it, drawn as a 0/1 step line.
-// Arrays and text are absent on purpose: nothing on this page can draw either.
-const VALUE_KINDS = ['value_columns', 'bool_columns']
+// Numeric-array readings (a value bundled with its setpoint and limits, per
+// db.py's _NUMERIC_ARRAY_UDTS) are offered last: some plant tables carry no
+// scalar numeric columns at all, only these, and without them the picker for
+// such a table showed nothing to select. A tile still draws one scalar line,
+// so `usePanelPolling` reads only the measured slot (index 0) out of the
+// array it gets back — the same convention Reports' EnvelopeTrend uses. Text
+// is still absent: nothing on this page can draw it.
+const VALUE_KINDS = ['value_columns', 'bool_columns', 'array_value_columns']
 
 // Options that only mean something against a measurement. Hidden -- not
 // cleared -- when every bound column is a flag: a stored warn on a panel

@@ -3,7 +3,6 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { fetchSeries, fetchLatest } from '@/api/readings'
 import { fetchTagLatest } from '@/api/tags'
 import { fetchSchemaLatest, fetchSchemaSeries } from '@/api/schema'
-import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { applyExpr } from '@/utils/mathExpr'
 import {
   mergeSources, sourcesFromError, connectionErrorMessage, isConnectionError,
@@ -25,6 +24,14 @@ function errorFor(anyOk, anyFailed, sources) {
   if (anyFailed) return connectionErrorMessage(sources)
   return 'No value reported.'
 }
+
+// A numeric-array column (a value bundled with its setpoint and limits — see
+// db.py's _NUMERIC_ARRAY_UDTS) reports each row as a JS array, the same shape
+// `/series` has always sent for one. A Live tile plots one scalar per series
+// though, so only the measured slot is read here — index 0, the same
+// convention Reports' EnvelopeTrend uses (trendParams.js's VALUE_INDEX). A
+// plain scalar reading passes through untouched.
+const arrayValueOf = (v) => (Array.isArray(v) ? v[0] : v)
 
 // --- per-source series identity -------------------------------------------
 // Every data endpoint now answers for all selected sources at once, so one
@@ -85,7 +92,9 @@ async function pollFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinu
 
   if (isTag) {
     // Fetch every tag concurrently; one dead tag must not blank the panel.
-    const results = await Promise.allSettled(seriesSpecs.map((s) => fetchTagLatest(s.key)))
+    const results = await Promise.allSettled(
+      seriesSpecs.map((s) => fetchTagLatest(s.key, panel.datasource_id)),
+    )
     // variables_tag has no history — sample at the poll wall-clock time so
     // the line advances every poll and looks live even when steady.
     const sampleT = Date.now()
@@ -135,7 +144,7 @@ async function pollFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinu
   if (isTable) {
     const results = await Promise.allSettled(seriesSpecs.map((s) => fetchSchemaLatest({
       table: panel.table_name, valueCol: s.valueCol, filterCol: panel.filter_col,
-      filterVal: s.filterVal, tsCol: panel.ts_col,
+      filterVal: s.filterVal, tsCol: panel.ts_col, datasourceId: panel.datasource_id,
     })))
     const sampleT = Date.now()
     const points = { ...prevPoints }
@@ -159,7 +168,7 @@ async function pollFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinu
       for (const row of res.value.readings) {
         if (row.value == null) continue
         anyOk = true
-        const value = applyExpr(mathFn, row.value)
+        const value = applyExpr(mathFn, arrayValueOf(row.value))
         // Real history tables carry a row timestamp; append only when it
         // advances. Current-state tables (no ts_col) sample at wall-clock so
         // steady values still move the line forward.
@@ -184,7 +193,7 @@ async function pollFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinu
   const spec = seriesSpecs[0]
   if (!spec) return { points: prevPoints, latest: prevLatest, unit: prevUnit, specs: [], sources: prev?.sources || null, error: '', updated: false }
   try {
-    const res = await fetchLatest(panel.device_id, panel.metric)
+    const res = await fetchLatest(panel.device_id, panel.metric, panel.datasource_id)
     const points = { ...prevPoints }
     const latest = { ...prevLatest }
     let unit = prevUnit
@@ -246,6 +255,7 @@ async function seedFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinu
       seriesSpecs.map((s) => fetchSchemaSeries({
         table: panel.table_name, valueCol: s.valueCol, tsCol: panel.ts_col,
         filterCol: panel.filter_col, filterVal: s.filterVal, minutes: rangeMinutes,
+        datasourceId: panel.datasource_id,
       })),
     )
     const points = {}
@@ -260,11 +270,11 @@ async function seedFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinu
       sourceLists.push(res.value.sources)
       for (const one of res.value.series) {
         const key = seriesKey(seriesSpecs[i].key, one.datasource_id)
-        const arr = one.points.map((p) => [new Date(p.ts).getTime(), applyExpr(mathFn, p.value)])
+        const arr = one.points.map((p) => [new Date(p.ts).getTime(), applyExpr(mathFn, arrayValueOf(p.value))])
         points[key] = arr
         if (arr.length) {
           const last = one.points[one.points.length - 1]
-          latest[key] = { value: applyExpr(mathFn, last.value), ts: last.ts }
+          latest[key] = { value: applyExpr(mathFn, arrayValueOf(last.value)), ts: last.ts }
         }
       }
     })
@@ -283,7 +293,7 @@ async function seedFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinu
       const fallbacks = await Promise.allSettled(
         emptyBases.map((s) => fetchSchemaLatest({
           table: panel.table_name, valueCol: s.valueCol, filterCol: panel.filter_col,
-          filterVal: s.filterVal, tsCol: panel.ts_col,
+          filterVal: s.filterVal, tsCol: panel.ts_col, datasourceId: panel.datasource_id,
         })),
       )
       fallbacks.forEach((res, j) => {
@@ -292,7 +302,7 @@ async function seedFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinu
           if (row.value == null) continue
           const key = seriesKey(emptyBases[j].key, row.datasource_id)
           if (points[key]?.length) continue
-          const v = applyExpr(mathFn, row.value)
+          const v = applyExpr(mathFn, arrayValueOf(row.value))
           const t = row.ts ? new Date(row.ts).getTime() : Date.now()
           points[key] = [[t, v]]
           latest[key] = { value: v, ts: row.ts || new Date(t).toISOString() }
@@ -306,7 +316,7 @@ async function seedFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinu
   const spec = seriesSpecs[0]
   if (!spec) return { points: {}, latest: {}, unit: '', specs: [], sources: null, error: '', updated: false }
   try {
-    const res = await fetchSeries(panel.device_id, panel.metric, rangeMinutes)
+    const res = await fetchSeries(panel.device_id, panel.metric, rangeMinutes, panel.datasource_id)
     const specs = expandSpecs(seriesSpecs, res.sources)
     const points = {}
     const latest = {}
@@ -328,7 +338,7 @@ async function seedFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinu
 
     // Stale-source fallback: no readings in the window -> seed the latest one.
     if (emptySources.length || !res.series.length) {
-      const r = await fetchLatest(panel.device_id, panel.metric).catch(() => null)
+      const r = await fetchLatest(panel.device_id, panel.metric, panel.datasource_id).catch(() => null)
       for (const row of r?.readings || []) {
         if (row.value == null) continue
         const key = seriesKey(spec.key, row.datasource_id)
@@ -379,18 +389,21 @@ function usePulse(active, ms) {
  *
  * Query key carries the 9 fields LivePanel.vue's deep watch re-seeds on:
  * [panel.source, panel.device_id, panel.metric, rangeMinutes, seriesTags,
- * panel.table_name, panel.filter_col, panel.ts_col] plus the header's
- * datasource selection.
+ * panel.table_name, panel.filter_col, panel.ts_col] plus the panel's own
+ * configured connection (`panel.datasource_id`).
  *
- * The selection is in the key rather than merely invalidated, and that is
- * load-bearing. The accumulator below is keyed by the hashed query key: a
- * refetch under an unchanged key takes the *poll* path and appends onto the
- * previous accumulator. Invalidate without changing the key and the newly
- * selected plant's points would be merged into the old plant's accumulated
- * series — one continuous line silently splicing two plants together.
- * (`panel.datasource_id` is deliberately absent: the header now decides where
- * data comes from, and the panel field only steers the editor's catalogue
- * browsing.) `refreshSignal` is folded in as a 10th field (Vue's
+ * Every fetch below passes `panel.datasource_id` explicitly, which bypasses
+ * the header's datasource selection entirely (see schema.py's
+ * `_catalogue_source` / readings.py's and tags.py's matching bypass) — a
+ * panel is pinned to whatever connection was chosen in its own editor and
+ * never changes with the header, so the header selection has no place in
+ * this key. `panel.datasource_id` is here instead, and that is load-bearing:
+ * the accumulator below is keyed by the hashed query key, and a refetch
+ * under an unchanged key takes the *poll* path and appends onto the previous
+ * accumulator. Invalidate without changing the key and re-pointing a panel at
+ * a different connection would merge the new connection's points into the
+ * old one's accumulated series — one continuous line silently splicing two
+ * plants together. `refreshSignal` is folded in as a 10th field (Vue's
  * `watch(refreshSignal)` calls the exact same full seed() as the 9-field
  * watcher) — React's effects fire on mount unlike Vue's watch, so a naive
  * `useEffect(() => seed(), [refreshSignal])` would double the seed request
@@ -407,16 +420,15 @@ function usePulse(active, ms) {
  */
 export function usePanelPolling({ panel, seriesSpecs, seriesTags, isTag, isTable, mathFn, rangeMinutes, refreshSignal = 0, onUpdated }) {
   const accumRef = useRef(new Map())
-  const selectionKey = useDatasourceSelectionStore((s) => s.selectionKey)
 
   const queryKey = useMemo(() => ([
     'live-panel-series',
     panel.source, panel.device_id, panel.metric,
     rangeMinutes, seriesTags,
     panel.table_name, panel.filter_col, panel.ts_col,
-    selectionKey,
+    panel.datasource_id,
     refreshSignal,
-  ]), [panel.source, panel.device_id, panel.metric, rangeMinutes, seriesTags, panel.table_name, panel.filter_col, panel.ts_col, selectionKey, refreshSignal])
+  ]), [panel.source, panel.device_id, panel.metric, rangeMinutes, seriesTags, panel.table_name, panel.filter_col, panel.ts_col, panel.datasource_id, refreshSignal])
 
   const hashedKey = useMemo(() => JSON.stringify(queryKey), [queryKey])
   const pollSeconds = panel.poll_interval_seconds || 5

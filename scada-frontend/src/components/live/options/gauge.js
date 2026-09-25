@@ -1,5 +1,7 @@
 import { colorAt } from '@/utils/seriesPalette'
-import { WARN_COLOR, CRIT_COLOR, thresholdColor } from './shared'
+import {
+  WARN_COLOR, CRIT_COLOR, thresholdColor, tickLineColor, axisTextColor, primaryTextColor,
+} from './shared'
 
 /**
  * Per-series gauge override: panel.options.gaugeSeries[unitKey] = {min, max,
@@ -43,13 +45,13 @@ export default function buildGaugeOption(spec, index, opts = {}, isMulti = false
       progress: { show: false },
       pointer: { width: 4, itemStyle: { color: pc } },
       axisTick: { show: false },
-      splitLine: { length: 10, lineStyle: { color: 'rgba(255,255,255,0.25)' } },
-      axisLabel: { color: '#8a99b3', fontSize: 9, distance: 12 },
+      splitLine: { length: 10, lineStyle: { color: tickLineColor() } },
+      axisLabel: { color: axisTextColor(), fontSize: 9, distance: 12 },
       anchor: { show: true, size: 8, itemStyle: { color: pc } },
       detail: {
         valueAnimation: true,
         formatter: (v) => `${fmtGauge(v)}${spec.unit ? ' ' + spec.unit : ''}`,
-        color: '#e6edf7', fontSize: isMulti ? 14 : 18, offsetCenter: [0, '78%'],
+        color: primaryTextColor(), fontSize: isMulti ? 14 : 18, offsetCenter: [0, '78%'],
       },
       data: [{ value: val }],
     }],

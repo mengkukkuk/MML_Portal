@@ -1,5 +1,7 @@
 import { colorAt } from '@/utils/seriesPalette'
-import { fmtValue, thresholdColor, TOOLTIP_BASE } from './shared'
+import {
+  fmtValue, thresholdColor, tooltipBase, axisTextColor, splitLineColor, primaryTextColor,
+} from './shared'
 
 /**
  * Bar gauge — one labelled, coloured bar per series (a "row" per tag),
@@ -19,17 +21,17 @@ export default function buildBarGaugeOption(seriesList, opts = {}) {
       label: {
         show: true,
         position: vertical ? 'top' : 'right',
-        color: '#e6edf7',
+        color: primaryTextColor(),
         fontSize: 12,
         formatter: () => `${fmtValue(v, opts.decimals, s.labels)}${s.unit ? ' ' + s.unit : ''}`,
       },
     }
   })
-  const vAxis = { type: 'value', min, max, axisLabel: { color: '#8a99b3', fontSize: 10 }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } } }
-  const cAxis = { type: 'category', data: seriesList.map((s) => s.label), axisLabel: { show: isMulti, color: '#8a99b3', fontSize: 10 }, axisLine: { show: false }, axisTick: { show: false } }
+  const vAxis = { type: 'value', min, max, axisLabel: { color: axisTextColor(), fontSize: 10 }, splitLine: { lineStyle: { color: splitLineColor() } } }
+  const cAxis = { type: 'category', data: seriesList.map((s) => s.label), axisLabel: { show: isMulti, color: axisTextColor(), fontSize: 10 }, axisLine: { show: false }, axisTick: { show: false } }
   return {
     grid: { top: 16, bottom: 24, left: 16, right: 56, containLabel: true },
-    tooltip: { ...TOOLTIP_BASE },
+    tooltip: { ...tooltipBase() },
     xAxis: vertical ? cAxis : vAxis,
     yAxis: vertical ? vAxis : cAxis,
     series: [{ type: 'bar', barWidth: isMulti ? '55%' : '45%', data }],
