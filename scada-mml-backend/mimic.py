@@ -447,6 +447,7 @@ def get_production_log(
         [target],
         lambda ds: db.production_log_hourly(binding, datasource_id=ds),
         label="mimic production log",
+        soft_schema_errors=False,
     )
     successful = next((report["result"] for report in reports if report["ok"]), None)
     if successful is None:

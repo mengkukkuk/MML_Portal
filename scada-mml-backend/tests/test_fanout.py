@@ -60,15 +60,31 @@ def test_one_dead_source_does_not_take_down_the_others():
     assert "timeout expired" in sources[1]["error"]
 
 
-def test_a_plant_missing_the_table_is_reported_not_raised():
+def test_a_plant_missing_the_table_is_soft_success_by_default():
     """UndefinedTable is a ProgrammingError, not an OperationalError — a guard
-    narrowed to connection failures would let this one propagate."""
+    narrowed to connection failures would let this one propagate. And unlike a
+    real outage, a plant that simply doesn't implement this feature's schema
+    must not trip SourceStatus's "did not answer" alert or
+    ConnectionAlarmStrip's "CONNECTION LOST" strip — both key off `ok`."""
     def missing(_ds_id):
         raise psycopg.errors.UndefinedTable('relation "event_logs" does not exist')
 
     out = db.fan_out([7], missing)
+    assert out[0]["ok"] is True
+    assert out[0]["result"] == []
+    assert out[0]["error"] is None
+
+
+def test_missing_table_is_a_hard_error_with_soft_schema_errors_disabled():
+    """A single-target caller that needs to distinguish "no data" from "this
+    plant doesn't have the table" (e.g. mimic.py's production-log lookup,
+    which raises 503 with the detail) opts out explicitly."""
+    def missing(_ds_id):
+        raise psycopg.errors.UndefinedColumn('column "foo" does not exist')
+
+    out = db.fan_out([7], missing, soft_schema_errors=False)
     assert out[0]["ok"] is False
-    assert "event_logs" in out[0]["error"]
+    assert "foo" in out[0]["error"]
 
 
 def test_error_is_first_line_only():
