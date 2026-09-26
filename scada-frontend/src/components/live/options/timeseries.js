@@ -1,5 +1,5 @@
 import { SERIES_PALETTE, colorAt } from '@/utils/seriesPalette'
-import { legendCfg, gridTop, timeAxis, valueAxis, tooltipAxis } from './shared'
+import { legendCfg, gridTop, compactGrid, timeAxis, valueAxis, tooltipAxis } from './shared'
 
 /**
  * Time series — one line per series, sharing a time x-axis and a
@@ -11,7 +11,7 @@ export default function buildTimeseriesOption(seriesList, opts = {}) {
   return {
     color: SERIES_PALETTE,
     legend: legendCfg(isMulti),
-    grid: { top: gridTop(isMulti), right: 14, bottom: 26, left: 46 },
+    grid: compactGrid(gridTop(isMulti)),
     tooltip: tooltipAxis(seriesList, opts.decimals),
     xAxis: timeAxis(),
     yAxis: valueAxis(),

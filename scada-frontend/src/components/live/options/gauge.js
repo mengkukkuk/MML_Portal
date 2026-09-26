@@ -38,20 +38,23 @@ export default function buildGaugeOption(spec, index, opts = {}, isMulti = false
   const val = spec.latest?.value ?? min
   const pc = thresholdColor(val, color, warn, crit)
   const fmtGauge = (v) => (decimals == null ? `${v}` : Number(v).toFixed(decimals))
+  // Small multiples can shrink to ~84px cells, so thin the ring and use fewer,
+  // smaller scale labels there to keep the scale inside the dial.
   return {
     series: [{
       type: 'gauge', min, max, radius: '92%', center: ['50%', '58%'],
-      axisLine: { lineStyle: { width: 10, color: stops } },
+      splitNumber: isMulti ? 4 : 10,
+      axisLine: { lineStyle: { width: isMulti ? 6 : 10, color: stops } },
       progress: { show: false },
-      pointer: { width: 4, itemStyle: { color: pc } },
+      pointer: { width: isMulti ? 3 : 4, itemStyle: { color: pc } },
       axisTick: { show: false },
-      splitLine: { length: 10, lineStyle: { color: tickLineColor() } },
-      axisLabel: { color: axisTextColor(), fontSize: 9, distance: 12 },
-      anchor: { show: true, size: 8, itemStyle: { color: pc } },
+      splitLine: { length: isMulti ? 6 : 10, lineStyle: { color: tickLineColor() } },
+      axisLabel: { color: axisTextColor(), fontSize: isMulti ? 8 : 9, distance: isMulti ? 8 : 12 },
+      anchor: { show: true, size: isMulti ? 6 : 8, itemStyle: { color: pc } },
       detail: {
         valueAnimation: true,
         formatter: (v) => `${fmtGauge(v)}${spec.unit ? ' ' + spec.unit : ''}`,
-        color: primaryTextColor(), fontSize: isMulti ? 14 : 18, offsetCenter: [0, '78%'],
+        color: primaryTextColor(), fontSize: isMulti ? 12 : 18, offsetCenter: [0, '78%'],
       },
       data: [{ value: val }],
     }],

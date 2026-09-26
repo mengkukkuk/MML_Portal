@@ -81,6 +81,11 @@
   flex: 0 0 140px;
 }
 
+.taglistName {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
 .removePlaceholder {
   width: 34px;
   flex: 0 0 34px;

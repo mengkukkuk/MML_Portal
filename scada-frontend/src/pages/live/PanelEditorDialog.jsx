@@ -102,6 +102,7 @@ function blankValues() {
     units: {},
     gaugeSeries: {},
     boolLabels: {},
+    columnLabels: {},
     filter_col: null,
     filters: [],
     ts_col: null,
@@ -161,6 +162,7 @@ export default function PanelEditorDialog({
   const gaugeSeriesMap = watch('gaugeSeries') || {}
   const unitsMap = watch('units') || {}
   const boolLabelsMap = watch('boolLabels') || {}
+  const columnLabelsMap = watch('columnLabels') || {}
 
   const allValueCols = useMemo(() => [metric, ...valueCols].filter(Boolean), [metric, valueCols])
   const conditionSeriesOptions = allValueCols
@@ -182,9 +184,13 @@ export default function PanelEditorDialog({
     () => buildDefectLabelsByCode(camerasQuery.data?.cameras),
     [camerasQuery.data],
   )
+  // A saved display name always wins over the defect-code label — both are
+  // "call this raw name something else", but a name someone typed on this
+  // exact panel is more specific than one inferred from a camera's defect
+  // catalogue.
   const labelForColumn = useCallback(
-    (name) => resolveTagLabel(name, null, labelsByCode),
-    [labelsByCode],
+    (name) => columnLabelsMap[name] || resolveTagLabel(name, null, labelsByCode),
+    [labelsByCode, columnLabelsMap],
   )
   // Which of the *bound* columns are flags. Saved on the panel so the tile can
   // print a word for a 0/1 without re-reading the catalogue at render time.
@@ -288,6 +294,12 @@ export default function PanelEditorDialog({
     const nextGauge = {}
     for (const k of Object.keys(curGauge)) if (liveKeys.has(k)) nextGauge[k] = curGauge[k]
     setValue('gaugeSeries', nextGauge)
+    // Display names share units' key space (column when unfiltered, filter
+    // value when filtered) -- same liveKeys prune.
+    const curLabels = getValues('columnLabels') || {}
+    const nextLabels = {}
+    for (const k of Object.keys(curLabels)) if (liveKeys.has(k)) nextLabels[k] = curLabels[k]
+    setValue('columnLabels', nextLabels)
   }, [setValue, getValues])
 
   // Populate the form when the dialog opens (create or edit mode).
@@ -302,7 +314,7 @@ export default function PanelEditorDialog({
         const {
           // eslint-disable-next-line no-unused-vars
           tags: _t, filters: _f, value_cols: _v, mathExpr: _m, units: _u, gaugeSeries: _g, conditions: _c, layout: _l,
-          boolCols: _bc, boolLabels: _bl,
+          boolCols: _bc, boolLabels: _bl, columnLabels: _cl,
           ...vizOpts
         } = panel.options || {}
         const chart_type = panel.chart_type === 'line' ? 'timeseries' : panel.chart_type
@@ -313,6 +325,7 @@ export default function PanelEditorDialog({
           units: { ...(panel.options?.units || {}) },
           gaugeSeries: { ...(panel.options?.gaugeSeries || {}) },
           boolLabels: { ...(panel.options?.boolLabels || {}) },
+          columnLabels: { ...(panel.options?.columnLabels || {}) },
           mathExpr: panel.options?.mathExpr || '',
           conditions: JSON.parse(JSON.stringify(panel.options?.conditions || [])),
           window_minutes: panel.window_minutes,
@@ -401,7 +414,10 @@ export default function PanelEditorDialog({
     cols.splice(i, 1)
     setValue('value_cols', cols)
     const stillUsed = new Set([metric, ...cols].filter(Boolean))
-    if (col && !stillUsed.has(col)) setUnit(col, null)
+    if (col && !stillUsed.has(col)) {
+      setUnit(col, null)
+      setColumnLabel(col, null)
+    }
   }
   // A flag reads 0 or 1. A dial still scaled 0-100 would pin the needle at
   // the floor forever and look exactly like a dead signal, so picking one
@@ -428,6 +444,17 @@ export default function PanelEditorDialog({
     else delete u[key]
     setValue('units', u)
   }
+  // Display name -- keyed exactly like units: by column when there is no
+  // filter, by filter value (the actual per-series identity) when there is.
+  // A `defect_n` column and a `CAM001-13` filter value never collide, so one
+  // flat map serves both rows.
+  function setColumnLabel(key, text) {
+    if (!key) return
+    const l = { ...columnLabelsMap }
+    if (text) l[key] = text
+    else delete l[key]
+    setValue('columnLabels', l)
+  }
 
   // --- filter-value management -------------------------------------------
   function firstUnusedFilter() {
@@ -450,6 +477,7 @@ export default function PanelEditorDialog({
     setValue('filters', arr)
     if (fv != null && !arr.includes(fv)) {
       setUnit(fv, null)
+      setColumnLabel(fv, null)
       setGaugeSeriesField(fv, null, null) // drop the whole entry below
     }
   }
@@ -585,6 +613,20 @@ export default function PanelEditorDialog({
                       labelFor={labelForColumn}
                       searchable
                     />
+                    {/* The column's own name only ever reaches the legend when
+                        there is no filter (it *is* the series), or when more
+                        than one column is charted (it prefixes the filter
+                        value). A single filtered column's name never shows --
+                        the field is hidden rather than left to edit nothing. */}
+                    {(!filterCol || allValueCols.length > 1) && (
+                      <TextField
+                        size="small"
+                        className={styles.taglistName}
+                        placeholder="Display name"
+                        value={columnLabelsMap[metric] || ''}
+                        onChange={(e) => setColumnLabel(metric, e.target.value)}
+                      />
+                    )}
                     {!filterCol && (
                       <UnitPicker className={styles.taglistUnit} value={unitsMap[metric] || ''} onChange={(v) => setUnit(metric, v)} />
                     )}
@@ -602,6 +644,15 @@ export default function PanelEditorDialog({
                         labelFor={labelForColumn}
                         searchable
                       />
+                      {(!filterCol || allValueCols.length > 1) && (
+                        <TextField
+                          size="small"
+                          className={styles.taglistName}
+                          placeholder="Display name"
+                          value={columnLabelsMap[c] || ''}
+                          onChange={(e) => setColumnLabel(c, e.target.value)}
+                        />
+                      )}
                       {!filterCol && (
                         <UnitPicker className={styles.taglistUnit} value={unitsMap[c] || ''} onChange={(v) => setUnit(c, v)} />
                       )}
@@ -693,6 +744,13 @@ export default function PanelEditorDialog({
                           options={filterValues}
                           labelFor={labelForColumn}
                           searchable
+                        />
+                        <TextField
+                          size="small"
+                          className={styles.taglistName}
+                          placeholder="Display name"
+                          value={columnLabelsMap[v] || ''}
+                          onChange={(e) => setColumnLabel(v, e.target.value)}
                         />
                         <UnitPicker className={styles.taglistUnit} value={unitsMap[v] || ''} onChange={(nv) => setUnit(v, nv)} />
                         <IconButton size="small" disabled={filters.length <= 1} title="Remove series" onClick={() => removeFilter(i)}>

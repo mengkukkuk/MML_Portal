@@ -461,4 +461,4 @@ if __name__ == "__main__":
     import uvicorn
 
     logger.info("Starting MML-Portal-API")
-    uvicorn.run(app, host="0.0.0.0", port=8088)
+    uvicorn.run(app, host="0.0.0.0", port=8089)

@@ -1,5 +1,7 @@
 import { colorAt } from '@/utils/seriesPalette'
-import { fmtValue, tooltipBase, axisTextColor, axisLineColor } from './shared'
+import {
+  fmtValue, tooltipBase, axisTextColor, axisLineColor, compactGrid, CATEGORY_LABEL_WIDTH,
+} from './shared'
 
 const BAND_H = 22
 
@@ -59,16 +61,16 @@ export default function buildStateTimelineOption(seriesList, opts = {}) {
         return `${categoryNames[yi] ?? ''}<br/>State: <b>${stateList[si] ?? '?'}</b><br/>Duration: ${durLabel}`
       },
     },
-    grid: { top: 8, right: 14, bottom: 24, left: 80 },
+    grid: compactGrid(6),
     xAxis: {
       type: 'time',
       axisLine: { lineStyle: { color: axisLineColor() } },
-      axisLabel: { color: axisTextColor(), fontSize: 10 },
+      axisLabel: { color: axisTextColor(), fontSize: 10, hideOverlap: true },
       splitLine: { show: false },
     },
     yAxis: {
       type: 'category', data: categoryNames,
-      axisLabel: { color: axisTextColor(), fontSize: 10 },
+      axisLabel: { color: axisTextColor(), fontSize: 10, width: CATEGORY_LABEL_WIDTH, overflow: 'truncate' },
       axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false },
     },
     series: [{
@@ -81,9 +83,11 @@ export default function buildStateTimelineOption(seriesList, opts = {}) {
         const catLabel = categoryNames[catI]
         const [x0, y0] = api.coord([startV, catLabel])
         const [x1] = api.coord([endV, catLabel])
+        // Shrink bands with the tile: never taller than 70% of a category row.
+        const bandH = Math.max(4, Math.min(BAND_H, api.size([0, 1])[1] * 0.7))
         return {
           type: 'rect',
-          shape: { x: x0, y: y0 - BAND_H / 2, width: Math.max(1, x1 - x0), height: BAND_H, r: 3 },
+          shape: { x: x0, y: y0 - bandH / 2, width: Math.max(1, x1 - x0), height: bandH, r: 3 },
           style: api.style({ fill: stateColors[si] ?? '#4f8cff', opacity: 0.85 }),
         }
       },

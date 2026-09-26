@@ -183,32 +183,37 @@ export function seriesCount(panel) {
 }
 
 // Per-chart-type minimum grid size (cols x rows) that still shows ALL
-// selected series AND keeps the ECharts canvas visible. See
-// LivePage.vue:746-790 for the full per-type layout-budget rationale.
+// selected series AND keeps the ECharts canvas legible. The panel body flexes
+// to whatever the tile gives it (LivePanel.module.css: flex-basis 0 bodies,
+// container-query font scaling, containLabel chart grids), and multi-series
+// gauges/stats wrap into a grid — so these floors only need to guarantee a
+// readable minimum, letting a dashboard pack many small widgets.
 export function panelMinSize(panel) {
   const n = Math.max(1, seriesCount(panel))
+  const half = Math.ceil(n / 2)
   const clampW = (w) => Math.max(2, Math.min(12, w))
   const clampH = (h) => Math.max(3, Math.min(30, h))
   switch (panel?.chart_type) {
     case 'stat':
-      if (n === 1) return { w: clampW(2), h: clampH(5) }
-      return { w: clampW(2), h: clampH(4 + 2 * n) }
+      if (n === 1) return { w: clampW(2), h: clampH(4) }
+      return { w: clampW(2), h: clampH(3 + half) }
     case 'gauge':
-      return { w: clampW(3 + (n - 1) * 2), h: clampH(8) }
+      if (n === 1) return { w: clampW(2), h: clampH(5) }
+      return { w: clampW(2 + half), h: clampH(n > 3 ? 7 : 5) }
     case 'bargauge':
       return panel.options?.orientation === 'vertical'
-        ? { w: clampW(2 + n), h: clampH(7) }
-        : { w: clampW(3), h: clampH(4 + n) }
+        ? { w: clampW(2 + half), h: clampH(5) }
+        : { w: clampW(3), h: clampH(3 + half) }
     case 'table':
-      return { w: clampW(2 + n), h: clampH(5) }
+      return { w: clampW(2 + half), h: clampH(4) }
     case 'statetimeline':
-      return { w: clampW(4), h: clampH(4 + 2 * n) }
+      return { w: clampW(3), h: clampH(3 + half) }
     case 'heatmap':
-      return { w: clampW(4), h: clampH(5 + n) }
+      return { w: clampW(3), h: clampH(4 + half) }
     case 'pie':
-      return { w: clampW(4), h: clampH(8) }
+      return { w: clampW(3), h: clampH(6) }
     default:
-      return { w: clampW(3), h: clampH(8) }
+      return { w: clampW(3), h: clampH(5) }
   }
 }
 
@@ -323,6 +328,14 @@ export function buildPanelPayload({
   const boolLabels = {}
   for (const c of boolCols) if (form.boolLabels?.[c]) boolLabels[c] = [...form.boolLabels[c]]
 
+  // Display names: same key space as units (column when unfiltered, filter
+  // value when filtered), plus columns even while filtered -- a multi-column
+  // filtered chart still prefixes each series with its column's name, so
+  // that name needs to survive too, not just the filter values' names.
+  const nameKeys = new Set([...allValueCols, ...(form.filters || [])])
+  const columnLabels = {}
+  for (const k of nameKeys) if (form.columnLabels?.[k]) columnLabels[k] = form.columnLabels[k]
+
   // Preserve the panel's layout when editing; seed a bottom slot when creating.
   const layoutOpt = editingPanel
     ? (editingPanel.options?.layout ? { layout: editingPanel.options.layout } : {})
@@ -348,6 +361,7 @@ export function buildPanelPayload({
       ...(Object.keys(gaugeMap).length ? { gaugeSeries: gaugeMap } : {}),
       ...(boolCols.length ? { boolCols } : {}),
       ...(Object.keys(boolLabels).length ? { boolLabels } : {}),
+      ...(Object.keys(columnLabels).length ? { columnLabels } : {}),
       ...extraOpts,
       ...condOpts,
       ...layoutOpt,

@@ -441,7 +441,7 @@ export default function LivePage() {
           cols={GRID_COLS}
           breakpoints={GRID_BREAKPOINTS}
           rowHeight={26}
-          margin={[16, 16]}
+          margin={[10, 10]}
           isDraggable={editMode && canManage}
           isResizable={editMode && canManage}
           verticalCompact

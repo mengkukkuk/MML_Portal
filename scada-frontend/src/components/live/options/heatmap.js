@@ -1,4 +1,6 @@
-import { fmtValue, tooltipBase, axisTextColor, axisLineColor } from './shared'
+import {
+  fmtValue, tooltipBase, axisTextColor, axisLineColor, compactGrid, CATEGORY_LABEL_WIDTH,
+} from './shared'
 
 /** Heatmap — time buckets x series, cell colour = average value in bucket. */
 export default function buildHeatmapOption(seriesList, opts = {}) {
@@ -56,20 +58,21 @@ export default function buildHeatmapOption(seriesList, opts = {}) {
         return `${seriesLabels[yi]}<br/>${timeLabels[xi]}<br/>${v != null ? fmtValue(v, opts.decimals) : '—'}${u ? ' ' + u : ''}`
       },
     },
-    grid: { top: 12, right: 60, bottom: 36, left: 80 },
+    // right: room for the vertical visualMap strip (itemWidth + its labels).
+    grid: compactGrid(8, { right: 46 }),
     xAxis: {
       type: 'category', data: timeLabels,
-      axisLabel: { color: axisTextColor(), fontSize: 9, interval: Math.ceil(numBuckets / 8), rotate: numBuckets > 10 ? 30 : 0 },
+      axisLabel: { color: axisTextColor(), fontSize: 9, hideOverlap: true, rotate: numBuckets > 10 ? 30 : 0 },
       axisLine: { lineStyle: { color: axisLineColor() } },
     },
     yAxis: {
       type: 'category', data: seriesLabels,
-      axisLabel: { color: axisTextColor(), fontSize: 10 },
+      axisLabel: { color: axisTextColor(), fontSize: 10, width: CATEGORY_LABEL_WIDTH, overflow: 'truncate' },
       axisLine: { show: false }, axisTick: { show: false },
     },
     visualMap: {
       min: vMin, max: vMax, calculable: false, orient: 'vertical',
-      right: 0, top: 'center',
+      right: 0, top: 'center', itemWidth: 10, itemHeight: 80,
       textStyle: { color: axisTextColor(), fontSize: 9 },
       inRange: { color: ['#22c55e', '#e6a23c', '#f56c6c'] },
     },

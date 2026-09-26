@@ -1,6 +1,7 @@
 import { colorAt } from '@/utils/seriesPalette'
 import {
   fmtValue, thresholdColor, tooltipBase, axisTextColor, splitLineColor, primaryTextColor,
+  compactGrid, CATEGORY_LABEL_WIDTH,
 } from './shared'
 
 /**
@@ -27,10 +28,15 @@ export default function buildBarGaugeOption(seriesList, opts = {}) {
       },
     }
   })
-  const vAxis = { type: 'value', min, max, axisLabel: { color: axisTextColor(), fontSize: 10 }, splitLine: { lineStyle: { color: splitLineColor() } } }
-  const cAxis = { type: 'category', data: seriesList.map((s) => s.label), axisLabel: { show: isMulti, color: axisTextColor(), fontSize: 10 }, axisLine: { show: false }, axisTick: { show: false } }
+  const vAxis = { type: 'value', min, max, axisLabel: { color: axisTextColor(), fontSize: 10, hideOverlap: true }, splitLine: { lineStyle: { color: splitLineColor() } } }
+  const cAxis = {
+    type: 'category', data: seriesList.map((s) => s.label),
+    axisLabel: { show: isMulti, color: axisTextColor(), fontSize: 10, hideOverlap: true, width: CATEGORY_LABEL_WIDTH, overflow: 'truncate' },
+    axisLine: { show: false }, axisTick: { show: false },
+  }
   return {
-    grid: { top: 16, bottom: 24, left: 16, right: 56, containLabel: true },
+    // Value labels sit past the bar end, so keep room on that side only.
+    grid: compactGrid(vertical ? 16 : 4, { right: vertical ? 10 : 52 }),
     tooltip: { ...tooltipBase() },
     xAxis: vertical ? cAxis : vAxis,
     yAxis: vertical ? vAxis : cAxis,

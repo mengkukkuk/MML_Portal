@@ -1,6 +1,6 @@
 import { SERIES_PALETTE, colorAt } from '@/utils/seriesPalette'
 import {
-  legendCfg, gridTop, fmtValue, tooltipBase, axisTextColor, axisLineColor, splitLineColor,
+  legendCfg, gridTop, compactGrid, fmtValue, tooltipBase, axisTextColor, axisLineColor, splitLineColor,
 } from './shared'
 
 /** Histogram — shared bucket range across every series, one bar set each. */
@@ -29,10 +29,10 @@ export default function buildHistogramOption(seriesList, opts = {}) {
   return {
     color: SERIES_PALETTE,
     legend: legendCfg(isMulti),
-    grid: { top: gridTop(isMulti), right: 14, bottom: 30, left: 40 },
+    grid: compactGrid(gridTop(isMulti)),
     tooltip: { trigger: 'axis', ...tooltipBase() },
-    xAxis: { type: 'category', data: labels, axisLabel: { color: axisTextColor(), fontSize: 9, interval: Math.ceil(n / 8) }, axisLine: { lineStyle: { color: axisLineColor() } } },
-    yAxis: { type: 'value', axisLabel: { color: axisTextColor(), fontSize: 10 }, splitLine: { lineStyle: { color: splitLineColor() } } },
+    xAxis: { type: 'category', data: labels, axisLabel: { color: axisTextColor(), fontSize: 9, hideOverlap: true }, axisLine: { lineStyle: { color: axisLineColor() } } },
+    yAxis: { type: 'value', axisLabel: { color: axisTextColor(), fontSize: 10, hideOverlap: true }, splitLine: { lineStyle: { color: splitLineColor() } } },
     series,
   }
 }

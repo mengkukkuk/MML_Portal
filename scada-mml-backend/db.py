@@ -1308,7 +1308,7 @@ def delete_panel(panel_id: int) -> bool:
 # text filter column could leak secrets via distinct_column_values.
 SENSITIVE_TABLES = {
     "users", "dashboard_panels", "mmldatabuffer", "datasources", "mimic_layouts",
-    "mimic_assets", "mimic_symbols", "cameras", "camera_defect",
+    "mimic_assets", "mimic_symbols", "cameras",
 }
 
 # Postgres text data_types a symbol may *print* rather than plot.

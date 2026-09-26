@@ -12,7 +12,6 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
   background:
     radial-gradient(130% 90% at 100% -10%, var(--accent-soft), transparent 55%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0) 32%),
@@ -21,10 +20,15 @@
   backdrop-filter: blur(16px) saturate(165%);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-lg);
-  padding: var(--space-4);
+  gap: 6px;
+  padding: var(--space-3);
   height: 100%;
   box-sizing: border-box;
   overflow: hidden;
+  /* Size container: the body below scales fonts/insets off the tile's own
+     box (cqw/cqh + @container rules), so a small tile stays legible rather
+     than clipping a layout designed for a big one. */
+  container: panel / size;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
     0 8px 30px rgba(0, 0, 0, 0.45),
@@ -71,8 +75,9 @@
 .panel__head {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  gap: var(--space-3);
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
 }
 
 .panel__titlewrap {
@@ -104,9 +109,12 @@
 
 .panel__title {
   margin: 0;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .panel__actions {
@@ -129,8 +137,8 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 28px;
-  padding: 0 8px;
+  height: 24px;
+  padding: 0 7px;
   font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -215,8 +223,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   background: transparent;
   border: 1px solid var(--border);
@@ -386,27 +394,34 @@
   color: var(--crit);
 }
 
+/* Every viz body takes exactly the space left under the header (flex-basis 0,
+   min-height 0) — it grows and shrinks with the tile instead of forcing a
+   fixed pixel height that overflows a small tile. */
 .panel__chart {
   width: 100%;
-  height: 220px;
-  flex: 1 1 auto;
-  min-height: 180px;
+  flex: 1 1 0;
+  min-height: 40px;
 }
 
 .panel__minis {
   display: flex;
-  gap: var(--space-2);
-  flex: 1 1 auto;
+  gap: var(--space-1);
+  flex: 1 1 0;
   min-height: 0;
 }
 
+/* Multi-gauge: a grid whose rows share the panel's remaining height, so extra
+   gauges shrink to fit instead of wrapping past the panel's clipped bottom. */
 .panel__minis--multi {
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
 }
 
 .panel__minicell {
   flex: 1 1 0;
-  min-width: 120px;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -414,15 +429,13 @@
 
 .panel__minichart {
   width: 100%;
-  height: 220px;
-}
-
-.panel__minichart--multi {
-  height: 150px;
+  flex: 1 1 0;
+  min-height: 0;
 }
 
 .panel__minilabel {
   font-size: 11px;
+  flex-shrink: 0;
   margin-top: 0px;
   text-align: center;
   max-width: 100%;
@@ -434,22 +447,35 @@
 .panel__stat {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  min-height: 120px;
+  gap: var(--space-1);
+  flex: 1 1 0;
+  min-height: 0;
 }
 
+/* Multi-stat: a wrapping grid of value tiles — reads more values per tile
+   than one tall list, and scrolls rather than clips if it still can't fit. */
 .panel__stat--multi {
-  min-height: 0;
-  gap: var(--space-1);
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  align-content: start;
+  gap: var(--space-1) var(--space-3);
+  overflow-y: auto;
 }
 
 .panel__statrow {
   display: flex;
   flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
 }
 
 .panel__statnum {
-  font-size: 46px;
+  /* Scales with the tile: 46px on a roomy tile, down to 20px on a small one. */
+  font-size: clamp(20px, min(30cqh, 16cqw), 46px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
@@ -458,38 +484,55 @@
 }
 
 .panel__stat--multi .panel__statnum {
-  font-size: 26px;
+  font-size: clamp(16px, 9cqw, 26px);
+}
+
+.panel__stat--multi .panel__statrow {
+  flex: none;
 }
 
 .panel__statunit {
-  font-size: 18px;
+  font-size: 0.4em;
   color: var(--fg-muted);
   margin-left: 6px;
 }
 
 .panel__stat--multi .panel__statunit {
-  font-size: 13px;
+  font-size: 0.5em;
 }
 
 .panel__statlabel {
-  font-size: 12px;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .panel__spark {
   width: 100%;
-  height: 64px;
+  flex: 1 1 0;
+  min-height: 20px;
+  max-height: 96px;
 }
 
 .panel__tablewrap {
-  max-height: 240px;
-  overflow-y: auto;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.panel__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
 }
 
 .panel__table th {
   text-align: left;
   color: var(--fg-muted);
   font-weight: 500;
-  padding: 6px 8px;
+  white-space: nowrap;
+  padding: 4px 6px;
   position: sticky;
   top: 0;
   background: color-mix(in srgb, var(--bg-elev) 92%, transparent);
@@ -499,7 +542,8 @@
 }
 
 .panel__table td {
-  padding: 5px 8px;
+  white-space: nowrap;
+  padding: 3px 6px;
   color: var(--fg);
   font-variant-numeric: tabular-nums;
   border-bottom: 1px solid var(--border-soft);
@@ -508,4 +552,30 @@
 .panel__tableempty {
   color: var(--fg-muted);
   text-align: center;
+}
+
+/* --- small tiles ------------------------------------------------------------
+ * Chrome yields space to the data as the tile shrinks: the cadence badge drops
+ * to just its dot and the header value steps down.
+ * ------------------------------------------------------------------------- */
+.panel__meta {
+  flex-shrink: 0;
+}
+
+@container panel (max-width: 280px) {
+  .panel__live {
+    font-size: 0;
+    gap: 0;
+    padding: 0 8px;
+  }
+}
+
+@container panel (max-width: 280px) or (max-height: 220px) {
+  .panel__num {
+    font-size: 18px;
+  }
+  .panel__chip {
+    font-size: 11px;
+    padding: 1px 7px;
+  }
 }

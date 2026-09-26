@@ -23,15 +23,19 @@ export default function buildPieOption(seriesList, opts = {}) {
     legend: legendCfg(isMulti),
     series: [{
       type: 'pie',
-      radius: [inner, '72%'],
-      center: ['50%', isMulti ? '55%' : '52%'],
+      radius: [inner, '70%'],
+      center: ['50%', isMulti ? '56%' : '52%'],
       data,
       label: {
         show: labelPos !== 'none',
         position: labelPos === 'none' ? 'outside' : labelPos,
-        color: axisTextColor(), fontSize: 11,
+        color: axisTextColor(), fontSize: 10,
         formatter: '{b}: {d}%',
+        // Keep outside labels inside small tiles instead of clipping at the edge.
+        overflow: 'truncate', width: 80,
       },
+      labelLine: { length: 6, length2: 6 },
+      labelLayout: { hideOverlap: true },
       emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.4)' } },
     }],
   }

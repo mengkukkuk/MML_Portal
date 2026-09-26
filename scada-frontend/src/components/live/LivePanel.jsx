@@ -115,15 +115,6 @@ export default function LivePanel({
     [isGeneric, vizType, seriesList, opts],
   )
 
-  // statetimeline/heatmap grow with series count; every other generic viz
-  // gets a fixed height (the panel__chart CSS class's flex-grow still lets
-  // it fill remaining tile space beyond this).
-  const chartHeight = useMemo(() => {
-    if (vizType === 'statetimeline') return `${Math.max(120, seriesList.length * 44 + 40)}px`
-    if (vizType === 'heatmap') return `${Math.max(160, seriesList.length * 34 + 60)}px`
-    return '220px'
-  }, [vizType, seriesList.length])
-
   const tableRows = useMemo(() => buildTableRows(seriesList, opts), [seriesList, opts])
 
   // Available values for the series-value changer — fetched once (view-only,
@@ -317,7 +308,6 @@ export default function LivePanel({
                 <EChart
                   key={`stat-${s.key}`}
                   className={styles.panel__spark}
-                  height="64px"
                   option={buildStatSparklineOption(s, i)}
                 />
               )}
@@ -366,7 +356,7 @@ export default function LivePanel({
             <div key={s.key} className={styles.panel__minicell}>
               <EChart
                 key={`gauge-${s.key}`}
-                className={`${styles.panel__minichart} ${isMulti ? styles['panel__minichart--multi'] : ''}`}
+                className={styles.panel__minichart}
                 option={buildGaugeOption(s, i, opts, isMulti)}
               />
               {isMulti && (
@@ -381,7 +371,6 @@ export default function LivePanel({
         <EChart
           key={vizType}
           className={styles.panel__chart}
-          height={chartHeight}
           option={option}
         />
       )}

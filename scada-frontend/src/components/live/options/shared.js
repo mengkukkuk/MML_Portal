@@ -72,19 +72,32 @@ export function thresholdColor(v, base, warn, crit) {
 
 export function legendCfg(isMulti) {
   return isMulti
-    ? { type: 'scroll', top: 0, textStyle: { color: axisTextColor(), fontSize: 10 }, itemWidth: 10, itemHeight: 10 }
+    ? {
+      type: 'scroll', top: 0, itemGap: 8, itemWidth: 9, itemHeight: 9, pageIconSize: 9,
+      textStyle: { color: axisTextColor(), fontSize: 10 },
+    }
     : undefined
 }
 
 export function gridTop(isMulti) {
-  return isMulti ? 30 : 12
+  return isMulti ? 26 : 8
 }
+
+// Tight plot-area insets with containLabel, so axis labels are measured and
+// fitted instead of reserving fixed pixel gutters — lets small tiles spend
+// almost all their area on the plot itself.
+export function compactGrid(top, extra = {}) {
+  return { top, right: 10, bottom: 2, left: 2, containLabel: true, ...extra }
+}
+
+// Category-axis labels (series names) truncate rather than eat the plot width.
+export const CATEGORY_LABEL_WIDTH = 72
 
 export function timeAxis() {
   return {
     type: 'time',
     axisLine: { lineStyle: { color: axisLineColor() } },
-    axisLabel: { color: axisTextColor(), fontSize: 10 },
+    axisLabel: { color: axisTextColor(), fontSize: 10, hideOverlap: true },
     splitLine: { show: false },
   }
 }
@@ -104,7 +117,7 @@ export function valueAxis() {
     scale: false,
     max: axisMax,
     axisLine: { show: false },
-    axisLabel: { color: axisTextColor(), fontSize: 10 },
+    axisLabel: { color: axisTextColor(), fontSize: 10, hideOverlap: true },
     splitLine: { lineStyle: { color: splitLineColor() } },
   }
 }

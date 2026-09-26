@@ -100,14 +100,21 @@ export function usePanelSeries(panel, { filterOverride = null } = {}) {
       const vcs = tableValueCols
       const fvs = tableHasFilter ? effectiveFilters : [null]
       const multiVc = vcs.length > 1
+      // The admin's saved display name (options.columnLabels), keyed exactly
+      // like a series' unit: by column when unfiltered, by filter value when
+      // filtered -- whichever one is the actual series identity and would
+      // otherwise be printed raw.
+      const colLabels = opts.columnLabels
+      const nameFor = (k) => (colLabels && colLabels[k]) || k
       const specs = []
       for (const vc of vcs) {
         for (const fv of fvs) {
           // Encode (vc, fv) into a stable key. JSON encoding is
           // collision-safe against value strings containing separators.
           const key = JSON.stringify([vc, fv])
-          const label = multiVc && fv != null ? `${vc} · ${fv}` : (fv != null ? fv : vc)
-          specs.push({ key, label, valueCol: vc, filterVal: fv, unitKey: fv != null ? fv : vc })
+          const unitKey = fv != null ? fv : vc
+          const label = multiVc && fv != null ? `${nameFor(vc)} · ${nameFor(fv)}` : nameFor(unitKey)
+          specs.push({ key, label, valueCol: vc, filterVal: fv, unitKey })
         }
       }
       return specs
@@ -117,7 +124,7 @@ export function usePanelSeries(panel, { filterOverride = null } = {}) {
       ? [{ key: panel.metric, label: panel.metric, valueCol: panel.metric, filterVal: null, unitKey: panel.metric }]
       : []
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isTag, isTable, opts.tags, panel.tag_name, panel.metric, tableValueCols, tableHasFilter, effectiveFilters])
+  }, [isTag, isTable, opts.tags, opts.columnLabels, panel.tag_name, panel.metric, tableValueCols, tableHasFilter, effectiveFilters])
 
   // Legacy alias: the bare series keys — folded into the deep-watch Query key.
   const seriesTags = useMemo(() => seriesSpecs.map((s) => s.key), [seriesSpecs])
