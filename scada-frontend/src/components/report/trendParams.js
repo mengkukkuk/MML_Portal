@@ -38,7 +38,7 @@ export const DEFAULT_MINUTES = 480
 // no control any more, and leaving them in `owns` is what purges the pair from
 // an older link rather than leaving a filter nothing on screen can undo.
 export const TREND_KEYS = ['tbl', 'vcol', 'tscol', 'fcol', 'fval', 'win', 'idx', 'tstart', 'tend']
-export const FILTER_KEYS = ['preset', 'start', 'end', 'location', 'tag']
+export const FILTER_KEYS = ['preset', 'start', 'end', 'location', 'camera']
 
 export const EMPTY_TREND = {
   table: '',

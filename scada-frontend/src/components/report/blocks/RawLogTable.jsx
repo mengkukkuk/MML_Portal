@@ -10,14 +10,13 @@ import { fmtDateTime, isMultiSource } from '../reportFormat'
 import styles from './blocks.module.css'
 
 /**
- * RawLogTable — the audit trail under the analysis: the actual event_logs rows,
- * unaggregated.
+ * RawLogTable — the audit trail under the analysis: the actual
+ * camera_defect_logs rows, unaggregated, one per inspected batch.
  *
  * Paged server-side rather than filtered from the /run payload, because /run
- * only ever returns *classified* state transitions. A row the vocabulary does
- * not recognise never reaches the charts, and this table is the only place it
- * is visible — which is exactly what someone debugging a suspicious OEE number
- * needs to see.
+ * only ever returns hourly rollups. A batch's per-defect breakdown is only
+ * visible here — which is exactly what someone chasing a suspicious defect
+ * rate needs to see.
  */
 
 const SEARCH_DEBOUNCE_MS = 350
@@ -39,12 +38,12 @@ export default function RawLogTable({ block, filters }) {
   // changing the selection, which re-merges the rows into a different order.
   useEffect(() => {
     setOffset(0)
-  }, [search, selectionKey, filters.start, filters.end, filters.locations, filters.tagNames])
+  }, [search, selectionKey, filters.start, filters.end, filters.locations, filters.cameraCodes])
 
   const query = useQuery({
     queryKey: [
       'report', 'logs', selectionKey,
-      filters.start, filters.end, filters.locations, filters.tagNames,
+      filters.start, filters.end, filters.locations, filters.cameraCodes,
       search, pageSize, offset,
     ],
     queryFn: () =>
@@ -52,7 +51,7 @@ export default function RawLogTable({ block, filters }) {
         start: filters.start,
         end: filters.end,
         locations: filters.locations,
-        tagNames: filters.tagNames,
+        cameraCodes: filters.cameraCodes,
         search: search || undefined,
         limit: pageSize,
         offset,
@@ -72,12 +71,12 @@ export default function RawLogTable({ block, filters }) {
 
   return (
     <ReportBlock
-      title={block?.title ?? 'Event Log'}
+      title={block?.title ?? 'Defect Batch Log'}
       note={total ? `${total.toLocaleString()} rows` : undefined}
     >
       <TextField
         size="small"
-        placeholder="Search event text…"
+        placeholder="Search camera name or code…"
         value={searchInput}
         onChange={(e) => setSearchInput(e.target.value)}
         className={styles.search}
@@ -106,20 +105,22 @@ export default function RawLogTable({ block, filters }) {
                 <th>Time</th>
                 {multi && <th>Source</th>}
                 <th>Line</th>
-                <th>Machine</th>
-                <th>Event</th>
+                <th>Camera</th>
+                <th>Batch</th>
+                <th className={styles['table__num']}>Total defects</th>
               </tr>
             </thead>
             <tbody>
               {/* `r.id` is a per-database serial, so it repeats across plants —
                   the source has to be in the key or React drops a row. */}
               {rows.map((r) => (
-                <tr key={`${r.datasource_id ?? ''}:${r.id ?? `${r.at_date_time}-${r.tag_name}`}`}>
-                  <td>{fmtDateTime(r.at_date_time)}</td>
+                <tr key={`${r.datasource_id ?? ''}:${r.id ?? `${r.created_at}-${r.code}-${r.batch_id}`}`}>
+                  <td>{fmtDateTime(r.created_at)}</td>
                   {multi && <td>{r.datasource_name ?? '—'}</td>}
                   <td>{r.location ?? '—'}</td>
-                  <td>{r.tag_name ?? '—'}</td>
-                  <td className={styles['table__wrap']}>{r.event ?? '—'}</td>
+                  <td>{r.name ?? r.code ?? '—'}</td>
+                  <td>{r.batch_id ?? '—'}</td>
+                  <td className={styles['table__num']}>{r.total_defects ?? 0}</td>
                 </tr>
               ))}
             </tbody>

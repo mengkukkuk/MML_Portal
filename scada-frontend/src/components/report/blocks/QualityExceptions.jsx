@@ -1,35 +1,38 @@
 import ReportBlock from './ReportBlock'
-import { SEVERITY_COLORS } from '../reportFormat'
+import { SEVERITY_COLORS, cameraLabel, cameraKey, fmtPercent, isMultiSource } from '../reportFormat'
 import styles from './blocks.module.css'
 
 /**
- * AlarmSummary — alarm counts by severity plus the most frequent alarm texts.
+ * QualityExceptions — cameras whose defect rate crossed the template's warn or
+ * critical threshold in this window.
  *
- * Counted independently of the Pareto on purpose: the Pareto measures lost
- * *time*, this measures *noise*. An alarm that fires constantly but never stops
- * the line is invisible in one and top of the other, and both readings matter.
+ * `warnPct`/`critPct` are per-template block options (not a global setting),
+ * because the same 4% defect rate is a warning on a loose line and clean on a
+ * strict one — see ReportBuilderPage's block editor.
  */
 
-const ORDER = ['critical', 'warning', 'info']
+const ORDER = ['critical', 'warning']
 
-export default function AlarmSummary({ block, result }) {
-  const summary = result?.alarm_summary
-  const topN = block?.options?.topN ?? 10
+export default function QualityExceptions({ block, result }) {
+  const exceptions = result?.quality_exceptions
+  const warnPct = block?.options?.warnPct ?? 2
+  const critPct = block?.options?.critPct ?? 5
 
-  if (!summary) return null
+  if (!exceptions) return null
 
-  const severities = Object.entries(summary.by_severity ?? {}).sort(
+  const severities = Object.entries(exceptions.by_severity ?? {}).sort(
     (a, b) => ORDER.indexOf(a[0]) - ORDER.indexOf(b[0]),
   )
-  const top = (summary.top ?? []).slice(0, topN)
+  const top = exceptions.top ?? []
+  const multi = isMultiSource(top)
 
   return (
     <ReportBlock
-      title={block?.title ?? 'Alarm Summary'}
-      note={`${summary.total} total`}
+      title={block?.title ?? 'Quality Exceptions'}
+      note={`${exceptions.total} total · warn ≥ ${warnPct}%, crit ≥ ${critPct}%`}
     >
-      {summary.total === 0 ? (
-        <p className={styles['block__empty']}>No alarms in this window.</p>
+      {exceptions.total === 0 ? (
+        <p className={styles['block__empty']}>No cameras exceeded the defect-rate thresholds.</p>
       ) : (
         <>
           <div className={styles['kpi__grid']}>
@@ -50,15 +53,15 @@ export default function AlarmSummary({ block, result }) {
             <table className={styles.table}>
               <thead>
                 <tr>
-                  <th>Alarm</th>
+                  <th>Camera</th>
                   <th>Severity</th>
-                  <th className={styles['table__num']}>Count</th>
+                  <th className={styles['table__num']}>Defect rate</th>
                 </tr>
               </thead>
               <tbody>
                 {top.map((row) => (
-                  <tr key={row.alarm}>
-                    <td className={styles['table__wrap']}>{row.alarm}</td>
+                  <tr key={cameraKey(row)}>
+                    <td className={styles['table__wrap']}>{cameraLabel(row, multi)}</td>
                     <td>
                       <span
                         className={styles.pill}
@@ -72,7 +75,7 @@ export default function AlarmSummary({ block, result }) {
                         {row.severity}
                       </span>
                     </td>
-                    <td className={styles['table__num']}>{row.count}</td>
+                    <td className={styles['table__num']}>{fmtPercent(row.defect_rate_pct)}</td>
                   </tr>
                 ))}
               </tbody>

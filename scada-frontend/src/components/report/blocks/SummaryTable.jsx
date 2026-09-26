@@ -1,93 +1,80 @@
 import { useMemo, useState } from 'react'
 import ReportBlock from './ReportBlock'
-import { fmtDuration, fmtPct, gradeColor, isMultiSource, machineKey, machineLabel } from '../reportFormat'
+import {
+  cameraKey,
+  cameraLabel,
+  defectRateColor,
+  fmtDateTime,
+  fmtPercent,
+  isMultiSource,
+  STATUS_COLORS,
+  STATUS_LABELS,
+} from '../reportFormat'
 import styles from './blocks.module.css'
 
 /**
- * SummaryTable — one row per machine, plus a totals footer.
+ * SummaryTable — one row per camera, plus a totals footer.
  *
- * The footer recomputes from the server's `totals`, which sums seconds rather
- * than averaging the percentage column above it. Averaging would weight a
- * rarely-used machine the same as the line's bottleneck and quietly misreport
- * the line, so the footer availability intentionally does not equal the mean of
- * the column.
+ * The footer recomputes from the server's `totals`, which sums inspected/defect
+ * counts rather than averaging the rate column above it — averaging would
+ * weight a barely-used camera the same as the line's main inspection point and
+ * quietly misreport the line.
  */
 
 const COLUMNS = {
-  machine: { label: 'Machine', align: 'left' },
-  runtime: { label: 'Runtime', align: 'num' },
-  downtime: { label: 'Downtime', align: 'num' },
-  unknown: { label: 'Unmeasured', align: 'num' },
-  availability: { label: 'Availability', align: 'num' },
-  oee: { label: 'OEE (A-only)', align: 'num' },
-  stops: { label: 'Stops', align: 'num' },
-  mtbf: { label: 'MTBF', align: 'num' },
-  mttr: { label: 'MTTR', align: 'num' },
-  alarms: { label: 'Alarms', align: 'num' },
+  camera: { label: 'Camera', align: 'left' },
+  inspected: { label: 'Inspected', align: 'num' },
+  defects: { label: 'Defects', align: 'num' },
+  rate: { label: 'Defect rate', align: 'num' },
+  worstDefect: { label: 'Worst defect', align: 'left' },
+  lastSeen: { label: 'Last seen', align: 'left' },
+  status: { label: 'Status', align: 'left' },
 }
 
-const DEFAULT_COLUMNS = [
-  'machine', 'runtime', 'downtime', 'availability', 'stops', 'mtbf', 'mttr', 'alarms',
-]
+const DEFAULT_COLUMNS = ['camera', 'inspected', 'defects', 'rate', 'worstDefect', 'lastSeen', 'status']
 
-function cell(key, m, multi) {
+function cell(key, c, multi) {
   switch (key) {
-    case 'machine': return machineLabel(m, multi)
-    case 'runtime': return fmtDuration(m.run_s)
-    case 'downtime': return fmtDuration(m.downtime_s)
-    case 'unknown': return fmtDuration(m.unknown_s)
-    case 'availability': return fmtPct(m.availability)
-    case 'oee': return fmtPct(m.oee)
-    case 'stops': return m.stop_count ?? 0
-    case 'mtbf': return fmtDuration(m.mtbf_s)
-    case 'mttr': return fmtDuration(m.mttr_s)
-    case 'alarms': return m.alarm_count ?? 0
+    case 'camera': return cameraLabel(c, multi)
+    case 'inspected': return (c.inspected ?? 0).toLocaleString()
+    case 'defects': return (c.defects ?? 0).toLocaleString()
+    case 'rate': return fmtPercent(c.defect_rate_pct)
+    case 'worstDefect': return c.worst_defect ?? '—'
+    case 'lastSeen': return fmtDateTime(c.last_seen)
+    case 'status': return STATUS_LABELS[c.status] ?? c.status ?? '—'
     default: return '—'
   }
 }
 
-function sortValue(key, m, multi) {
+function sortValue(key, c, multi) {
   switch (key) {
-    // Sorting on the rendered label keeps machines from the same plant adjacent
+    // Sorting on the rendered label keeps cameras from the same plant adjacent
     // once the source is part of it.
-    case 'machine': return machineLabel(m, multi)
-    case 'runtime': return m.run_s
-    case 'downtime': return m.downtime_s
-    case 'unknown': return m.unknown_s
-    // `null` availability means "not measured". Sorting it as -1 parks those
-    // machines at one end instead of scattering them through the ranking.
-    case 'availability':
-    case 'oee': return m.availability ?? -1
-    case 'stops': return m.stop_count ?? 0
-    case 'mtbf': return m.mtbf_s ?? -1
-    case 'mttr': return m.mttr_s ?? -1
-    case 'alarms': return m.alarm_count ?? 0
+    case 'camera': return cameraLabel(c, multi)
+    case 'inspected': return c.inspected ?? 0
+    case 'defects': return c.defects ?? 0
+    // `null` rate means "not measured". Sorting it as -1 parks those cameras at
+    // one end instead of scattering them through the ranking.
+    case 'rate': return c.defect_rate_pct ?? -1
+    case 'worstDefect': return c.worst_defect ?? ''
+    case 'lastSeen': return c.last_seen ? new Date(c.last_seen).getTime() : -1
+    case 'status': return c.status ?? ''
     default: return 0
   }
 }
 
 export default function SummaryTable({ block, result }) {
-  const [sortKey, setSortKey] = useState('availability')
-  const [asc, setAsc] = useState(true)
+  const [sortKey, setSortKey] = useState('rate')
+  const [asc, setAsc] = useState(false)
 
   const columns = (block?.options?.columns ?? DEFAULT_COLUMNS).filter((c) => COLUMNS[c])
-  const machines = result?.machines ?? []
-  const multi = isMultiSource(machines)
+  const cameras = result?.cameras ?? []
+  const multi = isMultiSource(cameras)
 
-  // `totals` carries no alarm count — the server aggregates alarms separately,
-  // and that summary counts every alarm in the window whether or not it landed
-  // on a machine that made it into this table. Summing the column is the figure
-  // that actually reconciles with the rows above.
-  const totals = useMemo(() => {
-    if (!result?.totals) return null
-    return {
-      ...result.totals,
-      alarm_count: machines.reduce((n, m) => n + (m.alarm_count ?? 0), 0),
-    }
-  }, [result, machines])
+  const totals = result?.totals ?? null
 
   const sorted = useMemo(() => {
-    const rows = [...machines]
+    const rows = [...cameras]
     rows.sort((a, b) => {
       const va = sortValue(sortKey, a, multi)
       const vb = sortValue(sortKey, b, multi)
@@ -95,26 +82,26 @@ export default function SummaryTable({ block, result }) {
       return asc ? va - vb : vb - va
     })
     return rows
-  }, [machines, sortKey, asc, multi])
+  }, [cameras, sortKey, asc, multi])
 
   function toggleSort(key) {
     if (key === sortKey) setAsc((v) => !v)
     else {
       setSortKey(key)
-      setAsc(key === 'machine')
+      setAsc(key === 'camera')
     }
   }
 
-  if (!machines.length) {
+  if (!cameras.length) {
     return (
-      <ReportBlock title={block?.title ?? 'Machine Summary'}>
-        <p className={styles['block__empty']}>No machines in this window.</p>
+      <ReportBlock title={block?.title ?? 'Camera Summary'}>
+        <p className={styles['block__empty']}>No cameras in this window.</p>
       </ReportBlock>
     )
   }
 
   return (
-    <ReportBlock title={block?.title ?? 'Machine Summary'} note="Click a header to sort">
+    <ReportBlock title={block?.title ?? 'Camera Summary'} note="Click a header to sort">
       <div className={styles['table__scroll']}>
         <table className={styles.table}>
           <thead>
@@ -133,19 +120,21 @@ export default function SummaryTable({ block, result }) {
             </tr>
           </thead>
           <tbody>
-            {sorted.map((m) => (
-              <tr key={machineKey(m)}>
+            {sorted.map((c) => (
+              <tr key={cameraKey(c)}>
                 {columns.map((key) => (
                   <td
                     key={key}
                     className={COLUMNS[key].align === 'num' ? styles['table__num'] : undefined}
                     style={
-                      key === 'availability' || key === 'oee'
-                        ? { color: gradeColor(m.availability) }
-                        : undefined
+                      key === 'rate'
+                        ? { color: defectRateColor(c.defect_rate_pct) }
+                        : key === 'status'
+                          ? { color: STATUS_COLORS[c.status] }
+                          : undefined
                     }
                   >
-                    {cell(key, m, multi)}
+                    {cell(key, c, multi)}
                   </td>
                 ))}
               </tr>
@@ -159,7 +148,7 @@ export default function SummaryTable({ block, result }) {
                     key={key}
                     className={COLUMNS[key].align === 'num' ? styles['table__num'] : undefined}
                   >
-                    {key === 'machine' ? `All (${totals.machine_count})` : cell(key, totals)}
+                    {key === 'camera' ? `All (${totals.camera_count})` : cell(key, totals)}
                   </td>
                 ))}
               </tr>

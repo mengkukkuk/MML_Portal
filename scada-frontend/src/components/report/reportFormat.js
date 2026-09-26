@@ -1,28 +1,10 @@
 /**
- * Shared formatting and palette for the report blocks.
+ * Shared formatting and palette for the vision/camera-QC report blocks.
  *
- * The state colours are literal hex rather than `var(--ok)` because ECharts
- * paints to a canvas and cannot resolve CSS custom properties. They are kept
- * in step with tokens.css by hand — if a token moves, move it here too.
+ * Colours are literal hex rather than `var(--ok)` where they feed ECharts,
+ * which paints to a canvas and cannot resolve CSS custom properties. Kept in
+ * step with tokens.css by hand — if a token moves, move it here too.
  */
-
-export const STATES = ['RUN', 'STOP', 'IDLE', 'PLANNED_DOWN', 'UNKNOWN']
-
-export const STATE_COLORS = {
-  RUN: '#22c55e', // --ok
-  STOP: '#ef4444', // --crit
-  IDLE: '#f59e0b', // --warn
-  PLANNED_DOWN: '#3aa0ff', // --info
-  UNKNOWN: '#5b6a86', // --fg-dim
-}
-
-export const STATE_LABELS = {
-  RUN: 'Running',
-  STOP: 'Stopped',
-  IDLE: 'Idle',
-  PLANNED_DOWN: 'Planned down',
-  UNKNOWN: 'No data',
-}
 
 export const SEVERITY_COLORS = {
   critical: '#ef4444',
@@ -30,36 +12,33 @@ export const SEVERITY_COLORS = {
   info: '#3aa0ff',
 }
 
-/** Seconds → compact human duration, e.g. `2d 4h`, `3h 12m`, `45s`. */
-export function fmtDuration(seconds) {
-  if (seconds == null || Number.isNaN(seconds)) return '—'
-  const s = Math.max(0, Math.round(seconds))
-  if (s < 60) return `${s}s`
-
-  const d = Math.floor(s / 86400)
-  const h = Math.floor((s % 86400) / 3600)
-  const m = Math.floor((s % 3600) / 60)
-
-  if (d) return h ? `${d}d ${h}h` : `${d}d`
-  if (h) return m ? `${h}h ${m}m` : `${h}h`
-  return `${m}m`
+/**
+ * A camera's reporting state for the window — independent of its defect rate.
+ * `no_data` means the pipeline never wrote an hourly row (a data problem);
+ * `partial` means fewer than half the window's hours reported; see
+ * vision_report_engine.aggregate_camera.
+ */
+export const STATUS_COLORS = {
+  ok: '#22c55e',
+  partial: '#f59e0b',
+  no_data: '#5b6a86',
 }
 
-/** Seconds → `HH:MM:SS`, used where a total has to be auditable. */
-export function fmtClock(seconds) {
-  if (seconds == null || Number.isNaN(seconds)) return '—'
-  const s = Math.max(0, Math.round(seconds))
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`
+export const STATUS_LABELS = {
+  ok: 'Reporting',
+  partial: 'Partial data',
+  no_data: 'No data',
 }
 
 /**
- * 0..1 → percent string. A null ratio means "not measured" and must stay
- * visibly blank — rendering it as 0% would read as a real, catastrophic score.
+ * A percent value already in 0..100 space (as the backend sends defect
+ * rates, cumulative pareto shares, etc.) → string. `null` means "not
+ * measured" and must stay visibly blank — rendering it as 0% would read as a
+ * real, perfect quality score.
  */
-export function fmtPct(ratio, digits = 1) {
-  if (ratio == null || Number.isNaN(ratio)) return '—'
-  return `${(ratio * 100).toFixed(digits)}%`
+export function fmtPercent(value, digits = 1) {
+  if (value == null || Number.isNaN(value)) return '—'
+  return `${value.toFixed(digits)}%`
 }
 
 export function fmtDateTime(value) {
@@ -71,10 +50,10 @@ export function fmtDateTime(value) {
 /**
  * True once the rows span more than one data source.
  *
- * Machine identity is `(datasource_id, location, tag_name)` server-side, but
- * only the datasource part is invisible on screen — two plants routinely both
- * have a `Line 1 / M01`. Everything that names or keys a machine consults this
- * so the source is shown when it disambiguates and stays out of the way when
+ * Camera identity is `(datasource_id, location, code)` server-side, but only
+ * the datasource part is invisible on screen — two plants routinely both have
+ * a `Line 1 / CAM01`. Everything that names or keys a camera consults this so
+ * the source is shown when it disambiguates and stays out of the way when
  * there is nothing to disambiguate.
  */
 export function isMultiSource(rows = []) {
@@ -82,35 +61,32 @@ export function isMultiSource(rows = []) {
 }
 
 /**
- * `Line 1 / M01`, the label used everywhere a machine is named — prefixed with
- * the plant when asked.
+ * `Line 1 / Packer Cam`, the label used everywhere a camera is named —
+ * prefixed with the plant when asked.
  *
  * The prefix rather than a separate column is deliberate: a template's column
  * list is saved per template, so a new column would never appear on any report
  * anyone has already built.
  */
-export function machineLabel(m, withSource = false) {
-  const base = `${m.location ?? '—'} / ${m.tag_name ?? '—'}`
-  return withSource && m.datasource_name ? `${m.datasource_name} · ${base}` : base
+export function cameraLabel(c, withSource = false) {
+  const base = `${c.location ?? '—'} / ${c.name ?? c.code ?? '—'}`
+  return withSource && c.datasource_name ? `${c.datasource_name} · ${base}` : base
 }
 
-/** Stable React key for a machine row. Mirrors `_machine_key` in reports.py. */
-export function machineKey(m) {
-  return `${m.datasource_id ?? ''}::${m.location ?? ''}::${m.tag_name ?? ''}`
+/** Stable React key for a camera row. Mirrors `_camera_key` in reports.py. */
+export function cameraKey(c) {
+  return `${c.datasource_id ?? ''}::${c.location ?? ''}::${c.code ?? ''}`
 }
 
 /**
- * Colour an availability figure against a target band. Used by the KPI strip
- * and the summary table so both grade a number the same way.
+ * Colour a defect-rate percentage against warn/crit thresholds — lower is
+ * better, the inverse of a coverage/availability grade. `null` (no data) is
+ * neutral rather than alarming: an outage is Camera Summary's "no_data"
+ * status to surface, not a quality colour.
  */
-export function gradeColor(ratio, target = 0.85) {
-  if (ratio == null) return 'var(--fg-dim)'
-  if (ratio >= target) return 'var(--ok)'
-  if (ratio >= target - 0.1) return 'var(--warn)'
-  return 'var(--crit)'
+export function defectRateColor(ratePct, warnPct = 2, critPct = 5) {
+  if (ratePct == null) return 'var(--fg-dim)'
+  if (ratePct >= critPct) return 'var(--crit)'
+  if (ratePct >= warnPct) return 'var(--warn)'
+  return 'var(--ok)'
 }
-
-/** The caveat that has to survive onto every screenshot, print and export. */
-export const OEE_CAVEAT =
-  'OEE is Availability only — this plant logs no production or reject counts, ' +
-  'so Performance and Quality are assumed 100%.'

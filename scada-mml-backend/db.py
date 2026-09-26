@@ -2901,18 +2901,18 @@ _DEFAULT_STATE_RULES = {
 
 _DEFAULT_TEMPLATE_BLOCKS = [
     {"id": "b1", "type": "kpi", "title": "Overview", "width": "full",
-     "options": {"metrics": ["oee", "availability", "runtime", "downtime", "stops", "mttr"],
-                 "targets": {"oee": 85, "availability": 90}}},
-    {"id": "b2", "type": "timeline", "title": "Machine State Timeline", "width": "full",
-     "options": {"groupBy": "machine", "showUnknown": True}},
-    {"id": "b3", "type": "pareto", "title": "Downtime Pareto", "width": "half",
-     "options": {"topN": 10, "rankBy": "duration"}},
-    {"id": "b4", "type": "alarms", "title": "Alarm Summary", "width": "half",
-     "options": {"topN": 10}},
-    {"id": "b5", "type": "summary_table", "title": "Machine Summary", "width": "full",
-     "options": {"columns": ["machine", "runtime", "downtime", "availability",
-                             "stops", "mtbf", "mttr", "alarms"]}},
-    {"id": "b6", "type": "raw_log", "title": "Event Log", "width": "full",
+     "options": {"metrics": ["inspected", "defects", "defect_rate", "cameras_ok"],
+                 "targetDefectPct": 3}},
+    {"id": "b2", "type": "timeline", "title": "Camera Throughput Timeline", "width": "full",
+     "options": {}},
+    {"id": "b3", "type": "pareto", "title": "Defect Type Pareto", "width": "half",
+     "options": {"topN": 10, "rankBy": "count"}},
+    {"id": "b4", "type": "exceptions", "title": "Quality Exceptions", "width": "half",
+     "options": {"warnPct": 2, "critPct": 5, "topN": 10}},
+    {"id": "b5", "type": "summary_table", "title": "Camera Summary", "width": "full",
+     "options": {"columns": ["camera", "inspected", "defects", "rate",
+                             "worstDefect", "lastSeen", "status"]}},
+    {"id": "b6", "type": "raw_log", "title": "Defect Batch Log", "width": "full",
      "options": {"pageSize": 50}},
 ]
 
@@ -2950,8 +2950,8 @@ def init_report_tables() -> None:
                 """INSERT INTO report_templates
                        (name, description, blocks, default_filters, is_default)
                    VALUES (%s, %s, %s, %s, TRUE)""",
-                ("Production Status Report",
-                 "Machine availability, downtime causes and OEE across a production line.",
+                ("Vision QC Report",
+                 "Inspection throughput, defect rates and quality exceptions across a production line.",
                  Json(_DEFAULT_TEMPLATE_BLOCKS),
                  Json({"preset": "last7d"})),
             )
@@ -3211,6 +3211,141 @@ def fetch_event_log_page(start, end, locations=None, tag_names=None, search=None
                     ORDER BY at_date_time DESC
                     LIMIT %s OFFSET %s"""
             ).format(events=sql.Identifier(schema, "event_logs")),
+            (start, end, *params, limit, offset),
+        ).fetchall()
+
+
+# --- Vision (camera QC) catalog & log queries --------------------------------
+# Mirrors the machine-report helpers above one-for-one, but reads the
+# vision_data schema instead: `cameras` stands in for the tag registry,
+# `production_hourly_log` for the windowed totals event_logs derives runtime
+# from, and `camera_defect_logs` for the raw per-batch historian. Kept
+# separate rather than parameterising the machine helpers because the two
+# schemas' primary keys (tag_name vs. camera code) and windowing columns
+# (at_date_time vs. period_start/created_at) don't line up cleanly enough to
+# share a query without a maze of branching.
+_vision_catalog_cache: dict[int | None, tuple[float, list[dict[str, Any]]]] = {}
+
+
+def vision_report_catalog(force: bool = False,
+                          datasource_id: int | None = None) -> list[dict[str, Any]]:
+    """Distinct (location, code, name) camera rows — feeds the Line/Camera pickers."""
+    now = datetime.now().timestamp()
+    cached = _vision_catalog_cache.get(datasource_id)
+    if not force and cached and now - cached[0] < _CATALOG_TTL_SECONDS:
+        return cached[1]
+
+    with _table_source_conn(datasource_id) as (conn, schema):
+        rows = conn.execute(
+            sql.SQL(
+                """SELECT location, code, name FROM {cameras}
+                   ORDER BY location NULLS LAST, code"""
+            ).format(cameras=sql.Identifier(schema, "cameras"))
+        ).fetchall()
+    _vision_catalog_cache[datasource_id] = (now, rows)
+    return rows
+
+
+def camera_defect_labels(datasource_id: int | None = None) -> dict[str, list[str]]:
+    """code -> defect_labels. Callers zip this against a batch's defect_array
+    by position; the two are read independently and a plant can shorten its
+    label list without truncating history, so the zip must tolerate a
+    defect_array longer than the labels it's paired with (see
+    test_camera_link_source.py's ragged-array convention)."""
+    with _table_source_conn(datasource_id) as (conn, schema):
+        rows = conn.execute(
+            sql.SQL(
+                """SELECT code, COALESCE(defect_labels, ARRAY[]::text[]) AS defect_labels
+                     FROM {cameras}"""
+            ).format(cameras=sql.Identifier(schema, "cameras"))
+        ).fetchall()
+    return {r["code"]: r["defect_labels"] for r in rows}
+
+
+def _camera_filter(locations, camera_codes):
+    """Same "empty means unfiltered" contract as `_machine_filter`."""
+    clauses, params = [], []
+    if locations:
+        clauses.append("location = ANY(%s)")
+        params.append(list(locations))
+    if camera_codes:
+        clauses.append("code = ANY(%s)")
+        params.append(list(camera_codes))
+    return ("".join(f" AND {c}" for c in clauses), params)
+
+
+def fetch_camera_hourly(start: datetime, end: datetime, locations=None,
+                        camera_codes=None, datasource_id: int | None = None,
+                        ) -> list[dict[str, Any]]:
+    """Hourly inspected/defect totals, windowed on `period_start` — the vision
+    equivalent of a machine's runtime/downtime split. One row per camera per
+    hour; a camera silent for the whole window simply contributes no rows,
+    which the aggregator reads as "no data" rather than "zero throughput"."""
+    where, params = _camera_filter(locations, camera_codes)
+    with _table_source_conn(datasource_id) as (conn, schema):
+        return conn.execute(
+            sql.SQL(
+                """SELECT location, code, period_start, count_total, defect_total
+                     FROM {tbl}
+                    WHERE period_start >= %s AND period_start < %s""" + where + """
+                    ORDER BY location, code, period_start"""
+            ).format(tbl=sql.Identifier(schema, "production_hourly_log")),
+            (start, end, *params),
+        ).fetchall()
+
+
+def fetch_camera_defect_logs_window(start: datetime, end: datetime, locations=None,
+                                    camera_codes=None, datasource_id: int | None = None,
+                                    ) -> list[dict[str, Any]]:
+    """Per-batch defect rows in the window — source data for the defect-type
+    pareto and for finding a camera's most recent/worst batch."""
+    where, params = _camera_filter(locations, camera_codes)
+    with _table_source_conn(datasource_id) as (conn, schema):
+        return conn.execute(
+            sql.SQL(
+                """SELECT location, code, name, batch_id, defect_array, created_at
+                     FROM {tbl}
+                    WHERE created_at >= %s AND created_at < %s""" + where + """
+                    ORDER BY created_at"""
+            ).format(tbl=sql.Identifier(schema, "camera_defect_logs")),
+            (start, end, *params),
+        ).fetchall()
+
+
+def count_camera_defect_logs(start, end, locations=None, camera_codes=None, search=None,
+                             datasource_id: int | None = None) -> int:
+    where, params = _camera_filter(locations, camera_codes)
+    if search:
+        where += " AND (name ILIKE %s OR code ILIKE %s)"
+        params.extend([f"%{search}%", f"%{search}%"])
+    with _table_source_conn(datasource_id) as (conn, schema):
+        row = conn.execute(
+            sql.SQL(
+                """SELECT COUNT(*) AS n FROM {tbl}
+                    WHERE created_at >= %s AND created_at < %s""" + where
+            ).format(tbl=sql.Identifier(schema, "camera_defect_logs")),
+            (start, end, *params),
+        ).fetchone()
+    return row["n"]
+
+
+def fetch_camera_defect_logs_page(start, end, locations=None, camera_codes=None, search=None,
+                                  limit: int = 50, offset: int = 0,
+                                  datasource_id: int | None = None) -> list[dict[str, Any]]:
+    """One page of the batch-defect log, newest first."""
+    where, params = _camera_filter(locations, camera_codes)
+    if search:
+        where += " AND (name ILIKE %s OR code ILIKE %s)"
+        params.extend([f"%{search}%", f"%{search}%"])
+    with _table_source_conn(datasource_id) as (conn, schema):
+        return conn.execute(
+            sql.SQL(
+                """SELECT location, code, name, batch_id, defect_array, created_at
+                     FROM {tbl}
+                    WHERE created_at >= %s AND created_at < %s""" + where + """
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s"""
+            ).format(tbl=sql.Identifier(schema, "camera_defect_logs")),
             (start, end, *params, limit, offset),
         ).fetchall()
 

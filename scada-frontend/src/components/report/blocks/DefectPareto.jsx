@@ -1,33 +1,29 @@
 import { useMemo } from 'react'
 import EChart from '@/components/charts/EChart'
 import ReportBlock from './ReportBlock'
-import { fmtDuration } from '../reportFormat'
 import styles from './blocks.module.css'
 
 /**
- * DowntimePareto — downtime causes ranked, with the cumulative % line that
- * makes it a Pareto rather than a bar chart. The point is the 80/20 read: how
- * few causes account for most of the lost time.
+ * DefectPareto — defect types ranked, with the cumulative % line that makes it
+ * a Pareto rather than a bar chart. The point is the 80/20 read: how few
+ * defect types account for most of the flagged units.
  *
  * The server collapses everything past `topN` into an "Other" bucket so the
- * cumulative line still reaches 100%. `No reason logged` is deliberately left
- * in as a normal bar — it quantifies how much downtime the plant cannot
- * currently explain, which is itself an actionable finding.
+ * cumulative line still reaches 100%.
  */
 
 const BAR_COLOR = '#ef4444'
 const LINE_COLOR = '#f59e0b'
 const OTHER_COLOR = '#5b6a86'
-const UNEXPLAINED = 'No reason logged'
 
-export default function DowntimePareto({ block, result }) {
-  const rows = result?.downtime_reasons ?? []
-  const rankBy = block?.options?.rankBy ?? 'duration'
-  const byCount = rankBy === 'count'
+export default function DefectPareto({ block, result }) {
+  const rows = result?.defect_reasons ?? []
+  const rankBy = block?.options?.rankBy ?? 'count'
+  const byBatches = rankBy === 'batches'
 
   const option = useMemo(() => {
-    const labels = rows.map((r) => r.reason)
-    const values = rows.map((r) => (byCount ? r.count : r.seconds / 3600))
+    const labels = rows.map((r) => r.defect)
+    const values = rows.map((r) => (byBatches ? r.batches : r.count))
 
     return {
       animation: false,
@@ -43,9 +39,9 @@ export default function DowntimePareto({ block, result }) {
           const r = rows[i]
           if (!r) return ''
           return [
-            `<b>${r.reason}</b>`,
-            `Downtime: ${fmtDuration(r.seconds)}`,
-            `Occurrences: ${r.count}`,
+            `<b>${r.defect}</b>`,
+            `Count: ${r.count}`,
+            `Batches: ${r.batches}`,
             `Cumulative: ${r.cumulative_pct?.toFixed(1)}%`,
           ].join('<br/>')
         },
@@ -67,7 +63,7 @@ export default function DowntimePareto({ block, result }) {
       yAxis: [
         {
           type: 'value',
-          name: byCount ? 'Count' : 'Hours',
+          name: byBatches ? 'Batches' : 'Count',
           nameTextStyle: { color: '#5b6a86', fontSize: 10 },
           axisLabel: { color: '#8a99b3', fontSize: 10 },
           splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } },
@@ -86,12 +82,7 @@ export default function DowntimePareto({ block, result }) {
           data: values.map((v, i) => ({
             value: v,
             itemStyle: {
-              color:
-                labels[i] === 'Other'
-                  ? OTHER_COLOR
-                  : labels[i] === UNEXPLAINED
-                    ? LINE_COLOR
-                    : BAR_COLOR,
+              color: labels[i] === 'Other' ? OTHER_COLOR : BAR_COLOR,
               borderRadius: [3, 3, 0, 0],
             },
           })),
@@ -108,17 +99,17 @@ export default function DowntimePareto({ block, result }) {
         },
       ],
     }
-  }, [rows, byCount])
+  }, [rows, byBatches])
 
   return (
     <ReportBlock
-      title={block?.title ?? 'Downtime Pareto'}
-      note={byCount ? 'Ranked by occurrences' : 'Ranked by duration'}
+      title={block?.title ?? 'Defect Pareto'}
+      note={byBatches ? 'Ranked by batches' : 'Ranked by count'}
     >
       {rows.length ? (
         <EChart option={option} height="300px" />
       ) : (
-        <p className={styles['block__empty']}>No downtime recorded in this window.</p>
+        <p className={styles['block__empty']}>No defects recorded in this window.</p>
       )}
     </ReportBlock>
   )

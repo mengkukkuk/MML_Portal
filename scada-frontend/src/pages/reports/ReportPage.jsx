@@ -5,6 +5,7 @@ import Button from '@mui/material/Button'
 import FormControl from '@mui/material/FormControl'
 import MenuItem from '@mui/material/MenuItem'
 import Select from '@mui/material/Select'
+import AddOutlined from '@mui/icons-material/AddOutlined'
 import DownloadOutlined from '@mui/icons-material/DownloadOutlined'
 import EditOutlined from '@mui/icons-material/EditOutlined'
 import PrintOutlined from '@mui/icons-material/PrintOutlined'
@@ -36,9 +37,9 @@ import {
 } from '@/components/report/trendParams'
 import { readStoredTrend, writeStoredTrend } from '@/components/report/trendStorage'
 import KpiStrip from '@/components/report/blocks/KpiStrip'
-import StateTimeline from '@/components/report/blocks/StateTimeline'
-import DowntimePareto from '@/components/report/blocks/DowntimePareto'
-import AlarmSummary from '@/components/report/blocks/AlarmSummary'
+import ThroughputTimeline from '@/components/report/blocks/ThroughputTimeline'
+import DefectPareto from '@/components/report/blocks/DefectPareto'
+import QualityExceptions from '@/components/report/blocks/QualityExceptions'
 import SummaryTable from '@/components/report/blocks/SummaryTable'
 import RawLogTable from '@/components/report/blocks/RawLogTable'
 import styles from './ReportPage.module.css'
@@ -66,16 +67,16 @@ import styles from './ReportPage.module.css'
 
 const BLOCK_COMPONENTS = {
   kpi: KpiStrip,
-  timeline: StateTimeline,
-  pareto: DowntimePareto,
-  alarms: AlarmSummary,
+  timeline: ThroughputTimeline,
+  pareto: DefectPareto,
+  exceptions: QualityExceptions,
   summary_table: SummaryTable,
   raw_log: RawLogTable,
 }
 
 // Blocks the server can satisfy from a /run call. `raw_log` is absent on
 // purpose — it fetches its own pages.
-const RUN_BLOCK_TYPES = new Set(['kpi', 'timeline', 'pareto', 'alarms', 'summary_table'])
+const RUN_BLOCK_TYPES = new Set(['kpi', 'timeline', 'pareto', 'exceptions', 'summary_table'])
 
 const WIDTH_CLASS = { full: 'w-full', half: 'w-half', third: 'w-third' }
 
@@ -216,6 +217,7 @@ export default function ReportPage() {
   }, [blocks])
 
   const paretoBlock = useMemo(() => blocks.find((b) => b.type === 'pareto'), [blocks])
+  const exceptionsBlock = useMemo(() => blocks.find((b) => b.type === 'exceptions'), [blocks])
 
   // Resolved once per run so every block and the export share one window —
   // re-resolving 'last7d' per consumer would hand them slightly different ends.
@@ -229,18 +231,23 @@ export default function ReportPage() {
     queryKey: [
       'report', 'run', template?.id, selectionKey,
       start?.valueOf(), end?.valueOf(),
-      filters.locations, filters.tagNames, runBlocks,
+      filters.locations, filters.cameraCodes, runBlocks,
       paretoBlock?.options?.topN, paretoBlock?.options?.rankBy,
+      exceptionsBlock?.options?.warnPct, exceptionsBlock?.options?.critPct,
+      exceptionsBlock?.options?.topN,
     ],
     queryFn: () =>
       runReport({
         start,
         end,
         locations: filters.locations,
-        tagNames: filters.tagNames,
+        cameraCodes: filters.cameraCodes,
         blocks: runBlocks,
         paretoTopN: paretoBlock?.options?.topN,
         paretoRankBy: paretoBlock?.options?.rankBy,
+        exceptionsWarnPct: exceptionsBlock?.options?.warnPct,
+        exceptionsCritPct: exceptionsBlock?.options?.critPct,
+        exceptionsTopN: exceptionsBlock?.options?.topN,
       }),
     enabled: !!template && !!start && !!end && runBlocks.length > 0,
   })
@@ -250,9 +257,9 @@ export default function ReportPage() {
       start,
       end,
       locations: filters.locations,
-      tagNames: filters.tagNames,
+      cameraCodes: filters.cameraCodes,
     }),
-    [start, end, filters.locations, filters.tagNames],
+    [start, end, filters.locations, filters.cameraCodes],
   )
 
   async function handleExport() {
@@ -281,10 +288,13 @@ export default function ReportPage() {
       <div className={styles.page}>
         <p className={styles.error}>
           No report templates exist yet.{' '}
-          {isAdmin
-            ? 'Create one to get started.'
-            : 'Ask an administrator to create one.'}
+          {isAdmin ? 'Create one to get started.' : 'Ask an administrator to create one.'}
         </p>
+        {isAdmin && (
+          <Button size="small" variant="contained" onClick={() => navigate('/reports/new')}>
+            Create template
+          </Button>
+        )}
       </div>
     )
   }
@@ -333,6 +343,11 @@ export default function ReportPage() {
           </div>
 
           <div className={styles['head__right']}>
+            {isAdmin && (
+              <Button size="small" startIcon={<AddOutlined />} onClick={() => navigate('/reports/new')}>
+                New
+              </Button>
+            )}
             {isAdmin && template && (
               <Button
                 size="small"

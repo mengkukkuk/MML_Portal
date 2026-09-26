@@ -101,6 +101,11 @@ export const router = createBrowserRouter(
               handle: { title: 'Reports', icon: AssessmentOutlined },
             },
             {
+              path: 'reports/new',
+              element: page(ReportBuilderPage),
+              handle: { title: 'New Report', requiresRole: 'admin' },
+            },
+            {
               path: 'reports/:templateId',
               element: page(ReportPage),
               handle: { title: 'Reports', icon: AssessmentOutlined },

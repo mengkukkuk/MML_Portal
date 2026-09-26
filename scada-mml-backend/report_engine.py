@@ -1,8 +1,13 @@
 """Pure OEE/MES report math — turns raw event rows into machine state intervals.
 
 Deliberately free of any database access so every edge case can be unit-tested
-against hand-built event lists (see tests/test_report_engine.py). ``reports.py``
-owns the SQL; this module owns the arithmetic the business will act on.
+against hand-built event lists (see tests/test_report_engine.py).
+
+Not currently wired into any router — the Reports page's block catalog was
+replaced with vision/camera-QC blocks (see ``vision_report_engine.py``, which
+``reports.py`` now uses instead). Left in place, tests and all, rather than
+deleted: the machine-state/OEE math here is independent and correct, and a
+plant report over ``event_logs`` may still want it later.
 
 The model, in one paragraph: ``public.event_logs`` records discrete state
 *transitions*, not durations. To measure how long a machine ran we pair each

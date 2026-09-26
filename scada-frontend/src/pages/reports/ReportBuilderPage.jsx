@@ -33,32 +33,32 @@ import styles from './ReportBuilderPage.module.css'
 const BLOCK_TYPES = {
   kpi: {
     label: 'KPI Strip',
-    hint: 'OEE, availability, runtime, downtime, MTBF/MTTR',
-    defaults: { width: 'full', options: { targets: { oee: 85, availability: 90 } } },
+    hint: 'Inspected, defects, defect rate, cameras reporting',
+    defaults: { width: 'full', options: { targetDefectPct: 2 } },
   },
   timeline: {
-    label: 'State Timeline',
-    hint: 'Gantt of machine states over the window',
-    defaults: { width: 'full', options: { showUnknown: true } },
+    label: 'Camera Throughput Timeline',
+    hint: 'Hourly defect-rate heatmap, one row per camera',
+    defaults: { width: 'full', options: {} },
   },
   pareto: {
-    label: 'Downtime Pareto',
-    hint: 'Ranked downtime causes with cumulative %',
-    defaults: { width: 'half', options: { topN: 10, rankBy: 'duration' } },
+    label: 'Defect Pareto',
+    hint: 'Ranked defect types with cumulative %',
+    defaults: { width: 'half', options: { topN: 10, rankBy: 'count' } },
   },
-  alarms: {
-    label: 'Alarm Summary',
-    hint: 'Counts by severity and most frequent alarms',
-    defaults: { width: 'half', options: { topN: 10 } },
+  exceptions: {
+    label: 'Quality Exceptions',
+    hint: 'Cameras over the warn/critical defect-rate threshold',
+    defaults: { width: 'half', options: { warnPct: 2, critPct: 5, topN: 10 } },
   },
   summary_table: {
-    label: 'Machine Summary',
-    hint: 'One row per machine with a totals footer',
+    label: 'Camera Summary',
+    hint: 'One row per camera with a totals footer',
     defaults: { width: 'full', options: {} },
   },
   raw_log: {
-    label: 'Event Log',
-    hint: 'Raw, unclassified event_logs rows',
+    label: 'Defect Batch Log',
+    hint: 'Raw, unclassified camera_defect_logs rows',
     defaults: { width: 'full', options: { pageSize: 50 } },
   },
 }
@@ -69,14 +69,9 @@ const WIDTHS = [
   { value: 'third', label: 'Third' },
 ]
 
-const SUMMARY_COLUMNS = [
-  'machine', 'runtime', 'downtime', 'unknown', 'availability',
-  'oee', 'stops', 'mtbf', 'mttr', 'alarms',
-]
+const SUMMARY_COLUMNS = ['camera', 'inspected', 'defects', 'rate', 'worstDefect', 'lastSeen', 'status']
 
-const DEFAULT_SUMMARY_COLUMNS = [
-  'machine', 'runtime', 'downtime', 'availability', 'stops', 'mtbf', 'mttr', 'alarms',
-]
+const DEFAULT_SUMMARY_COLUMNS = SUMMARY_COLUMNS
 
 let idCounter = 0
 const newBlockId = () => `b${Date.now().toString(36)}${(idCounter += 1)}`
@@ -102,9 +97,15 @@ export default function ReportBuilderPage() {
 
   // Seed the working copy once. Deliberately not kept in sync with the query
   // afterwards — a background refetch overwriting unsaved edits would be a
-  // silent data loss.
+  // silent data loss. With no :templateId (the /reports/new route) there is
+  // nothing to fetch, so the blank form is seeded immediately.
   useEffect(() => {
-    if (form || !templateQuery.data) return
+    if (form) return
+    if (!templateId) {
+      setForm({ name: '', description: '', blocks: [], preset: 'last7d', is_default: false })
+      return
+    }
+    if (!templateQuery.data) return
     const t = templateQuery.data
     setForm({
       name: t.name ?? '',
@@ -113,7 +114,7 @@ export default function ReportBuilderPage() {
       preset: t.default_filters?.preset ?? 'last7d',
       is_default: !!t.is_default,
     })
-  }, [templateQuery.data, form])
+  }, [templateId, templateQuery.data, form])
 
   const saveMutation = useMutation({
     mutationFn: (payload) =>
@@ -139,7 +140,7 @@ export default function ReportBuilderPage() {
     [form],
   )
 
-  if (templateQuery.isLoading || !form) {
+  if ((templateId && templateQuery.isLoading) || !form) {
     return (
       <div className={styles.page}>
         <p className={styles.empty}>
@@ -214,9 +215,9 @@ export default function ReportBuilderPage() {
   return (
     <div className={styles.page}>
       <header className={styles.head}>
-        <h2 className={styles.title}>Edit report template</h2>
+        <h2 className={styles.title}>{templateId ? 'Edit report template' : 'New report template'}</h2>
         <div className={styles.actions}>
-          <Button size="small" onClick={() => navigate(`/reports/${templateId}`)}>
+          <Button size="small" onClick={() => navigate(templateId ? `/reports/${templateId}` : '/reports')}>
             Cancel
           </Button>
           <Button
@@ -365,26 +366,28 @@ export default function ReportBuilderPage() {
         </ol>
       </section>
 
-      <section className={styles.card}>
-        <h3 className={styles.subtitle}>Danger zone</h3>
-        <p className={styles.hint}>
-          Deleting a template does not touch any log data — reports are computed
-          live from event_logs every time they are run.
-        </p>
-        <Button
-          size="small"
-          color="error"
-          variant="outlined"
-          loading={deleteMutation.isPending}
-          onClick={() => {
-            if (window.confirm(`Delete template "${form.name}"? This cannot be undone.`)) {
-              deleteMutation.mutate()
-            }
-          }}
-        >
-          Delete template
-        </Button>
-      </section>
+      {templateId && (
+        <section className={styles.card}>
+          <h3 className={styles.subtitle}>Danger zone</h3>
+          <p className={styles.hint}>
+            Deleting a template does not touch any log data — reports are computed
+            live from vision_data every time they are run.
+          </p>
+          <Button
+            size="small"
+            color="error"
+            variant="outlined"
+            loading={deleteMutation.isPending}
+            onClick={() => {
+              if (window.confirm(`Delete template "${form.name}"? This cannot be undone.`)) {
+                deleteMutation.mutate()
+              }
+            }}
+          >
+            Delete template
+          </Button>
+        </section>
+      )}
     </div>
   )
 }
@@ -394,48 +397,14 @@ function BlockOptions({ block, patchOptions }) {
   const o = block.options ?? {}
 
   if (block.type === 'kpi') {
-    const targets = o.targets ?? {}
     return (
-      <div className={styles.row}>
-        <TextField
-          size="small"
-          type="number"
-          label="OEE target %"
-          value={targets.oee ?? 85}
-          onChange={(e) =>
-            patchOptions(block.id, {
-              targets: { ...targets, oee: Number(e.target.value) },
-            })
-          }
-          className={styles.num}
-        />
-        <TextField
-          size="small"
-          type="number"
-          label="Availability target %"
-          value={targets.availability ?? 90}
-          onChange={(e) =>
-            patchOptions(block.id, {
-              targets: { ...targets, availability: Number(e.target.value) },
-            })
-          }
-          className={styles.num}
-        />
-      </div>
-    )
-  }
-
-  if (block.type === 'timeline') {
-    return (
-      <FormControlLabel
-        control={
-          <Checkbox
-            size="small"
-            checked={o.showUnknown !== false}
-            onChange={(e) => patchOptions(block.id, { showUnknown: e.target.checked })}
-          />
-        }
-        label="Show unmeasured (UNKNOWN) spans"
+      <TextField
+        size="small"
+        type="number"
+        label="Target defect rate %"
+        value={o.targetDefectPct ?? 2}
+        onChange={(e) => patchOptions(block.id, { targetDefectPct: Number(e.target.value) })}
+        className={styles.num}
       />
     )
   }
@@ -446,34 +415,52 @@ function BlockOptions({ block, patchOptions }) {
         <TextField
           size="small"
           type="number"
-          label="Top N causes"
+          label="Top N defects"
           value={o.topN ?? 10}
           onChange={(e) => patchOptions(block.id, { topN: Number(e.target.value) })}
           className={styles.num}
         />
         <FormControl size="small" className={styles.width}>
           <Select
-            value={o.rankBy ?? 'duration'}
+            value={o.rankBy ?? 'count'}
             onChange={(e) => patchOptions(block.id, { rankBy: e.target.value })}
           >
-            <MenuItem value="duration">Rank by lost time</MenuItem>
-            <MenuItem value="count">Rank by occurrences</MenuItem>
+            <MenuItem value="count">Rank by count</MenuItem>
+            <MenuItem value="batches">Rank by batches</MenuItem>
           </Select>
         </FormControl>
       </div>
     )
   }
 
-  if (block.type === 'alarms') {
+  if (block.type === 'exceptions') {
     return (
-      <TextField
-        size="small"
-        type="number"
-        label="Top N alarms"
-        value={o.topN ?? 10}
-        onChange={(e) => patchOptions(block.id, { topN: Number(e.target.value) })}
-        className={styles.num}
-      />
+      <div className={styles.row}>
+        <TextField
+          size="small"
+          type="number"
+          label="Warn ≥ defect rate %"
+          value={o.warnPct ?? 2}
+          onChange={(e) => patchOptions(block.id, { warnPct: Number(e.target.value) })}
+          className={styles.num}
+        />
+        <TextField
+          size="small"
+          type="number"
+          label="Critical ≥ defect rate %"
+          value={o.critPct ?? 5}
+          onChange={(e) => patchOptions(block.id, { critPct: Number(e.target.value) })}
+          className={styles.num}
+        />
+        <TextField
+          size="small"
+          type="number"
+          label="Top N shown"
+          value={o.topN ?? 10}
+          onChange={(e) => patchOptions(block.id, { topN: Number(e.target.value) })}
+          className={styles.num}
+        />
+      </div>
     )
   }
 

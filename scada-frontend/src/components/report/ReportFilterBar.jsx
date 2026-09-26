@@ -13,22 +13,20 @@ import { PRESETS } from './reportRange'
 import styles from './ReportFilterBar.module.css'
 
 /**
- * ReportFilterBar — window, line and machine selection.
+ * ReportFilterBar — window, line and camera selection.
  *
  * Uses DateTimePicker rather than DatePicker: a date-only picker silently
- * rounds the window to midnight, which on a 3-shift line moves real downtime
- * into or out of the report. Time is part of the question being asked.
+ * rounds the window to midnight, which on a 3-shift line moves real inspection
+ * activity into or out of the report. Time is part of the question being asked.
  *
- * Line and machine options come from /reports/catalog, which unions
- * variables_tag with the distinct machines in event_logs — so a machine that
- * has been decommissioned out of variables_tag can still be reported on
- * historically.
+ * Line and camera options come from /reports/catalog, which lists the distinct
+ * cameras registered in vision_data.cameras.
  *
  * The catalogue spans every selected source and the options are deduplicated by
- * *name*, not by machine identity. That is deliberate: the filters travel to
- * the server as plain location and tag strings and are applied to each source
+ * *code*, not by camera identity. That is deliberate: the filters travel to the
+ * server as plain location and code strings and are applied to each source
  * independently, so picking `Line 1` means "Line 1 wherever it exists". The
- * report itself still separates the two plants — see `_machine_key`.
+ * report itself still separates the two plants — see `_camera_key`.
  */
 
 export default function ReportFilterBar({ filters, onChange, onRefresh, isFetching }) {
@@ -46,13 +44,18 @@ export default function ReportFilterBar({ filters, onChange, onRefresh, isFetchi
     [catalog],
   )
 
-  // Machines are scoped to the selected lines — offering a machine that cannot
+  // Cameras are scoped to the selected lines — offering a camera that cannot
   // appear in the result is just a way to produce a confusing empty report.
-  const tags = useMemo(() => {
+  const cameras = useMemo(() => {
     const rows = filters.locations.length
       ? catalog.filter((c) => filters.locations.includes(c.location))
       : catalog
-    return [...new Set(rows.map((c) => c.tag_name).filter(Boolean))].sort()
+    // Dedupe by code but keep a friendly label when one exists.
+    const byCode = new Map()
+    for (const c of rows) {
+      if (c.code && !byCode.has(c.code)) byCode.set(c.code, c.name || c.code)
+    }
+    return [...byCode.entries()].sort((a, b) => a[1].localeCompare(b[1]))
   }, [catalog, filters.locations])
 
   function set(patch) {
@@ -60,20 +63,20 @@ export default function ReportFilterBar({ filters, onChange, onRefresh, isFetchi
   }
 
   function setLocations(next) {
-    // Drop any machine selection the new line set can no longer produce.
+    // Drop any camera selection the new line set can no longer produce.
     const allowed = new Set(
       (next.length ? catalog.filter((c) => next.includes(c.location)) : catalog).map(
-        (c) => c.tag_name,
+        (c) => c.code,
       ),
     )
     set({
       locations: next,
-      tagNames: filters.tagNames.filter((t) => allowed.has(t)),
+      cameraCodes: filters.cameraCodes.filter((code) => allowed.has(code)),
     })
   }
 
   const isCustom = filters.preset === 'custom'
-  const hasFilters = filters.locations.length > 0 || filters.tagNames.length > 0
+  const hasFilters = filters.locations.length > 0 || filters.cameraCodes.length > 0
 
   return (
     <div className={`${styles.bar} report-filters`}>
@@ -131,19 +134,19 @@ export default function ReportFilterBar({ filters, onChange, onRefresh, isFetchi
       </div>
 
       <div className={styles.group}>
-        <span className={styles.label}>Machine</span>
+        <span className={styles.label}>Camera</span>
         <FormControl size="small" className={styles.select}>
           <Select
             multiple
             displayEmpty
-            value={filters.tagNames}
-            onChange={(e) => set({ tagNames: e.target.value })}
-            renderValue={(v) => (v.length ? v.join(', ') : 'All machines')}
+            value={filters.cameraCodes}
+            onChange={(e) => set({ cameraCodes: e.target.value })}
+            renderValue={(v) => (v.length ? v.join(', ') : 'All cameras')}
           >
-            {tags.map((tag) => (
-              <MenuItem key={tag} value={tag}>
-                <Checkbox size="small" checked={filters.tagNames.includes(tag)} />
-                <ListItemText primary={tag} />
+            {cameras.map(([code, label]) => (
+              <MenuItem key={code} value={code}>
+                <Checkbox size="small" checked={filters.cameraCodes.includes(code)} />
+                <ListItemText primary={label} />
               </MenuItem>
             ))}
           </Select>
@@ -151,7 +154,7 @@ export default function ReportFilterBar({ filters, onChange, onRefresh, isFetchi
       </div>
 
       {hasFilters && (
-        <Button size="small" onClick={() => set({ locations: [], tagNames: [] })}>
+        <Button size="small" onClick={() => set({ locations: [], cameraCodes: [] })}>
           Clear
         </Button>
       )}

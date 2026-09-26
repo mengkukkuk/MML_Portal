@@ -51,7 +51,7 @@ export function filtersFromParams(params, fallbackPreset = DEFAULT_PRESET) {
     start: start ? dayjs(start) : null,
     end: end ? dayjs(end) : null,
     locations: params.getAll('location'),
-    tagNames: params.getAll('tag'),
+    cameraCodes: params.getAll('camera'),
   }
 }
 
@@ -64,7 +64,7 @@ export function paramsFromFilters(filters) {
     if (filters.end) params.set('end', filters.end.format('YYYY-MM-DDTHH:mm:ss'))
   }
   filters.locations.forEach((l) => params.append('location', l))
-  filters.tagNames.forEach((t) => params.append('tag', t))
+  filters.cameraCodes.forEach((c) => params.append('camera', c))
   return params
 }
 

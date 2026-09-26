@@ -1,16 +1,15 @@
 import ExcelJS from 'exceljs'
 import { fetchReportLogs } from '@/api/reports'
-import { OEE_CAVEAT, isMultiSource } from '@/components/report/reportFormat'
+import { isMultiSource } from '@/components/report/reportFormat'
 import { describeRange } from '@/components/report/reportRange'
 
 /**
- * Builds the xlsx export: Summary, Downtime Reasons, Alarms, Event Log.
+ * Builds the xlsx export: Summary, Defect Reasons, Quality Exceptions, Defect
+ * Batch Log.
  *
- * Every sheet is topped with the same provenance banner — window, generation
- * time, and the OEE caveat. Once a spreadsheet leaves the app it loses all the
- * context the UI provided, and an availability-only OEE figure passed off as a
- * real OEE is a genuinely misleading business number. The banner is the only
- * thing that travels with it.
+ * Every sheet is topped with the same provenance banner — window and
+ * generation time. Once a spreadsheet leaves the app it loses all the context
+ * the UI provided, so the banner is the only thing that travels with it.
  *
  * Times are written as text in server-local form rather than as Excel date
  * serials, because Excel would reinterpret them in the reader's own timezone —
@@ -33,8 +32,7 @@ function fmtTs(value) {
   )
 }
 
-const hours = (seconds) => (seconds == null ? null : Number((seconds / 3600).toFixed(3)))
-const pct = (ratio) => (ratio == null ? null : Number((ratio * 100).toFixed(2)))
+const pct = (value) => (value == null ? null : Number(value.toFixed(2)))
 
 /** Banner + column headers. Returns the row index the data should start on. */
 function startSheet(sheet, columns, meta) {
@@ -46,9 +44,7 @@ function startSheet(sheet, columns, meta) {
 
   sheet.mergeCells(2, 1, 2, columns.length)
   const note = sheet.getCell(2, 1)
-  note.value =
-    `Generated ${fmtTs(meta.generatedAt)} (plant server local time) · ` +
-    `${meta.machineCount} machines · ${OEE_CAVEAT}`
+  note.value = `Generated ${fmtTs(meta.generatedAt)} (plant server local time) · ${meta.cameraCount} cameras`
   note.font = { size: 9, italic: true, color: { argb: 'FF8A99B3' } }
   note.fill = TITLE_FILL
   note.alignment = { wrapText: true }
@@ -75,59 +71,46 @@ function addRows(sheet, startRow, columns, rows) {
 function buildSummary(wb, result, meta) {
   const sheet = wb.addWorksheet('Summary')
   // A spreadsheet has no tooltip to fall back on: with two plants selected,
-  // `Line 1 / M01` appears twice with different numbers and nothing on the row
-  // says which is which. The column only appears when it is needed, so
+  // `Line 1 / CAM01` appears twice with different numbers and nothing on the
+  // row says which is which. The column only appears when it is needed, so
   // single-plant exports keep the layout people already have macros against.
-  const multi = isMultiSource(result.machines ?? [])
+  const multi = isMultiSource(result.cameras ?? [])
   const columns = [
     ...(multi ? [{ header: 'Source', key: 'datasource_name', width: 20 }] : []),
     { header: 'Line', key: 'location', width: 16 },
-    { header: 'Machine', key: 'tag_name', width: 20 },
-    { header: 'Runtime (h)', key: 'run_h' },
-    { header: 'Stopped (h)', key: 'stop_h' },
-    { header: 'Idle (h)', key: 'idle_h' },
-    { header: 'Planned down (h)', key: 'planned_h', width: 18 },
-    { header: 'Unmeasured (h)', key: 'unknown_h', width: 18 },
-    { header: 'Downtime (h)', key: 'down_h' },
-    { header: 'Coverage (%)', key: 'coverage' },
-    { header: 'Availability (%)', key: 'availability', width: 18 },
-    { header: 'OEE (A-only) (%)', key: 'oee', width: 18 },
-    { header: 'Stops', key: 'stops', width: 10 },
-    { header: 'MTBF (h)', key: 'mtbf_h' },
-    { header: 'MTTR (h)', key: 'mttr_h' },
-    { header: 'Alarms', key: 'alarms', width: 10 },
+    { header: 'Camera', key: 'name', width: 20 },
+    { header: 'Inspected', key: 'inspected', width: 14 },
+    { header: 'Defects', key: 'defects', width: 12 },
+    { header: 'Defect rate (%)', key: 'defect_rate', width: 16 },
+    { header: 'Worst defect', key: 'worst_defect', width: 20 },
+    { header: 'Last seen', key: 'last_seen', width: 20 },
+    { header: 'Status', key: 'status', width: 14 },
   ]
   const start = startSheet(sheet, columns, meta)
 
-  const toRow = (m) => ({
-    datasource_name: m.datasource_name ?? '',
-    location: m.location ?? '',
-    tag_name: m.tag_name ?? '',
-    run_h: hours(m.run_s),
-    stop_h: hours(m.stop_s),
-    idle_h: hours(m.idle_s),
-    planned_h: hours(m.planned_down_s),
-    unknown_h: hours(m.unknown_s),
-    down_h: hours(m.downtime_s),
-    coverage: pct(m.coverage),
-    availability: pct(m.availability),
-    oee: pct(m.oee),
-    stops: m.stop_count ?? 0,
-    mtbf_h: hours(m.mtbf_s),
-    mttr_h: hours(m.mttr_s),
-    alarms: m.alarm_count ?? 0,
+  const toRow = (c) => ({
+    datasource_name: c.datasource_name ?? '',
+    location: c.location ?? '',
+    name: c.name ?? c.code ?? '',
+    inspected: c.inspected ?? 0,
+    defects: c.defects ?? 0,
+    defect_rate: pct(c.defect_rate_pct),
+    worst_defect: c.worst_defect ?? '',
+    last_seen: fmtTs(c.last_seen),
+    status: c.status ?? '',
   })
 
-  const rows = (result.machines ?? []).map(toRow)
+  const rows = (result.cameras ?? []).map(toRow)
   const t = result.totals
   if (t) {
     rows.push({
       ...toRow(t),
       datasource_name: '',
       location: 'ALL',
-      tag_name: `${t.machine_count} machines`,
-      coverage: null,
-      alarms: (result.machines ?? []).reduce((n, m) => n + (m.alarm_count ?? 0), 0),
+      name: `${t.camera_count} cameras`,
+      worst_defect: '',
+      last_seen: '',
+      status: '',
     })
   }
   addRows(sheet, start, columns, rows)
@@ -139,14 +122,14 @@ function buildSummary(wb, result, meta) {
 }
 
 function buildPareto(wb, result, meta) {
-  const rows = result.downtime_reasons ?? []
+  const rows = result.defect_reasons ?? []
   if (!rows.length) return
-  const sheet = wb.addWorksheet('Downtime Reasons')
+  const sheet = wb.addWorksheet('Defect Reasons')
   const columns = [
     { header: 'Rank', key: 'rank', width: 8 },
-    { header: 'Reason', key: 'reason', width: 46 },
-    { header: 'Downtime (h)', key: 'hours' },
-    { header: 'Occurrences', key: 'count', width: 14 },
+    { header: 'Defect', key: 'defect', width: 46 },
+    { header: 'Count', key: 'count', width: 14 },
+    { header: 'Batches', key: 'batches', width: 14 },
     { header: 'Cumulative (%)', key: 'cumulative', width: 16 },
   ]
   const start = startSheet(sheet, columns, meta)
@@ -154,38 +137,42 @@ function buildPareto(wb, result, meta) {
     sheet, start, columns,
     rows.map((r, i) => ({
       rank: i + 1,
-      reason: r.reason,
-      hours: hours(r.seconds),
+      defect: r.defect,
       count: r.count,
+      batches: r.batches,
       cumulative: r.cumulative_pct == null ? null : Number(r.cumulative_pct.toFixed(2)),
     })),
   )
 }
 
-function buildAlarms(wb, result, meta) {
-  const summary = result.alarm_summary
-  if (!summary) return
-  const sheet = wb.addWorksheet('Alarms')
+function buildExceptions(wb, result, meta) {
+  const exceptions = result.quality_exceptions
+  if (!exceptions) return
+  const sheet = wb.addWorksheet('Quality Exceptions')
   const columns = [
-    { header: 'Alarm', key: 'alarm', width: 56 },
+    { header: 'Camera', key: 'camera', width: 40 },
     { header: 'Severity', key: 'severity', width: 14 },
-    { header: 'Count', key: 'count', width: 12 },
+    { header: 'Defect rate (%)', key: 'rate', width: 16 },
   ]
   const start = startSheet(sheet, columns, meta)
 
   const rows = [
-    ...Object.entries(summary.by_severity ?? {}).map(([severity, count]) => ({
-      alarm: `— all ${severity} alarms —`,
+    ...Object.entries(exceptions.by_severity ?? {}).map(([severity, count]) => ({
+      camera: `— all ${severity} cameras —`,
       severity,
-      count,
+      rate: count,
     })),
-    ...(summary.top ?? []),
+    ...(exceptions.top ?? []).map((c) => ({
+      camera: `${c.location ?? '—'} / ${c.name ?? c.code ?? '—'}`,
+      severity: c.severity,
+      rate: pct(c.defect_rate_pct),
+    })),
   ]
   addRows(sheet, start, columns, rows)
 }
 
-async function buildEventLog(wb, meta, filters) {
-  const sheet = wb.addWorksheet('Event Log')
+async function buildBatchLog(wb, meta, filters) {
+  const sheet = wb.addWorksheet('Defect Batch Log')
 
   // Fetched before the columns are laid out: only the rows can say whether more
   // than one plant answered, and the Source column depends on that.
@@ -193,7 +180,7 @@ async function buildEventLog(wb, meta, filters) {
     start: filters.start,
     end: filters.end,
     locations: filters.locations,
-    tagNames: filters.tagNames,
+    cameraCodes: filters.cameraCodes,
     limit: EXPORT_ROW_CAP,
     offset: 0,
   })
@@ -204,19 +191,21 @@ async function buildEventLog(wb, meta, filters) {
       ? [{ header: 'Source', key: 'datasource_name', width: 20 }]
       : []),
     { header: 'Line', key: 'location', width: 16 },
-    { header: 'Machine', key: 'tag_name', width: 20 },
-    { header: 'Event', key: 'event', width: 70 },
+    { header: 'Camera', key: 'name', width: 20 },
+    { header: 'Batch', key: 'batch_id', width: 20 },
+    { header: 'Total defects', key: 'total_defects', width: 16 },
   ]
   const start = startSheet(sheet, columns, meta)
 
   addRows(
     sheet, start, columns,
     (page.rows ?? []).map((r) => ({
-      at: fmtTs(r.at_date_time),
+      at: fmtTs(r.created_at),
       datasource_name: r.datasource_name ?? '',
       location: r.location ?? '',
-      tag_name: r.tag_name ?? '',
-      event: r.event ?? '',
+      name: r.name ?? r.code ?? '',
+      batch_id: r.batch_id ?? '',
+      total_defects: r.total_defects ?? (r.defect_array ?? []).reduce((a, b) => a + (b || 0), 0),
     })),
   )
 
@@ -226,7 +215,7 @@ async function buildEventLog(wb, meta, filters) {
     warn.getCell(1).value =
       `TRUNCATED — ${page.total.toLocaleString()} rows matched, ` +
       `only the first ${EXPORT_ROW_CAP.toLocaleString()} are included. ` +
-      `Narrow the window or the machine selection for a complete export.`
+      `Narrow the window or the camera selection for a complete export.`
     warn.getCell(1).font = { bold: true, color: { argb: 'FFEF4444' } }
   }
 }
@@ -237,7 +226,7 @@ export async function exportReportXlsx({ result, filters, templateName, rangeLab
     templateName: templateName || 'Report',
     rangeLabel: rangeLabel || describeRange(filters.start, filters.end),
     generatedAt: result?.window?.generated_at ?? new Date(),
-    machineCount: result?.totals?.machine_count ?? 0,
+    cameraCount: result?.totals?.camera_count ?? 0,
   }
 
   const wb = new ExcelJS.Workbook()
@@ -246,8 +235,8 @@ export async function exportReportXlsx({ result, filters, templateName, rangeLab
 
   buildSummary(wb, result, meta)
   buildPareto(wb, result, meta)
-  buildAlarms(wb, result, meta)
-  await buildEventLog(wb, meta, filters)
+  buildExceptions(wb, result, meta)
+  await buildBatchLog(wb, meta, filters)
 
   const buffer = await wb.xlsx.writeBuffer()
   const blob = new Blob([buffer], {
