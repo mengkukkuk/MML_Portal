@@ -373,6 +373,12 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
   const filterMissing = needsFilter && (!form.filterCol || form.filterVal === '')
 
   const valid = !!form.table && !!form.valueCol && !exprError && !filterMissing
+  // No table picked = no source at all. That is a legitimate way to save: a
+  // symbol can be drawn and tagged (name + tag id) before its signal exists,
+  // and stays disconnected until someone commissions it. A half-filled source
+  // (table but no usable column) is still blocked — that one is a mistake.
+  const unbound = !form.table
+  const canSave = valid || unbound
 
   // --- live preview ---------------------------------------------------------
   // The connection picker above now decides more than the catalogue: it's the
@@ -427,7 +433,7 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
     onSave({
       tagId: form.tagId.trim() || null,
       label: form.label.trim() || node.label,
-      binding: bindingFromForm(form, kind),
+      binding: unbound ? null : bindingFromForm(form, kind),
     })
   }
 
@@ -844,8 +850,8 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
         )}
         <span className={styles.spacer} />
         <Button onClick={onClose}>Cancel</Button>
-        <Button variant="contained" disabled={!valid} onClick={handleSave}>
-          Use this source
+        <Button variant="contained" disabled={!canSave} onClick={handleSave}>
+          {unbound ? 'Save without source' : 'Use this source'}
         </Button>
       </DialogActions>
     </Dialog>

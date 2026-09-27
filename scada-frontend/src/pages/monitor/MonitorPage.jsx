@@ -776,7 +776,9 @@ export default function MonitorPage() {
     }
     commitLayout(next)
     setBindingNode(null)
-    notify(binding ? 'Binding updated in the draft.' : 'Symbol disconnected in the draft.')
+    notify(binding ? 'Binding updated in the draft.'
+      : bindingNode.binding ? 'Symbol disconnected in the draft.'
+        : 'Symbol updated in the draft (no data source).')
   }, [bindingNode, commitLayout, layout, notify])
 
   const applyProductionLog = useCallback((binding) => {
