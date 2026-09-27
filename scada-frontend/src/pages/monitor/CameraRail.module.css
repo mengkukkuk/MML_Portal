@@ -4,12 +4,12 @@
 .rail {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-3);
   flex: 1 1 auto;
   background: var(--bg-panel);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-  padding: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -139,7 +139,7 @@
 
 .ngValue {
   font-family: var(--font-mono);
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 500;
   line-height: 1;
   font-variant-numeric: tabular-nums;
@@ -186,7 +186,13 @@
 .causes {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 2px;
+}
+
+.hiddenNote {
+  margin: 4px 0 0;
+  font-size: 10.5px;
+  color: var(--fg-dim);
 }
 
 .cause {
@@ -198,7 +204,7 @@
   border-radius: var(--radius-sm);
   font: inherit;
   cursor: pointer;
-  padding: 6px 8px;
+  padding: 4px 8px;
   margin: 0 -8px;
   color: inherit;
 }
@@ -216,7 +222,7 @@
   justify-content: space-between;
   gap: var(--space-2);
   font-size: 12.5px;
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
 
 .causeOn .causeName {
@@ -324,15 +330,19 @@
   background-position: center;
 }
 
-/* One frame fills the well; scroll-snap plus the hidden native scrollbar is
- * what makes this "slide to view" — a swipe or the chevrons above move
- * exactly one frame, never a partial page of two. */
+/* Three thumbnails fill the well (FRAMES_IN_VIEW in CameraRail.jsx), small
+ * enough that the strip sits in view with the counts above it. Scroll-snap
+ * plus the hidden native scrollbar is what makes this "slide to view" — a
+ * swipe or the chevrons move one thumbnail, never leaving one cut in half.
+ * Full size is a click away in the lightbox. */
 .strip {
   display: flex;
   gap: var(--space-2);
   overflow-x: auto;
   scroll-snap-type: x mandatory;
-  padding: var(--space-2) var(--space-2) 4px;
+  /* No side padding: snap aligns to the scrollport edge, so padding here just
+   * shifts the row and lets a sliver of the fourth thumbnail show. */
+  padding: var(--space-2) 0 4px;
   scrollbar-width: none;
 }
 
@@ -341,7 +351,7 @@
 }
 
 .frame {
-  flex: 0 0 100%;
+  flex: 0 0 calc((100% - 2 * var(--space-2)) / 3);
   min-width: 0;
   margin: 0;
   scroll-snap-align: start;
@@ -411,11 +421,13 @@
 
 .frame figcaption {
   font-family: var(--font-thai);
-  font-size: 10.5px;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   line-height: 1.4;
   color: var(--fg-muted);
   margin-top: 4px;
-  overflow-wrap: anywhere;
 }
 
 .frame figcaption em {

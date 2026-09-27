@@ -37,6 +37,8 @@ const T = {
   pieces: 'ชิ้น',
   slotsTitle: 'สาเหตุที่ไม่ผ่าน · แตะเพื่อกรองภาพ',
   slotsEmpty: 'ยังไม่มีสาเหตุที่บันทึกไว้สำหรับกล้องนี้',
+  slotsBelowMin: (min, hidden) => `ไม่มีสาเหตุที่พบตั้งแต่ ${min} ครั้งขึ้นไป (ซ่อน ${hidden} รายการ)`,
+  slotsHidden: (min, hidden) => `ซ่อน ${hidden} สาเหตุที่พบน้อยกว่า ${min} ครั้ง`,
   slotFallback: (slot) => `ตำหนิ ${slot}`,
   timesWord: 'ครั้ง',
   stripTitle: 'ภาพ NG ล่าสุด',
@@ -132,6 +134,17 @@ function Frame({
  * faster than this.
  */
 const MIN_POLL_MS = 2000
+
+/**
+ * A cause counted fewer times than this is left out of the list. One stray
+ * reject is noise on a line doing thousands of units; listing it — and every
+ * zero-count slot — pushes the image strip below the fold, which is the part
+ * the operator actually came to look at. The total above still counts them.
+ */
+const MIN_CAUSE_COUNT = 2
+
+/** Thumbnails in view at once. Keep in step with `.frame`'s flex-basis. */
+const FRAMES_IN_VIEW = 3
 
 export default function CameraRail({
   node, tag, pollMs = 5000, container,
@@ -232,15 +245,20 @@ export default function CameraRail({
   })
 
   const slots = defects?.slots ?? []
+  const shownSlots = useMemo(() => slots.filter((s) => s.count >= MIN_CAUSE_COUNT), [slots])
+  const hiddenSlots = slots.length - shownSlots.length
   const topCount = useMemo(
-    () => slots.reduce((max, s) => Math.max(max, s.count), 0),
-    [slots],
+    () => shownSlots.reduce((max, s) => Math.max(max, s.count), 0),
+    [shownSlots],
   )
   // `slotFilter` holds a defect slot number, OK_SLOT, or null for "nothing picked".
   const showingOk = slotFilter === OK_SLOT
   const activeSlot = showingOk ? null : (slots.find((s) => s.slot === slotFilter) ?? null)
   const stripFrames = framesAreStale ? null : frames
   const frameCount = stripFrames?.length ?? 0
+  // The slide index is the first thumbnail in view; the last start position
+  // is the one that fills the well, so the right chevron stops there.
+  const lastStart = Math.max(0, frameCount - FRAMES_IN_VIEW)
   const activeLabel = showingOk ? T.okWord : activeSlot ? slotLabel(activeSlot) : ''
 
   const statusClass = STATUS_CLASS[tag?.status] || styles.pillStale
@@ -250,12 +268,20 @@ export default function CameraRail({
     setSlotFilter((cur) => (cur === slot ? null : slot))
   }
 
-  /** Slides exactly one frame per step — each frame is now full-width. */
+  /** One thumbnail's width plus the gap after it — the distance one step moves. */
+  function frameStep(el) {
+    const first = el?.firstElementChild
+    const second = first?.nextElementSibling
+    if (!first) return 0
+    return second ? second.offsetLeft - first.offsetLeft : first.offsetWidth
+  }
+
+  /** Slides one thumbnail per step, never past the last full view of three. */
   function goToSlide(i) {
     const el = stripRef.current
-    const clamped = Math.max(0, Math.min(i, frameCount - 1))
+    const clamped = Math.max(0, Math.min(i, lastStart))
     setSlideIndex(clamped)
-    el?.scrollTo({ left: clamped * el.clientWidth, behavior: 'smooth' })
+    el?.scrollTo({ left: clamped * frameStep(el), behavior: 'smooth' })
   }
 
   function scrollStrip(dir) {
@@ -266,9 +292,10 @@ export default function CameraRail({
    * which moves scrollLeft without going through goToSlide. */
   function handleStripScroll(e) {
     const el = e.currentTarget
-    if (!el.clientWidth) return
+    const step = frameStep(el)
+    if (!step) return
     setSlideIndex((cur) => {
-      const next = Math.round(el.scrollLeft / el.clientWidth)
+      const next = Math.min(lastStart, Math.round(el.scrollLeft / step))
       return next === cur ? cur : next
     })
   }
@@ -368,9 +395,9 @@ export default function CameraRail({
 
       <div>
         <div className={styles.sectionTitle}>{T.slotsTitle}</div>
-        {slots.length ? (
+        {shownSlots.length ? (
           <div className={styles.causes}>
-            {slots.map((s) => (
+            {shownSlots.map((s) => (
               <button
                 key={s.slot}
                 type="button"
@@ -397,7 +424,12 @@ export default function CameraRail({
             ))}
           </div>
         ) : (
-          <p className={styles.quiet}>{T.slotsEmpty}</p>
+          <p className={styles.quiet}>
+            {hiddenSlots ? T.slotsBelowMin(MIN_CAUSE_COUNT, hiddenSlots) : T.slotsEmpty}
+          </p>
+        )}
+        {shownSlots.length > 0 && hiddenSlots > 0 && (
+          <p className={styles.hiddenNote}>{T.slotsHidden(MIN_CAUSE_COUNT, hiddenSlots)}</p>
         )}
       </div>
 
@@ -422,7 +454,11 @@ export default function CameraRail({
               {T.okToggle}
             </button>
             {frameCount > 0 && (
-              <span className={styles.stripPos}>{`${slideIndex + 1}/${frameCount}`}</span>
+              <span className={styles.stripPos}>
+                {frameCount > FRAMES_IN_VIEW
+                  ? `${slideIndex + 1}–${Math.min(slideIndex + FRAMES_IN_VIEW, frameCount)}/${frameCount}`
+                  : `${frameCount}/${frameCount}`}
+              </span>
             )}
             <IconButton
               size="small"
@@ -435,7 +471,7 @@ export default function CameraRail({
             <IconButton
               size="small"
               aria-label={T.scrollRight}
-              disabled={slideIndex >= frameCount - 1}
+              disabled={slideIndex >= lastStart}
               onClick={() => scrollStrip(1)}
             >
               <ChevronRightIcon fontSize="small" />
