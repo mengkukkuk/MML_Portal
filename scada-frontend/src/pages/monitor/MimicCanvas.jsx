@@ -6,11 +6,18 @@ import {
   symbolDef, portPoint, bubbleSpec,
 } from '@/components/mimic/symbols'
 import InstrumentBubble from '@/components/mimic/InstrumentBubble'
-import { resolveSymbolColor, symbolColorStyle } from '@/components/mimic/symbolColors'
+import { resolveSymbolPaint, symbolColorStyle } from '@/components/mimic/symbolColors'
 import { isFlowing } from '@/components/mimic/tagStatus'
 import { NORMAL_WIRE, WirePath, wireType } from '@/components/mimic/wireTypes'
 import { fitToContents, gridStepForZoom, zoomAtPoint } from './editorViewport'
 import styles from './MimicCanvas.module.css'
+import { moveGroup, nodesInRect } from './editorSelection'
+
+
+/** A resolved { color, opacity } paint as the symbol group's CSS variables. */
+function paintStyle(paint) {
+  return paint ? symbolColorStyle(paint.color, paint.opacity) : undefined
+}
 
 const SNAPSHOT_STYLE_PROPERTIES = [
   'color', 'display', 'fill', 'fill-opacity', 'filter', 'font-family', 'font-size',
@@ -28,6 +35,32 @@ const blobAsDataUrl = (blob) => new Promise((resolve, reject) => {
 
 export const VIEW_W = 1600
 export const VIEW_H = 900
+const EMPTY_IDS = []
+
+/**
+ * The sheet sizes a drawing can use, all 16:9 like the original sheet. A
+ * plant with hundreds of symbols gets a bigger sheet to pan around rather
+ * than symbols shrunk until nothing is legible. Stored as the layout's
+ * `viewBox`, which the server keeps as-is.
+ */
+export const SHEET_SIZES = [
+  { id: 'standard', label: 'Standard', w: 1600, h: 900 },
+  { id: 'large', label: 'Large', w: 2400, h: 1350 },
+  { id: 'xl', label: 'Extra large', w: 3200, h: 1800 },
+  { id: 'huge', label: 'Huge', w: 4800, h: 2700 },
+  // Wide-screen sheets: the Standard height, so symbols keep their size, and
+  // the extra width a 21:9 or 32:9 control-room monitor actually has. The view
+  // takes the panel's shape (see panelAspect), so a wide sheet fills a wide
+  // screen edge to edge instead of sitting in a 16:9 box.
+  { id: 'wide', label: 'Wide 21:9', w: 2100, h: 900 },
+  { id: 'ultrawide', label: 'Ultra-wide 32:9', w: 3200, h: 900 },
+]
+
+/** A drawing's sheet size, falling back to Standard for older documents. */
+export function sheetOf(layout) {
+  return { w: layout?.viewBox?.w || VIEW_W, h: layout?.viewBox?.h || VIEW_H }
+}
+
 export const GRID = 8
 
 /** How near a dropped wire must land to count as hitting a port. */
@@ -98,7 +131,7 @@ function routeEdge(fromNode, fromPort, toNode, toPort) {
  * all. Resizing from the left is therefore "drag this edge to a grid line",
  * not "drag this edge and watch the other one drift".
  */
-function resizeBox(drag, dx, dy, lockAspect, snapEnabled) {
+function resizeBox(drag, dx, dy, lockAspect, snapEnabled, sheet = { w: VIEW_W, h: VIEW_H }) {
   const {
     x0, y0, w0, h0, handle,
   } = drag
@@ -108,22 +141,22 @@ function resizeBox(drag, dx, dy, lockAspect, snapEnabled) {
     x = clamp(snap(x0 + dx, snapEnabled), 0, x0 + w0 - MIN_NODE)
     w = x0 + w0 - x
   } else if (handle.ex === 'r') {
-    w = clamp(snap(w0 + dx, snapEnabled), MIN_NODE, VIEW_W - x0)
+    w = clamp(snap(w0 + dx, snapEnabled), MIN_NODE, sheet.w - x0)
   }
 
   if (handle.ey === 't') {
     y = clamp(snap(y0 + dy, snapEnabled), 0, y0 + h0 - MIN_NODE)
     h = y0 + h0 - y
   } else if (handle.ey === 'b') {
-    h = clamp(snap(h0 + dy, snapEnabled), MIN_NODE, VIEW_H - y0)
+    h = clamp(snap(h0 + dy, snapEnabled), MIN_NODE, sheet.h - y0)
   }
 
   // Shift on a corner keeps the symbol's proportions. Width leads, because the
   // pointer has travelled further horizontally on almost every corner drag.
   if (lockAspect && handle.ex && handle.ey && w0 > 0) {
-    h = clamp(Math.round((w * h0) / w0), MIN_NODE, VIEW_H)
-    if (handle.ey === 't') y = clamp(y0 + h0 - h, 0, VIEW_H - h)
-    else h = Math.min(h, VIEW_H - y0)
+    h = clamp(Math.round((w * h0) / w0), MIN_NODE, sheet.h)
+    if (handle.ey === 't') y = clamp(y0 + h0 - h, 0, sheet.h - h)
+    else h = Math.min(h, sheet.h - y0)
   }
 
   return { x, y, w, h }
@@ -179,6 +212,13 @@ const MimicCanvas = forwardRef(function MimicCanvas({
   tags,
   selectedId,
   onSelect,
+  // Multi-selection (editor only): the ids of a box/shift selection of two or
+  // more, and the callbacks that act on all of them at once.
+  groupIds = EMPTY_IDS,
+  onSelectMany,
+  onMoveNodes,
+  onNudgeNodes,
+  onDeleteNodes,
   selectedEdgeId = null,
   onSelectEdge,
   editMode = false,
@@ -216,6 +256,10 @@ const MimicCanvas = forwardRef(function MimicCanvas({
   // The in-flight wire: start port, current cursor, and the port it would land
   // on if released now. Never committed until pointerup finds a target.
   const [wire, setWire] = useState(null)
+  // The rubber band while a selection box is being dragged, in logical units.
+  const [marquee, setMarquee] = useState(null)
+  const groupSet = useMemo(() => new Set(groupIds), [groupIds])
+  const multi = groupIds.length > 1
 
   const baseView = useMemo(() => ({
     x: 0,
@@ -234,20 +278,70 @@ const MimicCanvas = forwardRef(function MimicCanvas({
 
   useEffect(() => onViewportChange?.(view), [onViewportChange, view])
 
+  /**
+   * The panel's own shape, measured. Every view the canvas computes takes this
+   * aspect ratio, so the drawing fills the panel on any screen: on a wide
+   * monitor a 16:9 view left broad empty bands either side, because the SVG
+   * letterboxes a view whose shape differs from its box.
+   */
+  const [panelAspect, setPanelAspect] = useState(baseView.w / baseView.h)
   useEffect(() => {
-    if (previousBaseViewKey.current === baseViewKey) return
-    previousBaseViewKey.current = baseViewKey
-    updateView(baseView)
-  }, [baseView, baseViewKey, updateView])
+    const svg = svgRef.current
+    if (!svg || typeof ResizeObserver === 'undefined') return undefined
+    const measure = () => {
+      const { width, height } = svg.getBoundingClientRect()
+      if (width > 0 && height > 0) setPanelAspect(width / height)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(svg)
+    return () => observer.disconnect()
+  }, [])
 
-  const resetView = useCallback(() => updateView(baseView), [baseView, updateView])
+  /** The whole sheet, centred, widened (or heightened) to the panel's shape. */
+  const sheetView = useCallback((aspect) => {
+    const sheetAspect = baseView.w / baseView.h
+    if (aspect >= sheetAspect) {
+      const w = baseView.h * aspect
+      return { x: (baseView.w - w) / 2, y: 0, w, h: baseView.h }
+    }
+    const h = baseView.w / aspect
+    return { x: 0, y: (baseView.h - h) / 2, w: baseView.w, h }
+  }, [baseView.h, baseView.w])
+
+  // Until someone zooms or pans, the view keeps fitting itself as the panel
+  // resizes. The live display fits the equipment (so it fills a wide screen);
+  // the editor fits the whole sheet, since that is the space being drawn on.
+  const autoFitRef = useRef(true)
+  const autoView = useCallback((aspect) => (editMode
+    ? sheetView(aspect)
+    : fitToContents(layout.nodes, aspect, 48, baseView.w)), [baseView.w, editMode, layout.nodes, sheetView])
+
+  // Deliberately not keyed on node positions: dragging a symbol in the editor
+  // must not re-fit the view under the pointer. A new sheet size, a switch of
+  // mode or drawing, or a resized panel is what re-fits.
+  const fitKey = `${baseViewKey}|${editMode}|${layout.name}|${layout.nodes.length}`
+  useEffect(() => {
+    const sheetChanged = previousBaseViewKey.current !== baseViewKey
+    previousBaseViewKey.current = baseViewKey
+    if (sheetChanged) autoFitRef.current = true
+    if (autoFitRef.current) updateView(autoView(panelAspect))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitKey, panelAspect])
+
+  const resetView = useCallback(() => {
+    autoFitRef.current = true
+    updateView(sheetView(panelAspect))
+  }, [panelAspect, sheetView, updateView])
   const zoom = useCallback((factor, point = null) => {
+    autoFitRef.current = false
     const p = point || { x: view.x + view.w / 2, y: view.y + view.h / 2 }
     updateView(zoomAtPoint(view, p.x, p.y, factor, baseView.w))
   }, [baseView.w, updateView, view])
-  const fit = useCallback(() => updateView(
-    fitToContents(layout.nodes, baseView.w / baseView.h, 48, baseView.w),
-  ), [baseView.h, baseView.w, layout.nodes, updateView])
+  const fit = useCallback(() => {
+    autoFitRef.current = true
+    updateView(fitToContents(layout.nodes, panelAspect, 48, baseView.w))
+  }, [baseView.w, layout.nodes, panelAspect, updateView])
 
   const snapshot = useCallback(async () => {
     const svg = svgRef.current
@@ -359,18 +453,41 @@ const MimicCanvas = forwardRef(function MimicCanvas({
   }, [])
 
   const handleNodePointerDown = useCallback((evt, node) => {
-    onSelect(node.id)
+    // Shift+click adds a symbol to the selection, or takes it back out.
+    if (editMode && evt.shiftKey && evt.button === 0 && onSelectMany) {
+      evt.preventDefault()
+      const current = multi ? groupIds : (selectedId ? [selectedId] : [])
+      onSelectMany(current.includes(node.id)
+        ? current.filter((id) => id !== node.id)
+        : [...current, node.id])
+      return
+    }
+    // Pressing on a member of the group keeps the group and drags all of it.
+    const groupDrag = editMode && multi && groupSet.has(node.id)
+    if (!groupDrag) onSelect(node.id)
     if (!editMode) return
     if (toolMode === 'pan' || spaceHeldRef.current || evt.button !== 0) return
     const p = toLogical(evt)
     if (!p) return
-    dragRef.current = {
-      kind: 'node', id: node.id, ox: p.x - node.x, oy: p.y - node.y,
+    if (groupDrag) {
+      dragRef.current = {
+        kind: 'group',
+        px: p.x,
+        py: p.y,
+        origins: layout.nodes
+          .filter((n) => groupSet.has(n.id))
+          .map((n) => ({ id: n.id, x: n.x, y: n.y, w: n.w, h: n.h })),
+      }
+    } else {
+      dragRef.current = {
+        kind: 'node', id: node.id, ox: p.x - node.x, oy: p.y - node.y,
+      }
     }
     onGestureStart?.()
     setDraggingId(node.id)
     capture(evt)
-  }, [capture, editMode, onGestureStart, onSelect, toLogical, toolMode])
+  }, [capture, editMode, groupIds, groupSet, layout.nodes, multi, onGestureStart, onSelect,
+    onSelectMany, selectedId, toLogical, toolMode])
 
   const handleResizePointerDown = useCallback((evt, node, handle) => {
     if (evt.button !== 0 || toolMode === 'pan' || spaceHeldRef.current) return
@@ -442,6 +559,24 @@ const MimicCanvas = forwardRef(function MimicCanvas({
     const p = toLogical(evt)
     if (!p) return
 
+    if (drag.kind === 'marquee') {
+      setMarquee({ x0: drag.x0, y0: drag.y0, x1: p.x, y1: p.y })
+      return
+    }
+
+    if (drag.kind === 'group') {
+      // The shared delta is snapped, not each position, so the members keep
+      // their spacing exactly — snapping each would nudge them onto the grid
+      // one by one and quietly rearrange the group.
+      onMoveNodes?.(moveGroup(
+        drag.origins,
+        snap(p.x - drag.px, snapEnabled),
+        snap(p.y - drag.py, snapEnabled),
+        baseView,
+      ))
+      return
+    }
+
     if (drag.kind === 'wire') {
       setWire({
         node: drag.node, port: drag.port, x: p.x, y: p.y, target: findPort(p, drag.node),
@@ -470,7 +605,7 @@ const MimicCanvas = forwardRef(function MimicCanvas({
       const dyg = p.y - drag.py
       const dx = dxg * Math.cos(th) - dyg * Math.sin(th)
       const dy = dxg * Math.sin(th) + dyg * Math.cos(th)
-      onResizeNode(drag.id, resizeBox(drag, dx, dy, evt.shiftKey, snapEnabled))
+      onResizeNode(drag.id, resizeBox(drag, dx, dy, evt.shiftKey, snapEnabled, baseView))
       return
     }
 
@@ -478,8 +613,8 @@ const MimicCanvas = forwardRef(function MimicCanvas({
       // Stored as an offset from the anchor, so the balloon keeps its relative
       // placement when the symbol itself is moved afterwards.
       onMoveBubble(drag.id, [
-        Math.round(clamp(p.x - drag.ox, drag.radius + 4, VIEW_W - drag.radius - 4) - drag.ax),
-        Math.round(clamp(p.y - drag.oy, drag.radius + 16, VIEW_H - drag.radius - 4) - drag.ay),
+        Math.round(clamp(p.x - drag.ox, drag.radius + 4, baseView.w - drag.radius - 4) - drag.ax),
+        Math.round(clamp(p.y - drag.oy, drag.radius + 16, baseView.h - drag.radius - 4) - drag.ay),
       ])
       return
     }
@@ -487,15 +622,32 @@ const MimicCanvas = forwardRef(function MimicCanvas({
     const node = nodeById(drag.id)
     if (!node) return
     onMoveNode(drag.id, {
-      x: clamp(snap(p.x - drag.ox, snapEnabled), 0, VIEW_W - node.w),
-      y: clamp(snap(p.y - drag.oy, snapEnabled), 0, VIEW_H - node.h),
+      x: clamp(snap(p.x - drag.ox, snapEnabled), 0, baseView.w - node.w),
+      y: clamp(snap(p.y - drag.oy, snapEnabled), 0, baseView.h - node.h),
     })
-  }, [findPort, nodeById, onMoveBubble, onMoveNode, onResizeNode, snapEnabled, toLogical, updateView])
+  }, [baseView, findPort, nodeById, onMoveBubble, onMoveNode, onMoveNodes, onResizeNode,
+    snapEnabled, toLogical, updateView])
 
   const endDrag = useCallback((evt) => {
     const drag = dragRef.current
     if (!drag) return
     dragRef.current = null
+    if (drag.kind === 'marquee') {
+      setMarquee(null)
+      const end = toLogical(evt) ?? { x: drag.x0, y: drag.y0 }
+      // A press that barely moved is a click on empty sheet: clear, as before.
+      const moved = Math.hypot(end.x - drag.x0, end.y - drag.y0) * (baseView.w / view.w) > 6
+      if (!moved) {
+        if (!drag.additive) onSelect(null)
+      } else {
+        const hit = nodesInRect(layout.nodes, { x: drag.x0, y: drag.y0 }, end)
+        onSelectMany?.(drag.additive ? [...new Set([...drag.base, ...hit])] : hit)
+      }
+      if (svgRef.current?.hasPointerCapture(evt.pointerId)) {
+        svgRef.current.releasePointerCapture(evt.pointerId)
+      }
+      return
+    }
     if (drag.kind === 'wire') {
       const point = toLogical(evt)
       const target = point ? findPort(point, drag.node) : wire?.target
@@ -509,16 +661,18 @@ const MimicCanvas = forwardRef(function MimicCanvas({
     if (svgRef.current?.hasPointerCapture(evt.pointerId)) {
       svgRef.current.releasePointerCapture(evt.pointerId)
     }
-  }, [findPort, onAddEdge, onGestureEnd, toLogical, wire])
+  }, [baseView.w, findPort, layout.nodes, onAddEdge, onGestureEnd, onSelect, onSelectMany,
+    toLogical, view.w, wire])
 
   const cancelDrag = useCallback((evt) => {
     const drag = dragRef.current
     if (!drag) return
     dragRef.current = null
     setWire(null)
+    setMarquee(null)
     setDraggingId(null)
     setResizingId(null)
-    if (drag.kind !== 'wire' && drag.kind !== 'pan') onGestureCancel?.()
+    if (drag.kind !== 'wire' && drag.kind !== 'pan' && drag.kind !== 'marquee') onGestureCancel?.()
     if (Number.isInteger(evt.pointerId) && svgRef.current?.hasPointerCapture(evt.pointerId)) {
       svgRef.current.releasePointerCapture(evt.pointerId)
     }
@@ -528,10 +682,31 @@ const MimicCanvas = forwardRef(function MimicCanvas({
     if (!editMode || evt.defaultPrevented) return
     const del = evt.key === 'Delete' || evt.key === 'Backspace'
 
+    if ((evt.ctrlKey || evt.metaKey) && evt.key.toLowerCase() === 'a' && onSelectMany) {
+      evt.preventDefault()
+      onSelectMany(layout.nodes.map((n) => n.id))
+      return
+    }
+
     if (selectedEdgeId) {
       if (!del) return
       evt.preventDefault()
       onDeleteEdge(selectedEdgeId)
+      return
+    }
+    if (multi) {
+      if (del) {
+        evt.preventDefault()
+        onDeleteNodes?.(groupIds)
+        return
+      }
+      const step = evt.shiftKey ? 1 : GRID
+      const delta = {
+        ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step],
+      }[evt.key]
+      if (!delta) return
+      evt.preventDefault()
+      onNudgeNodes?.(groupIds, delta[0], delta[1])
       return
     }
     if (!selectedId) return
@@ -551,7 +726,8 @@ const MimicCanvas = forwardRef(function MimicCanvas({
     // keydowns before React re-renders, and an absolute position computed from
     // the rendered node would make every one of them overwrite the last.
     onNudgeNode(selectedId, delta[0], delta[1])
-  }, [editMode, onDeleteEdge, onDeleteNode, onNudgeNode, selectedEdgeId, selectedId])
+  }, [editMode, groupIds, layout.nodes, multi, onDeleteEdge, onDeleteNode, onDeleteNodes,
+    onNudgeNode, onNudgeNodes, onSelectMany, selectedEdgeId, selectedId])
 
   useEffect(() => {
     if (!editMode) return undefined
@@ -638,11 +814,30 @@ const MimicCanvas = forwardRef(function MimicCanvas({
       onPointerDown={(e) => {
         focusStage()
         if (e.button === 1 || toolMode === 'pan' || spaceHeldRef.current) {
+          autoFitRef.current = false
           dragRef.current = { kind: 'pan', clientX: e.clientX, clientY: e.clientY, view }
           capture(e)
           return
         }
-        if (e.target === svgRef.current || e.target.dataset.canvasBackground === 'true') onSelect(null)
+        const onEmpty = e.target === svgRef.current || e.target.dataset.canvasBackground === 'true'
+        if (!onEmpty) return
+        // In the editor, pressing on empty sheet starts a selection box; the
+        // click-to-clear is decided on release, once it is clear no box was drawn.
+        if (editMode && e.button === 0 && onSelectMany) {
+          const p = toLogical(e)
+          if (!p) return
+          dragRef.current = {
+            kind: 'marquee',
+            x0: p.x,
+            y0: p.y,
+            additive: e.shiftKey,
+            base: multi ? groupIds : (selectedId ? [selectedId] : []),
+          }
+          setMarquee({ x0: p.x, y0: p.y, x1: p.x, y1: p.y })
+          capture(e)
+          return
+        }
+        onSelect(null)
       }}
     >
       <defs>
@@ -779,7 +974,7 @@ const MimicCanvas = forwardRef(function MimicCanvas({
           // the same loop, and each still needs its own reading and its own
           // pulse.
           const tag = tags[node.id] ?? null
-          const selected = selectedId === node.id
+          const selected = selectedId === node.id || groupSet.has(node.id)
           // A symbol that carries an instrument but has nothing bound to it is
           // an uncommissioned loop — drawn, but visibly not yet reading.
           const unbound = def.binding !== 'none' && !tag
@@ -789,7 +984,7 @@ const MimicCanvas = forwardRef(function MimicCanvas({
               // Palette colour, if the symbol or its category has one — see
               // symbolColors.js. Set as --sym-* so the halo and grips below keep
               // the app accent.
-              style={symbolColorStyle(resolveSymbolColor(node, def, layout.theme))}
+              style={paintStyle(resolveSymbolPaint(node, def, layout.theme))}
               className={`${styles.node} ${editMode ? styles.nodeEditing : ''} ${draggingId === node.id ? styles.nodeDragging : ''} ${unbound ? styles.nodeUnbound : ''}`}
               transform={`translate(${node.x} ${node.y})${node.rot ? ` rotate(${node.rot} ${node.w / 2} ${node.h / 2})` : ''}`}
               onPointerDown={(e) => handleNodePointerDown(e, node)}
@@ -830,7 +1025,7 @@ const MimicCanvas = forwardRef(function MimicCanvas({
                   edge you grab should be the edge that ends up there. They
                   live inside the node group so a rotated symbol keeps its
                   grips on its own corners. */}
-              {selected && editMode && HANDLES.map((h) => (
+              {selectedId === node.id && !multi && editMode && HANDLES.map((h) => (
                 <rect
                   key={h.id}
                   className={styles.grip}
@@ -957,7 +1152,7 @@ const MimicCanvas = forwardRef(function MimicCanvas({
         * picker's job, and a key listing lines that are not on the sheet is
         * decoration rather than information. */}
       {legend.length > 0 && (
-        <g transform={`translate(40 ${VIEW_H - 34})`}>
+        <g transform={`translate(40 ${baseView.h - 34})`}>
           {legend.map((entry, i) => (
             <g key={entry.id} transform={`translate(${i * 170} 0)`}>
               <WirePath d="M 0 0 H 34" wire={entry} />
@@ -965,6 +1160,15 @@ const MimicCanvas = forwardRef(function MimicCanvas({
             </g>
           ))}
         </g>
+      )}
+      {marquee && (
+        <rect
+          className={styles.marquee}
+          x={Math.min(marquee.x0, marquee.x1)}
+          y={Math.min(marquee.y0, marquee.y1)}
+          width={Math.abs(marquee.x1 - marquee.x0)}
+          height={Math.abs(marquee.y1 - marquee.y0)}
+        />
       )}
     </svg>
   )

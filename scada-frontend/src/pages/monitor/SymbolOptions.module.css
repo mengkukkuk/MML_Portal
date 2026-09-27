@@ -524,3 +524,54 @@
   color: var(--fg-muted);
   cursor: pointer;
 }
+
+/* Fill opacity, under the swatch it fades. The track runs from the panel to
+   the chosen colour, so the slider previews the very wash it sets. */
+.opacityRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: 36px; /* under the text, clear of the 28px swatch + gap */
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.opacity {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 6px;
+  margin: 0;
+  appearance: none;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--bg-elev), var(--swatch));
+  cursor: pointer;
+}
+
+.opacity::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--swatch) var(--pct), var(--bg-panel));
+  border: 2px solid var(--swatch);
+}
+
+.opacity::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--swatch) var(--pct), var(--bg-panel));
+  border: 2px solid var(--swatch);
+}
+
+.opacity:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.opacityValue {
+  flex: 0 0 34px;
+  text-align: right;
+  font-family: var(--font-mono);
+  color: var(--fg-muted);
+}

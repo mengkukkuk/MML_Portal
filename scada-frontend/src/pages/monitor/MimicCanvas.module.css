@@ -169,8 +169,12 @@
 /* An uncommissioned loop: drawn, but visibly not reading yet. The hairline
    dashed box is the drawing convention for equipment shown for reference
    rather than in service, and it reads honestly at a glance across a room. */
+/* Unconnected symbols were faded to 45%, which also greyed their ink — on a
+ * freshly drawn sheet, every line. The dashed .unboundOutline already marks
+ * them; the fill is quietened instead so the linework stays sharp. */
 .nodeUnbound {
-  opacity: 0.45;
+  --sym-fill: var(--bg-panel);
+  --sym-fill-elev: var(--bg-panel);
 }
 
 .unboundOutline {
@@ -326,4 +330,16 @@
   fill: var(--warn);
   pointer-events: none;
   user-select: none;
+}
+
+/* The selection box: the app accent, a faint wash, a dash — the usual rubber
+ * band, so it reads as "selecting" and never as a drawn object. Screen-pixel
+ * stroke so it is the same weight at any zoom. */
+.marquee {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 5 3;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }

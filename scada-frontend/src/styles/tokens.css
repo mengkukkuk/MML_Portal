@@ -43,6 +43,11 @@
   /* Thai UI copy (camera rail). Falls back to the system sans stack so a
      face that hasn't loaded yet renders Thai via the OS, not tofu. */
   --font-thai: "IBM Plex Sans Thai", var(--font-sans);
+
+  /* Mimic symbol linework. The theme's strongest foreground, so outlines read
+   * as drawn ink rather than as grey: near-white on the dark faceplates (black
+   * would vanish into navy), true black on paper — see that block. */
+  --sym-ink: var(--fg);
 }
 
 /* ---------------------------------------------------------------------------
@@ -115,6 +120,7 @@
   --ok: #2e7d5b;
   --warn: #b8810f;
   --crit: #be3b2b;
+  --sym-ink: #0b0d0f;
 }
 
 /* Re-skin the app smoothly when the operator swaps faceplates. */

@@ -33,7 +33,7 @@ export default function MimicEditorToolbar({
   toolMode, onToolMode, wirePen, onWirePen, gridVisible, onGridVisible,
   snapEnabled, onSnapEnabled, zoomPercent, onZoomOut, onZoomIn, onResetView,
   onFit, fullscreen, onFullscreen, onSnapshot, onTogglePalette, onToggleInspector,
-  onProductionLog, productionLogConfigured,
+  onProductionLog, productionLogConfigured, sheet, sheetSizes = [], onSheetSize,
 }) {
   return (
     <div className={styles.toolbar} role="toolbar" aria-label="Drafting tools">
@@ -56,6 +56,29 @@ export default function MimicEditorToolbar({
           ))}
         </select>
       </label>
+
+      {onSheetSize && sheet && (
+        <label className={`${styles.wireSelect} ${styles.sheetSelect}`} title="Sheet size — a bigger sheet holds more symbols; pan and zoom to move around it">
+          <span>Sheet</span>
+          <select
+            value={`${sheet.w}x${sheet.h}`}
+            onChange={(event) => {
+              const size = sheetSizes.find((s) => `${s.w}x${s.h}` === event.target.value)
+              if (size) onSheetSize(size.w, size.h)
+            }}
+          >
+            {sheetSizes.map((size) => (
+              // A size some symbol would fall off is shown but not offered.
+              <option key={size.id} value={`${size.w}x${size.h}`} disabled={!size.fits}>
+                {size.label} · {size.w}×{size.h}{size.fits ? '' : ' (symbols outside)'}
+              </option>
+            ))}
+            {!sheetSizes.some((s) => s.w === sheet.w && s.h === sheet.h) && (
+              <option value={`${sheet.w}x${sheet.h}`}>Custom · {sheet.w}×{sheet.h}</option>
+            )}
+          </select>
+        </label>
+      )}
 
       <div className={styles.toolGroup}>
         <ToolButton label="Toggle grid" active={gridVisible} onClick={() => onGridVisible(!gridVisible)}>

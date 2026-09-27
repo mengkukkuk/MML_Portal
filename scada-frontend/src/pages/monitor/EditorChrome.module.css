@@ -57,6 +57,8 @@
 
 .wireSelect { display: flex; align-items: center; gap: 8px; color: var(--fg-dim); font: 600 10px var(--font-display); letter-spacing: .12em; text-transform: uppercase; }
 .wireSelect select { width: 150px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-app); color: var(--fg); padding: 7px 26px 7px 8px; font: 12px var(--font-sans); }
+/* The sheet names carry their size ("Extra large · 3200×1800"), so the select is wider than the wire one. */
+.sheetSelect select { width: 200px; }
 .zoomGroup { margin-left: auto; }
 .zoomValue { width: 48px; color: var(--fg); text-align: center; font: 11px var(--font-mono); }
 .drawerTools { display: none; }
@@ -88,6 +90,7 @@
 @media (max-width: 1399px) {
   .drawerTools { display: flex; }
   .wireSelect select { width: 128px; }
+  .sheetSelect select { width: 176px; }
   .commandBar { align-items: flex-start; flex-direction: column; }
   .commandCluster { width: 100%; overflow-x: auto; }
   .saveCluster { width: 100%; justify-content: flex-end; }

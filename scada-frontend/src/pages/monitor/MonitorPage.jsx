@@ -31,10 +31,12 @@ import { fetchMimicLayout, fetchMimicLayouts, saveMimicLayout } from '@/api/mimi
 import { fetchDatasources } from '@/api/datasources'
 import { fetchMimicSymbols } from '@/api/mimicAssets'
 import { apiErrorMessage } from '@/api/client'
-import MimicCanvas, { VIEW_W, VIEW_H } from './MimicCanvas'
+import MimicCanvas, { VIEW_W, VIEW_H, SHEET_SIZES, sheetOf } from './MimicCanvas'
+import GroupInspector from './GroupInspector'
 import DetailRail from './DetailRail'
 import CameraRail from './CameraRail'
-import CategoryLegend from './CategoryLegend'
+import TitleBlock from './TitleBlock'
+import { useTranslation } from '@/i18n'
 import SymbolPalette from './SymbolPalette'
 import NodeInspector from './NodeInspector'
 import EdgeInspector from './EdgeInspector'
@@ -119,6 +121,7 @@ let addCounter = 0
  * server-side so every operator sees the same commissioned plant.
  */
 export default function MonitorPage() {
+  const tr = useTranslation()
   const role = useAuthStore((s) => s.user?.role ?? null)
   const canEdit = role === 'admin'
   const queryClient = useQueryClient()
@@ -348,6 +351,10 @@ export default function MonitorPage() {
   // A symbol and a pipe are never selected at once: the rail shows one
   // inspector, so two selections would leave one of them unreachable.
   const [selectedId, setSelectedId] = useState(null)
+  // A box or shift selection of two or more symbols (editor only). Mutually
+  // exclusive with selectedId: one symbol is the inspector's, several are the
+  // group panel's.
+  const [groupIds, setGroupIds] = useState([])
   const [selectedEdgeId, setSelectedEdgeId] = useState(null)
   const copiedNodeRef = useRef(null)
   const pasteCountRef = useRef(0)
@@ -496,6 +503,7 @@ export default function MonitorPage() {
   // the palette, and every option in it looks like it went missing.
   const selectNode = useCallback((id) => {
     setSelectedId(id)
+    setGroupIds([])
     setSelectedEdgeId(null)
     if (compactEditor) { setInspectorOpen(true); setPaletteOpen(false) }
   }, [compactEditor])
@@ -503,8 +511,22 @@ export default function MonitorPage() {
   const selectEdge = useCallback((id) => {
     setSelectedEdgeId(id)
     setSelectedId(null)
+    setGroupIds([])
     if (compactEditor) { setInspectorOpen(true); setPaletteOpen(false) }
   }, [compactEditor])
+
+  // Several at once: none clears, one is an ordinary selection, more is a group.
+  const selectMany = useCallback((ids) => {
+    const unique = [...new Set(ids)]
+    if (unique.length <= 1) {
+      selectNode(unique[0] ?? null)
+      return
+    }
+    setGroupIds(unique)
+    setSelectedId(null)
+    setSelectedEdgeId(null)
+    if (compactEditor) { setInspectorOpen(true); setPaletteOpen(false) }
+  }, [compactEditor, selectNode])
 
   const copySelection = useCallback(() => {
     if (!selectedNode) return false
@@ -523,13 +545,13 @@ export default function MonitorPage() {
     const node = {
       ...structuredClone(copied),
       id: `n-new-${Date.now().toString(36)}-${addCounter}`,
-      x: clamp(copied.x + offset, 0, VIEW_W - copied.w),
-      y: clamp(copied.y + offset, 0, VIEW_H - copied.h),
+      x: clamp(copied.x + offset, 0, sheetOf(layout).w - copied.w),
+      y: clamp(copied.y + offset, 0, sheetOf(layout).h - copied.h),
     }
     commitLayout((prev) => ({ ...prev, nodes: [...prev.nodes, node] }))
     selectNode(node.id)
     return true
-  }, [commitLayout, selectNode])
+  }, [commitLayout, layout, selectNode])
 
   // --- geometry edits ------------------------------------------------------
   const moveNode = useCallback((id, pos) => {
@@ -547,11 +569,65 @@ export default function MonitorPage() {
       nodes: prev.nodes.map((n) => (n.id === id
         ? {
           ...n,
-          x: clamp(n.x + dx, 0, VIEW_W - n.w),
-          y: clamp(n.y + dy, 0, VIEW_H - n.h),
+          x: clamp(n.x + dx, 0, sheetOf(prev).w - n.w),
+          y: clamp(n.y + dy, 0, sheetOf(prev).h - n.h),
         }
         : n)),
     }))
+  }, [commitLayout])
+
+  // --- group edits ---------------------------------------------------------
+  // The canvas computes the group's positions (a rigid block, clamped as one);
+  // these only write them, through the same preview/commit path as one symbol,
+  // so a group move is one undo step.
+  const moveNodes = useCallback((updates) => {
+    const at = new Map(updates.map((u) => [u.id, u]))
+    previewLayout((prev) => ({
+      ...prev,
+      nodes: prev.nodes.map((n) => (at.has(n.id) ? { ...n, x: at.get(n.id).x, y: at.get(n.id).y } : n)),
+    }))
+  }, [previewLayout])
+
+  const nudgeNodes = useCallback((ids, dx, dy) => {
+    commitLayout((prev) => {
+      const members = prev.nodes.filter((n) => ids.includes(n.id))
+      if (!members.length) return prev
+      const sheet = sheetOf(prev)
+      // One delta for all, limited by the members nearest each edge.
+      const cx = clamp(dx, -Math.min(...members.map((n) => n.x)),
+        sheet.w - Math.max(...members.map((n) => n.x + n.w)))
+      const cy = clamp(dy, -Math.min(...members.map((n) => n.y)),
+        sheet.h - Math.max(...members.map((n) => n.y + n.h)))
+      return {
+        ...prev,
+        nodes: prev.nodes.map((n) => (ids.includes(n.id) ? { ...n, x: n.x + cx, y: n.y + cy } : n)),
+      }
+    })
+  }, [commitLayout])
+
+  const deleteNodes = useCallback((ids) => {
+    const gone = new Set(ids)
+    commitLayout((prev) => ({
+      ...prev,
+      nodes: prev.nodes.filter((n) => !gone.has(n.id)),
+      edges: prev.edges.filter((e) => !gone.has(e.from.node) && !gone.has(e.to.node)),
+    }))
+    setGroupIds([])
+    setSelectedId(null)
+    setSelectedEdgeId(null)
+  }, [commitLayout])
+
+  const setNodesOptions = useCallback((ids, patch) => {
+    commitLayout((prev) => ({
+      ...prev,
+      nodes: prev.nodes.map((n) => (ids.includes(n.id) ? { ...n, options: { ...n.options, ...patch } } : n)),
+    }))
+  }, [commitLayout])
+
+  // Sheet size. Growing is always safe; shrinking is only offered when every
+  // symbol still fits (see sheetFits), so nothing is ever left off the sheet.
+  const setSheetSize = useCallback((w, h) => {
+    commitLayout((prev) => ({ ...prev, viewBox: { w, h } }))
   }, [commitLayout])
 
   // Ports are fractions of the node box and edge geometry is never stored, so
@@ -709,8 +785,9 @@ export default function MonitorPage() {
     const def = symbolDef({ type, symbolId }) ?? SYMBOLS[type]
     addCounter += 1
     const id = `n-new-${Date.now().toString(36)}-${addCounter}`
-    const rawX = (point?.x ?? VIEW_W / 2) - def.defaultSize.w / 2
-    const rawY = (point?.y ?? VIEW_H / 2) - def.defaultSize.h / 2
+    const sheet = sheetOf(layout)
+    const rawX = (point?.x ?? sheet.w / 2) - def.defaultSize.w / 2
+    const rawY = (point?.y ?? sheet.h / 2) - def.defaultSize.h / 2
     const place = (value) => (snapEnabled ? Math.round(value / 8) * 8 : Math.round(value))
     const node = {
       id,
@@ -719,15 +796,15 @@ export default function MonitorPage() {
       tagId: null,
       binding: null,
       label: def.label,
-      x: clamp(place(rawX), 0, VIEW_W - def.defaultSize.w),
-      y: clamp(place(rawY), 0, VIEW_H - def.defaultSize.h),
+      x: clamp(place(rawX), 0, sheet.w - def.defaultSize.w),
+      y: clamp(place(rawY), 0, sheet.h - def.defaultSize.h),
       w: def.defaultSize.w,
       h: def.defaultSize.h,
       rot: 0,
     }
     commitLayout((prev) => ({ ...prev, nodes: [...prev.nodes, node] }))
     selectNode(id)
-  }, [commitLayout, selectNode, snapEnabled])
+  }, [commitLayout, layout, selectNode, snapEnabled])
 
   // --- persistence ---------------------------------------------------------
   const [saving, setSaving] = useState(false)
@@ -1291,6 +1368,20 @@ export default function MonitorPage() {
     </div>
   )
 
+  // The attention list's order and counts. Rank: 0 alarm, 1 off normal,
+  // 2 not connected, 3 healthy — then sheet order within a rank, so a list
+  // that doesn't change doesn't reshuffle on every poll.
+  const attention = useMemo(() => {
+    const ranked = nodes.map((node, i) => {
+      const tag = tags[node.id]
+      const rank = tag?.status === 'crit' ? 0 : tag?.status === 'warn' ? 1 : !tag ? 2 : 3
+      return { node, tag, rank, i }
+    })
+    ranked.sort((a, b) => a.rank - b.rank || a.i - b.i)
+    const count = (r) => ranked.filter((x) => x.rank === r).length
+    return { ordered: ranked, crit: count(0), warn: count(1), unbound: count(2) }
+  }, [nodes, tags])
+
   const subtitle = nodes.length === 0
     ? 'Empty drawing · add symbols from the palette in edit mode'
     : connected === 0
@@ -1452,6 +1543,12 @@ export default function MonitorPage() {
               onToggleInspector={toggleInspector}
               onProductionLog={() => setProductionSettingsOpen(true)}
               productionLogConfigured={!!layout.productionLog}
+              sheet={sheetOf(layout)}
+              sheetSizes={SHEET_SIZES.map((size) => ({
+                ...size,
+                fits: layout.nodes.every((n) => n.x + n.w <= size.w && n.y + n.h <= size.h),
+              }))}
+              onSheetSize={setSheetSize}
             />
             <div className={styles.editorCanvas}>
               <MimicCanvas
@@ -1460,6 +1557,11 @@ export default function MonitorPage() {
                 tags={tags}
                 selectedId={selectedId}
                 onSelect={selectNode}
+                groupIds={groupIds}
+                onSelectMany={selectMany}
+                onMoveNodes={moveNodes}
+                onNudgeNodes={nudgeNodes}
+                onDeleteNodes={deleteNodes}
                 selectedEdgeId={selectedEdgeId}
                 onSelectEdge={selectEdge}
                 editMode={!saving}
@@ -1520,6 +1622,13 @@ export default function MonitorPage() {
                     onDelete={deleteEdge}
                     onBack={() => setSelectedEdgeId(null)}
                   />
+                ) : groupIds.length > 1 ? (
+                  <GroupInspector
+                    nodes={layout.nodes.filter((n) => groupIds.includes(n.id))}
+                    onOptions={(patch) => setNodesOptions(groupIds, patch)}
+                    onDelete={() => deleteNodes(groupIds)}
+                    onBack={() => setGroupIds([])}
+                  />
                 ) : selectedNode ? (
                   <NodeInspector
                     node={selectedNode}
@@ -1572,7 +1681,13 @@ export default function MonitorPage() {
               onMoveBubble={moveBubble}
             />
 
-            <CategoryLegend layout={layout} />
+            <TitleBlock
+              layout={layout}
+              name={activeName}
+              // Re-rendered on every poll, so this is the time of the figures
+              // on screen. Plant-local wall clock, like the rest of the page.
+              asOf={new Date().toLocaleTimeString('en-GB', { hour12: false })}
+            />
 
             {/* Windowed only. In full screen the same cluster is rendered
               * into the banner above instead, so it never covers the sheet. */}
@@ -1607,32 +1722,44 @@ export default function MonitorPage() {
         </div>
       )}
 
-      {/* Bottom strip to be added with title = "สิ่งที่ต้องจัดการ"
-      An empty drawing has no ticker to show;
-      the bare strip would just be a box with nothing in it. */}
-
+      {/* สิ่งที่ต้องจัดการ — every symbol on the sheet, the ones needing a
+        * person first: alarm, then off-normal, then not connected, then the
+        * healthy rest. Clicking an entry selects the symbol on the drawing.
+        * An empty drawing has nothing to list; the bare strip would just be a
+        * box with nothing in it. */}
       {nodes.length > 0 && (
-      <div className={styles.strip} role="group" aria-label="All plant tags">
-        {nodes.map((node) => {
-          const tag = tags[node.id]
-          const on = selectedId === node.id
-          const tone = tag?.status === 'crit' ? styles.chipCrit
-            : tag?.status === 'warn' ? styles.chipWarn : ''
-          return (
-            <button
-              key={node.id}
-              type="button"
-              className={`${styles.chip} ${on ? styles.chipOn : ''} ${tone} ${tag ? '' : styles.chipUnbound}`}
-              aria-pressed={on}
-              onClick={() => selectNode(node.id)}
-            >
-              <span className={styles.chipId}>{node.tagId || node.label}</span>
-              <span className={styles.chipValue}>{tag ? formatValue(tag) : '—'}</span>
-              {tag?.unit && <span className={styles.chipUnit}>{tag.unit}</span>}
-            </button>
-          )
-        })}
-      </div>
+        <section className={styles.strip} aria-label={tr('Things to handle')}>
+          <div className={styles.stripHead}>
+            <span className={styles.stripTitle}>{tr('Things to handle')}</span>
+            <span className={styles.stripCounts}>
+              {attention.crit > 0 && <span className={styles.countCrit}>{tr('{count} alarm', { count: attention.crit })}</span>}
+              {attention.warn > 0 && <span className={styles.countWarn}>{tr('{count} off normal', { count: attention.warn })}</span>}
+              {attention.unbound > 0 && <span className={styles.countUnbound}>{tr('{count} not connected', { count: attention.unbound })}</span>}
+              {!attention.crit && !attention.warn && !attention.unbound && (
+                <span className={styles.countOk}>{tr('Nothing needs attention')}</span>
+              )}
+            </span>
+          </div>
+          <div className={styles.stripItems} role="group" aria-label={tr('All plant tags')}>
+            {attention.ordered.map(({ node, tag, rank }) => {
+              const on = selectedId === node.id
+              const tone = rank === 0 ? styles.chipCrit : rank === 1 ? styles.chipWarn : ''
+              return (
+                <button
+                  key={node.id}
+                  type="button"
+                  className={`${styles.chip} ${on ? styles.chipOn : ''} ${tone} ${tag ? '' : styles.chipUnbound}`}
+                  aria-pressed={on}
+                  onClick={() => selectNode(node.id)}
+                >
+                  <span className={styles.chipId}>{node.tagId || node.label}</span>
+                  <span className={styles.chipValue}>{tag ? formatValue(tag) : '—'}</span>
+                  {tag?.unit && <span className={styles.chipUnit}>{tag.unit}</span>}
+                </button>
+              )
+            })}
+          </div>
+        </section>
       )}
 
       <SymbolBindingDialog

@@ -15,26 +15,37 @@
 
 /* --- shared strokes / fills ------------------------------------------- */
 
-/* --sym-* are set per symbol by MimicCanvas when it is painted from the
- * palette (see components/mimic/symbolColors.js); unset, the app theme shows. */
+/* Linework is ink (--sym-ink, tokens.css): black on the paper faceplate, the
+ * brightest foreground on the dark ones. A palette colour never recolours a
+ * line — it lives in the fills and accents (--sym-* below, set per symbol by
+ * MimicCanvas; see components/mimic/symbolColors.js) — so a coloured sheet
+ * still reads as one drawing in one pen, the way a technical diagram does.
+ *
+ * `non-scaling-stroke` pins the width in screen pixels. The 1600x900 sheet is
+ * usually scaled well below 1:1 to fit its panel, and a 2-unit stroke scaled
+ * to 0.6px renders as an anti-aliased grey smear; fixed pixels stay crisp at
+ * every zoom. Status (warn/crit) still overrides the stroke colour below. */
 .body {
   fill: var(--sym-fill, var(--bg-panel));
-  stroke: var(--sym-stroke, var(--fg-muted));
-  stroke-width: 2;
+  stroke: var(--sym-ink);
+  stroke-width: 1.6;
   stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
 }
 
 .bodyElev {
   fill: var(--sym-fill-elev, var(--bg-elev));
-  stroke: var(--sym-stroke, var(--fg-muted));
-  stroke-width: 2;
+  stroke: var(--sym-ink);
+  stroke-width: 1.6;
   stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
 }
 
 .hair {
   fill: none;
-  stroke: var(--fg-dim);
+  stroke: var(--sym-ink);
   stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
 .hairFill {
@@ -114,7 +125,7 @@
  */
 .levelTrack {
   fill: var(--bg-elev);
-  stroke: var(--fg-dim);
+  stroke: var(--sym-ink);
   stroke-width: 1.5;
 }
 
@@ -132,7 +143,7 @@
 }
 
 .levelTick {
-  stroke: var(--fg-dim);
+  stroke: var(--sym-ink);
   stroke-width: 1;
   opacity: 0.6;
 }
@@ -570,18 +581,18 @@
 
 .bubbleFace {
   fill: var(--bg-app);
-  stroke: var(--fg-muted);
+  stroke: var(--sym-ink);
   stroke-width: 1.5;
 }
 
 .bubbleSplit {
-  stroke: var(--fg-muted);
+  stroke: var(--sym-ink);
   stroke-width: 1;
 }
 
 .bubbleLead {
   fill: none;
-  stroke: var(--fg-dim);
+  stroke: var(--sym-ink);
   stroke-width: 1;
   stroke-dasharray: 2 4;
 }

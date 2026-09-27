@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  CATEGORY_COLORS, PALETTE_HEXES, categoryColor, cleanHex, resolveSymbolColor, symbolColorStyle,
+  CATEGORY_COLORS, DEFAULT_FILL_OPACITY, PALETTE_HEXES, categoryColor, cleanHex, cleanOpacity,
+  resolveSymbolColor, resolveSymbolPaint, symbolColorStyle,
 } from './symbolColors.js'
 
 const pump = { category: 'process' }
@@ -40,7 +41,33 @@ test('a colour from a saved document never reaches CSS unless it is #rrggbb', ()
 test('the style sets the symbol variables, never the app accent', () => {
   const style = symbolColorStyle('#007aff')
   assert.equal(style['--sym-accent'], '#007aff')
-  assert.equal(style['--sym-stroke'], '#007aff')
+  assert.equal('--sym-stroke' in style, false, 'outlines stay ink; colour never recolours a line')
   assert.match(style['--sym-fill'], /color-mix\(in srgb, #007aff 12%, var\(--bg-panel\)\)/)
   assert.equal('--accent' in style, false)
+})
+
+test('fill opacity comes from the same layer as the colour', () => {
+  const theme = { byCategory: true, opacities: { process: 60 } }
+  assert.deepEqual(resolveSymbolPaint({ options: {} }, pump, theme), { color: CATEGORY_COLORS.process, opacity: 60 })
+  // Own colour: its own opacity, never the category slider's.
+  assert.deepEqual(resolveSymbolPaint({ options: { color: '#ff3b30' } }, pump, theme),
+    { color: '#ff3b30', opacity: DEFAULT_FILL_OPACITY })
+  assert.deepEqual(resolveSymbolPaint({ options: { color: '#ff3b30', colorOpacity: 90 } }, pump, theme),
+    { color: '#ff3b30', opacity: 90 })
+  assert.equal(resolveSymbolPaint({ options: {} }, pump, { byCategory: false }), null)
+})
+
+test('opacity sets the body wash; raised parts take double, capped at solid', () => {
+  assert.match(symbolColorStyle('#007aff', 40)['--sym-fill'], /#007aff 40%/)
+  assert.match(symbolColorStyle('#007aff', 40)['--sym-fill-elev'], /#007aff 80%/)
+  assert.match(symbolColorStyle('#007aff', 75)['--sym-fill-elev'], /#007aff 100%/)
+  assert.equal(symbolColorStyle('#007aff', 0)['--sym-accent'], '#007aff', 'accents keep the colour at 0% fill')
+})
+
+test('a stored opacity is clamped to a whole 0..100, junk falls back to default', () => {
+  assert.equal(cleanOpacity(150), 100)
+  assert.equal(cleanOpacity(-5), 0)
+  assert.equal(cleanOpacity(33.6), 34)
+  for (const bad of ['50', null, NaN, undefined]) assert.equal(cleanOpacity(bad), null, String(bad))
+  assert.match(symbolColorStyle('#007aff', '50%;x')['--sym-fill'], new RegExp(`${DEFAULT_FILL_OPACITY}%`))
 })

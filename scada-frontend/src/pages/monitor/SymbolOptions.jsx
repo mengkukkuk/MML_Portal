@@ -12,7 +12,9 @@ import { fetchCameraLinkOptions } from '@/api/cameras'
 import { fetchSchemaColumns } from '@/api/schema'
 import { compileCondition } from '@/utils/mathExpr'
 import { SYMBOL_CATEGORIES } from '@/components/mimic/symbols'
-import { CATEGORY_COLORS, categoryColor, cleanHex } from '@/components/mimic/symbolColors'
+import {
+  CATEGORY_COLORS, DEFAULT_FILL_OPACITY, categoryColor, categoryOpacity, cleanHex, cleanOpacity,
+} from '@/components/mimic/symbolColors'
 import styles from './SymbolOptions.module.css'
 
 /**
@@ -561,7 +563,9 @@ function CameraLink({ node, onChange }) {
  * One swatch-and-honeycomb colour row: the current colour (or a dashed
  * "default" hexagon), a caption, and — once opened — the palette.
  */
-function ColourRow({ label, caption, value, open, onToggle, onPick, onReset, resetLabel }) {
+export function ColourRow({
+  label, caption, value, open, onToggle, onPick, onReset, resetLabel, opacity, onOpacity,
+}) {
   return (
     <div className={styles.colourRow}>
       <div className={styles.colourHead}>
@@ -583,6 +587,25 @@ function ColourRow({ label, caption, value, open, onToggle, onPick, onReset, res
           </button>
         )}
       </div>
+      {/* Beside the swatch it belongs to, and only once there is a colour to
+          fade — an opacity for "default look" would have nothing to act on. */}
+      {value && onOpacity && (
+        <label className={styles.opacityRow}>
+          <span>Fill</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={opacity}
+            aria-label={`${label} fill opacity`}
+            className={styles.opacity}
+            style={{ '--swatch': value, '--pct': `${opacity}%` }}
+            onChange={(e) => onOpacity(Number(e.target.value))}
+          />
+          <output className={styles.opacityValue}>{opacity}%</output>
+        </label>
+      )}
       {open && <Honeycomb value={value} label={label} onPick={onPick} />}
     </div>
   )
@@ -603,7 +626,9 @@ export function SymbolColour({ node, def, theme, onOptions, onTheme }) {
   const category = def?.category
   const categoryLabel = SYMBOL_CATEGORIES.find((c) => c.id === category)?.label ?? category
   const own = cleanHex(node.options?.color)
+  const ownOpacity = cleanOpacity(node.options?.colorOpacity) ?? DEFAULT_FILL_OPACITY
   const byCategory = !!theme?.byCategory
+  const catOpacity = categoryOpacity(theme, category)
   const catColour = categoryColor(theme, category)
   const catOverridden = !!cleanHex(theme?.categories?.[category])
   const toggle = (which) => setOpen((cur) => (cur === which ? null : which))
@@ -612,8 +637,9 @@ export function SymbolColour({ node, def, theme, onOptions, onTheme }) {
     <div className={styles.section}>
       <div className={styles.sectionTitle}>Colour</div>
       <p className={styles.hint}>
-        Paint from the lamp palette. A symbol in warning or alarm still turns
-        amber or red, whatever colour it is painted.
+        Paint from the lamp palette; the Fill slider sets how solid the body
+        is. A symbol in warning or alarm still turns amber or red, whatever
+        colour it is painted.
       </p>
 
       <ColourRow
@@ -623,7 +649,9 @@ export function SymbolColour({ node, def, theme, onOptions, onTheme }) {
         open={open === 'own'}
         onToggle={() => toggle('own')}
         onPick={(hex) => { onOptions({ color: hex }); setOpen(null) }}
-        onReset={own ? () => onOptions({ color: null }) : null}
+        onReset={own ? () => onOptions({ color: null, colorOpacity: null }) : null}
+        opacity={ownOpacity}
+        onOpacity={(v) => onOptions({ colorOpacity: v })}
         resetLabel={byCategory ? 'Use category' : 'Reset'}
       />
 
@@ -647,10 +675,13 @@ export function SymbolColour({ node, def, theme, onOptions, onTheme }) {
             onTheme({ categories: { ...(theme?.categories ?? {}), [category]: hex } })
             setOpen(null)
           }}
-          onReset={catOverridden ? () => {
-            const { [category]: _drop, ...rest } = theme?.categories ?? {}
-            onTheme({ categories: rest })
+          onReset={catOverridden || catOpacity !== DEFAULT_FILL_OPACITY ? () => {
+            const { [category]: _c, ...colours } = theme?.categories ?? {}
+            const { [category]: _o, ...opacities } = theme?.opacities ?? {}
+            onTheme({ categories: colours, opacities })
           } : null}
+          opacity={catOpacity}
+          onOpacity={(v) => onTheme({ opacities: { ...(theme?.opacities ?? {}), [category]: v } })}
           resetLabel="Default"
         />
       )}

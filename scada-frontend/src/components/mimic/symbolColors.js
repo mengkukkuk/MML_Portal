@@ -13,8 +13,9 @@
  * whole sheet, so a lamp and the pump it reports on can be made to match.
  *
  * A colour reaches the drawing as CSS custom properties on the symbol's group
- * (`--sym-accent`, `--sym-stroke`, `--sym-fill`, `--sym-fill-elev`), read by
- * symbols.module.css with the app theme as fallback. They are deliberately not
+ * (`--sym-accent`, `--sym-fill`, `--sym-fill-elev`), read by
+ * symbols.module.css with the app theme as fallback. Outlines are not among
+ * them: linework is always ink (`--sym-ink`), so a painted sheet keeps one pen. They are deliberately not
  * `--accent`: the selection halo and resize grips live inside the same group
  * and must keep the app's accent whatever colour the equipment is painted.
  *
@@ -57,26 +58,60 @@ export function categoryColor(theme, category) {
   return cleanHex(theme?.categories?.[category]) ?? CATEGORY_COLORS[category] ?? null
 }
 
+/**
+ * How strongly the colour fills a symbol's body, 0–100 (%). The ink outline
+ * and the coloured accents are unaffected, so even 0 leaves a readable,
+ * coloured symbol — only the body wash changes. 12 is the original tint.
+ */
+export const DEFAULT_FILL_OPACITY = 12
+
+/** A stored opacity is untrusted too: a whole number in 0..100, else null. */
+export function cleanOpacity(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  return Math.max(0, Math.min(100, Math.round(value)))
+}
+
+/** The category's fill opacity on this drawing, override first. */
+export function categoryOpacity(theme, category) {
+  return cleanOpacity(theme?.opacities?.[category]) ?? DEFAULT_FILL_OPACITY
+}
+
 /** The colour this symbol is drawn in, or null for the app's default look. */
 export function resolveSymbolColor(node, def, theme) {
-  const own = cleanHex(node?.options?.color)
-  if (own) return own
-  if (!theme?.byCategory) return null
-  return categoryColor(theme, def?.category)
+  return resolveSymbolPaint(node, def, theme)?.color ?? null
 }
 
 /**
- * The CSS custom properties that paint one symbol. The body keeps the panel as
- * its base and takes only a tint of the colour, so the readout text inside a
- * body stays legible on every palette colour — including white and yellow.
+ * Colour and fill opacity together, from the same layer: a symbol with its own
+ * colour uses its own opacity, one following its category uses the category's.
+ * Mixing layers (own colour, category opacity) would make the category slider
+ * quietly change a symbol someone deliberately painted apart from it.
  */
-export function symbolColorStyle(hex) {
+export function resolveSymbolPaint(node, def, theme) {
+  const own = cleanHex(node?.options?.color)
+  if (own) {
+    return { color: own, opacity: cleanOpacity(node?.options?.colorOpacity) ?? DEFAULT_FILL_OPACITY }
+  }
+  if (!theme?.byCategory) return null
+  const color = categoryColor(theme, def?.category)
+  return color ? { color, opacity: categoryOpacity(theme, def?.category) } : null
+}
+
+/**
+ * The CSS custom properties that paint one symbol. The body is the colour
+ * mixed into the panel at `opacity`%, so the default tint keeps the readout
+ * text inside a body legible on every palette colour — including white and
+ * yellow; a high opacity is a deliberate choice for a bold, solid look. The
+ * raised parts (plinths, housings) take twice the wash, capped at solid, so
+ * they stay distinguishable from the body at every setting.
+ */
+export function symbolColorStyle(hex, opacity = DEFAULT_FILL_OPACITY) {
   const color = cleanHex(hex)
   if (!color) return undefined
+  const fill = cleanOpacity(opacity) ?? DEFAULT_FILL_OPACITY
   return {
     '--sym-accent': color,
-    '--sym-stroke': color,
-    '--sym-fill': `color-mix(in srgb, ${color} 12%, var(--bg-panel))`,
-    '--sym-fill-elev': `color-mix(in srgb, ${color} 24%, var(--bg-elev))`,
+    '--sym-fill': `color-mix(in srgb, ${color} ${fill}%, var(--bg-panel))`,
+    '--sym-fill-elev': `color-mix(in srgb, ${color} ${Math.min(100, fill * 2)}%, var(--bg-elev))`,
   }
 }
