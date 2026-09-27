@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react'
+import { useTranslation } from '@/i18n'
 import ReportBlock from './ReportBlock'
 import {
   cameraKey,
   cameraLabel,
   defectRateColor,
   fmtDateTime,
+  fmtNumber,
   fmtPercent,
   isMultiSource,
   STATUS_COLORS,
@@ -15,33 +17,40 @@ import styles from './blocks.module.css'
 /**
  * SummaryTable — one row per camera, plus a totals footer.
  *
- * The footer recomputes from the server's `totals`, which sums inspected/defect
- * counts rather than averaging the rate column above it — averaging would
- * weight a barely-used camera the same as the line's main inspection point and
- * quietly misreport the line.
+ * Defects, batches, worst defect and last seen are camera_defect_logs figures;
+ * inspected (and so the rate) is production_hourly_log's and reads "—" where
+ * the source has no such table. The footer comes from the server's `totals`,
+ * which sums counts rather than averaging the rate column above it — averaging
+ * would weight a barely-used camera the same as the line's main inspection
+ * point — and counts a batch once, not once per camera it passed.
  */
 
-const COLUMNS = {
+export const COLUMNS = {
   camera: { label: 'Camera', align: 'left' },
   inspected: { label: 'Inspected', align: 'num' },
   defects: { label: 'Defects', align: 'num' },
   rate: { label: 'Defect rate', align: 'num' },
+  batches: { label: 'Batches', align: 'num' },
+  perBatch: { label: 'Defects / batch', align: 'num' },
   worstDefect: { label: 'Worst defect', align: 'left' },
   lastSeen: { label: 'Last seen', align: 'left' },
   status: { label: 'Status', align: 'left' },
 }
 
-const DEFAULT_COLUMNS = ['camera', 'inspected', 'defects', 'rate', 'worstDefect', 'lastSeen', 'status']
+export const DEFAULT_COLUMNS = ['camera', 'inspected', 'defects', 'rate', 'batches',
+  'perBatch', 'worstDefect', 'lastSeen', 'status']
 
-function cell(key, c, multi) {
+function cell(key, c, multi, tr) {
   switch (key) {
     case 'camera': return cameraLabel(c, multi)
-    case 'inspected': return (c.inspected ?? 0).toLocaleString()
-    case 'defects': return (c.defects ?? 0).toLocaleString()
+    case 'inspected': return fmtNumber(c.inspected)
+    case 'defects': return fmtNumber(c.defects ?? 0)
     case 'rate': return fmtPercent(c.defect_rate_pct)
+    case 'batches': return fmtNumber(c.batches ?? 0)
+    case 'perBatch': return fmtNumber(c.defects_per_batch, 1)
     case 'worstDefect': return c.worst_defect ?? '—'
     case 'lastSeen': return fmtDateTime(c.last_seen)
-    case 'status': return STATUS_LABELS[c.status] ?? c.status ?? '—'
+    case 'status': return tr(STATUS_LABELS[c.status] ?? c.status ?? '—')
     default: return '—'
   }
 }
@@ -51,11 +60,13 @@ function sortValue(key, c, multi) {
     // Sorting on the rendered label keeps cameras from the same plant adjacent
     // once the source is part of it.
     case 'camera': return cameraLabel(c, multi)
-    case 'inspected': return c.inspected ?? 0
+    case 'inspected': return c.inspected ?? -1
     case 'defects': return c.defects ?? 0
     // `null` rate means "not measured". Sorting it as -1 parks those cameras at
     // one end instead of scattering them through the ranking.
     case 'rate': return c.defect_rate_pct ?? -1
+    case 'batches': return c.batches ?? 0
+    case 'perBatch': return c.defects_per_batch ?? -1
     case 'worstDefect': return c.worst_defect ?? ''
     case 'lastSeen': return c.last_seen ? new Date(c.last_seen).getTime() : -1
     case 'status': return c.status ?? ''
@@ -64,11 +75,14 @@ function sortValue(key, c, multi) {
 }
 
 export default function SummaryTable({ block, result }) {
-  const [sortKey, setSortKey] = useState('rate')
+  const tr = useTranslation()
+  const [sortKey, setSortKey] = useState('defects')
   const [asc, setAsc] = useState(false)
 
+  // A saved column list is honoured as-is. Lists saved before the batch
+  // columns existed gain them once, server-side (db._upgrade_report_templates).
   const columns = (block?.options?.columns ?? DEFAULT_COLUMNS).filter((c) => COLUMNS[c])
-  const cameras = result?.cameras ?? []
+  const cameras = useMemo(() => result?.cameras ?? [], [result])
   const multi = isMultiSource(cameras)
 
   const totals = result?.totals ?? null
@@ -92,16 +106,18 @@ export default function SummaryTable({ block, result }) {
     }
   }
 
+  const title = tr(block?.title ?? 'Camera Summary')
+
   if (!cameras.length) {
     return (
-      <ReportBlock title={block?.title ?? 'Camera Summary'}>
-        <p className={styles['block__empty']}>No cameras in this window.</p>
+      <ReportBlock title={title}>
+        <p className={styles['block__empty']}>{tr('No cameras in this window.')}</p>
       </ReportBlock>
     )
   }
 
   return (
-    <ReportBlock title={block?.title ?? 'Camera Summary'} note="Click a header to sort">
+    <ReportBlock title={title} note={tr('Click a header to sort')}>
       <div className={styles['table__scroll']}>
         <table className={styles.table}>
           <thead>
@@ -112,8 +128,9 @@ export default function SummaryTable({ block, result }) {
                   className={COLUMNS[key].align === 'num' ? styles['table__num'] : undefined}
                   style={{ cursor: 'pointer' }}
                   onClick={() => toggleSort(key)}
+                  aria-sort={sortKey === key ? (asc ? 'ascending' : 'descending') : undefined}
                 >
-                  {COLUMNS[key].label}
+                  {tr(COLUMNS[key].label)}
                   {sortKey === key ? (asc ? ' ▲' : ' ▼') : ''}
                 </th>
               ))}
@@ -134,7 +151,7 @@ export default function SummaryTable({ block, result }) {
                           : undefined
                     }
                   >
-                    {cell(key, c, multi)}
+                    {cell(key, c, multi, tr)}
                   </td>
                 ))}
               </tr>
@@ -148,7 +165,11 @@ export default function SummaryTable({ block, result }) {
                     key={key}
                     className={COLUMNS[key].align === 'num' ? styles['table__num'] : undefined}
                   >
-                    {key === 'camera' ? `All (${totals.camera_count})` : cell(key, totals)}
+                    {key === 'camera'
+                      ? tr('All ({count})', { count: totals.camera_count })
+                      : key === 'worstDefect'
+                        ? (totals.top_defect ?? '—')
+                        : ['lastSeen', 'status'].includes(key) ? '' : cell(key, totals, false, tr)}
                   </td>
                 ))}
               </tr>

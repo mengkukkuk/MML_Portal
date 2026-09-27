@@ -20,8 +20,10 @@ test('custom bounds preserve instants across midnight and timezone offsets', () 
 test('invalid, missing, reversed and oversized dates are rejected', () => {
   for (const [start, end] of [['', ''], ['bad', '2026-09-09'],
     ['2026-09-09', '2026-09-09'], ['2026-09-10', '2026-09-09'],
-    ['2026-09-01', '2026-09-09']]) assert.ok(windowError(start, end))
+    ['2025-09-01', '2026-09-09']]) assert.ok(windowError(start, end))
   assert.equal(windowError('2026-09-01', '2026-09-08'), '')
+  // A whole year is a valid window now; the server samples it to fit.
+  assert.equal(windowError('2025-09-09', '2026-09-09'), '')
 })
 
 test('custom URL round-trip preserves OEE filters and array selections', () => {

@@ -5,6 +5,8 @@ import Button from '@mui/material/Button'
 import FormControl from '@mui/material/FormControl'
 import MenuItem from '@mui/material/MenuItem'
 import Select from '@mui/material/Select'
+import Tab from '@mui/material/Tab'
+import Tabs from '@mui/material/Tabs'
 import AddOutlined from '@mui/icons-material/AddOutlined'
 import DownloadOutlined from '@mui/icons-material/DownloadOutlined'
 import EditOutlined from '@mui/icons-material/EditOutlined'
@@ -13,6 +15,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider'
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
 
 import { fetchDefaultTemplate, fetchTemplate, fetchTemplates, runReport } from '@/api/reports'
+import { useTranslation } from '@/i18n'
 import { useAuthStore } from '@/stores/auth'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import ReportFilterBar from '@/components/report/ReportFilterBar'
@@ -37,10 +40,13 @@ import {
 } from '@/components/report/trendParams'
 import { readStoredTrend, writeStoredTrend } from '@/components/report/trendStorage'
 import KpiStrip from '@/components/report/blocks/KpiStrip'
+import DefectTrend from '@/components/report/blocks/DefectTrend'
 import ThroughputTimeline from '@/components/report/blocks/ThroughputTimeline'
 import DefectPareto from '@/components/report/blocks/DefectPareto'
 import QualityExceptions from '@/components/report/blocks/QualityExceptions'
 import SummaryTable from '@/components/report/blocks/SummaryTable'
+import BatchMatrix from '@/components/report/blocks/BatchMatrix'
+import DefectGrid from '@/components/report/blocks/DefectGrid'
 import RawLogTable from '@/components/report/blocks/RawLogTable'
 import styles from './ReportPage.module.css'
 
@@ -63,20 +69,53 @@ import styles from './ReportPage.module.css'
  *
  * Both filter sets share one query string, so each writer merges rather than
  * replaces: picking a date range must not silently clear the chart binding.
+ *
+ * Two readers, two tabs. "QC Summary" is the analyst's page — how many
+ * defects, which types, trending which way, which cameras are over threshold.
+ * "Engineering" is where a finding gets chased down — batch by batch, camera
+ * by camera, slot by slot, down to the raw log rows. A block's tab follows
+ * from its type (BLOCK_TAB), so every saved template splits the same way; the
+ * template still decides which blocks exist and their order within a tab. The
+ * tab is in the URL (?tab=engineering) like everything else a link should
+ * reproduce, and only the open tab is mounted — the raw log's paging query
+ * never runs for someone who only reads the summary.
  */
 
 const BLOCK_COMPONENTS = {
   kpi: KpiStrip,
+  defect_trend: DefectTrend,
   timeline: ThroughputTimeline,
   pareto: DefectPareto,
   exceptions: QualityExceptions,
   summary_table: SummaryTable,
+  batch_matrix: BatchMatrix,
+  defect_grid: DefectGrid,
   raw_log: RawLogTable,
+}
+
+const TABS = [
+  { key: 'summary', label: 'QC Summary' },
+  { key: 'engineering', label: 'Engineering' },
+]
+
+const BLOCK_TAB = {
+  kpi: 'summary',
+  defect_trend: 'summary',
+  pareto: 'summary',
+  exceptions: 'summary',
+  summary_table: 'summary',
+  batch_matrix: 'engineering',
+  defect_grid: 'engineering',
+  timeline: 'engineering',
+  raw_log: 'engineering',
 }
 
 // Blocks the server can satisfy from a /run call. `raw_log` is absent on
 // purpose — it fetches its own pages.
-const RUN_BLOCK_TYPES = new Set(['kpi', 'timeline', 'pareto', 'exceptions', 'summary_table'])
+const RUN_BLOCK_TYPES = new Set([
+  'kpi', 'defect_trend', 'timeline', 'pareto', 'exceptions', 'summary_table',
+  'batch_matrix', 'defect_grid',
+])
 
 const WIDTH_CLASS = { full: 'w-full', half: 'w-half', third: 'w-third' }
 
@@ -86,6 +125,7 @@ function errorText(error) {
 }
 
 export default function ReportPage() {
+  const tr = useTranslation()
   const { templateId } = useParams()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -208,9 +248,29 @@ export default function ReportPage() {
 
   const blocks = useMemo(() => template?.blocks ?? [], [template])
 
+  const tab = TABS.some((t) => t.key === searchParams.get('tab')) ? searchParams.get('tab') : 'summary'
+  const setTab = useCallback((next) => {
+    setSearchParams((curr) => {
+      const out = new URLSearchParams(curr)
+      if (next === 'summary') out.delete('tab')
+      else out.set('tab', next)
+      return out
+    }, { replace: true })
+  }, [setSearchParams])
+  const tabBlocks = useMemo(
+    () => blocks.filter((b) => (BLOCK_TAB[b.type] ?? 'summary') === tab),
+    [blocks, tab],
+  )
+  const tabCounts = useMemo(() => {
+    const counts = { summary: 0, engineering: 0 }
+    blocks.forEach((b) => { if (BLOCK_COMPONENTS[b.type]) counts[BLOCK_TAB[b.type] ?? 'summary'] += 1 })
+    return counts
+  }, [blocks])
+
   // Only ask the server for the projections this template actually renders.
-  // Dropping 'timeline' alone removes the interval arrays, which are the bulk
-  // of the response.
+  // Dropping 'timeline' and 'defect_trend' skips the per-period read, and
+  // 'batch_matrix' the camera_batch_work read. Both tabs' blocks are asked for
+  // at once, so switching tabs is instant rather than a second report run.
   const runBlocks = useMemo(() => {
     const wanted = blocks.map((b) => b.type).filter((t) => RUN_BLOCK_TYPES.has(t))
     return [...new Set(wanted)]
@@ -274,6 +334,7 @@ export default function ReportPage() {
         filters: logFilters,
         templateName: template?.name,
         rangeLabel: describeRange(start, end),
+        tr,
       })
     } catch (e) {
       setExportError(errorText(e))
@@ -287,12 +348,12 @@ export default function ReportPage() {
     return (
       <div className={styles.page}>
         <p className={styles.error}>
-          No report templates exist yet.{' '}
-          {isAdmin ? 'Create one to get started.' : 'Ask an administrator to create one.'}
+          {tr('No report templates exist yet.')}{' '}
+          {isAdmin ? tr('Create one to get started.') : tr('Ask an administrator to create one.')}
         </p>
         {isAdmin && (
           <Button size="small" variant="contained" onClick={() => navigate('/reports/new')}>
-            Create template
+            {tr('Create template')}
           </Button>
         )}
       </div>
@@ -323,7 +384,7 @@ export default function ReportPage() {
       <div className={`${styles.page} report-root`}>
         <header className={`${styles.head} report-controls`}>
           <div className={styles['head__left']}>
-            <h2 className={styles.title}>{template?.name ?? 'Report'}</h2>
+            <h2 className={styles.title}>{template?.name ?? tr('Report')}</h2>
             {templates.length > 1 && (
               <FormControl size="small" className={styles.templateSelect}>
                 <Select
@@ -345,7 +406,7 @@ export default function ReportPage() {
           <div className={styles['head__right']}>
             {isAdmin && (
               <Button size="small" startIcon={<AddOutlined />} onClick={() => navigate('/reports/new')}>
-                New
+                {tr('New')}
               </Button>
             )}
             {isAdmin && template && (
@@ -354,11 +415,11 @@ export default function ReportPage() {
                 startIcon={<EditOutlined />}
                 onClick={() => navigate(`/reports/${template.id}/edit`)}
               >
-                Edit
+                {tr('Edit')}
               </Button>
             )}
             <Button size="small" startIcon={<PrintOutlined />} onClick={() => window.print()}>
-              Print
+              {tr('Print')}
             </Button>
             <Button
               size="small"
@@ -367,31 +428,55 @@ export default function ReportPage() {
               disabled={!runQuery.data}
               onClick={handleExport}
             >
-              Export
+              {tr('Export')}
             </Button>
           </div>
         </header>
 
-        {/* The signal trend sits above the OEE report and is bound separately:
-            it reads a plant table directly, on its own window, and answers a
-            different question. Its controls lead because the chart below them
-            has nothing to draw until they are filled in. */}
-        <TrendRail trend={trend} range={trendRange} onApplyWindow={applyWindow} onChange={updateTrend} />
+        <Tabs
+          value={tab}
+          onChange={(_e, next) => setTab(next)}
+          className={`${styles.tabs} report-controls`}
+          aria-label={tr('Report view')}
+        >
+          {TABS.map((t) => (
+            <Tab
+              key={t.key}
+              value={t.key}
+              label={(
+                <span className={styles.tabLabel}>
+                  {tr(t.label)}
+                  <span className={styles.tabCount}>{tabCounts[t.key]}</span>
+                </span>
+              )}
+            />
+          ))}
+        </Tabs>
 
-        {isPlottable(trend) ? (
-          <EnvelopeTrend trend={trend} range={trendRange} onToggleIndex={toggleIndex} />
-        ) : (
-          <p className={styles.empty}>
-            Pick a table, a reading and a timestamp above to plot a signal.
-          </p>
+        {/* The signal trend leads the summary and is bound separately: it reads
+            a plant table directly, on its own window (up to a year), and
+            answers a different question from the report blocks below it. Its
+            controls lead because the chart under them has nothing to draw
+            until they are filled in. */}
+        {tab === 'summary' && (
+          <section className={styles.trend} aria-label={tr('Signal trend')}>
+            <TrendRail trend={trend} range={trendRange} onApplyWindow={applyWindow} onChange={updateTrend} />
+            {isPlottable(trend) ? (
+              <EnvelopeTrend trend={trend} range={trendRange} onToggleIndex={toggleIndex} />
+            ) : (
+              <p className={styles.empty}>
+                {tr('Pick a table, a reading and a timestamp above to plot a signal.')}
+              </p>
+            )}
+          </section>
         )}
 
         {/* Printed output loses the interactive controls, so the window it
             covers has to be stated on the page itself. This one describes the
-            OEE report below, not the trend — so it sits with its own filters. */}
+            report blocks below, not the trend — so it sits with its own filters. */}
         <p className={styles.range}>
-          {describeRange(start, end)}
-          <span className={styles.rangeNote}> · plant server local time</span>
+          {tr(TABS.find((t) => t.key === tab).label)} · {describeRange(start, end)}
+          <span className={styles.rangeNote}> · {tr('plant server local time')}</span>
         </p>
 
         <ReportFilterBar
@@ -407,24 +492,30 @@ export default function ReportPage() {
         {runError && <p className={styles.error}>{errorText(runError)}</p>}
 
         {/* A plant that failed to answer drops out of the report entirely, and
-            its machines then read as "nothing happened" rather than "not
-            asked" — a downtime report that quietly omits a line is worse than
+            its cameras then read as "nothing happened" rather than "not
+            asked" — a defect report that quietly omits a line is worse than
             one that fails. */}
         <SourceStatus sources={runQuery.data?.sources} />
 
-        {exportError && <p className={styles.error}>Export failed — {exportError}</p>}
+        {exportError && <p className={styles.error}>{tr('Export failed')} — {exportError}</p>}
 
-        {runQuery.isLoading && <p className={styles.empty}>Running report…</p>}
+        {runQuery.isLoading && <p className={styles.empty}>{tr('Running report…')}</p>}
 
         {!blocks.length && template && (
           <p className={styles.empty}>
-            This template has no blocks yet.
-            {isAdmin ? ' Use Edit to add some.' : ''}
+            {tr('This template has no blocks yet.')}
+            {isAdmin ? ` ${tr('Use Edit to add some.')}` : ''}
+          </p>
+        )}
+        {!!blocks.length && !tabBlocks.length && (
+          <p className={styles.empty}>
+            {tr('This template has no blocks on this tab.')}
+            {isAdmin ? ` ${tr('Use Edit to add some.')}` : ''}
           </p>
         )}
 
         <div className={styles.grid}>
-          {blocks.map((block) => {
+          {tabBlocks.map((block) => {
             const Component = BLOCK_COMPONENTS[block.type]
             if (!Component) return null
             const isLog = block.type === 'raw_log'

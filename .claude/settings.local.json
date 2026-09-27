@@ -139,7 +139,8 @@
       "Bash(node bin/archify.mjs visual-check \"G:/Code/DEV/scada-frontend/frontend-workflow.html\" --json)",
       "Bash(grep -n 'CREATE TABLE.*alarm' /g/code/dev/scada-mml-backend/*.py /g/code/dev/scada-mml-backend/*.sql)",
       "Bash(python3 -c \":*)",
-      "Bash(grep -r \"defect_label\\\\|display_name\\\\|alias\" G:/Code/DEV/scada-frontend/src --include=*.js --include=*.jsx)"
+      "Bash(grep -r \"defect_label\\\\|display_name\\\\|alias\" G:/Code/DEV/scada-frontend/src --include=*.js --include=*.jsx)",
+      "Bash(cd *)"
     ]
   }
 }

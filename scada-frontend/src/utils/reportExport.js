@@ -1,11 +1,16 @@
 import ExcelJS from 'exceljs'
 import { fetchReportLogs } from '@/api/reports'
-import { isMultiSource } from '@/components/report/reportFormat'
+import { fmtPeriod, isMultiSource } from '@/components/report/reportFormat'
 import { describeRange } from '@/components/report/reportRange'
 
 /**
- * Builds the xlsx export: Summary, Defect Reasons, Quality Exceptions, Defect
- * Batch Log.
+ * Builds the xlsx export: Summary, Defect Reasons, Defects Over Time, Quality
+ * Exceptions, Batch Matrix, Camera x Defect, Defect Batch Log — each sheet
+ * only when the report carried that projection.
+ *
+ * Headers and sheet names follow the viewer's interface language (`tr`);
+ * data — camera names, defect labels — is written exactly as the plant stores
+ * it.
  *
  * Every sheet is topped with the same provenance banner — window and
  * generation time. Once a spreadsheet leaves the app it loses all the context
@@ -34,6 +39,11 @@ function fmtTs(value) {
 
 const pct = (value) => (value == null ? null : Number(value.toFixed(2)))
 
+/** Excel refuses these in a sheet name, and caps it at 31 characters. */
+function sheetName(name) {
+  return name.replace(/[[\]:*?/\\]/g, ' ').slice(0, 31)
+}
+
 /** Banner + column headers. Returns the row index the data should start on. */
 function startSheet(sheet, columns, meta) {
   sheet.mergeCells(1, 1, 1, columns.length)
@@ -44,14 +54,16 @@ function startSheet(sheet, columns, meta) {
 
   sheet.mergeCells(2, 1, 2, columns.length)
   const note = sheet.getCell(2, 1)
-  note.value = `Generated ${fmtTs(meta.generatedAt)} (plant server local time) · ${meta.cameraCount} cameras`
+  note.value = meta.tr('Generated {at} (plant server local time) · {count} cameras', {
+    at: fmtTs(meta.generatedAt), count: meta.cameraCount,
+  })
   note.font = { size: 9, italic: true, color: { argb: 'FF8A99B3' } }
   note.fill = TITLE_FILL
   note.alignment = { wrapText: true }
   sheet.getRow(2).height = 26
 
   const headerRow = sheet.getRow(4)
-  headerRow.values = columns.map((c) => c.header)
+  headerRow.values = columns.map((c) => meta.tr(c.header))
   headerRow.font = { bold: true, color: { argb: 'FFE6EDF7' } }
   headerRow.eachCell((cell) => {
     cell.fill = HEADER_FILL
@@ -69,7 +81,7 @@ function addRows(sheet, startRow, columns, rows) {
 }
 
 function buildSummary(wb, result, meta) {
-  const sheet = wb.addWorksheet('Summary')
+  const sheet = wb.addWorksheet(sheetName(meta.tr('Summary')))
   // A spreadsheet has no tooltip to fall back on: with two plants selected,
   // `Line 1 / CAM01` appears twice with different numbers and nothing on the
   // row says which is which. The column only appears when it is needed, so
@@ -82,7 +94,9 @@ function buildSummary(wb, result, meta) {
     { header: 'Inspected', key: 'inspected', width: 14 },
     { header: 'Defects', key: 'defects', width: 12 },
     { header: 'Defect rate (%)', key: 'defect_rate', width: 16 },
-    { header: 'Worst defect', key: 'worst_defect', width: 20 },
+    { header: 'Batches', key: 'batches', width: 12 },
+    { header: 'Defects / batch', key: 'per_batch', width: 16 },
+    { header: 'Worst defect', key: 'worst_defect', width: 24 },
     { header: 'Last seen', key: 'last_seen', width: 20 },
     { header: 'Status', key: 'status', width: 14 },
   ]
@@ -92,9 +106,12 @@ function buildSummary(wb, result, meta) {
     datasource_name: c.datasource_name ?? '',
     location: c.location ?? '',
     name: c.name ?? c.code ?? '',
-    inspected: c.inspected ?? 0,
+    // Blank, not 0, when the source has no inspected count.
+    inspected: c.inspected ?? null,
     defects: c.defects ?? 0,
     defect_rate: pct(c.defect_rate_pct),
+    batches: c.batches ?? 0,
+    per_batch: c.defects_per_batch == null ? null : Number(c.defects_per_batch.toFixed(2)),
     worst_defect: c.worst_defect ?? '',
     last_seen: fmtTs(c.last_seen),
     status: c.status ?? '',
@@ -106,9 +123,9 @@ function buildSummary(wb, result, meta) {
     rows.push({
       ...toRow(t),
       datasource_name: '',
-      location: 'ALL',
-      name: `${t.camera_count} cameras`,
-      worst_defect: '',
+      location: meta.tr('ALL'),
+      name: meta.tr('{count} cameras', { count: t.camera_count }),
+      worst_defect: t.top_defect ?? '',
       last_seen: '',
       status: '',
     })
@@ -124,7 +141,7 @@ function buildSummary(wb, result, meta) {
 function buildPareto(wb, result, meta) {
   const rows = result.defect_reasons ?? []
   if (!rows.length) return
-  const sheet = wb.addWorksheet('Defect Reasons')
+  const sheet = wb.addWorksheet(sheetName(meta.tr('Defect Reasons')))
   const columns = [
     { header: 'Rank', key: 'rank', width: 8 },
     { header: 'Defect', key: 'defect', width: 46 },
@@ -137,7 +154,7 @@ function buildPareto(wb, result, meta) {
     sheet, start, columns,
     rows.map((r, i) => ({
       rank: i + 1,
-      defect: r.defect,
+      defect: r.defect === 'Other' ? meta.tr('Other') : r.defect,
       count: r.count,
       batches: r.batches,
       cumulative: r.cumulative_pct == null ? null : Number(r.cumulative_pct.toFixed(2)),
@@ -148,7 +165,7 @@ function buildPareto(wb, result, meta) {
 function buildExceptions(wb, result, meta) {
   const exceptions = result.quality_exceptions
   if (!exceptions) return
-  const sheet = wb.addWorksheet('Quality Exceptions')
+  const sheet = wb.addWorksheet(sheetName(meta.tr('Quality Exceptions')))
   const columns = [
     { header: 'Camera', key: 'camera', width: 40 },
     { header: 'Severity', key: 'severity', width: 14 },
@@ -171,8 +188,82 @@ function buildExceptions(wb, result, meta) {
   addRows(sheet, start, columns, rows)
 }
 
+function buildTrend(wb, result, meta) {
+  const rows = result.defect_trend ?? []
+  if (!rows.length) return
+  const sheet = wb.addWorksheet(sheetName(meta.tr('Defects Over Time')))
+  const bucket = result.window?.bucket
+  const columns = [
+    { header: 'Period', key: 'period', width: 20 },
+    { header: 'Defect', key: 'defect', width: 40 },
+    { header: 'Count', key: 'count', width: 12 },
+  ]
+  const start = startSheet(sheet, columns, meta)
+  addRows(sheet, start, columns, rows.map((r) => ({
+    period: fmtPeriod(r.period, bucket),
+    defect: r.defect,
+    count: r.count,
+  })))
+}
+
+function buildBatchMatrix(wb, result, meta) {
+  const matrix = result.batch_matrix
+  if (!matrix?.batches?.length) return
+  const sheet = wb.addWorksheet(sheetName(meta.tr('Batch Matrix')))
+  const multi = new Set(matrix.batches.map((b) => b.datasource_id ?? null)).size > 1
+  const columns = [
+    { header: 'Batch', key: 'batch_id', width: 10 },
+    ...(multi ? [{ header: 'Source', key: 'datasource_name', width: 20 }] : []),
+    { header: 'Started', key: 'created_at', width: 20 },
+    { header: 'Last update', key: 'updated_at', width: 20 },
+    ...matrix.cameras.map((c) => ({ header: c.name ?? c.key, key: `cam:${c.key}`, width: 14 })),
+    { header: 'Total', key: 'total', width: 12 },
+    { header: 'Defects by type', key: 'detail', width: 60 },
+  ]
+  const start = startSheet(sheet, columns, meta)
+  addRows(sheet, start, columns, matrix.batches.map((b) => ({
+    batch_id: b.batch_id,
+    datasource_name: b.datasource_name ?? '',
+    created_at: fmtTs(b.created_at),
+    updated_at: fmtTs(b.updated_at),
+    ...Object.fromEntries(matrix.cameras.map((c) => [`cam:${c.key}`, b.cells[c.key]?.total ?? null])),
+    total: b.total,
+    detail: matrix.cameras
+      .filter((c) => b.cells[c.key]?.slots?.length)
+      .map((c) => `${c.name ?? c.key}: ${b.cells[c.key].slots.map((x) => `${x.defect} ${x.count}`).join(', ')}`)
+      .join(' | '),
+  })))
+}
+
+function buildDefectGrid(wb, result, meta) {
+  const cameras = (result.cameras ?? []).filter((c) => c.slots?.length)
+  if (!cameras.length) return
+  const sheet = wb.addWorksheet(sheetName(meta.tr('Camera x Defect Type')))
+  const multi = isMultiSource(cameras)
+  // Long format — one row per camera slot — so it pivots in Excel either way.
+  const columns = [
+    ...(multi ? [{ header: 'Source', key: 'datasource_name', width: 20 }] : []),
+    { header: 'Line', key: 'location', width: 16 },
+    { header: 'Camera', key: 'name', width: 20 },
+    { header: 'Slot', key: 'slot', width: 8 },
+    { header: 'Defect', key: 'defect', width: 36 },
+    { header: 'Count', key: 'count', width: 12 },
+    { header: 'Batches', key: 'batches', width: 12 },
+  ]
+  const start = startSheet(sheet, columns, meta)
+  addRows(sheet, start, columns, cameras.flatMap((c) => c.slots.map((x) => ({
+    datasource_name: c.datasource_name ?? '',
+    location: c.location ?? '',
+    name: c.name ?? c.code ?? '',
+    slot: x.slot,
+    defect: x.defect,
+    count: x.count,
+    batches: x.batches,
+  }))))
+}
+
 async function buildBatchLog(wb, meta, filters) {
-  const sheet = wb.addWorksheet('Defect Batch Log')
+  const sheet = wb.addWorksheet(sheetName(meta.tr('Defect Batch Log')))
 
   // Fetched before the columns are laid out: only the rows can say whether more
   // than one plant answered, and the Source column depends on that.
@@ -193,6 +284,7 @@ async function buildBatchLog(wb, meta, filters) {
     { header: 'Line', key: 'location', width: 16 },
     { header: 'Camera', key: 'name', width: 20 },
     { header: 'Batch', key: 'batch_id', width: 20 },
+    { header: 'Defects by type', key: 'detail', width: 48 },
     { header: 'Total defects', key: 'total_defects', width: 16 },
   ]
   const start = startSheet(sheet, columns, meta)
@@ -205,6 +297,7 @@ async function buildBatchLog(wb, meta, filters) {
       location: r.location ?? '',
       name: r.name ?? r.code ?? '',
       batch_id: r.batch_id ?? '',
+      detail: (r.defects ?? []).map((d) => `${d.defect} ${d.count}`).join(', '),
       total_defects: r.total_defects ?? (r.defect_array ?? []).reduce((a, b) => a + (b || 0), 0),
     })),
   )
@@ -212,18 +305,19 @@ async function buildBatchLog(wb, meta, filters) {
   // A silently short file would look authoritative. Say so, in the sheet.
   if (page.truncated) {
     const warn = sheet.getRow(start + (page.rows?.length ?? 0) + 1)
-    warn.getCell(1).value =
-      `TRUNCATED — ${page.total.toLocaleString()} rows matched, ` +
-      `only the first ${EXPORT_ROW_CAP.toLocaleString()} are included. ` +
-      `Narrow the window or the camera selection for a complete export.`
+    warn.getCell(1).value = meta.tr(
+      'TRUNCATED — {total} rows matched, only the first {cap} are included. Narrow the window or the camera selection for a complete export.',
+      { total: page.total.toLocaleString(), cap: EXPORT_ROW_CAP.toLocaleString() },
+    )
     warn.getCell(1).font = { bold: true, color: { argb: 'FFEF4444' } }
   }
 }
 
 /** Build the workbook and hand it to the browser as a download. */
-export async function exportReportXlsx({ result, filters, templateName, rangeLabel }) {
+export async function exportReportXlsx({ result, filters, templateName, rangeLabel, tr = (t, _p) => t }) {
   const meta = {
-    templateName: templateName || 'Report',
+    tr: (text, params) => tr(text, params),
+    templateName: templateName || tr('Report'),
     rangeLabel: rangeLabel || describeRange(filters.start, filters.end),
     generatedAt: result?.window?.generated_at ?? new Date(),
     cameraCount: result?.totals?.camera_count ?? 0,
@@ -235,7 +329,10 @@ export async function exportReportXlsx({ result, filters, templateName, rangeLab
 
   buildSummary(wb, result, meta)
   buildPareto(wb, result, meta)
+  buildTrend(wb, result, meta)
   buildExceptions(wb, result, meta)
+  buildBatchMatrix(wb, result, meta)
+  buildDefectGrid(wb, result, meta)
   await buildBatchLog(wb, meta, filters)
 
   const buffer = await wb.xlsx.writeBuffer()

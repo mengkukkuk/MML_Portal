@@ -23,6 +23,7 @@ information_schema allowlist in db.py, per connection, so a plant database's own
 catalogue governs what may be read from it (sensitive tables are denylisted
 there); filter values are always parameterized.
 """
+import math
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -48,6 +49,13 @@ router = APIRouter(
 # resolve at that distance — so the ceiling is a legibility limit that happens to
 # also bound the projection.
 MAX_TABLE_COLUMNS = 8
+
+# The widest /series window: a year, plus a day so "same date last year" fits.
+MAX_SERIES_DAYS = 366
+# Windows longer than this are thinned to one reading per bucket (see
+# get_series). A week is the old ceiling, so every window that already worked
+# row for row still does.
+SAMPLE_AFTER = timedelta(days=7)
 
 
 def _detail(e: Exception) -> str:
@@ -126,6 +134,9 @@ class SeriesOut(BaseModel):
     # on a chart, so the caller is told rather than left to infer it — the same
     # reason /api/reports/logs reports it.
     truncated: bool = False
+    # Set when a long window was thinned to one reading per this many seconds
+    # (see SAMPLE_AFTER below), so the chart can say it isn't every row.
+    sampled_seconds: int | None = None
     datasource_id: int | None = None
     datasource_name: str | None = None
 
@@ -250,7 +261,7 @@ def get_series(
     ts_col: str = Query(..., min_length=1),
     filter_col: str | None = Query(None),
     filter_val: str | None = Query(None),
-    minutes: int = Query(15, ge=1, le=10080),
+    minutes: int = Query(15, ge=1, le=MAX_SERIES_DAYS * 1440),
     limit: int = Query(5000, ge=1, le=50000),
     datasource_id: int | None = Query(None),
     _user: dict = Depends(get_current_user),
@@ -260,7 +271,7 @@ def get_series(
 ):
     """One time-series window per source — seeds real history on load.
 
-    Paired timezone-aware start/end bounds override minutes (at most seven days).
+    Paired timezone-aware start/end bounds override minutes (at most a year).
 
     Non-numeric readings are dropped rather than 400ing the request. A text
     column has no trend to draw, but it is a legitimate binding for a symbol
@@ -273,16 +284,26 @@ def get_series(
     `/latest` above.
 
     `limit` bounds the newest N rows per source. The window is selectable up to
-    a week and this query has no natural ceiling, so an unlucky binding could
+    a year and this query has no natural ceiling, so an unlucky binding could
     otherwise stream a plant's entire history into a chart.
+
+    Past SAMPLE_AFTER, the window is thinned to one reading per bucket sized so
+    the whole window fits under `limit` — a year then draws a year, rather than
+    the newest `limit` rows of it. Short windows are returned row for row.
     """
     if (start is None) != (end is None):
         raise HTTPException(422, "Provide both start and end")
     if start is not None:
         if start.utcoffset() is None or end.utcoffset() is None:
             raise HTTPException(422, "Start and end must include a timezone offset")
-        if not timedelta(0) < end - start <= timedelta(days=7):
-            raise HTTPException(422, "Range must be greater than zero and at most seven days")
+        if not timedelta(0) < end - start <= timedelta(days=MAX_SERIES_DAYS):
+            raise HTTPException(
+                422, f"Range must be greater than zero and at most {MAX_SERIES_DAYS} days")
+
+    window = (end - start) if start is not None else timedelta(minutes=minutes)
+    sample_seconds = (
+        max(60, math.ceil(window.total_seconds() / limit)) if window > SAMPLE_AFTER else None
+    )
 
     def number(v):
         return isinstance(v, (int, float, Decimal)) and not isinstance(v, bool)
@@ -323,7 +344,8 @@ def get_series(
         # complete window would then tell the reader to shorten it.
         bounds = {"start": start, "end": end} if start is not None else {}
         rows = db.table_series(table, value_col, filter_col, filter_val, ts_col,
-                               minutes, ds, limit=limit + 1, **bounds)
+                               minutes, ds, limit=limit + 1, sample_seconds=sample_seconds,
+                               **bounds)
         truncated = len(rows) > limit
         if truncated:
             rows = rows[-limit:]
@@ -331,6 +353,7 @@ def get_series(
             "points": [{"ts": r["ts"], "value": point_value(r["value"])}
                        for r in rows if plottable(r["value"])],
             "truncated": truncated,
+            "sampled_seconds": sample_seconds,
         }]
 
     targets = [datasource_id] if datasource_id is not None else datasource_ids

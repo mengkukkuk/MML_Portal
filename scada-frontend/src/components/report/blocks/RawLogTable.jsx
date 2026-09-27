@@ -5,8 +5,9 @@ import TextField from '@mui/material/TextField'
 import ReportBlock from './ReportBlock'
 import SourceStatus from '@/components/SourceStatus/SourceStatus'
 import { fetchReportLogs } from '@/api/reports'
+import { useTranslation } from '@/i18n'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
-import { fmtDateTime, isMultiSource } from '../reportFormat'
+import { fmtDateTime, fmtNumber, isMultiSource } from '../reportFormat'
 import styles from './blocks.module.css'
 
 /**
@@ -14,14 +15,15 @@ import styles from './blocks.module.css'
  * camera_defect_logs rows, unaggregated, one per inspected batch.
  *
  * Paged server-side rather than filtered from the /run payload, because /run
- * only ever returns hourly rollups. A batch's per-defect breakdown is only
- * visible here — which is exactly what someone chasing a suspicious defect
- * rate needs to see.
+ * only returns roll-ups. Each row's defect_array arrives already named from
+ * its camera's `defect_labels` (joined in the plant's own database), so the
+ * breakdown reads "Roll NG 3 · Filter NG 1" rather than "[3,1,0,0,0]".
  */
 
 const SEARCH_DEBOUNCE_MS = 350
 
 export default function RawLogTable({ block, filters }) {
+  const tr = useTranslation()
   const pageSize = block?.options?.pageSize ?? 50
   const selectionKey = useDatasourceSelectionStore((s) => s.selectionKey)
 
@@ -71,12 +73,12 @@ export default function RawLogTable({ block, filters }) {
 
   return (
     <ReportBlock
-      title={block?.title ?? 'Defect Batch Log'}
-      note={total ? `${total.toLocaleString()} rows` : undefined}
+      title={tr(block?.title ?? 'Defect Batch Log')}
+      note={total ? tr('{count} rows', { count: total.toLocaleString() }) : undefined}
     >
       <TextField
         size="small"
-        placeholder="Search camera name or code…"
+        placeholder={tr('Search camera name or code…')}
         value={searchInput}
         onChange={(e) => setSearchInput(e.target.value)}
         className={styles.search}
@@ -95,19 +97,20 @@ export default function RawLogTable({ block, filters }) {
 
       {!query.error && rows.length === 0 ? (
         <p className={styles['block__empty']}>
-          {query.isLoading ? 'Loading…' : 'No log rows match these filters.'}
+          {query.isLoading ? tr('Loading…') : tr('No log rows match these filters.')}
         </p>
       ) : (
         <div className={styles['table__scroll']}>
           <table className={styles.table}>
             <thead>
               <tr>
-                <th>Time</th>
-                {multi && <th>Source</th>}
-                <th>Line</th>
-                <th>Camera</th>
-                <th>Batch</th>
-                <th className={styles['table__num']}>Total defects</th>
+                <th>{tr('Time')}</th>
+                {multi && <th>{tr('Source')}</th>}
+                <th>{tr('Line')}</th>
+                <th>{tr('Camera')}</th>
+                <th>{tr('Batch')}</th>
+                <th>{tr('Defects by type')}</th>
+                <th className={styles['table__num']}>{tr('Total defects')}</th>
               </tr>
             </thead>
             <tbody>
@@ -120,7 +123,18 @@ export default function RawLogTable({ block, filters }) {
                   <td>{r.location ?? '—'}</td>
                   <td>{r.name ?? r.code ?? '—'}</td>
                   <td>{r.batch_id ?? '—'}</td>
-                  <td className={styles['table__num']}>{r.total_defects ?? 0}</td>
+                  <td className={styles['table__wrap']}>
+                    {r.defects?.length ? (
+                      <div className={styles.chips}>
+                        {r.defects.map((d) => (
+                          <span key={d.slot} className={styles.chip} title={tr('Slot {slot}', { slot: d.slot })}>
+                            {d.defect}<b>{fmtNumber(d.count)}</b>
+                          </span>
+                        ))}
+                      </div>
+                    ) : <span className={styles['matrix__none']}>{tr('No defects')}</span>}
+                  </td>
+                  <td className={styles['table__num']}>{fmtNumber(r.total_defects ?? 0)}</td>
                 </tr>
               ))}
             </tbody>
@@ -130,7 +144,7 @@ export default function RawLogTable({ block, filters }) {
 
       <div className={styles.pager}>
         <span>
-          {from.toLocaleString()}–{to.toLocaleString()} of {total.toLocaleString()}
+          {tr('{from}–{to} of {total}', { from: from.toLocaleString(), to: to.toLocaleString(), total: total.toLocaleString() })}
         </span>
         <div className={styles['pager__buttons']}>
           <Button
@@ -138,14 +152,14 @@ export default function RawLogTable({ block, filters }) {
             disabled={offset === 0 || query.isFetching}
             onClick={() => setOffset((o) => Math.max(0, o - pageSize))}
           >
-            Previous
+            {tr('Previous')}
           </Button>
           <Button
             size="small"
             disabled={to >= total || query.isFetching}
             onClick={() => setOffset((o) => o + pageSize)}
           >
-            Next
+            {tr('Next')}
           </Button>
         </div>
       </div>

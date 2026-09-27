@@ -440,6 +440,7 @@ def fan_out_rows(
     query,
     *,
     label: str = "rows",
+    soft_schema_errors: bool = True,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """fan_out + flatten. Every row gains `datasource_id` and `datasource_name`.
 
@@ -451,7 +452,8 @@ def fan_out_rows(
     and sort across sources anyway; the tag is what makes React keys and the
     acknowledge path able to tell two plants' identically-named rows apart.
     """
-    reports = fan_out(datasource_ids, query, label=label)
+    reports = fan_out(datasource_ids, query, label=label,
+                      soft_schema_errors=soft_schema_errors)
     rows: list[dict[str, Any]] = []
     for report in reports:
         for row in report["result"] or []:
@@ -1685,8 +1687,15 @@ def table_series(
     *,
     start: datetime | None = None,
     end: datetime | None = None,
+    sample_seconds: int | None = None,
 ) -> list[dict[str, Any]]:
     """Time-ordered rows in explicit bounds, or over the last `minutes`.
+
+    `sample_seconds` keeps one row — the newest — per bucket of that many
+    seconds. It is how a year-long window draws the whole year: capping the
+    newest N rows instead would show a year chart holding only its last days.
+    The newest row rather than an average, because a value may be a numeric
+    array (a reading with its setpoint and limits) that has no single mean.
 
     Explicit bounds are aware datetimes validated by the series route. Naive
     plant columns use the connection's timezone and are returned as instants.
@@ -1753,7 +1762,17 @@ def table_series(
         if filter_col and filter_val is not None:
             query += sql.SQL(" AND {}::text = %s").format(sql.Identifier(filter_col))
             params.append(filter_val)
-        if limit is None:
+        if sample_seconds:
+            query = (
+                sql.SQL("SELECT w.value, w.ts FROM (SELECT DISTINCT ON (bucket) q.value, q.ts, "
+                        "floor(extract(epoch FROM q.ts) / %s) AS bucket FROM (")
+                + query
+                + sql.SQL(") AS q ORDER BY bucket, q.ts DESC) AS w ORDER BY w.ts ASC")
+            )
+            # No LIMIT: the caller sizes the bucket so window / bucket already
+            # fits, and a LIMIT on this ascending order would clip the newest end.
+            params = [sample_seconds, *params]
+        elif limit is None:
             query += sql.SQL(" ORDER BY {} ASC").format(sql.Identifier(ts_col))
         else:
             # Newest N, then put them back in reading order. Keeping the *oldest*
@@ -2900,21 +2919,63 @@ _DEFAULT_STATE_RULES = {
 }
 
 _DEFAULT_TEMPLATE_BLOCKS = [
+    # QC Summary tab — the analyst's read: how much, which defects, where.
     {"id": "b1", "type": "kpi", "title": "Overview", "width": "full",
-     "options": {"metrics": ["inspected", "defects", "defect_rate", "cameras_ok"],
-                 "targetDefectPct": 3}},
-    {"id": "b2", "type": "timeline", "title": "Camera Throughput Timeline", "width": "full",
+     "options": {"targetDefectPct": 3}},
+    {"id": "b7", "type": "defect_trend", "title": "Defects Over Time", "width": "full",
      "options": {}},
     {"id": "b3", "type": "pareto", "title": "Defect Type Pareto", "width": "half",
      "options": {"topN": 10, "rankBy": "count"}},
     {"id": "b4", "type": "exceptions", "title": "Quality Exceptions", "width": "half",
      "options": {"warnPct": 2, "critPct": 5, "topN": 10}},
     {"id": "b5", "type": "summary_table", "title": "Camera Summary", "width": "full",
-     "options": {"columns": ["camera", "inspected", "defects", "rate",
-                             "worstDefect", "lastSeen", "status"]}},
+     "options": {"columns": ["camera", "inspected", "defects", "rate", "batches",
+                             "perBatch", "worstDefect", "lastSeen", "status"]}},
+    # Engineering tab — the detail an engineer chases a finding down with.
+    {"id": "b8", "type": "batch_matrix", "title": "Batch x Camera Matrix", "width": "full",
+     "options": {}},
+    {"id": "b9", "type": "defect_grid", "title": "Camera x Defect Type", "width": "full",
+     "options": {}},
+    {"id": "b2", "type": "timeline", "title": "Camera Defect Timeline", "width": "full",
+     "options": {}},
     {"id": "b6", "type": "raw_log", "title": "Defect Batch Log", "width": "full",
      "options": {"pageSize": 50}},
 ]
+
+#: Bumped when the default block set grows. Templates saved under an older
+#: layout get the missing standard blocks appended once, on boot, and are
+#: stamped with this version in `default_filters.layout` — so an admin who
+#: later removes one of them deliberately doesn't see it come back.
+REPORT_LAYOUT_VERSION = 2
+_LAYOUT_V2_BLOCKS = ("defect_trend", "batch_matrix", "defect_grid")
+
+
+def _upgrade_report_templates(conn) -> None:
+    rows = conn.execute(
+        "SELECT id, blocks, default_filters FROM report_templates").fetchall()
+    standard = {b["type"]: b for b in _DEFAULT_TEMPLATE_BLOCKS}
+    for row in rows:
+        filters = row["default_filters"] or {}
+        if (filters.get("layout") or 1) >= REPORT_LAYOUT_VERSION:
+            continue
+        blocks = list(row["blocks"] or [])
+        have = {b.get("type") for b in blocks}
+        # A saved Camera Summary column list predates the batch columns; slot
+        # them in after "rate" so existing reports gain them too.
+        for block in blocks:
+            cols = (block.get("options") or {}).get("columns")
+            if block.get("type") == "summary_table" and cols and "batches" not in cols:
+                at = cols.index("rate") + 1 if "rate" in cols else len(cols)
+                block["options"] = {**block["options"],
+                                    "columns": [*cols[:at], "batches", "perBatch", *cols[at:]]}
+        for block_type in _LAYOUT_V2_BLOCKS:
+            if block_type not in have:
+                blocks.append({**standard[block_type], "id": f"{standard[block_type]['id']}v2"})
+        conn.execute(
+            "UPDATE report_templates SET blocks = %s, default_filters = %s WHERE id = %s",
+            (Json(blocks), Json({**filters, "layout": REPORT_LAYOUT_VERSION}), row["id"]),
+        )
+
 
 def init_report_tables() -> None:
     with get_connection() as conn:
@@ -2951,10 +3012,11 @@ def init_report_tables() -> None:
                        (name, description, blocks, default_filters, is_default)
                    VALUES (%s, %s, %s, %s, TRUE)""",
                 ("Vision QC Report",
-                 "Inspection throughput, defect rates and quality exceptions across a production line.",
+                 "Defect counts, defect types and quality exceptions per camera, batch by batch.",
                  Json(_DEFAULT_TEMPLATE_BLOCKS),
-                 Json({"preset": "last7d"})),
+                 Json({"preset": "last7d", "layout": REPORT_LAYOUT_VERSION})),
             )
+        _upgrade_report_templates(conn)
         conn.commit()
 
     try:
@@ -3246,22 +3308,6 @@ def vision_report_catalog(force: bool = False,
     return rows
 
 
-def camera_defect_labels(datasource_id: int | None = None) -> dict[str, list[str]]:
-    """code -> defect_labels. Callers zip this against a batch's defect_array
-    by position; the two are read independently and a plant can shorten its
-    label list without truncating history, so the zip must tolerate a
-    defect_array longer than the labels it's paired with (see
-    test_camera_link_source.py's ragged-array convention)."""
-    with _table_source_conn(datasource_id) as (conn, schema):
-        rows = conn.execute(
-            sql.SQL(
-                """SELECT code, COALESCE(defect_labels, ARRAY[]::text[]) AS defect_labels
-                     FROM {cameras}"""
-            ).format(cameras=sql.Identifier(schema, "cameras"))
-        ).fetchall()
-    return {r["code"]: r["defect_labels"] for r in rows}
-
-
 def _camera_filter(locations, camera_codes):
     """Same "empty means unfiltered" contract as `_machine_filter`."""
     clauses, params = [], []
@@ -3294,21 +3340,173 @@ def fetch_camera_hourly(start: datetime, end: datetime, locations=None,
         ).fetchall()
 
 
-def fetch_camera_defect_logs_window(start: datetime, end: datetime, locations=None,
-                                    camera_codes=None, datasource_id: int | None = None,
-                                    ) -> list[dict[str, Any]]:
-    """Per-batch defect rows in the window — source data for the defect-type
-    pareto and for finding a camera's most recent/worst batch."""
+# Every report block reads the per-batch historian (`camera_defect_logs`) or
+# its pivot (`camera_batch_work`); `production_hourly_log` above is kept only
+# for the inspected count a defect *rate* needs. Each query below pairs a
+# defect_array slot with its name from `cameras.defect_labels` *inside the
+# plant's own database*: pairing in Python off a code -> labels map merged
+# across the whole selection would label plant A's batches with plant B's
+# names whenever the two share a camera code.
+#
+# A camera's line is read from `cameras` when it is registered there: a log
+# row snapshots the line as it was spelled at the time ("LINE 13" last month,
+# "Line 13" now), and grouping on the snapshot would split one camera in two.
+# The log's own copy is only the fallback for a camera no longer registered.
+#
+# Slot N of `defect_array` is `defect_labels[N]` (both 1-based via WITH
+# ORDINALITY). An unnamed slot — an array longer than its labels, or a
+# NULL/blank entry — falls back to "Defect N" rather than dropping the counts.
+_SLOT_LABEL = "COALESCE(NULLIF(c.defect_labels[s.slot], ''), 'Defect ' || s.slot)"
+
+#: date_trunc() units the defect-period query accepts.
+PERIOD_BUCKETS = ("hour", "day", "week", "month")
+
+
+def fetch_camera_log_stats(start: datetime, end: datetime, locations=None,
+                           camera_codes=None, datasource_id: int | None = None,
+                           ) -> list[dict[str, Any]]:
+    """Per camera in the window: total defects (every slot of every log row),
+    the distinct batch ids it logged, its log-row count and when it was last
+    heard from.
+
+    Batch ids come back as a list rather than a count so the caller can count
+    *distinct batches across cameras* — one batch runs past every camera on the
+    line, and summing per-camera counts would count it once per camera."""
     where, params = _camera_filter(locations, camera_codes)
     with _table_source_conn(datasource_id) as (conn, schema):
         return conn.execute(
             sql.SQL(
-                """SELECT location, code, name, batch_id, defect_array, created_at
-                     FROM {tbl}
-                    WHERE created_at >= %s AND created_at < %s""" + where + """
-                    ORDER BY created_at"""
-            ).format(tbl=sql.Identifier(schema, "camera_defect_logs")),
+                """SELECT COALESCE(c.location, l.location) AS location, l.code,
+                          COALESCE(max(c.name), max(l.name)) AS name,
+                          COALESCE(SUM((SELECT SUM(x) FROM unnest(l.defect_array) x)), 0)::bigint
+                              AS defects,
+                          array_agg(DISTINCT l.batch_id) AS batch_ids,
+                          COUNT(*) AS log_rows,
+                          MAX(l.created_at) AS last_seen
+                     FROM (SELECT location, code, name, batch_id, defect_array, created_at
+                             FROM {logs}
+                            WHERE created_at >= %s AND created_at < %s""" + where + """
+                          ) l
+                     LEFT JOIN {cameras} c ON c.code = l.code
+                    GROUP BY 1, l.code"""
+            ).format(logs=sql.Identifier(schema, "camera_defect_logs"),
+                     cameras=sql.Identifier(schema, "cameras")),
             (start, end, *params),
+        ).fetchall()
+
+
+def fetch_camera_defect_slots(start: datetime, end: datetime, locations=None,
+                              camera_codes=None, datasource_id: int | None = None,
+                              ) -> list[dict[str, Any]]:
+    """`{location, code, slot, defect, count, batches}` per camera per labelled
+    defect slot — one query that feeds the pareto (merged by label), the
+    camera x defect grid and each camera's worst defect.
+
+    `batches` is the number of distinct batches in which that slot fired on that
+    camera. Zero-count slots aren't returned."""
+    where, params = _camera_filter(locations, camera_codes)
+    with _table_source_conn(datasource_id) as (conn, schema):
+        return conn.execute(
+            sql.SQL(
+                """SELECT COALESCE(c.location, l.location) AS location, l.code, s.slot,
+                          """ + _SLOT_LABEL + """ AS defect,
+                          SUM(s.cnt)::bigint AS count,
+                          COUNT(DISTINCT l.batch_id) AS batches
+                     FROM (SELECT location, batch_id, code, defect_array
+                             FROM {logs}
+                            WHERE created_at >= %s AND created_at < %s""" + where + """
+                          ) l
+                    CROSS JOIN LATERAL unnest(l.defect_array)
+                          WITH ORDINALITY AS s(cnt, slot)
+                     LEFT JOIN {cameras} c ON c.code = l.code
+                    WHERE s.cnt > 0
+                    GROUP BY 1, l.code, s.slot, 4"""
+            ).format(logs=sql.Identifier(schema, "camera_defect_logs"),
+                     cameras=sql.Identifier(schema, "cameras")),
+            (start, end, *params),
+        ).fetchall()
+
+
+def fetch_camera_defect_periods(start: datetime, end: datetime, bucket: str,
+                                locations=None, camera_codes=None,
+                                datasource_id: int | None = None,
+                                ) -> list[dict[str, Any]]:
+    """`{period, location, code, defect, count}` — defects per time bucket per
+    camera per labelled slot. Feeds both the defects-over-time chart (merged
+    across cameras) and the camera timeline heatmap (merged across types).
+
+    `bucket` is a date_trunc() unit from PERIOD_BUCKETS; the caller picks it
+    from the window so a year renders as ~52 weeks, not 8,760 hours."""
+    if bucket not in PERIOD_BUCKETS:
+        raise ValueError(f"unsupported bucket {bucket!r}")
+    where, params = _camera_filter(locations, camera_codes)
+    with _table_source_conn(datasource_id) as (conn, schema):
+        return conn.execute(
+            sql.SQL(
+                """SELECT date_trunc({unit}, l.created_at) AS period,
+                          COALESCE(c.location, l.location) AS location, l.code,
+                          """ + _SLOT_LABEL + """ AS defect,
+                          SUM(s.cnt)::bigint AS count
+                     FROM (SELECT location, code, defect_array, created_at
+                             FROM {logs}
+                            WHERE created_at >= %s AND created_at < %s""" + where + """
+                          ) l
+                    CROSS JOIN LATERAL unnest(l.defect_array)
+                          WITH ORDINALITY AS s(cnt, slot)
+                     LEFT JOIN {cameras} c ON c.code = l.code
+                    WHERE s.cnt > 0
+                    GROUP BY 1, 2, 3, 4
+                    ORDER BY 1"""
+            ).format(unit=sql.Literal(bucket),
+                     logs=sql.Identifier(schema, "camera_defect_logs"),
+                     cameras=sql.Identifier(schema, "cameras")),
+            (start, end, *params),
+        ).fetchall()
+
+
+#: A batch-work window is one row per batch per camera, so this only bites on a
+#: plant rolling batches every few minutes for a year.
+MAX_BATCH_WORK_ROWS = 2000
+
+
+def fetch_camera_batch_work(start: datetime, end: datetime, locations=None,
+                            camera_codes=None, datasource_id: int | None = None,
+                            ) -> list[dict[str, Any]]:
+    """`camera_batch_work` unpivoted to one row per batch per camera.
+
+    The table is a pivot: one row per batch, one jsonb column per camera
+    (`camera_1` … `camera_N`) holding that camera's defect_array. The column
+    name is the camera's `name` lower-cased with spaces as underscores — how
+    `fn_sync_camera_batch_work` derives it — so that is the join back to
+    `cameras` and its `defect_labels`. Columns are read with jsonb_each rather
+    than named, so a plant that adds `camera_6` needs no code change. A column
+    that matches no camera still comes back, with `code` NULL.
+
+    A batch overlaps the window when it started before the end and was last
+    written after the start. Newest batches first, capped at
+    MAX_BATCH_WORK_ROWS batch-camera rows."""
+    where, params = _camera_filter(locations, camera_codes)
+    with _table_source_conn(datasource_id) as (conn, schema):
+        return conn.execute(
+            sql.SQL(
+                """SELECT b.batch_id, b.status, b.created_at, b.updated_at,
+                          kv.key AS column_name, c.location, c.code, c.name,
+                          ARRAY(SELECT e::numeric::bigint
+                                  FROM jsonb_array_elements_text(kv.value) e) AS defect_array,
+                          COALESCE(c.defect_labels, ARRAY[]::text[]) AS defect_labels
+                     FROM {work} b
+                    CROSS JOIN LATERAL jsonb_each(
+                          to_jsonb(b) - 'batch_id' - 'status' - 'created_at' - 'updated_at'
+                          ) AS kv
+                     LEFT JOIN {cameras} c ON lower(replace(c.name, ' ', '_')) = kv.key
+                    WHERE jsonb_typeof(kv.value) = 'array'
+                      AND b.created_at < %s
+                      AND COALESCE(b.updated_at, b.created_at) >= %s""" + where + """
+                    ORDER BY b.batch_id DESC, kv.key
+                    LIMIT %s"""
+            ).format(work=sql.Identifier(schema, "camera_batch_work"),
+                     cameras=sql.Identifier(schema, "cameras")),
+            (end, start, *params, MAX_BATCH_WORK_ROWS),
         ).fetchall()
 
 
@@ -3332,7 +3530,10 @@ def count_camera_defect_logs(start, end, locations=None, camera_codes=None, sear
 def fetch_camera_defect_logs_page(start, end, locations=None, camera_codes=None, search=None,
                                   limit: int = 50, offset: int = 0,
                                   datasource_id: int | None = None) -> list[dict[str, Any]]:
-    """One page of the batch-defect log, newest first."""
+    """One page of the batch-defect log, newest first, each row carrying its
+    camera's `defect_labels` so every slot can be named. The page is cut in the
+    inner query and only then joined, so the join can never widen it
+    (`cameras.code` is unique)."""
     where, params = _camera_filter(locations, camera_codes)
     if search:
         where += " AND (name ILIKE %s OR code ILIKE %s)"
@@ -3340,12 +3541,16 @@ def fetch_camera_defect_logs_page(start, end, locations=None, camera_codes=None,
     with _table_source_conn(datasource_id) as (conn, schema):
         return conn.execute(
             sql.SQL(
-                """SELECT location, code, name, batch_id, defect_array, created_at
-                     FROM {tbl}
-                    WHERE created_at >= %s AND created_at < %s""" + where + """
-                    ORDER BY created_at DESC
-                    LIMIT %s OFFSET %s"""
-            ).format(tbl=sql.Identifier(schema, "camera_defect_logs")),
+                """SELECT l.*, COALESCE(c.defect_labels, ARRAY[]::text[]) AS defect_labels
+                     FROM (SELECT id, location, code, name, batch_id, defect_array, created_at
+                             FROM {tbl}
+                            WHERE created_at >= %s AND created_at < %s""" + where + """
+                            ORDER BY created_at DESC
+                            LIMIT %s OFFSET %s) l
+                     LEFT JOIN {cameras} c ON c.code = l.code
+                    ORDER BY l.created_at DESC"""
+            ).format(tbl=sql.Identifier(schema, "camera_defect_logs"),
+                     cameras=sql.Identifier(schema, "cameras")),
             (start, end, *params, limit, offset),
         ).fetchall()
 

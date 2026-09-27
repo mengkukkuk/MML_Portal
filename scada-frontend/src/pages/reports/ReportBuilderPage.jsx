@@ -14,6 +14,8 @@ import DeleteOutlined from '@mui/icons-material/DeleteOutlined'
 
 import { deleteTemplate, fetchTemplate, updateTemplate, createTemplate } from '@/api/reports'
 import { PRESETS } from '@/components/report/reportRange'
+import { COLUMNS as SUMMARY_COLUMN_DEFS, DEFAULT_COLUMNS as DEFAULT_SUMMARY_COLUMNS } from '@/components/report/blocks/SummaryTable'
+import { useTranslation } from '@/i18n'
 import styles from './ReportBuilderPage.module.css'
 
 /**
@@ -30,35 +32,61 @@ import styles from './ReportBuilderPage.module.css'
  * works from a keyboard on a plant terminal.
  */
 
+// `tab` mirrors ReportPage's BLOCK_TAB: which of the page's two tabs a block
+// lands on. Shown here so an admin adding a block knows where it will appear.
 const BLOCK_TYPES = {
   kpi: {
     label: 'KPI Strip',
-    hint: 'Inspected, defects, defect rate, cameras reporting',
+    hint: 'Defects, batches, defects per batch, top defect, defect rate',
+    tab: 'QC Summary',
     defaults: { width: 'full', options: { targetDefectPct: 2 } },
   },
-  timeline: {
-    label: 'Camera Throughput Timeline',
-    hint: 'Hourly defect-rate heatmap, one row per camera',
+  defect_trend: {
+    label: 'Defects Over Time',
+    hint: 'Defects per hour/day/week, stacked by defect type',
+    tab: 'QC Summary',
     defaults: { width: 'full', options: {} },
   },
   pareto: {
     label: 'Defect Pareto',
     hint: 'Ranked defect types with cumulative %',
+    tab: 'QC Summary',
     defaults: { width: 'half', options: { topN: 10, rankBy: 'count' } },
   },
   exceptions: {
     label: 'Quality Exceptions',
     hint: 'Cameras over the warn/critical defect-rate threshold',
+    tab: 'QC Summary',
     defaults: { width: 'half', options: { warnPct: 2, critPct: 5, topN: 10 } },
   },
   summary_table: {
     label: 'Camera Summary',
     hint: 'One row per camera with a totals footer',
+    tab: 'QC Summary',
+    defaults: { width: 'full', options: {} },
+  },
+  batch_matrix: {
+    label: 'Batch x Camera Matrix',
+    hint: 'camera_batch_work: one row per batch, one column per camera',
+    tab: 'Engineering',
+    defaults: { width: 'full', options: {} },
+  },
+  defect_grid: {
+    label: 'Camera x Defect Type',
+    hint: 'Each camera\'s defect slots, named from its own labels',
+    tab: 'Engineering',
+    defaults: { width: 'full', options: {} },
+  },
+  timeline: {
+    label: 'Camera Defect Timeline',
+    hint: 'Defects per period heatmap, one row per camera',
+    tab: 'Engineering',
     defaults: { width: 'full', options: {} },
   },
   raw_log: {
     label: 'Defect Batch Log',
-    hint: 'Raw, unclassified camera_defect_logs rows',
+    hint: 'Raw camera_defect_logs rows with named defects',
+    tab: 'Engineering',
     defaults: { width: 'full', options: { pageSize: 50 } },
   },
 }
@@ -69,9 +97,7 @@ const WIDTHS = [
   { value: 'third', label: 'Third' },
 ]
 
-const SUMMARY_COLUMNS = ['camera', 'inspected', 'defects', 'rate', 'worstDefect', 'lastSeen', 'status']
-
-const DEFAULT_SUMMARY_COLUMNS = SUMMARY_COLUMNS
+const SUMMARY_COLUMNS = Object.keys(SUMMARY_COLUMN_DEFS)
 
 let idCounter = 0
 const newBlockId = () => `b${Date.now().toString(36)}${(idCounter += 1)}`
@@ -82,6 +108,7 @@ function errorText(error) {
 }
 
 export default function ReportBuilderPage() {
+  const tr = useTranslation()
   const { templateId } = useParams()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -102,7 +129,7 @@ export default function ReportBuilderPage() {
   useEffect(() => {
     if (form) return
     if (!templateId) {
-      setForm({ name: '', description: '', blocks: [], preset: 'last7d', is_default: false })
+      setForm({ name: '', description: '', blocks: [], preset: 'last7d', is_default: false, filters: {} })
       return
     }
     if (!templateQuery.data) return
@@ -113,6 +140,10 @@ export default function ReportBuilderPage() {
       blocks: (t.blocks ?? []).map((b) => ({ ...b, id: b.id ?? newBlockId() })),
       preset: t.default_filters?.preset ?? 'last7d',
       is_default: !!t.is_default,
+      // Kept whole so saving round-trips keys this form doesn't edit — notably
+      // `layout`, the server's one-time block-upgrade stamp. Dropping it would
+      // make the next boot re-add blocks an admin just removed.
+      filters: t.default_filters ?? {},
     })
   }, [templateId, templateQuery.data, form])
 
@@ -144,7 +175,7 @@ export default function ReportBuilderPage() {
     return (
       <div className={styles.page}>
         <p className={styles.empty}>
-          {templateQuery.error ? errorText(templateQuery.error) : 'Loading template…'}
+          {templateQuery.error ? errorText(templateQuery.error) : tr('Loading template…')}
         </p>
       </div>
     )
@@ -175,7 +206,7 @@ export default function ReportBuilderPage() {
         {
           id: newBlockId(),
           type,
-          title: def.label,
+          title: tr(def.label),
           width: def.defaults.width,
           options: { ...def.defaults.options },
         },
@@ -200,14 +231,14 @@ export default function ReportBuilderPage() {
   function save() {
     setSaveError('')
     if (!form.name.trim()) {
-      setSaveError('A template needs a name.')
+      setSaveError(tr('A template needs a name.'))
       return
     }
     saveMutation.mutate({
       name: form.name.trim(),
       description: form.description,
       blocks: form.blocks,
-      default_filters: { preset: form.preset },
+      default_filters: { ...form.filters, preset: form.preset },
       is_default: form.is_default,
     })
   }
@@ -215,10 +246,10 @@ export default function ReportBuilderPage() {
   return (
     <div className={styles.page}>
       <header className={styles.head}>
-        <h2 className={styles.title}>{templateId ? 'Edit report template' : 'New report template'}</h2>
+        <h2 className={styles.title}>{templateId ? tr('Edit report template') : tr('New report template')}</h2>
         <div className={styles.actions}>
           <Button size="small" onClick={() => navigate(templateId ? `/reports/${templateId}` : '/reports')}>
-            Cancel
+            {tr('Cancel')}
           </Button>
           <Button
             size="small"
@@ -226,7 +257,7 @@ export default function ReportBuilderPage() {
             loading={saveMutation.isPending}
             onClick={save}
           >
-            Save
+            {tr('Save')}
           </Button>
         </div>
       </header>
@@ -237,7 +268,7 @@ export default function ReportBuilderPage() {
         <div className={styles.row}>
           <TextField
             size="small"
-            label="Name"
+            label={tr('Name')}
             value={form.name}
             onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             className={styles.grow}
@@ -249,7 +280,7 @@ export default function ReportBuilderPage() {
             >
               {Object.entries(PRESETS).map(([key, p]) => (
                 <MenuItem key={key} value={key}>
-                  Default range: {p.label}
+                  {tr('Default range: {range}', { range: tr(p.label) })}
                 </MenuItem>
               ))}
             </Select>
@@ -257,7 +288,7 @@ export default function ReportBuilderPage() {
         </div>
         <TextField
           size="small"
-          label="Description"
+          label={tr('Description')}
           value={form.description}
           onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
           fullWidth
@@ -270,12 +301,12 @@ export default function ReportBuilderPage() {
               onChange={(e) => setForm((f) => ({ ...f, is_default: e.target.checked }))}
             />
           }
-          label="Open this template when /reports is visited"
+          label={tr('Open this template when /reports is visited')}
         />
       </section>
 
       <section className={styles.card}>
-        <h3 className={styles.subtitle}>Add a block</h3>
+        <h3 className={styles.subtitle}>{tr('Add a block')}</h3>
         <div className={styles.palette}>
           {Object.entries(BLOCK_TYPES).map(([type, def]) => (
             <button
@@ -285,10 +316,11 @@ export default function ReportBuilderPage() {
               onClick={() => addBlock(type)}
             >
               <span className={styles.paletteLabel}>
-                {def.label}
-                {usedTypes.has(type) && <span className={styles.usedTag}>in use</span>}
+                {tr(def.label)}
+                {usedTypes.has(type) && <span className={styles.usedTag}>{tr('in use')}</span>}
               </span>
-              <span className={styles.paletteHint}>{def.hint}</span>
+              <span className={styles.paletteHint}>{tr(def.hint)}</span>
+              <span className={styles.paletteHint}>{tr('Tab: {tab}', { tab: tr(def.tab) })}</span>
             </button>
           ))}
         </div>
@@ -296,11 +328,11 @@ export default function ReportBuilderPage() {
 
       <section className={styles.card}>
         <h3 className={styles.subtitle}>
-          Blocks <span className={styles.hint}>— order here is the order on the page and in print</span>
+          {tr('Blocks')} <span className={styles.hint}>— {tr('order here is the order within each tab and in print')}</span>
         </h3>
 
         {!form.blocks.length && (
-          <p className={styles.empty}>No blocks yet. Add one above.</p>
+          <p className={styles.empty}>{tr('No blocks yet. Add one above.')}</p>
         )}
 
         <ol className={styles.list}>
@@ -308,14 +340,14 @@ export default function ReportBuilderPage() {
             <li key={block.id} className={styles.item}>
               <div className={styles.itemHead}>
                 <span className={styles.itemType}>
-                  {BLOCK_TYPES[block.type]?.label ?? block.type}
+                  {BLOCK_TYPES[block.type] ? `${tr(BLOCK_TYPES[block.type].label)} · ${tr(BLOCK_TYPES[block.type].tab)}` : block.type}
                 </span>
                 <div className={styles.itemActions}>
                   <Button
                     size="small"
                     disabled={i === 0}
                     onClick={() => move(i, -1)}
-                    aria-label="Move up"
+                    aria-label={tr('Move up')}
                   >
                     <ArrowUpwardOutlined fontSize="small" />
                   </Button>
@@ -323,7 +355,7 @@ export default function ReportBuilderPage() {
                     size="small"
                     disabled={i === form.blocks.length - 1}
                     onClick={() => move(i, 1)}
-                    aria-label="Move down"
+                    aria-label={tr('Move down')}
                   >
                     <ArrowDownwardOutlined fontSize="small" />
                   </Button>
@@ -331,7 +363,7 @@ export default function ReportBuilderPage() {
                     size="small"
                     color="error"
                     onClick={() => removeBlock(block.id)}
-                    aria-label="Remove block"
+                    aria-label={tr('Remove block')}
                   >
                     <DeleteOutlined fontSize="small" />
                   </Button>
@@ -341,7 +373,7 @@ export default function ReportBuilderPage() {
               <div className={styles.row}>
                 <TextField
                   size="small"
-                  label="Title"
+                  label={tr('Title')}
                   value={block.title ?? ''}
                   onChange={(e) => patchBlock(block.id, { title: e.target.value })}
                   className={styles.grow}
@@ -353,7 +385,7 @@ export default function ReportBuilderPage() {
                   >
                     {WIDTHS.map((w) => (
                       <MenuItem key={w.value} value={w.value}>
-                        {w.label}
+                        {tr(w.label)}
                       </MenuItem>
                     ))}
                   </Select>
@@ -368,10 +400,9 @@ export default function ReportBuilderPage() {
 
       {templateId && (
         <section className={styles.card}>
-          <h3 className={styles.subtitle}>Danger zone</h3>
+          <h3 className={styles.subtitle}>{tr('Danger zone')}</h3>
           <p className={styles.hint}>
-            Deleting a template does not touch any log data — reports are computed
-            live from vision_data every time they are run.
+            {tr('Deleting a template does not touch any log data — reports are computed live from vision_data every time they are run.')}
           </p>
           <Button
             size="small"
@@ -379,12 +410,12 @@ export default function ReportBuilderPage() {
             variant="outlined"
             loading={deleteMutation.isPending}
             onClick={() => {
-              if (window.confirm(`Delete template "${form.name}"? This cannot be undone.`)) {
+              if (window.confirm(tr('Delete template "{name}"? This cannot be undone.', { name: form.name }))) {
                 deleteMutation.mutate()
               }
             }}
           >
-            Delete template
+            {tr('Delete template')}
           </Button>
         </section>
       )}
@@ -394,6 +425,7 @@ export default function ReportBuilderPage() {
 
 /** Per-type option form. Only the handful of knobs each block actually reads. */
 function BlockOptions({ block, patchOptions }) {
+  const tr = useTranslation()
   const o = block.options ?? {}
 
   if (block.type === 'kpi') {
@@ -401,7 +433,7 @@ function BlockOptions({ block, patchOptions }) {
       <TextField
         size="small"
         type="number"
-        label="Target defect rate %"
+        label={tr('Target defect rate %')}
         value={o.targetDefectPct ?? 2}
         onChange={(e) => patchOptions(block.id, { targetDefectPct: Number(e.target.value) })}
         className={styles.num}
@@ -415,7 +447,7 @@ function BlockOptions({ block, patchOptions }) {
         <TextField
           size="small"
           type="number"
-          label="Top N defects"
+          label={tr('Top N defects')}
           value={o.topN ?? 10}
           onChange={(e) => patchOptions(block.id, { topN: Number(e.target.value) })}
           className={styles.num}
@@ -425,8 +457,8 @@ function BlockOptions({ block, patchOptions }) {
             value={o.rankBy ?? 'count'}
             onChange={(e) => patchOptions(block.id, { rankBy: e.target.value })}
           >
-            <MenuItem value="count">Rank by count</MenuItem>
-            <MenuItem value="batches">Rank by batches</MenuItem>
+            <MenuItem value="count">{tr('Rank by count')}</MenuItem>
+            <MenuItem value="batches">{tr('Rank by batches')}</MenuItem>
           </Select>
         </FormControl>
       </div>
@@ -439,7 +471,7 @@ function BlockOptions({ block, patchOptions }) {
         <TextField
           size="small"
           type="number"
-          label="Warn ≥ defect rate %"
+          label={tr('Warn ≥ defect rate %')}
           value={o.warnPct ?? 2}
           onChange={(e) => patchOptions(block.id, { warnPct: Number(e.target.value) })}
           className={styles.num}
@@ -447,7 +479,7 @@ function BlockOptions({ block, patchOptions }) {
         <TextField
           size="small"
           type="number"
-          label="Critical ≥ defect rate %"
+          label={tr('Critical ≥ defect rate %')}
           value={o.critPct ?? 5}
           onChange={(e) => patchOptions(block.id, { critPct: Number(e.target.value) })}
           className={styles.num}
@@ -455,7 +487,7 @@ function BlockOptions({ block, patchOptions }) {
         <TextField
           size="small"
           type="number"
-          label="Top N shown"
+          label={tr('Top N shown')}
           value={o.topN ?? 10}
           onChange={(e) => patchOptions(block.id, { topN: Number(e.target.value) })}
           className={styles.num}
@@ -486,7 +518,7 @@ function BlockOptions({ block, patchOptions }) {
                 }
               />
             }
-            label={col}
+            label={tr(SUMMARY_COLUMN_DEFS[col].label)}
           />
         ))}
       </div>
@@ -502,7 +534,7 @@ function BlockOptions({ block, patchOptions }) {
         >
           {[25, 50, 100, 200].map((n) => (
             <MenuItem key={n} value={n}>
-              {n} rows per page
+              {tr('{count} rows per page', { count: n })}
             </MenuItem>
           ))}
         </Select>

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dayjs from 'dayjs'
 import Button from '@mui/material/Button'
 import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker'
-import { windowError } from './trendWindow'
+import { TREND_RANGES, windowError } from './trendWindow'
 import { useQuery } from '@tanstack/react-query'
 import Checkbox from '@mui/material/Checkbox'
 import FormControl from '@mui/material/FormControl'
@@ -11,7 +11,7 @@ import Select from '@mui/material/Select'
 import { fetchSchemaTables } from '@/api/schema'
 import { useTrendColumns } from './useTrendColumns'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
-import { TIME_RANGES } from '@/components/live/usePanelSeries'
+import { useTranslation } from '@/i18n'
 import styles from './TrendRail.module.css'
 
 /**
@@ -39,6 +39,7 @@ import styles from './TrendRail.module.css'
  */
 
 export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
+  const tr = useTranslation()
   const [draft, setDraft] = useState(() => ({ minutes: trend.minutes, start: dayjs(range.start), end: dayjs(range.end) }))
   useEffect(() => {
     setDraft({ minutes: trend.minutes, start: dayjs(range.start), end: dayjs(range.end) })
@@ -151,12 +152,12 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
 
   return (
     <div className={`${styles.rail} report-trend-controls`}>
-      <Field label="Table">
+      <Field label={tr('Table')}>
         <Select
           value={tables.some((t) => t.table === trend.table) ? trend.table : ''}
           displayEmpty
           onChange={(e) => pickTable(e.target.value)}
-          renderValue={(v) => v || 'Choose a table'}
+          renderValue={(v) => v || tr('Choose a table')}
         >
           {tables.map((t) => (
             <MenuItem key={t.table} value={t.table}>{t.label}</MenuItem>
@@ -165,12 +166,12 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
       </Field>
 
       {hasGroups && (
-        <Field label="Group">
+        <Field label={tr('Group')}>
           <Select
             value={activeGroup?.key ?? ''}
             displayEmpty
-            inputProps={{ 'aria-label': 'Reading group' }}
-            renderValue={() => activeGroup?.label ?? 'Choose a group'}
+            inputProps={{ 'aria-label': tr('Reading group') }}
+            renderValue={() => activeGroup?.label ?? tr('Choose a group')}
             onChange={(e) => pickGroup(e.target.value)}
           >
             {groups.map((group) => (
@@ -183,22 +184,22 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
       {/* Multiple by default, singular in effect until a second box is ticked:
           one reading is the ordinary case and still reads as one name, so the
           control does not announce a capability the reader has not asked for. */}
-      <Field label={shownValueCols.length > 1 ? 'Readings' : 'Reading'} wide>
+      <Field label={shownValueCols.length > 1 ? tr('Readings') : tr('Reading')} wide>
         <Select
           multiple
           value={shownValueCols}
           displayEmpty
           disabled={!trend.table || noArrays}
-          inputProps={{ 'aria-label': 'Reading' }}
+          inputProps={{ 'aria-label': tr('Reading') }}
           onChange={(e) => pickReadings(
             typeof e.target.value === 'string' ? e.target.value.split(',') : e.target.value,
           )}
           renderValue={(picked) =>
-            !picked.length ? (noArrays ? 'None available' : 'Choose a column')
+            !picked.length ? (noArrays ? tr('None available') : tr('Choose a column'))
               : picked.length <= 2 ? picked.map(labelFor).join(', ')
                 // Past two names the control is wider than the answer is useful.
                 // The chart's own legend below names every line in full.
-                : `${picked.length} readings`}
+                : tr('{count} readings', { count: picked.length })}
         >
           {readingOptions.map((option) => (
             <MenuItem key={option.value} value={option.value} className={styles.option}>
@@ -209,22 +210,22 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
         </Select>
       </Field>
 
-      <Field label="Window">
+      <Field label={tr('Window')}>
         <Select
           value={draft.minutes}
           onChange={(e) => pickWindow(e.target.value)}
         >
-          {TIME_RANGES.map((r) => (
-            <MenuItem key={r.value} value={r.value}>{r.label}</MenuItem>
+          {TREND_RANGES.map((r) => (
+            <MenuItem key={r.value} value={r.value}>{tr(r.label)}</MenuItem>
           ))}
-          <MenuItem value="custom">Custom</MenuItem>
+          <MenuItem value="custom">{tr('Custom')}</MenuItem>
         </Select>
       </Field>
 
       {['start', 'end'].map((key) => (
         <DateTimePicker
           key={key}
-          label={key === 'start' ? 'Start' : 'End'}
+          label={key === 'start' ? tr('Start') : tr('End')}
           value={draft[key]}
           onChange={(value) => setDraft((d) => ({ ...d, minutes: 'custom', [key]: value }))}
           format="DD/MM/YYYY HH:mm"
@@ -235,14 +236,13 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
       <Button size="small" variant="outlined" disabled={!!rangeError}
         onClick={() => onApplyWindow({ minutes: draft.minutes,
           start: dateString(draft.start), end: dateString(draft.end) })}>
-        Apply
+        {tr('Apply')}
       </Button>
-      {rangeError && <p className={styles.error} role="alert">{rangeError}</p>}
+      {rangeError && <p className={styles.error} role="alert">{tr(rangeError)}</p>}
 
       {noArrays && (
         <p className={styles.hint}>
-          {trend.table} has no multi-value reading columns. This chart plots a
-          column that stores a value with its setpoint and limits together.
+          {tr('{table} has no multi-value reading columns. This chart plots a column that stores a value with its setpoint and limits together.', { table: trend.table })}
         </p>
       )}
       {catalogError && (

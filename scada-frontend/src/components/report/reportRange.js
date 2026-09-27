@@ -29,6 +29,11 @@ export const PRESETS = {
       dayjs().subtract(1, 'month').endOf('month'),
     ],
   },
+  last90d: { label: 'Last 90 days', resolve: () => [dayjs().subtract(90, 'day'), dayjs()] },
+  thisYear: { label: 'This year', resolve: () => [dayjs().startOf('year'), dayjs()] },
+  // The widest preset. The server allows 400 days (reports.MAX_WINDOW_DAYS),
+  // and past ~4 months the defects-over-time chart buckets by week.
+  last12m: { label: 'Last 12 months', resolve: () => [dayjs().subtract(12, 'month'), dayjs()] },
   custom: { label: 'Custom', resolve: null },
 }
 

@@ -11,6 +11,8 @@
  * filters: a trend someone found is a link, not a screenshot plus instructions.
  */
 
+import { TREND_RANGES } from './trendWindow.js'
+
 // The four slots a numeric-array reading carries, in the order the plant writes
 // them. Index *is* meaning here — there is no per-row label to read it from.
 export const ROLES = [
@@ -91,7 +93,7 @@ export function trendFromParams(params) {
     valueCols: params.getAll('vcol').filter(Boolean),
     tsCol: params.get('tscol') ?? '',
     minutes: params.get('win') === 'custom' ? 'custom'
-      : [10, 30, 60, 480, 1440, 10080].includes(minutes) ? minutes : DEFAULT_MINUTES,
+      : TREND_RANGES.some((r) => r.value === minutes) ? minutes : DEFAULT_MINUTES,
     start: params.get('tstart') ?? '',
     end: params.get('tend') ?? '',
     indexes: parseIndexes(params.get('idx')),

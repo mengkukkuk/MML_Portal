@@ -91,3 +91,38 @@
     grid-column: span 12;
   }
 }
+
+/* --- tabs ------------------------------------------------------------------ */
+
+.tabs {
+  min-height: 40px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.tabLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tabCount {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--fg-muted);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+}
+
+/* The signal trend is its own question on its own window; a hairline keeps it
+   from reading as the first block of the report below. */
+.trend {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px dashed var(--border-soft);
+}

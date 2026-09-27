@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import EChart from '@/components/charts/EChart'
+import { useTranslation } from '@/i18n'
 import ReportBlock from './ReportBlock'
 import styles from './blocks.module.css'
 
@@ -17,12 +18,15 @@ const LINE_COLOR = '#f59e0b'
 const OTHER_COLOR = '#5b6a86'
 
 export default function DefectPareto({ block, result }) {
-  const rows = result?.defect_reasons ?? []
+  const tr = useTranslation()
+  const rows = useMemo(() => result?.defect_reasons ?? [], [result])
   const rankBy = block?.options?.rankBy ?? 'count'
   const byBatches = rankBy === 'batches'
 
   const option = useMemo(() => {
-    const labels = rows.map((r) => r.defect)
+    // "Other" is the server's tail bucket, the one label here that is ours to
+    // translate; every other label is a plant's own defect name.
+    const labels = rows.map((r) => (r.defect === 'Other' ? tr('Other') : r.defect))
     const values = rows.map((r) => (byBatches ? r.batches : r.count))
 
     return {
@@ -39,10 +43,10 @@ export default function DefectPareto({ block, result }) {
           const r = rows[i]
           if (!r) return ''
           return [
-            `<b>${r.defect}</b>`,
-            `Count: ${r.count}`,
-            `Batches: ${r.batches}`,
-            `Cumulative: ${r.cumulative_pct?.toFixed(1)}%`,
+            `<b>${labels[i]}</b>`,
+            `${tr('Count')}: ${r.count.toLocaleString()}`,
+            `${tr('Batches')}: ${r.batches.toLocaleString()}`,
+            `${tr('Cumulative')}: ${r.cumulative_pct?.toFixed(1)}%`,
           ].join('<br/>')
         },
       },
@@ -63,7 +67,7 @@ export default function DefectPareto({ block, result }) {
       yAxis: [
         {
           type: 'value',
-          name: byBatches ? 'Batches' : 'Count',
+          name: byBatches ? tr('Batches') : tr('Count'),
           nameTextStyle: { color: '#5b6a86', fontSize: 10 },
           axisLabel: { color: '#8a99b3', fontSize: 10 },
           splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } },
@@ -82,7 +86,7 @@ export default function DefectPareto({ block, result }) {
           data: values.map((v, i) => ({
             value: v,
             itemStyle: {
-              color: labels[i] === 'Other' ? OTHER_COLOR : BAR_COLOR,
+              color: rows[i].defect === 'Other' ? OTHER_COLOR : BAR_COLOR,
               borderRadius: [3, 3, 0, 0],
             },
           })),
@@ -99,17 +103,17 @@ export default function DefectPareto({ block, result }) {
         },
       ],
     }
-  }, [rows, byBatches])
+  }, [rows, byBatches, tr])
 
   return (
     <ReportBlock
-      title={block?.title ?? 'Defect Pareto'}
-      note={byBatches ? 'Ranked by batches' : 'Ranked by count'}
+      title={tr(block?.title ?? 'Defect Pareto')}
+      note={byBatches ? tr('Ranked by batches') : tr('Ranked by count')}
     >
       {rows.length ? (
         <EChart option={option} height="300px" />
       ) : (
-        <p className={styles['block__empty']}>No defects recorded in this window.</p>
+        <p className={styles['block__empty']}>{tr('No defects recorded in this window.')}</p>
       )}
     </ReportBlock>
   )

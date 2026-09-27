@@ -1,81 +1,64 @@
 import { useMemo } from 'react'
 import EChart from '@/components/charts/EChart'
+import { useTranslation } from '@/i18n'
 import ReportBlock from './ReportBlock'
-import { cameraLabel, fmtDateTime, isMultiSource } from '../reportFormat'
+import { cameraLabel, fmtPeriod, isMultiSource } from '../reportFormat'
 import styles from './blocks.module.css'
 
 /**
- * ThroughputTimeline — one row per camera, one cell per hour, coloured by
- * defect rate. A heatmap rather than a Gantt: vision data has no discrete
- * machine states, just a continuous count_total/defect_total pair per hour, so
- * the interesting signal is "how bad was this hour", not "which state was
- * active".
+ * Camera defect timeline — one row per camera, one cell per period, shaded by
+ * how many defects that camera logged. The engineer's "when did it start, and
+ * on which camera" view: a camera that goes bad shows as a row turning red
+ * from a point in time, which a totals table can't show.
  *
- * Cell colour comes straight from the same rate the KPI/summary blocks report,
- * so the picture always matches the numbers. An hour with zero inspected units
- * (a gap, not a good hour) renders as a distinct neutral colour rather than a
- * false "0% defects" green.
+ * Built from camera_defect_logs (the `periods` the server attaches to each
+ * camera when this block is on the page), bucketed like DefectTrend. A cell
+ * with no logged defects is left empty rather than painted "good": the log
+ * only records batches, so absence is not proof the camera was running.
  */
 
-const ROW_HEIGHT = 26
+const ROW_HEIGHT = 28
 const MIN_HEIGHT = 160
-const GAP_COLOR = '#3a4457'
-
-function rateColor(rate) {
-  if (rate == null) return GAP_COLOR
-  if (rate >= 5) return '#ef4444'
-  if (rate >= 2) return '#f59e0b'
-  return '#22c55e'
-}
 
 export default function ThroughputTimeline({ block, result }) {
-  const cameras = result?.cameras ?? []
+  const tr = useTranslation()
+  const cameras = useMemo(() => result?.cameras ?? [], [result])
+  const bucket = result?.window?.bucket ?? 'day'
 
-  const { option, hours } = useMemo(() => {
+  const { option, periodCount, max } = useMemo(() => {
     const multi = isMultiSource(cameras)
     const categories = cameras.map((c) => cameraLabel(c, multi))
-    const hourSet = new Set()
-    cameras.forEach((c) => (c.hourly ?? []).forEach((h) => hourSet.add(h.period_start)))
-    const hourList = [...hourSet].sort()
-    const hourIndex = new Map(hourList.map((h, i) => [h, i]))
-
+    const periodList = [...new Set(cameras.flatMap((c) => (c.periods ?? []).map((p) => p.period)))]
+      .sort((a, b) => Date.parse(a) - Date.parse(b))
+    const periodIndex = new Map(periodList.map((p, i) => [p, i]))
+    let peak = 0
     const data = []
     cameras.forEach((c, row) => {
-      for (const h of c.hourly ?? []) {
-        const rate = h.count_total > 0 ? (h.defect_total / h.count_total) * 100 : null
-        data.push({
-          value: [hourIndex.get(h.period_start), row, rate],
-          period_start: h.period_start,
-          count_total: h.count_total,
-          defect_total: h.defect_total,
-        })
+      for (const p of c.periods ?? []) {
+        peak = Math.max(peak, p.defects)
+        data.push([periodIndex.get(p.period), row, p.defects])
       }
     })
 
     return {
-      hours: hourList,
+      periodCount: periodList.length,
+      max: peak,
       option: {
         animation: false,
-        grid: { left: 8, right: 16, top: 8, bottom: 40, containLabel: true },
+        grid: { left: 8, right: 16, top: 8, bottom: 56, containLabel: true },
         tooltip: {
           backgroundColor: '#172238',
           borderColor: 'rgba(255,255,255,0.12)',
           textStyle: { color: '#e6edf7', fontSize: 12 },
-          formatter: (p) => {
-            const d = p.data
-            const rate = d.value[2]
-            return [
-              `<b>${categories[d.value[1]]}</b>`,
-              fmtDateTime(d.period_start),
-              d.count_total > 0
-                ? `Inspected: ${d.count_total} · Defects: ${d.defect_total} · ${rate.toFixed(1)}%`
-                : 'No data this hour',
-            ].join('<br/>')
-          },
+          formatter: (p) => [
+            `<b>${categories[p.data[1]]}</b>`,
+            fmtPeriod(periodList[p.data[0]], bucket),
+            `${tr('Defects')}: ${p.data[2].toLocaleString()}`,
+          ].join('<br/>'),
         },
         xAxis: {
           type: 'category',
-          data: hourList.map((h) => fmtDateTime(h)),
+          data: periodList.map((p) => fmtPeriod(p, bucket)),
           splitArea: { show: false },
           axisLine: { lineStyle: { color: 'rgba(255,255,255,0.12)' } },
           axisLabel: { color: '#8a99b3', fontSize: 9, hideOverlap: true },
@@ -88,50 +71,46 @@ export default function ThroughputTimeline({ block, result }) {
           axisLine: { show: false },
           axisLabel: { color: '#8a99b3', fontSize: 11 },
         },
+        visualMap: {
+          min: 0,
+          max: Math.max(1, peak),
+          calculable: false,
+          orient: 'horizontal',
+          left: 'center',
+          bottom: 0,
+          itemHeight: 120,
+          textStyle: { color: '#8a99b3', fontSize: 10 },
+          inRange: { color: ['#3a4457', '#f59e0b', '#ef4444'] },
+        },
         series: [
           {
             type: 'heatmap',
-            data: data.map((d) => ({
-              value: d.value,
-              period_start: d.period_start,
-              count_total: d.count_total,
-              defect_total: d.defect_total,
-              itemStyle: { color: rateColor(d.value[2]) },
-            })),
+            data,
             itemStyle: { borderColor: 'rgba(0,0,0,0.25)', borderWidth: 1 },
           },
         ],
       },
     }
-  }, [cameras])
+  }, [cameras, bucket, tr])
 
-  if (!cameras.length) {
+  const title = tr(block?.title ?? 'Camera Defect Timeline')
+
+  if (!cameras.length || !periodCount) {
     return (
-      <ReportBlock title={block?.title ?? 'Camera Throughput Timeline'}>
-        <p className={styles['block__empty']}>No cameras in this window.</p>
+      <ReportBlock title={title}>
+        <p className={styles['block__empty']}>{tr('No defects recorded in this window.')}</p>
       </ReportBlock>
     )
   }
 
-  const height = Math.max(MIN_HEIGHT, cameras.length * ROW_HEIGHT + 60)
+  const height = Math.max(MIN_HEIGHT, cameras.length * ROW_HEIGHT + 90)
 
   return (
-    <ReportBlock title={block?.title ?? 'Camera Throughput Timeline'} note={`${hours.length} hours`}>
+    <ReportBlock
+      title={title}
+      note={tr('{count} periods · peak {max} defects', { count: periodCount, max: max.toLocaleString() })}
+    >
       <EChart option={option} height={`${height}px`} />
-      <div className={styles.legend}>
-        <span className={styles['legend__item']}>
-          <i className={styles['legend__swatch']} style={{ background: '#22c55e' }} /> &lt; 2%
-        </span>
-        <span className={styles['legend__item']}>
-          <i className={styles['legend__swatch']} style={{ background: '#f59e0b' }} /> 2–5%
-        </span>
-        <span className={styles['legend__item']}>
-          <i className={styles['legend__swatch']} style={{ background: '#ef4444' }} /> ≥ 5%
-        </span>
-        <span className={styles['legend__item']}>
-          <i className={styles['legend__swatch']} style={{ background: GAP_COLOR }} /> No data
-        </span>
-      </div>
     </ReportBlock>
   )
 }

@@ -393,6 +393,92 @@ def test_defect_query_casts_updated_at_and_reads_the_array_column(monkeypatch):
     assert "defect_1" not in statements[0]
 
 
+def _capture_sql(monkeypatch):
+    """Record every (statement, params) a camera query sends, answering empty."""
+    captured = []
+
+    class Connection:
+        def execute(self, statement, params):
+            captured.append((statement.as_string(None), params))
+            return type("R", (), {"fetchall": lambda _self: []})()
+
+    @contextmanager
+    def source_conn(_datasource_id):
+        yield Connection(), "vision_data2"
+
+    monkeypatch.setattr(db, "_table_source_conn", source_conn)
+    return captured
+
+
+def test_defect_slot_query_labels_slots_from_the_same_plants_cameras(monkeypatch):
+    """Pins the slot mapping to its SQL: the array is unnested with its slot
+    number and labelled from that source's own `cameras`, unnamed slots fall
+    back to "Defect N", and zero counts never become buckets."""
+    captured = _capture_sql(monkeypatch)
+    db.fetch_camera_defect_slots("t0", "t1", camera_codes=["VIS-01"], datasource_id=86)
+
+    statement, params = captured[0]
+    assert "SELECT location, batch_id, code, defect_array" in statement
+    assert '"vision_data2"."camera_defect_logs"' in statement
+    assert "unnest(l.defect_array)" in statement and "WITH ORDINALITY" in statement
+    assert 'LEFT JOIN "vision_data2"."cameras" c ON c.code = l.code' in statement
+    assert "c.defect_labels[s.slot]" in statement
+    assert "'Defect ' || s.slot" in statement
+    assert "s.cnt > 0" in statement
+    assert "COUNT(DISTINCT l.batch_id)" in statement
+    assert params == ("t0", "t1", ["VIS-01"])
+
+
+def test_defect_period_query_only_accepts_known_buckets(monkeypatch):
+    """The bucket reaches SQL as a literal, so it is whitelisted first."""
+    captured = _capture_sql(monkeypatch)
+    db.fetch_camera_defect_periods("t0", "t1", "week", datasource_id=86)
+    assert "date_trunc('week', l.created_at)" in captured[0][0]
+    assert "c.defect_labels[s.slot]" in captured[0][0]
+    with pytest.raises(ValueError):
+        db.fetch_camera_defect_periods("t0", "t1", "week'); DROP TABLE x; --",
+                                       datasource_id=86)
+    assert len(captured) == 1
+
+
+def test_batch_work_query_unpivots_camera_columns_and_joins_by_name(monkeypatch):
+    """camera_batch_work stores one jsonb column per camera, named from the
+    camera's `name` by fn_sync_camera_batch_work; the join back must use that
+    same derivation, and must not name the columns (a plant can add more)."""
+    captured = _capture_sql(monkeypatch)
+    db.fetch_camera_batch_work("t0", "t1", locations=["Line 1"], datasource_id=86)
+    statement, params = captured[0]
+    assert '"vision_data2"."camera_batch_work"' in statement
+    assert "jsonb_each(" in statement and "camera_1" not in statement
+    assert "lower(replace(c.name, ' ', '_')) = kv.key" in statement
+    assert "jsonb_typeof(kv.value) = 'array'" in statement
+    # Overlap test: started before the end, last written after the start.
+    assert params == ("t1", "t0", ["Line 1"], db.MAX_BATCH_WORK_ROWS)
+
+
+def test_camera_roll_ups_take_the_line_from_cameras_not_the_log_snapshot(monkeypatch):
+    """A log row snapshots the line as spelled at the time ("LINE 13", later
+    "Line 13"); grouping on that splits one camera into two rows."""
+    captured = _capture_sql(monkeypatch)
+    db.fetch_camera_log_stats("t0", "t1", datasource_id=86)
+    db.fetch_camera_defect_slots("t0", "t1", datasource_id=86)
+    db.fetch_camera_defect_periods("t0", "t1", "day", datasource_id=86)
+    for statement, _params in captured:
+        assert "COALESCE(c.location, l.location) AS location" in statement
+        assert 'LEFT JOIN "vision_data2"."cameras" c ON c.code = l.code' in statement
+
+
+def test_log_page_is_cut_before_the_label_join(monkeypatch):
+    captured = _capture_sql(monkeypatch)
+    db.fetch_camera_defect_logs_page("t0", "t1", search="cam", limit=5, offset=10,
+                                     datasource_id=86)
+    statement, params = captured[0]
+    inner = statement.index("LIMIT %s OFFSET %s")
+    assert inner < statement.index('LEFT JOIN "vision_data2"."cameras"')
+    assert "defect_labels" in statement
+    assert params == ("t0", "t1", "%cam%", "%cam%", 5, 10)
+
+
 def test_camera_data_queries_never_use_the_app_database_connection(monkeypatch):
     class Result:
         def __init__(self, *, row=None, rows=None):

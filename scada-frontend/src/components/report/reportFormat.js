@@ -1,3 +1,6 @@
+import dayjs from 'dayjs'
+import { colorAt } from '@/utils/seriesPalette'
+
 /**
  * Shared formatting and palette for the vision/camera-QC report blocks.
  *
@@ -89,4 +92,51 @@ export function defectRateColor(ratePct, warnPct = 2, critPct = 5) {
   if (ratePct >= critPct) return 'var(--crit)'
   if (ratePct >= warnPct) return 'var(--warn)'
   return 'var(--ok)'
+}
+
+/** Count/ratio → string; `null` stays a visible dash, like fmtPercent. */
+export function fmtNumber(value, digits = 0) {
+  if (value == null || Number.isNaN(value)) return '—'
+  return Number(value).toLocaleString(undefined, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })
+}
+
+/**
+ * A defect-period bucket start → axis label. The server picks the bucket from
+ * the window (vision_report_engine.pick_bucket), so a shift reads in hours and
+ * a year in weeks; the label has to say which it is.
+ */
+export function fmtPeriod(value, bucket) {
+  const d = dayjs(value)
+  if (!d.isValid()) return String(value ?? '—')
+  switch (bucket) {
+    case 'hour': return d.format('DD MMM HH:00')
+    case 'week': return d.format('[W] DD MMM YY')
+    case 'month': return d.format('MMM YYYY')
+    default: return d.format('DD MMM YY')
+  }
+}
+
+/**
+ * One colour per defect type, stable for the whole page: the trend's stacked
+ * bars, the grid and the matrix chips all agree that "Roll NG" is the same ink.
+ * Assigned in label order, so it doesn't shuffle as the window changes which
+ * type is biggest.
+ */
+export function defectPalette(labels = []) {
+  const sorted = [...new Set(labels)].sort((a, b) => String(a).localeCompare(String(b)))
+  return new Map(sorted.map((label, i) => [label, colorAt(i)]))
+}
+
+/**
+ * Background for a count cell in a heat table: transparent at zero, stronger
+ * red toward the table's maximum. A square root scale so one enormous batch
+ * doesn't wash every other cell out to nothing.
+ */
+export function heatBackground(value, max) {
+  if (!value || !max) return undefined
+  const t = Math.sqrt(Math.min(1, value / max))
+  return `color-mix(in srgb, var(--crit) ${Math.round(8 + t * 52)}%, transparent)`
 }

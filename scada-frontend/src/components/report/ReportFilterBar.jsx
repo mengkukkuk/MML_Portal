@@ -8,6 +8,7 @@ import MenuItem from '@mui/material/MenuItem'
 import Select from '@mui/material/Select'
 import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker'
 import { fetchCatalog } from '@/api/reports'
+import { useTranslation } from '@/i18n'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { PRESETS } from './reportRange'
 import styles from './ReportFilterBar.module.css'
@@ -30,6 +31,7 @@ import styles from './ReportFilterBar.module.css'
  */
 
 export default function ReportFilterBar({ filters, onChange, onRefresh, isFetching }) {
+  const tr = useTranslation()
   const selectionKey = useDatasourceSelectionStore((s) => s.selectionKey)
   const catalogQuery = useQuery({
     queryKey: ['report', 'catalog', selectionKey],
@@ -81,12 +83,12 @@ export default function ReportFilterBar({ filters, onChange, onRefresh, isFetchi
   return (
     <div className={`${styles.bar} report-filters`}>
       <div className={styles.group}>
-        <span className={styles.label}>Range</span>
+        <span className={styles.label}>{tr('Range')}</span>
         <FormControl size="small" className={styles.preset}>
           <Select value={filters.preset} onChange={(e) => set({ preset: e.target.value })}>
             {Object.entries(PRESETS).map(([key, p]) => (
               <MenuItem key={key} value={key}>
-                {p.label}
+                {tr(p.label)}
               </MenuItem>
             ))}
           </Select>
@@ -114,14 +116,14 @@ export default function ReportFilterBar({ filters, onChange, onRefresh, isFetchi
       )}
 
       <div className={styles.group}>
-        <span className={styles.label}>Line</span>
+        <span className={styles.label}>{tr('Line')}</span>
         <FormControl size="small" className={styles.select}>
           <Select
             multiple
             displayEmpty
             value={filters.locations}
             onChange={(e) => setLocations(e.target.value)}
-            renderValue={(v) => (v.length ? v.join(', ') : 'All lines')}
+            renderValue={(v) => (v.length ? v.join(', ') : tr('All lines'))}
           >
             {locations.map((loc) => (
               <MenuItem key={loc} value={loc}>
@@ -134,14 +136,14 @@ export default function ReportFilterBar({ filters, onChange, onRefresh, isFetchi
       </div>
 
       <div className={styles.group}>
-        <span className={styles.label}>Camera</span>
+        <span className={styles.label}>{tr('Camera')}</span>
         <FormControl size="small" className={styles.select}>
           <Select
             multiple
             displayEmpty
             value={filters.cameraCodes}
             onChange={(e) => set({ cameraCodes: e.target.value })}
-            renderValue={(v) => (v.length ? v.join(', ') : 'All cameras')}
+            renderValue={(v) => (v.length ? v.join(', ') : tr('All cameras'))}
           >
             {cameras.map(([code, label]) => (
               <MenuItem key={code} value={code}>
@@ -155,12 +157,12 @@ export default function ReportFilterBar({ filters, onChange, onRefresh, isFetchi
 
       {hasFilters && (
         <Button size="small" onClick={() => set({ locations: [], cameraCodes: [] })}>
-          Clear
+          {tr('Clear')}
         </Button>
       )}
 
       <Button size="small" variant="outlined" loading={isFetching} onClick={onRefresh}>
-        Run
+        {tr('Run')}
       </Button>
     </div>
   )

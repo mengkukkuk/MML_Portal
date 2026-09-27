@@ -4,11 +4,13 @@ Read-only against the vision_data-schema tables in the selected datasources;
 the only writes are to the app's own report_templates, which live in the
 config database regardless of what is selected.
 
-The interesting endpoint is POST /run. It fetches each camera's hourly rows
-*once* and projects that single aggregate into every requested block, so the
-KPI cards, the throughput timeline, the defect pareto and the camera summary
-table can never disagree with each other — which they would if each block
-queried independently.
+The interesting endpoint is POST /run. It reads camera_defect_logs once per
+projection shape — a per-camera roll-up, labelled defect slots, optional time
+buckets — and camera_batch_work for the batch matrix, and projects those into
+every requested block, so the KPI cards, the pareto, the defect grid and the
+camera summary can never disagree with each other — which they would if each
+block queried independently. production_hourly_log is read only for the
+inspected count a defect rate needs.
 
 A camera's identity is `(datasource_id, location, code)`, not `(location,
 code)`. Two plants both running a "Line 1 / CAM01" would otherwise have their
@@ -79,10 +81,11 @@ class RunIn(BaseModel):
     end: datetime
     locations: list[str] = []
     camera_codes: list[str] = []
-    #: Which projections to compute. Hourly rows (and, when a pareto or
-    #: summary table is requested, the per-batch defect log) are fetched once
-    #: and shared by every block below.
-    blocks: list[str] = ["kpi", "timeline", "pareto", "exceptions", "summary_table"]
+    #: Which projections to compute. The per-camera log roll-up and labelled
+    #: defect slots are fetched once and shared by every block; the time
+    #: buckets and the batch pivot are only read when a block needs them.
+    blocks: list[str] = ["kpi", "defect_trend", "pareto", "exceptions", "summary_table",
+                         "timeline", "defect_grid", "batch_matrix"]
     pareto_top_n: int = Field(10, ge=1, le=100)
     pareto_rank_by: Literal["count", "batches"] = "count"
     #: A per-template setting, not a global one — a packaging line's acceptable
@@ -181,110 +184,139 @@ def _camera_key(row: dict[str, Any]) -> tuple:
     return (row["datasource_id"], row["location"], row["code"])
 
 
+def _fetch(datasource_ids, fn, label, **kwargs):
+    """db.fan_out_rows with a positional label — keeps /run's six reads short."""
+    return db.fan_out_rows(datasource_ids, fn, label=label, **kwargs)
+
+
 @router.post("/run")
 def run_report(
     payload: RunIn = Body(...),
     _user: dict = Depends(get_current_user),
     datasource_ids: list[int | None] = Depends(active_datasources),
 ):
-    """Execute a report over a window and return one payload for every block."""
+    """Execute a report over a window and return one payload for every block.
+
+    Every defect figure is read from camera_defect_logs / camera_batch_work,
+    each slot named from that plant's own `cameras.defect_labels` by the SQL.
+    production_hourly_log is read only for the inspected count; a plant that
+    lacks it (or fails to answer it) still reports every count — its cameras'
+    `inspected` and rate are `None`, and `inspected_sources` says why.
+    """
     window_seconds = _validate_window(payload.start, payload.end)
+    blocks = set(payload.blocks)
+    args = (payload.start, payload.end, payload.locations, payload.camera_codes)
 
-    hourly, hourly_sources = db.fan_out_rows(
-        datasource_ids,
-        lambda ds: db.fetch_camera_hourly(
-            payload.start, payload.end, payload.locations, payload.camera_codes,
-            datasource_id=ds),
-        label="camera hourly",
-    )
-    catalog_entries, _catalog_sources = db.fan_out_rows(
-        datasource_ids,
-        lambda ds: db.vision_report_catalog(datasource_id=ds),
-        label="vision catalog",
-    )
+    # The log roll-up is the primary read: its source report is the one the
+    # page shows, because a plant that can't answer it has nothing to report.
+    stats, log_sources = _fetch(
+        datasource_ids, lambda ds: db.fetch_camera_log_stats(*args, datasource_id=ds),
+        "camera log stats")
+    slots, _ = _fetch(
+        datasource_ids, lambda ds: db.fetch_camera_defect_slots(*args, datasource_id=ds),
+        "camera defect slots")
+    # Hard schema errors here, unlike every other read: fan_out would otherwise
+    # report a plant with no production_hourly_log as ok-and-empty, which reads
+    # as "0 units inspected" instead of "inspected count unknown".
+    hourly, inspected_sources = _fetch(
+        datasource_ids, lambda ds: db.fetch_camera_hourly(*args, datasource_id=ds),
+        "camera hourly", soft_schema_errors=False)
+    catalog_entries, _ = _fetch(
+        datasource_ids, lambda ds: db.vision_report_catalog(datasource_id=ds),
+        "vision catalog")
     catalog_by_key = {_camera_key(c): c["name"] for c in catalog_entries}
+    inspected_ok = {s["datasource_id"] for s in inspected_sources if s["ok"]}
 
-    # Group hourly rows by camera so each camera's aggregate is built from only
-    # its own rows. The datasource is part of the key — see the module docstring.
-    by_camera: dict[tuple, list] = {}
+    stats_by_key = {_camera_key(r): r for r in stats}
+    profile = engine.camera_defect_profile(slots, _camera_key)
+    hourly_by_key: dict[tuple, list] = {}
     for row in hourly:
-        by_camera.setdefault(_camera_key(row), []).append(row)
+        hourly_by_key.setdefault(_camera_key(row), []).append(row)
+
+    bucket = engine.pick_bucket(window_seconds)
+    periods: list[dict[str, Any]] = []
+    if blocks & {"defect_trend", "timeline"}:
+        periods, _ = _fetch(
+            datasource_ids,
+            lambda ds: db.fetch_camera_defect_periods(
+                payload.start, payload.end, bucket, payload.locations, payload.camera_codes,
+                datasource_id=ds),
+            "camera defect periods")
+    periods_by_key: dict[tuple, list] = {}
+    if "timeline" in blocks:
+        for row in engine.sum_by(periods, ("datasource_id", "location", "code", "period")):
+            periods_by_key.setdefault(_camera_key(row), []).append(
+                {"period": row["period"], "defects": row["count"]})
 
     # A camera explicitly asked for but with no rows at all still deserves a
     # row in the report — showing it as "no_data" is the finding.
-    keys = set(by_camera)
+    keys = set(stats_by_key) | set(hourly_by_key)
     if payload.camera_codes:
         keys |= {_camera_key(c) for c in catalog_entries
                  if c["code"] in payload.camera_codes
                  and (not payload.locations or c["location"] in payload.locations)}
 
     names = db.datasource_names(datasource_ids)
-    want_hourly_detail = "timeline" in payload.blocks
-    want_batch_detail = "pareto" in payload.blocks or "summary_table" in payload.blocks
-
-    defect_rows: list[dict[str, Any]] = []
-    labels_by_code: dict[str, list[str]] = {}
-    if want_batch_detail:
-        defect_rows, _defect_sources = db.fan_out_rows(
-            datasource_ids,
-            lambda ds: db.fetch_camera_defect_logs_window(
-                payload.start, payload.end, payload.locations, payload.camera_codes,
-                datasource_id=ds),
-            label="camera defect logs",
-        )
-        label_maps, _label_sources = db.fan_out_rows(
-            datasource_ids,
-            lambda ds: [{"code": k, "defect_labels": v}
-                       for k, v in db.camera_defect_labels(datasource_id=ds).items()],
-            label="camera defect labels",
-        )
-        labels_by_code = {r["code"]: r["defect_labels"] for r in label_maps}
-
-    batch_summary = engine.camera_batch_summary(defect_rows, labels_by_code) \
-        if want_batch_detail else {}
-
     cameras: list[dict[str, Any]] = []
     for key in sorted(keys, key=lambda k: (k[1] or "", k[2] or "", k[0] or 0)):
         ds_id, location, code = key
-        rows = by_camera.get(key, [])
-        agg = engine.aggregate_camera(rows, window_seconds)
+        stat = stats_by_key.get(key)
+        prof = profile.get(key, {"slots": [], "worst_defect": None})
         entry = {
             "location": location,
             "code": code,
-            "name": catalog_by_key.get(key) or code,
+            "name": catalog_by_key.get(key) or (stat or {}).get("name") or code,
             "datasource_id": ds_id,
             "datasource_name": names.get(ds_id),
-            **agg,
-            **batch_summary.get(code, {"last_seen": None, "worst_defect": None}),
+            **engine.aggregate_camera(hourly_by_key.get(key, []), stat, window_seconds,
+                                      inspected_known=ds_id in inspected_ok),
+            "worst_defect": prof["worst_defect"],
+            "slots": prof["slots"],
         }
-        entry.pop("worst_defect_count", None)
-        if want_hourly_detail:
-            entry["hourly"] = sorted(
-                ({"period_start": r["period_start"], "count_total": r["count_total"],
-                  "defect_total": r["defect_total"]} for r in rows),
-                key=lambda r: r["period_start"],
-            )
+        if "timeline" in blocks:
+            entry["periods"] = periods_by_key.get(key, [])
         cameras.append(entry)
+
+    batch_keys = {(r["datasource_id"], b) for r in stats for b in (r.get("batch_ids") or [])}
+    pareto_all = engine.defect_pareto(slots, top_n=0)
+    totals = engine.totals_across(cameras, batch_keys)
+    totals["top_defect"] = pareto_all[0]["defect"] if pareto_all else None
 
     result: dict[str, Any] = {
         "window": {
             "start": payload.start,
             "end": payload.end,
             "seconds": window_seconds,
+            "bucket": bucket,
             "generated_at": datetime.now(),
         },
-        "sources": hourly_sources,
-        "totals": engine.totals_across(cameras),
+        "sources": log_sources,
+        # Kept apart from `sources`: a plant with no production_hourly_log is
+        # a missing *rate*, not a failed plant, and must not blank its counts.
+        "inspected_sources": inspected_sources,
+        "totals": totals,
     }
 
-    if "pareto" in payload.blocks:
+    if "pareto" in blocks:
         result["defect_reasons"] = engine.defect_pareto(
-            defect_rows, labels_by_code, payload.pareto_top_n, payload.pareto_rank_by)
+            slots, payload.pareto_top_n, payload.pareto_rank_by)
 
-    if "exceptions" in payload.blocks:
+    if "defect_trend" in blocks:
+        result["defect_trend"] = engine.sum_by(periods, ("period", "defect"))
+
+    if "exceptions" in blocks:
         result["quality_exceptions"] = engine.quality_exceptions(
             cameras, payload.exceptions_warn_pct, payload.exceptions_crit_pct,
             payload.exceptions_top_n)
+
+    if "batch_matrix" in blocks:
+        work, _ = _fetch(
+            datasource_ids, lambda ds: db.fetch_camera_batch_work(*args, datasource_id=ds),
+            "camera batch work")
+        result["batch_matrix"] = {
+            **engine.batch_matrix(work),
+            "truncated": len(work) >= db.MAX_BATCH_WORK_ROWS,
+        }
 
     result["cameras"] = cameras
     return result
@@ -335,9 +367,11 @@ def raw_logs(
     rows.sort(key=sort_key("created_at"), reverse=True)
     page = rows[offset:offset + limit]
     for row in page:
-        # A raw int[] is not a friendly table cell; the total is what the
-        # on-screen log and the export both actually want to sort/scan by.
-        row["total_defects"] = sum(row.get("defect_array") or [])
+        # A raw int[] is not a friendly table cell. Each row arrives with its
+        # own plant's labels (joined in SQL), so the names are that camera's.
+        row["defects"] = engine.slot_breakdown(row.get("defect_array"),
+                                               row.pop("defect_labels", None))
+        row["total_defects"] = sum(d["count"] for d in row["defects"])
     return {
         "total": total,
         "limit": limit,

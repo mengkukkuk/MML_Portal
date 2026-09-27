@@ -54,7 +54,7 @@ def test_explicit_bounds_reach_query_with_offsets_and_keep_truncation(client, mo
     monkeypatch.setattr(db, 'table_series', rows)
     response = request(client, start=START.isoformat(), end=END.isoformat(), minutes=10, limit=2)
     assert response.status_code == 200
-    assert seen == [{'limit': 3, 'start': START, 'end': END}]
+    assert seen == [{'limit': 3, 'sample_seconds': None, 'start': START, 'end': END}]
     series = response.json()['series'][0]
     assert series['truncated'] is True
     assert [p['value'] for p in series['points']] == [[1], [2]]
@@ -67,7 +67,7 @@ def test_explicit_bounds_reach_query_with_offsets_and_keep_truncation(client, mo
     {'start': START.replace(tzinfo=None).isoformat(), 'end': END.isoformat()},
     {'start': START.isoformat(), 'end': START.isoformat()},
     {'start': END.isoformat(), 'end': START.isoformat()},
-    {'start': START.isoformat(), 'end': (START + timedelta(days=8)).isoformat()},
+    {'start': START.isoformat(), 'end': (START + timedelta(days=367)).isoformat()},
 ])
 def test_invalid_ranges_are_rejected_before_query(client, monkeypatch, bounds):
     monkeypatch.setattr(db, 'table_series', lambda *a, **k: pytest.fail('queried an invalid range'))
@@ -79,7 +79,7 @@ def test_relative_call_keeps_existing_interface(client, monkeypatch):
     monkeypatch.setattr(db, 'table_series', lambda *a, **k: seen.append((a, k)) or [])
     assert request(client, minutes=480).status_code == 200
     assert seen[0][0][5] == 480
-    assert seen[0][1] == {'limit': 5001}
+    assert seen[0][1] == {'limit': 5001, 'sample_seconds': None}
 
 
 @pytest.mark.parametrize('kind', ['timestamp with time zone', 'timestamp without time zone'])
@@ -108,3 +108,46 @@ def test_buffer_applies_historical_bounds_and_newest_limit(monkeypatch):
     result = db.table_series('variables_tag', 'value', 'tag_name', 'M01', 'ts', 10,
                              limit=2, start=START, end=END)
     assert [r['value'] for r in result] == [7, 8]
+
+
+def test_a_year_window_is_accepted_and_thinned_to_fit_the_limit(client, monkeypatch):
+    """A year used to be refused (seven-day ceiling); now it is sampled so the
+    whole year fits under `limit` instead of the newest `limit` rows of it."""
+    seen = []
+    monkeypatch.setattr(db, 'table_series', lambda *a, **k: seen.append(k) or [])
+    end = START + timedelta(days=365)
+    response = request(client, start=START.isoformat(), end=end.isoformat(), limit=5000)
+    assert response.status_code == 200
+    assert seen[0]['sample_seconds'] == -(-365 * 86400 // 5000)
+    assert response.json()['series'][0]['sampled_seconds'] == seen[0]['sample_seconds']
+
+
+def test_a_relative_year_is_accepted_and_sampled(client, monkeypatch):
+    seen = []
+    monkeypatch.setattr(db, 'table_series', lambda *a, **k: seen.append(k) or [])
+    assert request(client, minutes=525600).status_code == 200
+    assert seen[0]['sample_seconds'] == -(-525600 * 60 // 5000)
+
+
+def test_a_week_is_still_returned_row_for_row(client, monkeypatch):
+    seen = []
+    monkeypatch.setattr(db, 'table_series', lambda *a, **k: seen.append(k) or [])
+    end = START + timedelta(days=7)
+    assert request(client, start=START.isoformat(), end=end.isoformat()).status_code == 200
+    assert seen[0]['sample_seconds'] is None
+
+
+def test_sampled_sql_keeps_the_newest_row_per_bucket_without_clipping(monkeypatch):
+    conn = _RecordingConn()
+    _stub_conn(monkeypatch, conn)
+    monkeypatch.setattr(db, '_safe_identifiers', lambda *a, **k: {
+        **COLUMNS, 'recorded_at': 'timestamp with time zone'})
+    db.table_series('probe', 'reading', None, None, 'recorded_at', 10, 1,
+                    limit=5001, start=START, end=END, sample_seconds=3600)
+    query = _query_text(conn)
+    assert 'DISTINCT ON (bucket)' in query
+    assert 'floor(extract(epoch FROM q.ts) / %s) AS bucket' in query
+    assert 'ORDER BY bucket, q.ts DESC' in query
+    # A LIMIT on the ascending result would drop the newest buckets.
+    assert 'LIMIT' not in query and query.endswith('ORDER BY w.ts ASC')
+    assert conn.params == [3600, START, END]
