@@ -34,6 +34,7 @@ import { apiErrorMessage } from '@/api/client'
 import MimicCanvas, { VIEW_W, VIEW_H } from './MimicCanvas'
 import DetailRail from './DetailRail'
 import CameraRail from './CameraRail'
+import CategoryLegend from './CategoryLegend'
 import SymbolPalette from './SymbolPalette'
 import NodeInspector from './NodeInspector'
 import EdgeInspector from './EdgeInspector'
@@ -593,6 +594,12 @@ export default function MonitorPage() {
         ? { ...n, options: { ...n.options, ...patch } }
         : n)),
     }))
+  }, [commitLayout])
+
+  // Drawing-wide symbol colours (colour by category, per-category colour).
+  // Stored on the layout document as `theme`; the server keeps it untouched.
+  const setLayoutTheme = useCallback((patch) => {
+    commitLayout((prev) => ({ ...prev, theme: { ...(prev.theme ?? {}), ...patch } }))
   }, [commitLayout])
 
   // Back to the size the symbol was drawn at. Position is left alone: the
@@ -1523,6 +1530,8 @@ export default function MonitorPage() {
                     onResetSize={resetNodeSize}
                     onRotate={rotateNode}
                     onOptions={setNodeOptions}
+                    theme={layout?.theme}
+                    onTheme={setLayoutTheme}
                     onBack={() => setSelectedId(null)}
                   />
                 ) : (
@@ -1562,6 +1571,8 @@ export default function MonitorPage() {
               onDeleteEdge={deleteEdgeKey}
               onMoveBubble={moveBubble}
             />
+
+            <CategoryLegend layout={layout} />
 
             {/* Windowed only. In full screen the same cluster is rendered
               * into the banner above instead, so it never covers the sheet. */}

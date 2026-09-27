@@ -24,7 +24,7 @@ export default function SensorEye({ node, tag }) {
       <path
         className={made ? '' : s.beam}
         d={`M ${w * 0.4} ${cy - 4} L ${w * 0.86} ${cy - 4} L ${w * 0.86} ${cy + 4} L ${w * 0.4} ${cy + 4} Z`}
-        fill={made ? 'var(--warn)' : 'var(--accent)'}
+        fill={made ? 'var(--warn)' : 'var(--sym-accent, var(--accent))'}
         opacity={made ? 0.9 : undefined}
       />
       <text

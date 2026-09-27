@@ -460,3 +460,67 @@
     transform: none;
   }
 }
+
+/* --- symbol colour ----------------------------------------------------- */
+
+.colourRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.colourHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* No colour chosen: an empty hexagon, dashed, so "default" reads as absence
+   rather than as a grey the palette happens to offer. */
+.swatchDefault {
+  background: repeating-linear-gradient(135deg, var(--bg-elev) 0 4px, var(--bg-panel) 4px 8px);
+}
+
+.colourText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.colourLabel {
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.colourCaption {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.colourReset {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 8px;
+  color: var(--fg-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.colourReset:hover {
+  color: var(--fg);
+  background: var(--bg-elev);
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  color: var(--fg-muted);
+  cursor: pointer;
+}

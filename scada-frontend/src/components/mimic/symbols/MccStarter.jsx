@@ -35,7 +35,7 @@ export default function MccStarter({ node, tag }) {
         width={w * 0.4}
         height={24}
         rx={2}
-        fill={running ? 'var(--accent)' : 'var(--bg-panel)'}
+        fill={running ? 'var(--sym-accent, var(--accent))' : 'var(--bg-panel)'}
         opacity={running ? 0.85 : 1}
       />
       <line className={s.hair} x1={cx} y1={coilY + 12} x2={cx} y2={olY - 13} />

@@ -27,7 +27,7 @@ export default function IpCamera({ node, tag }) {
           className={s.march}
           d={`M ${lensCx} ${lensCy} L ${w} ${lensCy - h * 0.3} M ${lensCx} ${lensCy} L ${w} ${lensCy + h * 0.3}`}
           fill="none"
-          stroke="var(--accent)"
+          stroke="var(--sym-accent, var(--accent))"
           strokeWidth={1.5}
           opacity={0.5}
         />
@@ -45,7 +45,7 @@ export default function IpCamera({ node, tag }) {
 
       {/* lens */}
       <circle className={s.body} cx={lensCx} cy={lensCy} r={lensR} fill="var(--bg-app)" />
-      <circle cx={lensCx} cy={lensCy} r={lensR * 0.48} fill="var(--accent)" opacity={online ? 0.55 : 0.2} />
+      <circle cx={lensCx} cy={lensCy} r={lensR * 0.48} fill="var(--sym-accent, var(--accent))" opacity={online ? 0.55 : 0.2} />
 
       {/* link LED */}
       <circle

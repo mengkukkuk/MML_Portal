@@ -11,6 +11,8 @@ import { MAX_CASES } from '@/components/mimic/conditions'
 import { fetchCameraLinkOptions } from '@/api/cameras'
 import { fetchSchemaColumns } from '@/api/schema'
 import { compileCondition } from '@/utils/mathExpr'
+import { SYMBOL_CATEGORIES } from '@/components/mimic/symbols'
+import { CATEGORY_COLORS, categoryColor, cleanHex } from '@/components/mimic/symbolColors'
 import styles from './SymbolOptions.module.css'
 
 /**
@@ -55,9 +57,9 @@ function ConditionInput({ value, placeholder, onChange }) {
  * the ring, which is the only reason to prefer it here — it is a better map of
  * the thing being chosen, not a nicer shape.
  */
-function Honeycomb({ value, onPick }) {
+function Honeycomb({ value, onPick, label = 'Lens colour' }) {
   return (
-    <div className={styles.comb} role="listbox" aria-label="Lens colour">
+    <div className={styles.comb} role="listbox" aria-label={label}>
       {LED_PALETTE.map((row) => (
         <div className={styles.combRow} key={row.join()}>
           {row.map((hex) => (
@@ -551,6 +553,113 @@ function CameraLink({ node, onChange }) {
           ))}
         </select>
       </label>
+    </div>
+  )
+}
+
+/**
+ * One swatch-and-honeycomb colour row: the current colour (or a dashed
+ * "default" hexagon), a caption, and — once opened — the palette.
+ */
+function ColourRow({ label, caption, value, open, onToggle, onPick, onReset, resetLabel }) {
+  return (
+    <div className={styles.colourRow}>
+      <div className={styles.colourHead}>
+        <button
+          type="button"
+          className={`${styles.swatch} ${value ? '' : styles.swatchDefault}`}
+          style={value ? { background: value } : undefined}
+          aria-label={`${label}: ${value ?? 'default'}`}
+          aria-expanded={open}
+          onClick={onToggle}
+        />
+        <span className={styles.colourText}>
+          <span className={styles.colourLabel}>{label}</span>
+          <span className={styles.colourCaption}>{caption}</span>
+        </span>
+        {onReset && (
+          <button type="button" className={styles.colourReset} onClick={onReset}>
+            {resetLabel}
+          </button>
+        )}
+      </div>
+      {open && <Honeycomb value={value} label={label} onPick={onPick} />}
+    </div>
+  )
+}
+
+/**
+ * SymbolColour — paint a symbol, or every symbol of its kind, from the lamp
+ * palette. Shown for every symbol type; see components/mimic/symbolColors.js
+ * for how the two layers resolve and why status colours still win.
+ *
+ * The category layer is drawing-wide (`layout.theme`), which is what makes a
+ * sheet read as categories at a glance: every electrical symbol amber, every
+ * process symbol blue, without painting forty symbols one at a time. The
+ * symbol's own colour is the exception on top of that.
+ */
+export function SymbolColour({ node, def, theme, onOptions, onTheme }) {
+  const [open, setOpen] = useState(null)
+  const category = def?.category
+  const categoryLabel = SYMBOL_CATEGORIES.find((c) => c.id === category)?.label ?? category
+  const own = cleanHex(node.options?.color)
+  const byCategory = !!theme?.byCategory
+  const catColour = categoryColor(theme, category)
+  const catOverridden = !!cleanHex(theme?.categories?.[category])
+  const toggle = (which) => setOpen((cur) => (cur === which ? null : which))
+
+  return (
+    <div className={styles.section}>
+      <div className={styles.sectionTitle}>Colour</div>
+      <p className={styles.hint}>
+        Paint from the lamp palette. A symbol in warning or alarm still turns
+        amber or red, whatever colour it is painted.
+      </p>
+
+      <ColourRow
+        label="This symbol"
+        caption={own ? 'Own colour' : byCategory ? `Follows ${categoryLabel}` : 'Default look'}
+        value={own}
+        open={open === 'own'}
+        onToggle={() => toggle('own')}
+        onPick={(hex) => { onOptions({ color: hex }); setOpen(null) }}
+        onReset={own ? () => onOptions({ color: null }) : null}
+        resetLabel={byCategory ? 'Use category' : 'Reset'}
+      />
+
+      <label className={styles.toggle}>
+        <input
+          type="checkbox"
+          checked={byCategory}
+          onChange={(e) => onTheme({ byCategory: e.target.checked })}
+        />
+        <span>Colour every symbol by its category</span>
+      </label>
+
+      {byCategory && category && (
+        <ColourRow
+          label={`${categoryLabel} symbols`}
+          caption="Every symbol in this category, on this drawing"
+          value={catColour}
+          open={open === 'category'}
+          onToggle={() => toggle('category')}
+          onPick={(hex) => {
+            onTheme({ categories: { ...(theme?.categories ?? {}), [category]: hex } })
+            setOpen(null)
+          }}
+          onReset={catOverridden ? () => {
+            const { [category]: _drop, ...rest } = theme?.categories ?? {}
+            onTheme({ categories: rest })
+          } : null}
+          resetLabel="Default"
+        />
+      )}
+      {byCategory && !category && (
+        <p className={styles.hint}>This symbol has no category, so only its own colour applies.</p>
+      )}
+      {byCategory && category && !CATEGORY_COLORS[category] && !catOverridden && (
+        <p className={styles.hint}>No default colour for this category yet — pick one above.</p>
+      )}
     </div>
   )
 }

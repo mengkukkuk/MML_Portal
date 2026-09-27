@@ -39,7 +39,7 @@ export default function UvReactor({ node, tag }) {
           width={w * 0.8}
           height={chamberH - 4}
           rx={(chamberH - 4) / 2}
-          fill="var(--accent)"
+          fill="var(--sym-accent, var(--accent))"
         />
       )}
 

@@ -6,6 +6,7 @@ import {
   symbolDef, portPoint, bubbleSpec,
 } from '@/components/mimic/symbols'
 import InstrumentBubble from '@/components/mimic/InstrumentBubble'
+import { resolveSymbolColor, symbolColorStyle } from '@/components/mimic/symbolColors'
 import { isFlowing } from '@/components/mimic/tagStatus'
 import { NORMAL_WIRE, WirePath, wireType } from '@/components/mimic/wireTypes'
 import { fitToContents, gridStepForZoom, zoomAtPoint } from './editorViewport'
@@ -785,6 +786,10 @@ const MimicCanvas = forwardRef(function MimicCanvas({
           return (
             <g
               key={node.id}
+              // Palette colour, if the symbol or its category has one — see
+              // symbolColors.js. Set as --sym-* so the halo and grips below keep
+              // the app accent.
+              style={symbolColorStyle(resolveSymbolColor(node, def, layout.theme))}
               className={`${styles.node} ${editMode ? styles.nodeEditing : ''} ${draggingId === node.id ? styles.nodeDragging : ''} ${unbound ? styles.nodeUnbound : ''}`}
               transform={`translate(${node.x} ${node.y})${node.rot ? ` rotate(${node.rot} ${node.w / 2} ${node.h / 2})` : ''}`}
               onPointerDown={(e) => handleNodePointerDown(e, node)}

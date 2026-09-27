@@ -15,16 +15,18 @@
 
 /* --- shared strokes / fills ------------------------------------------- */
 
+/* --sym-* are set per symbol by MimicCanvas when it is painted from the
+ * palette (see components/mimic/symbolColors.js); unset, the app theme shows. */
 .body {
-  fill: var(--bg-panel);
-  stroke: var(--fg-muted);
+  fill: var(--sym-fill, var(--bg-panel));
+  stroke: var(--sym-stroke, var(--fg-muted));
   stroke-width: 2;
   stroke-linejoin: round;
 }
 
 .bodyElev {
-  fill: var(--bg-elev);
-  stroke: var(--fg-muted);
+  fill: var(--sym-fill-elev, var(--bg-elev));
+  stroke: var(--sym-stroke, var(--fg-muted));
   stroke-width: 2;
   stroke-linejoin: round;
 }
@@ -42,12 +44,12 @@
 
 .accentStroke {
   fill: none;
-  stroke: var(--accent);
+  stroke: var(--sym-accent, var(--accent));
   stroke-width: 2;
 }
 
 .accentFill {
-  fill: var(--accent);
+  fill: var(--sym-accent, var(--accent));
   stroke: none;
 }
 
@@ -117,7 +119,7 @@
 }
 
 .levelFill {
-  fill: var(--accent);
+  fill: var(--sym-accent, var(--accent));
   opacity: 0.85;
   /* Rect edges tween on change, same easing as Tank.jsx's own .liquid — a
      level that jumps reads as a fault, not a reading. y/height carry a
@@ -304,7 +306,7 @@
   pointer-events: none;
 }
 
-.deltaUp { fill: var(--accent); }
+.deltaUp { fill: var(--sym-accent, var(--accent)); }
 .deltaDown { fill: var(--fg-muted); }
 
 @keyframes mimic-delta {
@@ -368,7 +370,7 @@
 /* --- level fill (tanks, drums) ---------------------------------------- */
 
 .liquid {
-  fill: var(--accent);
+  fill: var(--sym-accent, var(--accent));
   opacity: 0.32;
   /* On-change: the level tweens to its new height rather than jumping. */
   transition: y 0.6s cubic-bezier(0.22, 0.61, 0.36, 1),
@@ -377,7 +379,7 @@
 
 .liquidLine {
   fill: none;
-  stroke: var(--accent);
+  stroke: var(--sym-accent, var(--accent));
   stroke-width: 1.5;
   transition: transform 0.6s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
@@ -640,7 +642,7 @@
   animation: mimic-ring 0.85s ease-out forwards;
 }
 
-.ringRise { stroke: var(--accent); }
+.ringRise { stroke: var(--sym-accent, var(--accent)); }
 .ringFall { stroke: var(--fg-muted); }
 .ringWarn { stroke: var(--warn); stroke-width: 2.5; }
 .ringCrit { stroke: var(--crit); stroke-width: 2.5; }

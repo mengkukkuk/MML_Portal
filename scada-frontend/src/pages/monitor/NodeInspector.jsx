@@ -4,7 +4,7 @@ import DeleteOutlineOutlined from '@mui/icons-material/DeleteOutlineOutlined'
 import RestartAltOutlined from '@mui/icons-material/RestartAltOutlined'
 import Rotate90DegreesCwOutlined from '@mui/icons-material/Rotate90DegreesCwOutlined'
 import { symbolDef, bubbleSpec, bubbleMoved } from '@/components/mimic/symbols'
-import SymbolOptions from './SymbolOptions'
+import SymbolOptions, { SymbolColour } from './SymbolOptions'
 import styles from './NodeInspector.module.css'
 
 /**
@@ -17,7 +17,7 @@ import styles from './NodeInspector.module.css'
  */
 export default function NodeInspector({
   node, datasources = [], onConnect, onDelete, onResetBubble, onResetSize, onRotate,
-  onOptions, onBack,
+  onOptions, onBack, theme, onTheme,
 }) {
   const def = symbolDef(node)
   const b = node.binding
@@ -93,6 +93,16 @@ export default function NodeInspector({
           about the reading above it — a colour rule reads nothing until that
           says which column, and the two are edited in one sitting. */}
       <SymbolOptions node={node} onChange={(patch) => onOptions(node.id, patch)} />
+
+      {onTheme && (
+        <SymbolColour
+          node={node}
+          def={def}
+          theme={theme}
+          onOptions={(patch) => onOptions(node.id, patch)}
+          onTheme={onTheme}
+        />
+      )}
 
       <div className={styles.section}>
         <div className={styles.sectionTitle}>Title</div>

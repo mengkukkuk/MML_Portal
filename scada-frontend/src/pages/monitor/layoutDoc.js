@@ -196,5 +196,8 @@ export function emptyLayout(name) {
     edges: [],
     productionLog: null,
     kpis: [],
+    // A new sheet starts colour-coded by category; older drawings keep their
+    // look until someone turns this on (see components/mimic/symbolColors.js).
+    theme: { byCategory: true },
   }
 }

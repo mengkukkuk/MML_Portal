@@ -25,7 +25,7 @@ export default function Breaker({ node, tag }) {
         y={cy - boxR}
         width={boxR * 2}
         height={boxR * 2}
-        fill={closed ? 'var(--accent)' : 'var(--bg-panel)'}
+        fill={closed ? 'var(--sym-accent, var(--accent))' : 'var(--bg-panel)'}
         opacity={closed ? 0.85 : 1}
       />
 
