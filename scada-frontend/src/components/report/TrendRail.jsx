@@ -9,7 +9,9 @@ import FormControl from '@mui/material/FormControl'
 import MenuItem from '@mui/material/MenuItem'
 import Select from '@mui/material/Select'
 import { fetchSchemaTables } from '@/api/schema'
+import { fetchDatasources } from '@/api/datasources'
 import { useTrendColumns } from './useTrendColumns'
+import { trendSourceId } from './trendParams'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { useTranslation } from '@/i18n'
 import styles from './TrendRail.module.css'
@@ -32,7 +34,11 @@ import styles from './TrendRail.module.css'
  * be months old and point at a table that has since been dropped, so a stale
  * link has to degrade to "pick again" rather than to an error.
  *
- * All five reads are pinned to the *primary* selected source. The catalogue
+ * Every read is pinned to one source: the datasource picked in the first
+ * control, or — until one is picked — the first source selected in the header.
+ * Choosing a datasource first and then one of *its* tables is the order the
+ * data actually has; the table list below is that source's catalogue. Before
+ * this picker, all reads were pinned to the *primary* selected source. The catalogue
  * routes resolve to it anyway, so letting the data call fan out instead would
  * offer a table only the first plant has and then draw one envelope per plant
  * on top of each other — three tolerance bands for one device.
@@ -55,7 +61,12 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
     }
   }
   const selected = useDatasourceSelectionStore((s) => s.selected)
-  const primaryId = selected?.[0]?.id
+  const primaryId = trendSourceId(trend, selected?.[0]?.id)
+
+  // Any configured source can be browsed, not only the header's selection —
+  // the trend reads one table from one source, so it has nothing to merge.
+  const datasourcesQuery = useQuery({ queryKey: ['datasources'], queryFn: fetchDatasources, staleTime: 60_000 })
+  const datasources = useMemo(() => datasourcesQuery.data ?? [], [datasourcesQuery.data])
 
   const tablesQuery = useQuery({
     queryKey: ['trend', 'tables', primaryId ?? 'app'],
@@ -125,6 +136,22 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
     }
   }, [cols, arrayCols, tsCols, valueCols, trend, primaryId, set])
 
+  // A link naming a datasource that has since been deleted falls back to the
+  // header's source rather than failing every read below.
+  useEffect(() => {
+    if (!datasourcesQuery.data || trend.datasourceId == null) return
+    if (!datasources.some((d) => d.id === trend.datasourceId)) {
+      clampedFor.current = null
+      set({ datasourceId: null, table: '', valueCols: [], tsCol: '' })
+    }
+  }, [datasourcesQuery.data, datasources, trend.datasourceId, set])
+
+  function pickSource(id) {
+    // A different database: every table and column below describes the old one.
+    clampedFor.current = null
+    set({ datasourceId: id, table: '', valueCols: [], tsCol: '' })
+  }
+
   function pickTable(table) {
     // Everything downstream describes the old table's columns.
     clampedFor.current = null
@@ -152,10 +179,28 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
 
   return (
     <div className={`${styles.rail} report-trend-controls`}>
+      <Field label={tr('Datasource')}>
+        <Select
+          value={datasources.some((d) => d.id === primaryId) ? primaryId : ''}
+          displayEmpty
+          inputProps={{ 'aria-label': tr('Datasource') }}
+          onChange={(e) => pickSource(e.target.value)}
+          renderValue={(id) => datasources.find((d) => d.id === id)?.name ?? tr('Choose a datasource')}
+        >
+          {datasources.map((d) => (
+            <MenuItem key={d.id} value={d.id}>
+              {d.name}
+              <span className={styles.sourceDb}>{d.database}</span>
+            </MenuItem>
+          ))}
+        </Select>
+      </Field>
+
       <Field label={tr('Table')}>
         <Select
           value={tables.some((t) => t.table === trend.table) ? trend.table : ''}
           displayEmpty
+          disabled={primaryId == null}
           onChange={(e) => pickTable(e.target.value)}
           renderValue={(v) => v || tr('Choose a table')}
         >

@@ -39,15 +39,25 @@ export const DEFAULT_MINUTES = 480
 // 'fcol'/'fval' are listed but no longer read or written: the device filter has
 // no control any more, and leaving them in `owns` is what purges the pair from
 // an older link rather than leaving a filter nothing on screen can undo.
-export const TREND_KEYS = ['tbl', 'vcol', 'tscol', 'fcol', 'fval', 'win', 'idx', 'tstart', 'tend']
+export const TREND_KEYS = ['ds', 'tbl', 'vcol', 'tscol', 'fcol', 'fval', 'win', 'idx', 'tstart', 'tend']
 export const FILTER_KEYS = ['preset', 'start', 'end', 'location', 'camera']
 
 export const EMPTY_TREND = {
+  datasourceId: null,
   table: '',
   valueCols: [],
   tsCol: '',
   minutes: DEFAULT_MINUTES,
   indexes: ALL_INDEXES,
+}
+
+/**
+ * The datasource a trend reads. An explicit pick (`ds` in the URL) wins; with
+ * none, it follows the first source selected in the header, which is what the
+ * trend always read before the picker existed — so older links behave as they did.
+ */
+export function trendSourceId(trend, primaryId) {
+  return trend?.datasourceId ?? primaryId ?? null
 }
 
 /** A trend is only runnable once it has somewhere to read from and a clock. */
@@ -84,7 +94,9 @@ function parseIndexes(raw) {
 
 export function trendFromParams(params) {
   const minutes = Number.parseInt(params.get('win') ?? '', 10)
+  const ds = Number.parseInt(params.get('ds') ?? '', 10)
   return {
+    datasourceId: Number.isInteger(ds) && ds > 0 ? ds : null,
     table: params.get('tbl') ?? '',
     // Repeated rather than comma-joined, the way `location` and `tag` already
     // are: a column name is a plant's identifier and nothing here gets to
@@ -103,6 +115,7 @@ export function trendFromParams(params) {
 export function paramsFromTrend(trend) {
   const out = new URLSearchParams()
   if (!trend) return out
+  if (trend.datasourceId != null) out.set('ds', String(trend.datasourceId))
   if (trend.table) out.set('tbl', trend.table)
   ;(trend.valueCols ?? []).forEach((col) => { if (col) out.append('vcol', col) })
   if (trend.tsCol) out.set('tscol', trend.tsCol)

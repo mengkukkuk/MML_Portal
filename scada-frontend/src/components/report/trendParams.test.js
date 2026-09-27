@@ -9,6 +9,7 @@ import {
   mergeParams,
   paramsFromTrend,
   trendFromParams,
+  trendSourceId,
 } from './trendParams.js'
 
 const parse = (qs) => trendFromParams(new URLSearchParams(qs))
@@ -76,4 +77,20 @@ test('role selection is untouched by the multi-reading work', () => {
   assert.deepEqual(parse('idx=9').indexes, ALL_INDEXES, 'no valid index is corrupt, not empty')
   assert.equal(paramsFromTrend(parse('tbl=t&vcol=a&tscol=ts')).has('idx'), false,
     'the common case stays a short link')
+})
+
+test('a picked datasource round-trips, and no pick means "follow the header"', () => {
+  const picked = trendFromParams(new URLSearchParams('ds=294&tbl=camera_defect&vcol=a&tscol=ts'))
+  assert.equal(picked.datasourceId, 294)
+  assert.equal(paramsFromTrend(picked).get('ds'), '294')
+  assert.equal(trendSourceId(picked, 7), 294, 'an explicit pick wins over the header')
+
+  const unpicked = trendFromParams(new URLSearchParams('tbl=t'))
+  assert.equal(unpicked.datasourceId, null)
+  assert.equal(paramsFromTrend(unpicked).has('ds'), false)
+  assert.equal(trendSourceId(unpicked, 7), 7, 'older links keep reading the header source')
+
+  for (const bad of ['ds=abc', 'ds=0', 'ds=-3']) {
+    assert.equal(trendFromParams(new URLSearchParams(bad)).datasourceId, null, bad)
+  }
 })

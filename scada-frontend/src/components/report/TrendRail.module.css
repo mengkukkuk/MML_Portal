@@ -85,3 +85,12 @@
     max-width: none;
   }
 }
+
+/* The database behind a datasource name — two sources can share a friendly
+   name, never a host database, so the picker says which is which. */
+.sourceDb {
+  margin-left: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+}

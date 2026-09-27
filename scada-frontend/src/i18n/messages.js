@@ -356,4 +356,6 @@ export const messages = {
   'Critical ≥ defect rate %': 'วิกฤตเมื่ออัตราของเสีย ≥ %',
   'Top N shown': 'จำนวนที่แสดง',
   '{count} rows per page': '{count} แถวต่อหน้า',
+  'Datasource': 'แหล่งข้อมูล',
+  'Choose a datasource': 'เลือกแหล่งข้อมูล',
 }

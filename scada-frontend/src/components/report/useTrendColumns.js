@@ -6,10 +6,10 @@ import { buildDefectLabelsByCode } from '@/utils/defectLabels'
 import { groupReadings } from './readingGroups'
 
 /** Share the table inspection between the controls and the rendered chart. */
-export function useTrendColumns(table, primaryId) {
+export function useTrendColumns(table, sourceId) {
   const query = useQuery({
-    queryKey: ['trend', 'columns', primaryId ?? 'app', table],
-    queryFn: () => fetchSchemaColumns(table, primaryId ?? undefined),
+    queryKey: ['trend', 'columns', sourceId ?? 'app', table],
+    queryFn: () => fetchSchemaColumns(table, sourceId ?? undefined),
     enabled: !!table,
     staleTime: 5 * 60_000,
   })
