@@ -13,6 +13,7 @@ import ArrowUpwardOutlined from '@mui/icons-material/ArrowUpwardOutlined'
 import DeleteOutlined from '@mui/icons-material/DeleteOutlined'
 
 import { deleteTemplate, fetchTemplate, updateTemplate, createTemplate } from '@/api/reports'
+import { apiErrorMessage } from '@/api/client'
 import { PRESETS } from '@/components/report/reportRange'
 import { COLUMNS as SUMMARY_COLUMN_DEFS, DEFAULT_COLUMNS as DEFAULT_SUMMARY_COLUMNS } from '@/components/report/blocks/SummaryTable'
 import { useTranslation } from '@/i18n'
@@ -104,7 +105,7 @@ const newBlockId = () => `b${Date.now().toString(36)}${(idCounter += 1)}`
 
 function errorText(error) {
   if (!error) return ''
-  return error?.response?.data?.detail || error?.message || String(error)
+  return apiErrorMessage(error, error?.message || String(error))
 }
 
 export default function ReportBuilderPage() {

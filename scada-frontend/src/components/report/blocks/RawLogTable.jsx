@@ -5,6 +5,7 @@ import TextField from '@mui/material/TextField'
 import ReportBlock from './ReportBlock'
 import SourceStatus from '@/components/SourceStatus/SourceStatus'
 import { fetchReportLogs } from '@/api/reports'
+import { apiErrorMessage } from '@/api/client'
 import { useTranslation } from '@/i18n'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { fmtDateTime, fmtNumber, isMultiSource } from '../reportFormat'
@@ -86,7 +87,7 @@ export default function RawLogTable({ block, filters }) {
 
       {query.error && (
         <p className={styles.warning}>
-          {query.error?.response?.data?.detail || query.error.message}
+          {apiErrorMessage(query.error, query.error.message)}
         </p>
       )}
 

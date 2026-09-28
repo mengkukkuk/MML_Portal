@@ -13,6 +13,7 @@ import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
 import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import { fetchRecentAlarms, fetchActiveAlarms, acknowledgeAlarm } from '@/api/alarms'
 import { fetchCameraLinkOptions } from '@/api/cameras'
+import { apiErrorMessage } from '@/api/client'
 import { buildDefectLabelsByCode, resolveTagLabel } from '@/utils/defectLabels'
 import { buildFamilies, sevRank } from '@/utils/alarmFamilies'
 import { fmtStamp, fmtTime } from '@/utils/datetime'
@@ -128,7 +129,7 @@ export default function AlarmsPage() {
       queryClient.invalidateQueries({ queryKey: ['alarms', 'active'] })
     },
     onError: (e) =>
-      setAckError(e?.response?.data?.detail || e?.message || 'Could not acknowledge that alarm.'),
+      setAckError(apiErrorMessage(e, e?.message || 'Could not acknowledge that alarm.')),
   })
 
   const alarms = recentQuery.data?.alarms ?? []
@@ -137,7 +138,7 @@ export default function AlarmsPage() {
   const multiSource = sources.length > 1
   const loading = recentQuery.isLoading
   const error = recentQuery.error
-    ? recentQuery.error?.response?.data?.detail || recentQuery.error?.message || String(recentQuery.error)
+    ? apiErrorMessage(recentQuery.error, recentQuery.error?.message || String(recentQuery.error))
     : ''
 
   // Same four filters power both the live snapshot and the historical stack

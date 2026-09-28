@@ -6,6 +6,7 @@ import TextField from '@mui/material/TextField'
 import Button from '@mui/material/Button'
 import Alert from '@mui/material/Alert'
 import { resetPassword } from '@/api/auth'
+import { apiErrorMessage } from '@/api/client'
 import LanguageSelect from '@/components/LanguageSelect/LanguageSelect.jsx'
 import styles from './ResetPasswordPage.module.css'
 
@@ -38,7 +39,7 @@ export default function ResetPasswordPage() {
       await resetPassword(token, values.newPassword)
       navigate('/login')
     } catch (e) {
-      setError(e?.response?.data?.detail || 'Reset failed')
+      setError(apiErrorMessage(e, 'Reset failed'))
     } finally {
       setLoading(false)
     }

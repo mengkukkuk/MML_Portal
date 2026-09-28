@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { fetchRecentAlarms, fetchActiveAlarms, acknowledgeAlarm } from '@/api/alarms'
+import { apiErrorMessage } from '@/api/client'
 
 /**
  * alarms — ported 1:1 from the Pinia store (src/stores/alarms.js).
@@ -36,7 +37,7 @@ export const useAlarmsStore = create((set, get) => ({
       const { alarms, sources } = await fetchRecentAlarms(limit)
       set({ alarms, sources, updatedAt: new Date() })
     } catch (e) {
-      set({ error: e?.response?.data?.detail || e?.message || String(e) })
+      set({ error: apiErrorMessage(e, e?.message || String(e)) })
     } finally {
       set({ loading: false })
     }
@@ -51,7 +52,7 @@ export const useAlarmsStore = create((set, get) => ({
       const { alarms: activeAlarms } = await fetchActiveAlarms()
       set({ activeAlarms })
     } catch (e) {
-      set({ activeError: e?.response?.data?.detail || e?.message || String(e) })
+      set({ activeError: apiErrorMessage(e, e?.message || String(e)) })
     } finally {
       set({ activeLoading: false })
     }
@@ -78,7 +79,7 @@ export const useAlarmsStore = create((set, get) => ({
         return { alarms }
       })
     } catch (e) {
-      set({ error: e?.response?.data?.detail || e?.message || String(e) })
+      set({ error: apiErrorMessage(e, e?.message || String(e)) })
     } finally {
       set((state) => {
         const acking = new Set(state.acking)

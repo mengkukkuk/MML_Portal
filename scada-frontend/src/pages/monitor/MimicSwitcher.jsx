@@ -8,6 +8,7 @@ import DialogActions from '@mui/material/DialogActions'
 import TextField from '@mui/material/TextField'
 import Alert from '@mui/material/Alert'
 import { fetchMimicLayout, saveMimicLayout, deleteMimicLayout } from '@/api/mimic'
+import { apiErrorMessage } from '@/api/client'
 import { emptyLayout } from './layoutDoc'
 import styles from './MimicSwitcher.module.css'
 
@@ -63,7 +64,7 @@ export default function MimicSwitcher({
       setNewName('')
       onSelect(created.slug)
     },
-    onError: (e) => setManageError(e?.response?.data?.detail || 'Failed to create the mimic.'),
+    onError: (e) => setManageError(apiErrorMessage(e, 'Failed to create the mimic.')),
   })
 
   // The PUT is a full upsert, so a rename has to carry the drawing back with
@@ -79,13 +80,13 @@ export default function MimicSwitcher({
       queryClient.invalidateQueries({ queryKey: ['mimic-layout', saved.slug] })
       setRenameTarget(null)
     },
-    onError: (e) => setManageError(e?.response?.data?.detail || 'Failed to rename the mimic.'),
+    onError: (e) => setManageError(apiErrorMessage(e, 'Failed to rename the mimic.')),
   })
 
   const deleteMut = useMutation({
     mutationFn: deleteMimicLayout,
     onSuccess: () => { invalidate(); setDeleteTarget(null) },
-    onError: (e) => setDeleteError(e?.response?.data?.detail || 'Failed to delete the mimic.'),
+    onError: (e) => setDeleteError(apiErrorMessage(e, 'Failed to delete the mimic.')),
   })
 
   function openManage() {

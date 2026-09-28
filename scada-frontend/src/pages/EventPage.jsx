@@ -10,6 +10,7 @@ import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
 import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import { fetchRecentEvents } from '@/api/events'
 import { fetchCameraLinkOptions } from '@/api/cameras'
+import { apiErrorMessage } from '@/api/client'
 import { buildDefectLabelsByCode, resolveTagLabel } from '@/utils/defectLabels'
 import { buildFamilies } from '@/utils/alarmFamilies'
 import { fmtStamp, fmtTime } from '@/utils/datetime'
@@ -81,7 +82,7 @@ export default function EventPage() {
   const multiSource = sources.length > 1
   const loading = eventsQuery.isLoading
   const error = eventsQuery.error
-    ? eventsQuery.error?.response?.data?.detail || eventsQuery.error?.message || String(eventsQuery.error)
+    ? apiErrorMessage(eventsQuery.error, eventsQuery.error?.message || String(eventsQuery.error))
     : ''
 
   // Distinct location values for the Line filter dropdown

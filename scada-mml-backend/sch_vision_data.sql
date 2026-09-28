@@ -1,3 +1,5 @@
+--create database mmldata;
+
 CREATE SCHEMA IF NOT EXISTS vision_data;
 
 --array_max
@@ -106,40 +108,6 @@ alter table vision_data.camera_batch_work
 CREATE INDEX IF NOT EXISTS idx_camera_defect_logs_code_batch
     ON vision_data.camera_defect_logs (lower(code) ASC, batch_id DESC);
 
--- Shared Trigger Function: set_updated_at
-CREATE OR REPLACE FUNCTION vision_data.set_updated_at()
-    RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-ALTER FUNCTION vision_data.set_updated_at() OWNER TO postgres;
-
--- Dynamic Trigger Binding updated_at
-DO $$
-    DECLARE
-        t text;
-    BEGIN
-        FOR t IN
-            SELECT table_name
-            FROM information_schema.columns
-            WHERE table_schema = 'vision_data'
-              AND column_name = 'updated_at'
-              AND table_name IN ('cameras', 'camera_defect', 'camera_defect_logs'
-                ,'camera_batch_work', 'camera_count_speed', 'camera_defect_speed','camera_defect_ratio')
-            LOOP
-                EXECUTE format('
-                DROP TRIGGER IF EXISTS trg_set_updated_at ON vision_data.%I;
-                CREATE TRIGGER trg_set_updated_at
-                    BEFORE UPDATE ON vision_data.%I
-                    FOR EACH ROW
-                    EXECUTE FUNCTION vision_data.set_updated_at();
-            ', t, t);
-            END LOOP;
-    END;
-$$;
 
 -- Historian Trigger Function
 CREATE OR REPLACE FUNCTION vision_data.fn_log_camera_defect_history()
@@ -554,4 +522,38 @@ CREATE TRIGGER trg_sync_production_defect
     AFTER INSERT OR UPDATE ON vision_data.camera_defect
     FOR EACH ROW
 EXECUTE FUNCTION vision_data.fn_sync_production_hourly_log();
-7
+
+-- Shared Trigger Function: set_updated_at
+CREATE OR REPLACE FUNCTION vision_data.set_updated_at()
+    RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+ALTER FUNCTION vision_data.set_updated_at() OWNER TO postgres;
+
+-- Dynamic Trigger Binding updated_at
+DO $$
+    DECLARE
+        t text;
+    BEGIN
+        FOR t IN
+            SELECT table_name
+            FROM information_schema.columns
+            WHERE table_schema = 'vision_data'
+              AND column_name = 'updated_at'
+              AND table_name IN ('cameras', 'camera_defect', 'camera_defect_logs'
+                ,'camera_batch_work', 'camera_count_speed', 'camera_defect_speed','camera_defect_ratio')
+            LOOP
+                EXECUTE format('
+                DROP TRIGGER IF EXISTS trg_set_updated_at ON vision_data.%I;
+                CREATE TRIGGER trg_set_updated_at
+                    BEFORE UPDATE ON vision_data.%I
+                    FOR EACH ROW
+                    EXECUTE FUNCTION vision_data.set_updated_at();
+            ', t, t);
+            END LOOP;
+    END;
+$$;

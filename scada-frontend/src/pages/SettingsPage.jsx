@@ -26,6 +26,7 @@ import {
   fetchDatasources, createDatasource, updateDatasource, deleteDatasource, testDatasource,
 } from '@/api/datasources'
 import { fetchCameraLinkSource, updateCameraLinkSource } from '@/api/cameras'
+import { apiErrorMessage } from '@/api/client'
 import styles from './SettingsPage.module.css'
 import LanguageSelect from '@/components/LanguageSelect/LanguageSelect.jsx'
 
@@ -167,7 +168,7 @@ export default function SettingsPage() {
       notify('Connection saved.')
       setDsDialogOpen(false)
     },
-    onError: (e) => setDsDialogError(e?.response?.data?.detail || 'Failed to save connection.'),
+    onError: (e) => setDsDialogError(apiErrorMessage(e, 'Failed to save connection.')),
   })
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }) => updateDatasource(id, payload),
@@ -176,7 +177,7 @@ export default function SettingsPage() {
       notify('Connection updated.')
       setDsDialogOpen(false)
     },
-    onError: (e) => setDsDialogError(e?.response?.data?.detail || 'Failed to save connection.'),
+    onError: (e) => setDsDialogError(apiErrorMessage(e, 'Failed to save connection.')),
   })
   const deleteMutation = useMutation({
     mutationFn: (id) => deleteDatasource(id),
@@ -192,7 +193,7 @@ export default function SettingsPage() {
       notify('Connection deleted.')
       setDeleteTarget(null)
     },
-    onError: (e) => setDeleteError(e?.response?.data?.detail || 'Delete failed.'),
+    onError: (e) => setDeleteError(apiErrorMessage(e, 'Delete failed.')),
   })
   const savingDs = createMutation.isPending || updateMutation.isPending
 
@@ -243,7 +244,7 @@ export default function SettingsPage() {
         serverVersion: r.server_version,
       })
     } catch (e) {
-      setDsTest({ state: 'error', message: e?.response?.data?.detail || 'Test failed.' })
+      setDsTest({ state: 'error', message: apiErrorMessage(e, 'Test failed.') })
     }
   }
 
@@ -279,7 +280,7 @@ export default function SettingsPage() {
     } catch (e) {
       setRowTest((prev) => ({
         ...prev,
-        [ds.id]: { state: 'error', message: e?.response?.data?.detail || 'Test failed.' },
+        [ds.id]: { state: 'error', message: apiErrorMessage(e, 'Test failed.') },
       }))
     }
   }
@@ -310,7 +311,7 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ['camera-link-options'] })
       notify('Camera source updated.')
     },
-    onError: (e) => notify(e?.response?.data?.detail || 'Failed to update camera source.', 'error'),
+    onError: (e) => notify(apiErrorMessage(e, 'Failed to update camera source.'), 'error'),
   })
 
   return (

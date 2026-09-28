@@ -27,6 +27,7 @@ import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
 import { fetchUsers, createUser, updateUser, deleteUser } from '@/api/users'
+import { apiErrorMessage } from '@/api/client'
 import styles from './AccountsPage.module.css'
 
 /**
@@ -84,7 +85,7 @@ export default function AccountsPage() {
       notify('User created')
       setDialogOpen(false)
     },
-    onError: (e) => setDialogError(e?.response?.data?.detail || 'Save failed'),
+    onError: (e) => setDialogError(apiErrorMessage(e, 'Save failed')),
   })
 
   const updateMutation = useMutation({
@@ -94,7 +95,7 @@ export default function AccountsPage() {
       notify('User updated')
       setDialogOpen(false)
     },
-    onError: (e) => setDialogError(e?.response?.data?.detail || 'Save failed'),
+    onError: (e) => setDialogError(apiErrorMessage(e, 'Save failed')),
   })
 
   const deleteMutation = useMutation({
@@ -104,7 +105,7 @@ export default function AccountsPage() {
       notify('User deleted')
       setDeleteTarget(null)
     },
-    onError: (e) => setDeleteError(e?.response?.data?.detail || 'Delete failed'),
+    onError: (e) => setDeleteError(apiErrorMessage(e, 'Delete failed')),
   })
 
   const submitting = createMutation.isPending || updateMutation.isPending
@@ -178,7 +179,7 @@ export default function AccountsPage() {
 
       {listError && (
         <Alert severity="error">
-          {listError?.response?.data?.detail || listError?.message || 'Failed to load users'}
+          {listError ? apiErrorMessage(listError, listError?.message || 'Failed to load users') : null}
         </Alert>
       )}
 

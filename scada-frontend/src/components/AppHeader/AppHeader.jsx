@@ -21,6 +21,7 @@ import Alert from '@mui/material/Alert'
 import ConnectionPill from '@/components/ConnectionPill/ConnectionPill.jsx'
 import { useAuthStore } from '@/stores/auth'
 import { changePassword } from '@/api/auth'
+import { apiErrorMessage } from '@/api/client'
 import DatasourcePicker from './DatasourcePicker.jsx'
 import HeaderClock from './HeaderClock.jsx'
 import LanguageSelect from '@/components/LanguageSelect/LanguageSelect.jsx'
@@ -80,7 +81,7 @@ export default function AppHeader({ collapsed, onToggle }) {
       await changePassword(values.oldPassword, values.newPassword)
       setPwVisible(false)
     } catch (e) {
-      setPwError(e?.response?.data?.detail || 'Password change failed')
+      setPwError(apiErrorMessage(e, 'Password change failed'))
     } finally {
       setPwLoading(false)
     }

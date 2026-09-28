@@ -15,6 +15,7 @@ import TableRow from '@mui/material/TableRow'
 import TableCell from '@mui/material/TableCell'
 import Alert from '@mui/material/Alert'
 import { createDashboard, updateDashboard, deleteDashboard } from '@/api/dashboards'
+import { apiErrorMessage } from '@/api/client'
 import styles from './DashboardSwitcher.module.css'
 
 /**
@@ -53,17 +54,17 @@ export default function DashboardSwitcher({
       setNewTitle('')
       onSelect(created.id)
     },
-    onError: (e) => setManageError(e?.response?.data?.detail || 'Failed to create dashboard.'),
+    onError: (e) => setManageError(apiErrorMessage(e, 'Failed to create dashboard.')),
   })
   const renameMut = useMutation({
     mutationFn: ({ id, payload }) => updateDashboard(id, payload),
     onSuccess: () => { invalidate(); setRenameTarget(null) },
-    onError: (e) => setManageError(e?.response?.data?.detail || 'Failed to rename dashboard.'),
+    onError: (e) => setManageError(apiErrorMessage(e, 'Failed to rename dashboard.')),
   })
   const deleteMut = useMutation({
     mutationFn: deleteDashboard,
     onSuccess: () => { invalidate(); setDeleteTarget(null) },
-    onError: (e) => setDeleteError(e?.response?.data?.detail || 'Failed to delete dashboard.'),
+    onError: (e) => setDeleteError(apiErrorMessage(e, 'Failed to delete dashboard.')),
   })
 
   function openManage() {

@@ -23,6 +23,7 @@ import {
 } from '@/api/panels'
 import { fetchDashboards } from '@/api/dashboards'
 import { fetchDatasources } from '@/api/datasources'
+import { apiErrorMessage } from '@/api/client'
 import {
   layoutFromPanels, nextLayoutSlot, appendLayoutItem, panelMinSize,
   buildLayoutSavePayload, buildDuplicatePayload,
@@ -248,7 +249,7 @@ export default function LivePage() {
       patchPanels((old) => old.map((p) => byId.get(p.id) || p))
       notify('Layout saved.')
     } catch (e) {
-      notify(e?.response?.data?.detail || 'Failed to save layout.', 'error')
+      notify(apiErrorMessage(e, 'Failed to save layout.'), 'error')
     } finally {
       setSavingLayout(false)
     }
@@ -329,7 +330,7 @@ export default function LivePage() {
       notify('Panel duplicated.')
       setDuplicateTarget(null)
     } catch (e) {
-      setDuplicateError(e?.response?.data?.detail || 'Failed to duplicate panel.')
+      setDuplicateError(apiErrorMessage(e, 'Failed to duplicate panel.'))
     } finally {
       setDuplicating(false)
     }
@@ -356,7 +357,7 @@ export default function LivePage() {
       notify('Panel deleted.')
       setDeleteTarget(null)
     } catch (e) {
-      setDeleteError(e?.response?.data?.detail || 'Failed to delete panel.')
+      setDeleteError(apiErrorMessage(e, 'Failed to delete panel.'))
     } finally {
       setDeleting(false)
     }
@@ -369,7 +370,7 @@ export default function LivePage() {
       const updated = await updatePollInterval(panel.id, seconds)
       patchPanels((old) => old.map((p) => (p.id === updated.id ? updated : p)))
     } catch (e) {
-      notify(e?.response?.data?.detail || 'Failed to update poll interval.', 'error')
+      notify(apiErrorMessage(e, 'Failed to update poll interval.'), 'error')
     }
   }
 
@@ -422,7 +423,7 @@ export default function LivePage() {
 
       {loadError && (
         <Alert severity="error">
-          {loadError?.response?.data?.detail || loadError?.message || 'Failed to load dashboard.'}
+          {apiErrorMessage(loadError, loadError?.message || 'Failed to load dashboard.')}
         </Alert>
       )}
 

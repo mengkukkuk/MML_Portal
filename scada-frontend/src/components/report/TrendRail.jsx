@@ -10,6 +10,7 @@ import MenuItem from '@mui/material/MenuItem'
 import Select from '@mui/material/Select'
 import { fetchSchemaTables } from '@/api/schema'
 import { fetchDatasources } from '@/api/datasources'
+import { apiErrorMessage } from '@/api/client'
 import { useTrendColumns } from './useTrendColumns'
 import { trendSourceId } from './trendParams'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
@@ -292,7 +293,7 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
       )}
       {catalogError && (
         <p className={styles.error}>
-          {catalogError?.response?.data?.detail || catalogError.message}
+          {apiErrorMessage(catalogError, catalogError.message)}
         </p>
       )}
     </div>

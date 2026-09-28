@@ -37,6 +37,7 @@ import CandlestickChartOutlinedIcon from '@mui/icons-material/CandlestickChartOu
 import { fetchSchemaTables, fetchSchemaColumns, fetchSchemaValues } from '@/api/schema'
 import { fetchCameraLinkOptions } from '@/api/cameras'
 import { createPanel, updatePanel } from '@/api/panels'
+import { apiErrorMessage } from '@/api/client'
 import { colorAt } from '@/utils/seriesPalette'
 import { COMPARATOR_OPS } from '@/utils/alertConditions'
 import { UNIT_GROUPS } from '@/utils/units'
@@ -218,7 +219,7 @@ export default function PanelEditorDialog({
     } catch (e) {
       schemaTablesRef.current = []
       setSchemaTables([])
-      setSaveError(e?.response?.data?.detail || 'Could not load tables from that connection.')
+      setSaveError(apiErrorMessage(e, 'Could not load tables from that connection.'))
       return []
     }
   }, [])
@@ -557,7 +558,7 @@ export default function PanelEditorDialog({
       }
       onClose()
     } catch (e) {
-      setSaveError(e?.response?.data?.detail || 'Failed to save panel.')
+      setSaveError(apiErrorMessage(e, 'Failed to save panel.'))
     }
   }
 

@@ -15,6 +15,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider'
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
 
 import { fetchDefaultTemplate, fetchTemplate, fetchTemplates, runReport } from '@/api/reports'
+import { apiErrorMessage } from '@/api/client'
 import { useTranslation } from '@/i18n'
 import { useAuthStore } from '@/stores/auth'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
@@ -121,7 +122,7 @@ const WIDTH_CLASS = { full: 'w-full', half: 'w-half', third: 'w-third' }
 
 function errorText(error) {
   if (!error) return ''
-  return error?.response?.data?.detail || error?.message || String(error)
+  return apiErrorMessage(error, error?.message || String(error))
 }
 
 export default function ReportPage() {

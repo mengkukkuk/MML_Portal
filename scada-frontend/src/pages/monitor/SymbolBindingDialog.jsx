@@ -7,6 +7,7 @@ import DialogActions from '@mui/material/DialogActions'
 import Button from '@mui/material/Button'
 import Alert from '@mui/material/Alert'
 import { fetchDatasources } from '@/api/datasources'
+import { apiErrorMessage } from '@/api/client'
 import { fetchCameraLinkOptions } from '@/api/cameras'
 import { badgeFor, familyGroups, groupColumns, pickableColumns } from '@/utils/columnKinds'
 import { groupByFamily } from '@/utils/nameFamilies'
@@ -606,7 +607,7 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
 
             {columnsQuery.isError && (
               <Alert severity="error" className={styles.alert}>
-                {columnsQuery.error?.response?.data?.detail || 'Could not read that table.'}
+                {apiErrorMessage(columnsQuery.error, 'Could not read that table.')}
               </Alert>
             )}
           </section>
@@ -837,7 +838,7 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
 
             {previewQuery.isError && (
               <Alert severity="warning" className={styles.alert}>
-                {previewQuery.error?.response?.data?.detail || 'No reading from that binding yet.'}
+                {apiErrorMessage(previewQuery.error, 'No reading from that binding yet.')}
               </Alert>
             )}
           </section>
