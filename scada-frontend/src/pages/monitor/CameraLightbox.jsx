@@ -122,11 +122,11 @@ export default function CameraLightbox({
           {url
             ? (
               <img
-                key={url}
                 ref={imgRef}
                 src={url}
                 alt=""
                 className={styles.img}
+                decoding="async"
                 onLoad={(e) => readNatural(e.currentTarget)}
               />
             )

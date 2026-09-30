@@ -75,9 +75,20 @@ function resolve(cameraCode, slot, index, mtimeNs) {
 /** The blob URL for one frame, or null until it arrives (and if it never does). */
 export default function useCameraFrameUrl(cameraCode, slot, index, mtimeNs) {
   const ready = !!cameraCode && slot != null && index != null
-  const [url, setUrl] = useState(
-    () => (ready ? cache.get(keyFor(cameraCode, slot, index, mtimeNs))?.url ?? null : null),
-  )
+  const cacheKey = ready ? keyFor(cameraCode, slot, index, mtimeNs) : null
+
+  const [prevKey, setPrevKey] = useState(cacheKey)
+  const [url, setUrl] = useState(() => (ready ? cache.get(cacheKey)?.url ?? null : null))
+
+  // Read the cache synchronously as soon as the key changes, rather than
+  // waiting for the effect below (which runs post-paint). Without this, a
+  // frame that navigates to an already-cached neighbor — the common case,
+  // since CameraRail mounts every strip frame up front — briefly renders the
+  // *previous* frame's url before the effect corrects it.
+  if (cacheKey !== prevKey) {
+    setPrevKey(cacheKey)
+    setUrl(ready ? cache.get(cacheKey)?.url ?? null : null)
+  }
 
   useEffect(() => {
     if (!ready) { setUrl(null); return undefined }
