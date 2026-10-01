@@ -16,9 +16,12 @@ venv/
 # Node / frontend
 node_modules/
 dist/
+.vite/
 .env
 .env.local
+scada-frontend/public/m_favicon.tif
 
 # Editor / OS
+.idea/
 .DS_Store
 Thumbs.db

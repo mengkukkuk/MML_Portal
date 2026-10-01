@@ -139,7 +139,7 @@ The single most important split in this codebase.
 Password hash format: `scrypt$<salt_hex>$<digest_hex>` (no third-party wheel needed for Python 3.14).
 
 ### Frontend Layout
-- `src/pages/` — root pages: `OverviewPage`, `DevicesPage`, `AlarmsPage`, `EventPage`, `LoginPage`,
+- `src/pages/` — root pages: `DevicesPage`, `AlarmsPage`, `EventPage`, `LoginPage`,
   `ResetPasswordPage`, `SettingsPage`, `AccountsPage` (admin-only), `NotFoundPage`; plus subdirs:
   - `pages/live/` — **`LivePage`** (admin-managed live grid), `DashboardSwitcher`, `PanelEditorDialog`, `ParamFields`, `panelPayload.js`
   - `pages/monitor/` — **`MonitorPage`** (interactive SCADA mimic), `MimicCanvas`, `MimicSwitcher`, `DetailRail`, `NodeInspector`, `EdgeInspector`, `SymbolPalette`, `SymbolBindingDialog`, `CustomSymbolDialog`, `WirePicker`, `defaultLayout.js`, `layoutDoc.js`
@@ -148,7 +148,7 @@ Password hash format: `scrypt$<salt_hex>$<digest_hex>` (no third-party wheel nee
 - `src/stores/` — Zustand stores: `auth`, `users`, `devices`, `alarms`, `connection`
 - `src/api/` — thin Axios wrappers per domain (`auth`, `users`, `devices`, `alarms`, `readings`, `tags`,
   `panels`, `dashboards`, `datasources`, `schema`, `events`, `mimic`, `mimicAssets`, `reports`)
-- `src/components/` — shared UI: `AppHeader`, `AppSidebar`, `GaugeTile`, `StatCard`, `TrendChart`,
+- `src/components/` — shared UI: `AppHeader`, `AppSidebar`,
   `ConnectionPill`, plus subdirs:
   - `components/live/` — **`LivePanel`** (Grafana-style single-tile renderer), `usePanelPolling.js`, `usePanelSeries.js`
   - `components/charts/` — `EChart.jsx` (echarts wrapper)

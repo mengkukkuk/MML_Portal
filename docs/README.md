@@ -69,14 +69,14 @@ C:\dev\
     │   ├── stores\                 ← Zustand: auth, users, devices, alarms, connection
     │   ├── pages\                  ← page components:
     │   │  ├── LoginPage, ResetPasswordPage (public)
-    │   │  ├── OverviewPage, DevicesPage, AlarmsPage, EventPage, SettingsPage (authenticated)
+    │   │  ├── DevicesPage, AlarmsPage, EventPage, SettingsPage (authenticated)
     │   │  ├── AccountsPage (admin-only)
     │   │  ├── live/LivePage + supporting files
     │   │  ├── monitor/MonitorPage + mimic editor components
     │   │  ├── reports/ReportPage, ReportBuilderPage
     │   │  └── NotFoundPage
     │   ├── components\             ← shared UI:
-    │   │  ├── AppHeader, AppSidebar, ConnectionPill, GaugeTile, StatCard, TrendChart
+    │   │  ├── AppHeader, AppSidebar, ConnectionPill
     │   │  ├── charts/EChart (generic ECharts wrapper)
     │   │  ├── live/LivePanel + options/ (9 viz-type builders) + polling hooks
     │   │  ├── mimic/symbol library + hooks

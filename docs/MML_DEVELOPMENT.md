@@ -143,12 +143,12 @@ C:\dev\
 │   │   │                           mimicAssets.js, events.js, schema.js, reports.js
 │   │   ├── stores\               # Zustand: auth.js, users.js, devices.js, alarms.js, connection.js, settings.js
 │   │   ├── pages\                # Top-level: LoginPage, ResetPasswordPage (public);
-│   │   │                           OverviewPage, DevicesPage, AlarmsPage, EventPage, SettingsPage,
+│   │   │                           DevicesPage, AlarmsPage, EventPage, SettingsPage,
 │   │   │                           AccountsPage (admin), NotFoundPage;
 │   │   │                           live/ (LivePage, PanelEditorDialog, DashboardSwitcher, etc.),
 │   │   │                           monitor/ (MonitorPage, MimicCanvas, SymbolPalette, etc.),
 │   │   │                           reports/ (ReportPage, ReportBuilderPage)
-│   │   ├── components\           # AppHeader, AppSidebar, ConnectionPill, GaugeTile, StatCard,
+│   │   ├── components\           # AppHeader, AppSidebar, ConnectionPill,
 │   │   │                           charts/EChart.jsx (echarts-for-react wrapper),
 │   │   │                           live/LivePanel.jsx, options/*.js, usePanelPolling.js, usePanelSeries.js,
 │   │   │                           mimic/ (symbol components, hooks, utilities),
@@ -925,7 +925,7 @@ npm run build        # outputs to dist\ (includes web.config from public\)
 |---------------------------|-----------------------|----------|---------|
 | `/login`                  | `LoginPage.jsx`           | public   | Sign-in form |
 | `/reset-password`         | `ResetPasswordPage.jsx`   | public   | Consumes single-use reset token |
-| `/`                       | `OverviewPage.jsx`        | required | KPI snapshot / dashboard overview |
+| `/`                       | — (redirects to `monitor`) | required | Index redirect |
 | `/devices`                | `DevicesPage.jsx`         | required | Device list / detail |
 | `/alarms`                 | `AlarmsPage.jsx`          | required | Alarm log with acknowledge actions |
 | `/events`                 | `EventPage.jsx`           | required | Event log from public.event_logs |
