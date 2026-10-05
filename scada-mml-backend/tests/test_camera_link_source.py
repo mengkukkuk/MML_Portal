@@ -5,6 +5,7 @@ connection-boundary case verifies camera data cannot silently fall back to the
 app/config connection.
 """
 
+import re
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -410,23 +411,67 @@ def _capture_sql(monkeypatch):
     return captured
 
 
-def test_defect_slot_query_labels_slots_from_the_same_plants_cameras(monkeypatch):
+def test_log_summary_labels_slots_from_the_same_plants_cameras(monkeypatch):
     """Pins the slot mapping to its SQL: the array is unnested with its slot
     number and labelled from that source's own `cameras`, unnamed slots fall
     back to "Defect N", and zero counts never become buckets."""
     captured = _capture_sql(monkeypatch)
-    db.fetch_camera_defect_slots("t0", "t1", camera_codes=["VIS-01"], datasource_id=86)
+    db.fetch_camera_log_summary("t0", "t1", camera_codes=["VIS-01"], datasource_id=86)
 
     statement, params = captured[0]
-    assert "SELECT location, batch_id, code, defect_array" in statement
     assert '"vision_data2"."camera_defect_logs"' in statement
     assert "unnest(l.defect_array)" in statement and "WITH ORDINALITY" in statement
     assert 'LEFT JOIN "vision_data2"."cameras" c ON c.code = l.code' in statement
-    assert "c.defect_labels[s.slot]" in statement
+    # The slot CTE reads the labels carried through the window CTE as `l`.
+    assert "l.defect_labels[s.slot]" in statement
     assert "'Defect ' || s.slot" in statement
     assert "s.cnt > 0" in statement
     assert "COUNT(DISTINCT l.batch_id)" in statement
     assert params == ("t0", "t1", ["VIS-01"])
+
+
+def test_log_summary_is_one_query_that_never_ships_batch_ids(monkeypatch):
+    """Per-camera figures, slots and the plant's batch count come back in one
+    round trip, with batches counted in SQL — the old shape sent every distinct
+    batch id to Python just to take `len()` of it."""
+    captured = _capture_sql(monkeypatch)
+    db.fetch_camera_log_summary("t0", "t1", datasource_id=86)
+    assert len(captured) == 1
+    statement, _params = captured[0]
+    assert "COUNT(DISTINCT batch_id) AS batches" in statement
+    assert "array_agg" not in statement
+    assert "source_batches" in statement and "AS slots" in statement
+    # A camera's total is the sum of the slots shown beside it.
+    assert "SUM(count)::bigint AS defects" in statement
+    # Materialising the window spills to disk and is slower than re-reading it.
+    assert "AS NOT MATERIALIZED" in statement
+
+
+def test_camera_code_filters_the_raw_log_but_the_line_filters_the_registered_one(monkeypatch):
+    """Code filters inside the window subquery (index-friendly); the line is
+    matched after the join on the camera's registered line, because the log's
+    own copy is a stale snapshot of how the line used to be spelled."""
+    captured = _capture_sql(monkeypatch)
+    db.fetch_camera_log_summary("t0", "t1", locations=["Line 13"],
+                                camera_codes=["VIS-01"], datasource_id=86)
+    statement, params = captured[0]
+    assert statement.index("code = ANY(%s)") < statement.index("LEFT JOIN")
+    assert statement.index("LEFT JOIN") < statement.index("COALESCE(c.location, l.location) = ANY(%s)")
+    assert params == ("t0", "t1", ["VIS-01"], ["Line 13"])
+
+
+def test_hourly_query_sums_in_sql_and_counts_distinct_hours(monkeypatch):
+    """(code, hour, batch) is the table's key, so a mid-hour batch change makes
+    two rows for one hour; coverage must count the hour once."""
+    captured = _capture_sql(monkeypatch)
+    db.fetch_camera_hourly("t0", "t1", locations=["Line 13"], datasource_id=86)
+    statement, params = captured[0]
+    assert "SUM(h.count_total)" in statement
+    assert "COUNT(DISTINCT h.period_start) AS hours_reporting" in statement
+    assert 'LEFT JOIN "vision_data2"."cameras" c ON c.code = h.code' in statement
+    assert "COALESCE(c.location, h.location) AS location" in statement
+    assert "COALESCE(c.location, h.location) = ANY(%s)" in statement
+    assert params == ("t0", "t1", ["Line 13"])
 
 
 def test_defect_period_query_only_accepts_known_buckets(monkeypatch):
@@ -460,12 +505,14 @@ def test_camera_roll_ups_take_the_line_from_cameras_not_the_log_snapshot(monkeyp
     """A log row snapshots the line as spelled at the time ("LINE 13", later
     "Line 13"); grouping on that splits one camera into two rows."""
     captured = _capture_sql(monkeypatch)
-    db.fetch_camera_log_stats("t0", "t1", datasource_id=86)
-    db.fetch_camera_defect_slots("t0", "t1", datasource_id=86)
+    db.fetch_camera_log_summary("t0", "t1", datasource_id=86)
+    db.fetch_camera_hourly("t0", "t1", datasource_id=86)
     db.fetch_camera_defect_periods("t0", "t1", "day", datasource_id=86)
+    assert len(captured) == 3
     for statement, _params in captured:
-        assert "COALESCE(c.location, l.location) AS location" in statement
-        assert 'LEFT JOIN "vision_data2"."cameras" c ON c.code = l.code' in statement
+        assert re.search(r"COALESCE\(c\.location, (l|h)\.location\) AS location", statement)
+        assert re.search(r'LEFT JOIN "vision_data2"\."cameras" c ON c\.code = (l|h)\.code',
+                         statement)
 
 
 def test_log_page_is_cut_before_the_label_join(monkeypatch):

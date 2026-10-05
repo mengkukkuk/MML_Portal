@@ -49,14 +49,15 @@ def slot_breakdown(defect_array: Iterable[Any] | None,
     return out
 
 
-def aggregate_camera(hourly_rows: list[dict[str, Any]], log_stats: dict[str, Any] | None,
+def aggregate_camera(hourly: dict[str, Any] | None, log_stats: dict[str, Any] | None,
                      window_seconds: float, inspected_known: bool = True) -> dict[str, Any]:
     """One camera's figures for the window.
 
     Defects, batches and last-seen come from its camera_defect_logs roll-up.
-    `inspected` comes from production_hourly_log, and is `None` when that
-    table couldn't be read for this camera's plant (`inspected_known=False`) —
-    the rate is then `None` too, not a false 0%.
+    `inspected` comes from its production_hourly_log roll-up (`hourly`:
+    `{inspected, hours_reporting}`, None when it reported no hours), and is
+    `None` when that table couldn't be read for this camera's plant
+    (`inspected_known=False`) — the rate is then `None` too, not a false 0%.
 
     `status` distinguishes "no data" (neither a log row nor an hourly row in
     the window — a pipeline problem) from a genuinely clean camera, and
@@ -64,13 +65,14 @@ def aggregate_camera(hourly_rows: list[dict[str, Any]], log_stats: dict[str, Any
     fully-covered one: a quiet camera must not look identical to a perfect one.
     """
     stats = log_stats or {}
+    hourly = hourly or {}
     defects = int(stats.get("defects") or 0)
-    batches = len(stats.get("batch_ids") or [])
+    batches = int(stats.get("batches") or 0)
     log_rows = int(stats.get("log_rows") or 0)
 
-    inspected = sum(r["count_total"] or 0 for r in hourly_rows) if inspected_known else None
+    inspected = int(hourly.get("inspected") or 0) if inspected_known else None
     rate = (defects / inspected * 100) if inspected else None
-    hours_reporting = len(hourly_rows)
+    hours_reporting = int(hourly.get("hours_reporting") or 0)
     window_hours = window_seconds / 3600 if window_seconds > 0 else 0
 
     if not log_rows and not hours_reporting:
@@ -94,23 +96,24 @@ def aggregate_camera(hourly_rows: list[dict[str, Any]], log_stats: dict[str, Any
     }
 
 
-def totals_across(cameras: list[dict[str, Any]], batch_keys: set | None = None,
+def totals_across(cameras: list[dict[str, Any]], batches: int | None = None,
                   ) -> dict[str, Any]:
     """Line-level roll-up. Recomputed from summed counts rather than averaging
     each camera's rate: a mean of percentages would weight a barely-used
     camera the same as the line's main inspection point.
 
-    `batch_keys` is the set of distinct `(datasource_id, batch_id)` across all
-    cameras — one batch passes every camera, so per-camera batch counts can't
-    simply be summed. `inspected` is `None` unless at least one camera has a
-    known inspected count, and the rate then uses only those cameras' defects,
-    so a plant without an hourly log can't dilute another plant's rate."""
+    `batches` is the count of distinct batches, summed over plants by the
+    caller (batch ids are per-plant serials) — one batch passes every camera,
+    so per-camera batch counts can't simply be summed. `inspected` is `None`
+    unless at least one camera has a known inspected count, and the rate then
+    uses only those cameras' defects, so a plant without an hourly log can't
+    dilute another plant's rate."""
     known = [c for c in cameras if c.get("inspected") is not None]
     inspected = sum(c["inspected"] for c in known) if known else None
     defects = sum(c.get("defects") or 0 for c in cameras)
     rated_defects = sum(c.get("defects") or 0 for c in known)
     rate = (rated_defects / inspected * 100) if inspected else None
-    batches = len(batch_keys) if batch_keys is not None else 0
+    batches = batches or 0
     return {
         "inspected": inspected,
         "defects": defects,
@@ -149,7 +152,8 @@ def defect_pareto(buckets_in: Iterable[dict[str, Any]], top_n: int = 10,
     window, with a running cumulative % — same "Other" tail-collapsing shape
     as report_engine.downtime_pareto so the chart component can be shared.
 
-    Input is db.fetch_camera_defect_slots' rows, already labelled per plant.
+    Input is the per-camera `slots` of db.fetch_camera_log_summary, already
+    labelled per plant and flattened to one row per camera per slot.
     The same label arrives once per camera (and per plant), so buckets are
     merged by name here first; `batches` then counts camera-batches.
     """

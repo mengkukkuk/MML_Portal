@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Reports Page — Block-to-Table Mapping</title>
+<style>
+  :root {
+    --bg: #0b1220;
+    --panel: #111a2c;
+    --panel-2: #1f2c48;
+    --border: #2a3958;
+    --text: #e6edf7;
+    --muted: #8a99b3;
+    --accent: #4da3ff;
+    --code-bg: #0d1526;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 32px 24px 80px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin: 0 0 28px; }
+  h2 {
+    font-size: 15px;
+    color: var(--accent);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+    margin: 40px 0 16px;
+  }
+  .block-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 16px;
+  }
+  .block-title {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .block-title .name { font-size: 16px; font-weight: 600; }
+  .badge {
+    font-size: 11px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--muted);
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 2px 6px;
+  }
+  .hint { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; width: 150px; white-space: nowrap; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    color: #7ee7c7;
+    font-size: 12.5px;
+  }
+  .file code { color: var(--accent); }
+  .note { color: var(--muted); font-size: 12.5px; }
+  .diagram {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.7;
+    white-space: pre;
+    overflow-x: auto;
+    color: var(--text);
+  }
+  .diagram .tbl { color: #7ee7c7; }
+  .diagram .blk { color: var(--accent); }
+  .legend {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    font-size: 12.5px;
+    color: var(--muted);
+    margin-top: 10px;
+  }
+  .legend span.tbl { color: #7ee7c7; }
+  .legend span.blk { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Reports Page — Block → Table Mapping</h1>
+<p class="subtitle">scada-frontend/src/pages/reports · scada-mml-backend/reports.py, vision_report_engine.py, db.py</p>
+
+<h2>Overview diagram</h2>
+<div class="diagram">POST /api/reports/run  (reports.py:run_report)
+│
+├─ fetch_camera_hourly()        →  <span class="tbl">vision_data.production_hourly_log</span>   (one row/camera/hour)
+├─ fetch_camera_defect_logs_window() → <span class="tbl">vision_data.camera_defect_logs</span>   (one row/camera/batch)
+├─ camera_defect_labels()       →  <span class="tbl">vision_data.cameras</span>.defect_labels
+├─ fetch_camera_defect_pareto() →  <span class="tbl">camera_defect_logs</span> ⨝ <span class="tbl">cameras</span>.defect_labels  (one row/defect label)
+└─ vision_report_catalog()      →  <span class="tbl">vision_data.cameras</span>  (location, code, name)
+        │
+        ▼  engine.aggregate_camera() / totals_across() / defect_pareto() /
+           quality_exceptions() / camera_batch_summary()
+        │
+        ▼  one JSON payload, shared by every block on the page:
+
+  <span class="blk">KPI Strip</span>          ← result.totals              (built from production_hourly_log)
+  <span class="blk">Throughput Timeline</span>← result.cameras[].hourly    (production_hourly_log rows)
+  <span class="blk">Defect Pareto</span>      ← result.defect_reasons      (camera_defect_logs, grouped by defect type)
+  <span class="blk">Quality Exceptions</span> ← result.quality_exceptions  (thresholds applied to production_hourly_log totals)
+  <span class="blk">Camera Summary</span>     ← result.cameras[]           (production_hourly_log + camera_defect_logs)
+
+GET /api/reports/logs  (reports.py:raw_logs) — independent of /run
+  <span class="blk">Defect Batch Log</span>   ← count_camera_defect_logs() / fetch_camera_defect_logs_page()
+                             on  <span class="tbl">vision_data.camera_defect_logs</span> (paged, newest first)
+</div>
+<div class="legend"><span><span class="tbl">■</span> Postgres table/column</span><span><span class="blk">■</span> Report block (frontend component)</span></div>
+
+<h2>Per-block detail</h2>
+
+<div class="block-card">
+  <div class="block-title"><span class="name">KPI Strip</span><span class="badge">type: kpi</span></div>
+  <p class="hint">Inspected, defects, defect rate, cameras reporting — the headline numbers.</p>
+  <table>
+    <tr><th>Frontend component</th><td class="file"><code>src/components/report/blocks/KpiStrip.jsx</code></td></tr>
+    <tr><th>Reads</th><td><code>result.totals</code></td></tr>
+    <tr><th>Backend source</th><td><code>vision_report_engine.totals_across(cameras)</code> — sums each camera's <code>inspected</code>/<code>defects</code> (themselves from <code>aggregate_camera()</code>)</td></tr>
+    <tr><th>Table</th><td><code>vision_data.production_hourly_log</code> (columns: <code>count_total</code>, <code>defect_total</code>, windowed on <code>period_start</code>)</td></tr>
+    <tr><th>Query</th><td class="file"><code>db.fetch_camera_hourly()</code> — reports.py:196</td></tr>
+  </table>
+</div>
+
+<div class="block-card">
+  <div class="block-title"><span class="name">Camera Throughput Timeline</span><span class="badge">type: timeline</span></div>
+  <p class="hint">Hourly defect-rate heatmap, one row per camera.</p>
+  <table>
+    <tr><th>Frontend component</th><td class="file"><code>src/components/report/blocks/ThroughputTimeline.jsx</code></td></tr>
+    <tr><th>Reads</th><td><code>result.cameras[].hourly[]</code> — <code>{ period_start, count_total, defect_total }</code></td></tr>
+    <tr><th>Table</th><td><code>vision_data.production_hourly_log</code></td></tr>
+    <tr><th>Query</th><td class="file"><code>db.fetch_camera_hourly()</code> — reports.py:196 (only attached when <code>timeline</code> is a requested block)</td></tr>
+  </table>
+</div>
+
+<div class="block-card">
+  <div class="block-title"><span class="name">Defect Pareto</span><span class="badge">type: pareto</span></div>
+  <p class="hint">Ranked defect types with cumulative %.</p>
+  <table>
+    <tr><th>Frontend component</th><td class="file"><code>src/components/report/blocks/DefectPareto.jsx</code></td></tr>
+    <tr><th>Reads</th><td><code>result.defect_reasons[]</code> — <code>{ defect, count, batches, cumulative_pct }</code></td></tr>
+    <tr><th>Backend source</th><td><code>vision_report_engine.defect_pareto(buckets)</code> — merges per-plant buckets by label, ranks, collapses the tail into "Other"</td></tr>
+    <tr><th>Table</th><td><code>vision_data.camera_defect_logs</code> (<code>batch_id, code, defect_array</code>) — <code>unnest(defect_array) WITH ORDINALITY</code>, slot N labelled by <code>vision_data.cameras.defect_labels[N]</code> (LEFT JOIN on <code>code</code>, same plant DB); unnamed slots → "Defect N"</td></tr>
+    <tr><th>Query</th><td class="file"><code>db.fetch_camera_defect_pareto()</code> — returns <code>{ defect, count, batches }</code> per label</td></tr>
+  </table>
+</div>
+
+<div class="block-card">
+  <div class="block-title"><span class="name">Quality Exceptions</span><span class="badge">type: exceptions</span></div>
+  <p class="hint">Cameras over the (per-template) warn/critical defect-rate threshold.</p>
+  <table>
+    <tr><th>Frontend component</th><td class="file"><code>src/components/report/blocks/QualityExceptions.jsx</code></td></tr>
+    <tr><th>Reads</th><td><code>result.quality_exceptions</code> — <code>{ total, by_severity, top[] }</code></td></tr>
+    <tr><th>Backend source</th><td><code>vision_report_engine.quality_exceptions(cameras, warn_pct, crit_pct)</code> — thresholds are template options, not queried from a table</td></tr>
+    <tr><th>Table</th><td><code>vision_data.production_hourly_log</code> (via the same per-camera aggregate the KPI strip uses)</td></tr>
+  </table>
+</div>
+
+<div class="block-card">
+  <div class="block-title"><span class="name">Camera Summary</span><span class="badge">type: summary_table</span></div>
+  <p class="hint">One row per camera with a totals footer.</p>
+  <table>
+    <tr><th>Frontend component</th><td class="file"><code>src/components/report/blocks/SummaryTable.jsx</code></td></tr>
+    <tr><th>Reads</th><td><code>result.cameras[]</code> — <code>{ location, code, name, inspected, defects, defect_rate_pct, status, last_seen, worst_defect }</code></td></tr>
+    <tr><th>Tables</th><td>
+      <code>vision_data.production_hourly_log</code> → inspected/defects/rate/status<br>
+      <code>vision_data.camera_defect_logs</code> → last_seen, worst_defect (via <code>engine.camera_batch_summary()</code>)<br>
+      <code>vision_data.cameras</code> → camera display name (catalog lookup)
+    </td></tr>
+  </table>
+</div>
+
+<div class="block-card">
+  <div class="block-title"><span class="name">Defect Batch Log</span><span class="badge">type: raw_log</span></div>
+  <p class="hint">Raw, unclassified <code>camera_defect_logs</code> rows — paged table + spreadsheet export.</p>
+  <table>
+    <tr><th>Frontend component</th><td class="file"><code>src/components/report/blocks/RawLogTable.jsx</code></td></tr>
+    <tr><th>Endpoint</th><td><code>GET /api/reports/logs</code> — reports.py:293 (separate from <code>/run</code>; paged independently)</td></tr>
+    <tr><th>Table</th><td><code>vision_data.camera_defect_logs</code> (columns: <code>location, code, name, batch_id, defect_array, created_at</code>)</td></tr>
+    <tr><th>Query</th><td class="file"><code>db.count_camera_defect_logs()</code> / <code>db.fetch_camera_defect_logs_page()</code></td></tr>
+  </table>
+</div>
+
+<div class="block-card">
+  <div class="block-title"><span class="name">Line / Camera filter pickers</span><span class="badge">not a report block — filter bar</span></div>
+  <p class="hint">Populates the Line and Camera dropdowns in the filter bar (<code>ReportFilterBar.jsx</code>).</p>
+  <table>
+    <tr><th>Endpoint</th><td><code>GET /api/reports/catalog</code> — reports.py:146</td></tr>
+    <tr><th>Table</th><td><code>vision_data.cameras</code> (columns: <code>location, code, name</code>), cached 5 min per datasource</td></tr>
+    <tr><th>Query</th><td class="file"><code>db.vision_report_catalog()</code> — db.py:3230</td></tr>
+  </table>
+</div>
+
+<h2>Table reference</h2>
+<table>
+  <tr><th>Table</th><td><code>vision_data.production_hourly_log</code></td></tr>
+  <tr><th>Grain</th><td>one row per camera per hour</td></tr>
+  <tr><th>Key columns</th><td><code>location, code, period_start, batch_id, count_total, defect_total</code></td></tr>
+  <tr><th>Feeds</th><td>KPI Strip, Throughput Timeline, Quality Exceptions, Camera Summary (counts)</td></tr>
+</table>
+<br>
+<table>
+  <tr><th>Table</th><td><code>vision_data.camera_defect_logs</code></td></tr>
+  <tr><th>Grain</th><td>one row per camera per batch (historian of <code>camera_defect</code>)</td></tr>
+  <tr><th>Key columns</th><td><code>location, code, name, batch_id, defect_array, created_at</code></td></tr>
+  <tr><th>Feeds</th><td>Defect Pareto, Camera Summary (last_seen/worst_defect), Defect Batch Log</td></tr>
+</table>
+<br>
+<table>
+  <tr><th>Table</th><td><code>vision_data.cameras</code></td></tr>
+  <tr><th>Grain</th><td>one row per camera (registry)</td></tr>
+  <tr><th>Key columns</th><td><code>location, code, name, defect_labels</code></td></tr>
+  <tr><th>Feeds</th><td>Line/Camera filter pickers, camera display names, defect-type labels for the pareto</td></tr>
+</table>
+
+<p class="note" style="margin-top:32px;">
+  A camera's identity throughout is <code>(datasource_id, location, code)</code>, not just <code>(location, code)</code> —
+  see reports.py's module docstring. All three tables above live under the <code>vision_data</code> schema of
+  whichever datasource(s) the logged-in user has selected; the schema name itself is per-datasource-configurable
+  (<code>localbase.datasources.db_schema</code>), it just happens to be <code>vision_data</code> for every camera
+  datasource currently configured.
+</p>
+
+</div>
+</body>
+</html>

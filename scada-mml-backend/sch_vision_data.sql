@@ -108,6 +108,13 @@ alter table vision_data.camera_batch_work
 CREATE INDEX IF NOT EXISTS idx_camera_defect_logs_code_batch
     ON vision_data.camera_defect_logs (lower(code) ASC, batch_id DESC);
 
+-- Every report block windows this table on created_at (the Report page's Camera
+-- Summary, pareto, defect trend and timeline all scan it); without this index
+-- each of those is a sequential scan of the whole historian. The index above
+-- cannot serve them: it is on lower(code), and the report filters on code.
+CREATE INDEX IF NOT EXISTS idx_camera_defect_logs_created_at
+    ON vision_data.camera_defect_logs (created_at);
+
 
 -- Historian Trigger Function
 CREATE OR REPLACE FUNCTION vision_data.fn_log_camera_defect_history()

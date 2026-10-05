@@ -140,7 +140,8 @@
       "Bash(grep -n 'CREATE TABLE.*alarm' /g/code/dev/scada-mml-backend/*.py /g/code/dev/scada-mml-backend/*.sql)",
       "Bash(python3 -c \":*)",
       "Bash(grep -r \"defect_label\\\\|display_name\\\\|alias\" G:/Code/DEV/scada-frontend/src --include=*.js --include=*.jsx)",
-      "Bash(cd *)"
+      "Bash(cd *)",
+      "Bash(./venv/Scripts/python.exe -)"
     ]
   }
 }

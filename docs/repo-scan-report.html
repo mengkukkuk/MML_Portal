@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DEV repo-scan report</title>
+<style>
+  :root{--bg:#0f1318;--panel:#171d25;--line:#273040;--text:#e4e9f0;--mute:#8d99aa;
+    --core:#3fb68b;--merge:#e2b341;--rebuild:#5aa2e8;--dep:#e06c6c;--accent:#7aa7ff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 "IBM Plex Sans",system-ui,sans-serif}
+  main{max-width:1040px;margin:0 auto;padding:28px 16px 64px}
+  h1{font-size:26px;margin:0 0 4px}
+  h2{font-size:17px;margin:34px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  .sub{color:var(--mute);margin:0 0 22px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+  .kpi b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+  .kpi span{color:var(--mute);font-size:12.5px}
+  details{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin:8px 0}
+  summary{cursor:pointer;padding:11px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"▸";color:var(--mute);transition:transform .15s}
+  details[open]>summary::before{transform:rotate(90deg)}
+  summary .name{font-weight:600;font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:13.5px}
+  summary .meta{color:var(--mute);font-size:12.5px;margin-left:auto}
+  .body{padding:2px 16px 14px 34px;color:var(--text)}
+  .body ul{margin:6px 0;padding-left:18px}
+  .body li{margin:3px 0}
+  .tag{font-size:11.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;padding:2px 8px;border-radius:99px;border:1px solid}
+  .core{color:var(--core);border-color:var(--core)}
+  .merge{color:var(--merge);border-color:var(--merge)}
+  .rebuild{color:var(--rebuild);border-color:var(--rebuild)}
+  .dep{color:var(--dep);border-color:var(--dep)}
+  code{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5px;background:#0b0f14;padding:1px 5px;border-radius:4px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  th,td{text-align:left;padding:7px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mute);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  td.n{text-align:right;font-variant-numeric:tabular-nums;font-family:"IBM Plex Mono",monospace}
+  .bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;min-width:90px}
+  .bar i{display:block;height:100%;background:var(--accent)}
+  .note{color:var(--mute);font-size:13px;margin-top:10px}
+  .scroll{overflow-x:auto}
+</style>
+</head>
+<body>
+<main>
+  <h1>DEV · repo-scan report</h1>
+  <p class="sub">Branch <code>tbc_poc</code> · depth <code>standard</code> · scanned 2026-10-01 · tracked files only unless noted</p>
+
+  <div class="kpis">
+    <div class="kpi"><b>589</b><span>tracked files</span></div>
+    <div class="kpi"><b>~67k</b><span>project code LOC (frontend + backend + installer)</span></div>
+    <div class="kpi"><b>0</b><span>embedded third-party libraries in source</span></div>
+    <div class="kpi"><b>488</b><span>LOC of dead code removed (WirePicker kept)</span></div>
+    <div class="kpi"><b>~490 MB</b><span>untracked deps (all gitignored)</span></div>
+  </div>
+
+  <h2>Classification</h2>
+  <div class="scroll"><table>
+    <tr><th>Class</th><th>What</th><th class="n">Files</th><th class="n">LOC</th></tr>
+    <tr><td>Project code</td><td><code>scada-frontend</code> React 19 SPA</td><td class="n">330</td><td class="n">48,329</td></tr>
+    <tr><td>Project code</td><td><code>scada-mml-backend</code> FastAPI + psycopg3</td><td class="n">70</td><td class="n">17,773</td></tr>
+    <tr><td>Project code</td><td><code>installer</code> Inno Setup + PowerShell</td><td class="n">8</td><td class="n">1,175</td></tr>
+    <tr><td>Generated docs</td><td><code>docs/</code> (mostly self-contained HTML)</td><td class="n">27</td><td class="n">33,987</td></tr>
+    <tr><td>Third-party (vendored skills)</td><td><code>.claude/skills</code> + <code>.agents/skills</code>, source <code>mattpocock/skills</code></td><td class="n">133</td><td class="n">554</td></tr>
+    <tr><td>Build / IDE artifacts</td><td><code>.idea</code>, <code>.vite/deps</code>, <code>.tif</code></td><td class="n">~23</td><td class="n">–</td></tr>
+  </table></div>
+  <p class="note">No vendored library source (FFmpeg/Boost-style) found. Third-party code lives in <code>node_modules</code> (347 MB), <code>venv</code> (80 MB), <code>.venv</code> (62 MB) and <code>dist</code> (6 MB), all correctly gitignored.</p>
+
+  <h2>Module verdicts</h2>
+
+  <details open>
+    <summary><span class="tag core">Core asset</span><span class="name">scada-mml-backend/</span><span class="meta">17.8k LOC · 21 test files (4.9k LOC)</span></summary>
+    <div class="body"><ul>
+      <li>Healthy: 28% of backend LOC is tests; covers licensing, security secrets, schema coercion, report engines, camera files.</li>
+      <li><code>db.py</code> is 3,598 lines (154 KB) — one-fifth of the backend. Candidate to split by domain (tags, readings, mimic, cameras, config).</li>
+      <li>Dependency pins are mixed: <code>psycopg_pool&gt;=3.2</code> and <code>cryptography</code> are unpinned while everything else is exact; <code>pytest==7.4.0</code> is old.</li>
+      <li>Two parallel Python environments exist (<code>.venv</code> at root and <code>scada-mml-backend/venv</code>), ~142 MB combined.</li>
+    </ul></div>
+  </details>
+
+  <details>
+    <summary><span class="tag merge">Extract &amp; merge</span><span class="name">scada-mml-backend/ one-off scripts</span><span class="meta">7 files · 979 LOC</span></summary>
+    <div class="body"><ul>
+      <li>Never imported: <code>_probe_alarms.py</code> (53), <code>_seed_alarms.py</code> (41) — underscore-prefixed scratch scripts; delete or move under <code>scripts/</code>.</li>
+      <li><code>simulate_data.py</code>, <code>simulate_events.py</code>, <code>seed_users.py</code>, <code>verify_license.py</code>, <code>migrate_config_to_local.py</code> are legitimate CLIs but sit beside runtime modules. Group into <code>scripts/</code> or fold into <code>plant_cli.py</code>.</li>
+    </ul></div>
+  </details>
+
+  <details open>
+    <summary><span class="tag core">Core asset</span><span class="name">scada-frontend/src</span><span class="meta">~48k LOC · 15 node:test files</span></summary>
+    <div class="body"><ul>
+      <li><code>components/mimic</code> (75 files), <code>pages/monitor</code> (55), <code>components/report</code> (27), <code>components/live</code> (18) carry the product.</li>
+      <li>Tests only cover pure-logic modules (editor session/viewport/selection, report params, name families); no component or route tests.</li>
+      <li>Large files worth splitting: <code>MonitorPage.jsx</code> 1,842, <code>MimicCanvas.jsx</code> 1,177, <code>PanelEditorDialog.jsx</code> 1,057, <code>symbols/index.js</code> 863, <code>SymbolBindingDialog.jsx</code> 860.</li>
+      <li>Dependency set is current and lean (React 19, MUI 7, Vite 8, ECharts 6, TanStack Query 5, Zustand 5). <code>exceljs</code> is the heaviest runtime dep; confirm it is code-split.</li>
+    </ul></div>
+  </details>
+
+  <details open>
+    <summary><span class="tag dep">Deprecate</span><span class="name">Dead frontend code</span><span class="meta">10 files · 488 LOC · removed</span></summary>
+    <div class="body"><ul>
+      <li><code>pages/OverviewPage.jsx</code> + css — not imported; <code>/</code> redirects to <code>monitor</code> in <code>router/routes.jsx</code>. Still carries a Vue-era comment.</li>
+      <li><code>components/StatCard</code>, <code>components/GaugeTile</code>, <code>components/TrendChart</code> — used only by <code>OverviewPage</code>, so dead transitively.</li>
+      <li><code>stores/devices.js</code> (33) and <code>stores/alarms.js</code> (91) — no importers; only a doc comment in <code>DevicesPage.jsx</code> mentions them.</li>
+      <li><code>pages/monitor/WirePicker.jsx</code> + css (242) — not imported anywhere, but kept: it is the unfinished "wire pen" feature (commit 8c0e72c).</li>
+    </ul>
+    <p class="note">Detection is by import-name match plus manual confirmation of each item above; dynamic imports built from variable strings would not be seen.</p></div>
+  </details>
+
+  <details>
+    <summary><span class="tag core">Core asset</span><span class="name">installer/</span><span class="meta">8 files · 1.2k LOC</span></summary>
+    <div class="body"><ul><li>Inno Setup script plus build, redist fetch, postinstall, secret-protection and uninstall scripts. Small and focused; no issues found.</li></ul></div>
+  </details>
+
+  <details>
+    <summary><span class="tag merge">Extract &amp; merge</span><span class="name">docs/</span><span class="meta">27 files · ~4.5 MB</span></summary>
+    <div class="body"><ul>
+      <li><code>CLAUDE.md</code> (16.6 KB) and <code>AGENTS.md</code> (15.6 KB) are near-duplicates; keep one canonical file and have the other point at it.</li>
+      <li><code>vue-render-flow.html</code> and Vue references in <code>CLAUDE.md</code>, <code>MML_DEVELOPMENT.md</code> and several architecture pages are stale — the frontend was converted to React and <code>package.json</code> has no Vue dependency.</li>
+      <li>Two 800 KB HTML pages plus 8 visual-check PNGs and 2 visual-check HTML/JSON files (~2.3 MB) are regeneration artifacts; consider not tracking them.</li>
+      <li><code>docs/.pr_body.md</code> is a leftover PR draft.</li>
+    </ul></div>
+  </details>
+
+  <details>
+    <summary><span class="tag dep">Deprecate</span><span class="name">.claude/skills ⇄ .agents/skills</span><span class="meta">133 files · 2 mirrored trees</span></summary>
+    <div class="body"><ul>
+      <li>The two trees are mirrors; only <code>mmlportal-patterns/SKILL.md</code> differs (a BOM, and <code>CLAUDE.md</code> vs <code>AGENTS.md</code> reference). <code>.claude</code> additionally holds a few extra skills.</li>
+      <li>Most skills come from the external <code>mattpocock/skills</code> repo (see <code>skills-lock.json</code>). Pick one canonical location and generate or symlink the other.</li>
+    </ul></div>
+  </details>
+
+  <details>
+    <summary><span class="tag dep">Deprecate</span><span class="name">Tracked artifacts</span><span class="meta">~23 files</span></summary>
+    <div class="body"><ul>
+      <li><code>.idea/*</code> (14) and <code>scada-mml-backend/.idea/*</code> (4) — IDE state; <code>.idea/</code> is dirty in git status right now (<code>dataSources.xml</code>, <code>dbnavigator.xml</code>, …) and may hold DB connection details.</li>
+      <li><code>scada-frontend/.vite/deps/*</code> (2) — Vite cache, not in the root <code>.gitignore</code>.</li>
+      <li><code>scada-frontend/public/m_favicon.tif</code> — 1.2 MB TIFF that browsers will not use; only the PNG/SVG variants are needed.</li>
+      <li>Untracked <code>scada-mml-backend/reports_data_mapping.html</code> is a generated report; belongs in <code>docs/</code> or should be ignored.</li>
+    </ul></div>
+  </details>
+
+  <h2>Largest source files</h2>
+  <div class="scroll"><table>
+    <tr><th>File</th><th class="n">Lines</th><th>Relative size</th></tr>
+    <tr><td><code>scada-mml-backend/db.py</code></td><td class="n">3,598</td><td><div class="bar"><i style="width:100%"></i></div></td></tr>
+    <tr><td><code>pages/monitor/MonitorPage.jsx</code></td><td class="n">1,842</td><td><div class="bar"><i style="width:51%"></i></div></td></tr>
+    <tr><td><code>pages/ap/APPage.module.css</code></td><td class="n">1,236</td><td><div class="bar"><i style="width:34%"></i></div></td></tr>
+    <tr><td><code>pages/monitor/MimicCanvas.jsx</code></td><td class="n">1,177</td><td><div class="bar"><i style="width:33%"></i></div></td></tr>
+    <tr><td><code>pages/monitor/MonitorPage.module.css</code></td><td class="n">1,063</td><td><div class="bar"><i style="width:30%"></i></div></td></tr>
+    <tr><td><code>pages/live/PanelEditorDialog.jsx</code></td><td class="n">1,057</td><td><div class="bar"><i style="width:29%"></i></div></td></tr>
+    <tr><td><code>scada-mml-backend/mimic.py</code></td><td class="n">878</td><td><div class="bar"><i style="width:24%"></i></div></td></tr>
+    <tr><td><code>components/mimic/symbols/index.js</code></td><td class="n">863</td><td><div class="bar"><i style="width:24%"></i></div></td></tr>
+  </table></div>
+
+  <h2>Suggested next steps</h2>
+  <div class="body" style="padding-left:0"><ol>
+    <li><s>Delete the dead frontend set</s> — done (488 LOC); <code>WirePicker</code> kept as in-progress work.</li>
+    <li><s>Untrack <code>.idea</code>, <code>.vite</code> and the TIFF; add to <code>.gitignore</code></s> — done.</li>
+    <li>Choose one of <code>.claude/skills</code> / <code>.agents/skills</code> and one of <code>CLAUDE.md</code> / <code>AGENTS.md</code> as canonical.</li>
+    <li>Remove or regenerate stale Vue-era docs.</li>
+    <li>Split <code>db.py</code> by domain; pin <code>psycopg_pool</code> and <code>cryptography</code>.</li>
+    <li>Housekeeping: <code>git prune</code> reports one garbage temp object at <code>.git/objects/04/tmp_obj_YGeKaU</code>.</li>
+  </ol></div>
+  <p class="note">Standard-depth scan: structure, imports, sizes and dependency manifests. Thread-safety, memory and API-consistency checks need <code>deep</code>.</p>
+</main>
+</body>
+</html>

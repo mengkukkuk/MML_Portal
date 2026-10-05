@@ -3320,22 +3320,58 @@ def _camera_filter(locations, camera_codes):
     return ("".join(f" AND {c}" for c in clauses), params)
 
 
+def _camera_scope(locations, camera_codes):
+    """`(code_where, location_where, params)` for a query over a log table
+    joined to `cameras` as `c`, the log side aliased `l`/`h`.
+
+    The camera code filters the raw table, inside the window subquery, where a
+    plain column can use an index. The line is filtered *after* the join, on
+    `COALESCE(c.location, <log>.location)`: that is the spelling the Line picker
+    offers (it comes from `cameras`) and the one rows are grouped under, while
+    a log row's own copy is a stale snapshot ("LINE 13" last month, "Line 13"
+    now) that would silently drop a moved camera's older rows.
+
+    `params` follow the placeholders' order in the SQL: codes, then lines."""
+    code_where, location_where, params = "", "", []
+    if camera_codes:
+        code_where = " AND code = ANY(%s)"
+        params.append(list(camera_codes))
+    if locations:
+        location_where = " AND COALESCE(c.location, {side}.location) = ANY(%s)"
+        params.append(list(locations))
+    return code_where, location_where, params
+
+
 def fetch_camera_hourly(start: datetime, end: datetime, locations=None,
                         camera_codes=None, datasource_id: int | None = None,
                         ) -> list[dict[str, Any]]:
-    """Hourly inspected/defect totals, windowed on `period_start` — the vision
-    equivalent of a machine's runtime/downtime split. One row per camera per
-    hour; a camera silent for the whole window simply contributes no rows,
-    which the aggregator reads as "no data" rather than "zero throughput"."""
-    where, params = _camera_filter(locations, camera_codes)
+    """`{location, code, inspected, hours_reporting}` per camera, windowed on
+    `period_start` — the vision equivalent of a machine's runtime/downtime
+    split. A camera silent for the whole window contributes no row, which the
+    aggregator reads as "no data" rather than "zero throughput".
+
+    Summed here rather than in Python so a year of hours stays one row per
+    camera on the wire. `hours_reporting` counts *distinct* hours: the table is
+    unique on (code, hour, batch), so a batch change mid-hour gives that hour
+    two rows and a row count would report coverage the camera never had. The
+    line is the camera's registered one, like every other camera roll-up, so
+    its inspected count lands on the same camera as its defects."""
+    code_where, location_where, params = _camera_scope(locations, camera_codes)
     with _table_source_conn(datasource_id) as (conn, schema):
         return conn.execute(
             sql.SQL(
-                """SELECT location, code, period_start, count_total, defect_total
-                     FROM {tbl}
-                    WHERE period_start >= %s AND period_start < %s""" + where + """
-                    ORDER BY location, code, period_start"""
-            ).format(tbl=sql.Identifier(schema, "production_hourly_log")),
+                """SELECT COALESCE(c.location, h.location) AS location, h.code,
+                          COALESCE(SUM(h.count_total), 0)::bigint AS inspected,
+                          COUNT(DISTINCT h.period_start) AS hours_reporting
+                     FROM (SELECT location, code, period_start, count_total
+                             FROM {tbl}
+                            WHERE period_start >= %s AND period_start < %s""" + code_where + """
+                          ) h
+                     LEFT JOIN {cameras} c ON c.code = h.code
+                    WHERE TRUE""" + location_where.format(side="h") + """
+                    GROUP BY 1, h.code"""
+            ).format(tbl=sql.Identifier(schema, "production_hourly_log"),
+                     cameras=sql.Identifier(schema, "cameras")),
             (start, end, *params),
         ).fetchall()
 
@@ -3356,71 +3392,93 @@ def fetch_camera_hourly(start: datetime, end: datetime, locations=None,
 # Slot N of `defect_array` is `defect_labels[N]` (both 1-based via WITH
 # ORDINALITY). An unnamed slot — an array longer than its labels, or a
 # NULL/blank entry — falls back to "Defect N" rather than dropping the counts.
-_SLOT_LABEL = "COALESCE(NULLIF(c.defect_labels[s.slot], ''), 'Defect ' || s.slot)"
+def _slot_label(labels: str) -> str:
+    return f"COALESCE(NULLIF({labels}[s.slot], ''), 'Defect ' || s.slot)"
+
+
+_SLOT_LABEL = _slot_label("c.defect_labels")
 
 #: date_trunc() units the defect-period query accepts.
 PERIOD_BUCKETS = ("hour", "day", "week", "month")
 
 
-def fetch_camera_log_stats(start: datetime, end: datetime, locations=None,
-                           camera_codes=None, datasource_id: int | None = None,
-                           ) -> list[dict[str, Any]]:
-    """Per camera in the window: total defects (every slot of every log row),
-    the distinct batch ids it logged, its log-row count and when it was last
-    heard from.
+def fetch_camera_log_summary(start: datetime, end: datetime, locations=None,
+                             camera_codes=None, datasource_id: int | None = None,
+                             ) -> list[dict[str, Any]]:
+    """One row per camera that logged in the window, in one query over
+    `camera_defect_logs`: `{location, code, name, defects, batches, log_rows,
+    last_seen, slots, source_batches}`.
 
-    Batch ids come back as a list rather than a count so the caller can count
-    *distinct batches across cameras* — one batch runs past every camera on the
-    line, and summing per-camera counts would count it once per camera."""
-    where, params = _camera_filter(locations, camera_codes)
+    `defects` is the sum of the camera's `slots` — each slot's counts are
+    already summed in the unnest pass, so the total costs no second look at
+    every row, and a camera's figure can't disagree with the slots shown beside
+    it (counts are never negative, so skipping zero slots loses nothing).
+    `batches` is that camera's distinct batch ids. `slots` is its labelled
+    defect types,
+    `[{slot, defect, count, batches}]` in slot order, zero-count slots left out
+    — it feeds each camera's worst defect, the pareto and the defect grid, so
+    none of them needs a scan of its own. `source_batches` is the distinct
+    batches across *all* the plant's cameras, repeated on every row: one batch
+    runs past every camera on the line, so summing `batches` per camera would
+    count it once per camera. Batch ids are per-plant serials, which is why the
+    caller sums `source_batches` across plants rather than merging ids.
+
+    The window is one CTE, `l`, with the camera's registered line and its
+    labels joined on; see `_camera_scope` for why the line comes from
+    `cameras`. It is deliberately NOT MATERIALIZED: spilling a wide window to a
+    temp file cost ~1s more per 400k rows than letting each roll-up re-read the
+    (cached) table. What a roll-up costs is its sort, not the scan."""
+    code_where, location_where, params = _camera_scope(locations, camera_codes)
     with _table_source_conn(datasource_id) as (conn, schema):
         return conn.execute(
             sql.SQL(
-                """SELECT COALESCE(c.location, l.location) AS location, l.code,
-                          COALESCE(max(c.name), max(l.name)) AS name,
-                          COALESCE(SUM((SELECT SUM(x) FROM unnest(l.defect_array) x)), 0)::bigint
-                              AS defects,
-                          array_agg(DISTINCT l.batch_id) AS batch_ids,
-                          COUNT(*) AS log_rows,
-                          MAX(l.created_at) AS last_seen
-                     FROM (SELECT location, code, name, batch_id, defect_array, created_at
-                             FROM {logs}
-                            WHERE created_at >= %s AND created_at < %s""" + where + """
-                          ) l
-                     LEFT JOIN {cameras} c ON c.code = l.code
-                    GROUP BY 1, l.code"""
-            ).format(logs=sql.Identifier(schema, "camera_defect_logs"),
-                     cameras=sql.Identifier(schema, "cameras")),
-            (start, end, *params),
-        ).fetchall()
-
-
-def fetch_camera_defect_slots(start: datetime, end: datetime, locations=None,
-                              camera_codes=None, datasource_id: int | None = None,
-                              ) -> list[dict[str, Any]]:
-    """`{location, code, slot, defect, count, batches}` per camera per labelled
-    defect slot — one query that feeds the pareto (merged by label), the
-    camera x defect grid and each camera's worst defect.
-
-    `batches` is the number of distinct batches in which that slot fired on that
-    camera. Zero-count slots aren't returned."""
-    where, params = _camera_filter(locations, camera_codes)
-    with _table_source_conn(datasource_id) as (conn, schema):
-        return conn.execute(
-            sql.SQL(
-                """SELECT COALESCE(c.location, l.location) AS location, l.code, s.slot,
-                          """ + _SLOT_LABEL + """ AS defect,
-                          SUM(s.cnt)::bigint AS count,
-                          COUNT(DISTINCT l.batch_id) AS batches
-                     FROM (SELECT location, batch_id, code, defect_array
-                             FROM {logs}
-                            WHERE created_at >= %s AND created_at < %s""" + where + """
-                          ) l
-                    CROSS JOIN LATERAL unnest(l.defect_array)
-                          WITH ORDINALITY AS s(cnt, slot)
-                     LEFT JOIN {cameras} c ON c.code = l.code
-                    WHERE s.cnt > 0
-                    GROUP BY 1, l.code, s.slot, 4"""
+                """WITH l AS NOT MATERIALIZED (
+                       SELECT COALESCE(c.location, l.location) AS location, l.code,
+                              COALESCE(c.name, l.name) AS name, l.batch_id,
+                              l.defect_array, l.created_at, c.defect_labels
+                         FROM (SELECT location, code, name, batch_id, defect_array, created_at
+                                 FROM {logs}
+                                WHERE created_at >= %s AND created_at < %s""" + code_where + """
+                              ) l
+                         LEFT JOIN {cameras} c ON c.code = l.code
+                        WHERE TRUE""" + location_where.format(side="l") + """
+                   ),
+                   slot AS (
+                       SELECT l.location, l.code, s.slot,
+                              """ + _slot_label("l.defect_labels") + """ AS defect,
+                              SUM(s.cnt)::bigint AS count,
+                              COUNT(DISTINCT l.batch_id) AS batches
+                         FROM l
+                        CROSS JOIN LATERAL unnest(l.defect_array)
+                              WITH ORDINALITY AS s(cnt, slot)
+                        WHERE s.cnt > 0
+                        GROUP BY l.location, l.code, s.slot, 4
+                   ),
+                   cam AS (
+                       SELECT location, code, MAX(name) AS name,
+                              COUNT(DISTINCT batch_id) AS batches,
+                              COUNT(*) AS log_rows,
+                              MAX(created_at) AS last_seen
+                         FROM l
+                        GROUP BY location, code
+                   ),
+                   cam_slots AS (
+                       SELECT location, code, SUM(count)::bigint AS defects,
+                              jsonb_agg(jsonb_build_object(
+                                  'slot', slot, 'defect', defect,
+                                  'count', count, 'batches', batches) ORDER BY slot) AS slots
+                         FROM slot
+                        GROUP BY location, code
+                   )
+                   SELECT cam.location, cam.code, cam.name,
+                          COALESCE(cs.defects, 0) AS defects,
+                          cam.batches, cam.log_rows, cam.last_seen,
+                          (SELECT COUNT(DISTINCT batch_id) FROM l) AS source_batches,
+                          COALESCE(cs.slots, '[]'::jsonb) AS slots
+                     FROM cam
+                     LEFT JOIN cam_slots cs
+                            ON cs.location IS NOT DISTINCT FROM cam.location
+                           AND cs.code = cam.code"""
             ).format(logs=sql.Identifier(schema, "camera_defect_logs"),
                      cameras=sql.Identifier(schema, "cameras")),
             (start, end, *params),
@@ -3439,7 +3497,7 @@ def fetch_camera_defect_periods(start: datetime, end: datetime, bucket: str,
     from the window so a year renders as ~52 weeks, not 8,760 hours."""
     if bucket not in PERIOD_BUCKETS:
         raise ValueError(f"unsupported bucket {bucket!r}")
-    where, params = _camera_filter(locations, camera_codes)
+    code_where, location_where, params = _camera_scope(locations, camera_codes)
     with _table_source_conn(datasource_id) as (conn, schema):
         return conn.execute(
             sql.SQL(
@@ -3449,12 +3507,12 @@ def fetch_camera_defect_periods(start: datetime, end: datetime, bucket: str,
                           SUM(s.cnt)::bigint AS count
                      FROM (SELECT location, code, defect_array, created_at
                              FROM {logs}
-                            WHERE created_at >= %s AND created_at < %s""" + where + """
+                            WHERE created_at >= %s AND created_at < %s""" + code_where + """
                           ) l
                     CROSS JOIN LATERAL unnest(l.defect_array)
                           WITH ORDINALITY AS s(cnt, slot)
                      LEFT JOIN {cameras} c ON c.code = l.code
-                    WHERE s.cnt > 0
+                    WHERE s.cnt > 0""" + location_where.format(side="l") + """
                     GROUP BY 1, 2, 3, 4
                     ORDER BY 1"""
             ).format(unit=sql.Literal(bucket),

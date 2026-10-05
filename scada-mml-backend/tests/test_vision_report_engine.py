@@ -3,7 +3,7 @@
 No database and no mocks, mirroring test_report_engine.py's approach: every
 case here is a hand-built row list with a hand-checked expected number.
 """
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytest
 
@@ -13,19 +13,15 @@ HOUR = 3600.0
 DAY = 86400.0
 
 
-def hourly(count_total, defect_total=0, offset_hours=0):
-    return {
-        "location": "Line 1",
-        "code": "cam1",
-        "period_start": datetime(2026, 8, 10) + timedelta(hours=offset_hours),
-        "count_total": count_total,
-        "defect_total": defect_total,
-    }
+def hourly(inspected, hours_reporting=1):
+    """A camera's production_hourly_log roll-up, as db.fetch_camera_hourly returns it."""
+    return {"location": "Line 1", "code": "cam1",
+            "inspected": inspected, "hours_reporting": hours_reporting}
 
 
-def stats(defects, batch_ids=(1,), log_rows=None, last_seen=None):
-    return {"defects": defects, "batch_ids": list(batch_ids),
-            "log_rows": len(batch_ids) if log_rows is None else log_rows,
+def stats(defects, batches=1, log_rows=None, last_seen=None):
+    return {"defects": defects, "batches": batches,
+            "log_rows": batches if log_rows is None else log_rows,
             "last_seen": last_seen}
 
 
@@ -55,9 +51,8 @@ def test_slot_breakdown_falls_back_for_unnamed_and_blank_slots():
 # --- aggregate_camera ---------------------------------------------------------
 
 def test_aggregate_camera_takes_defects_from_logs_and_inspected_from_hourly():
-    """The hourly `defect_total` is ignored: every defect figure is the log's."""
-    rows = [hourly(100, 99, 0), hourly(100, 99, 1)]
-    out = ve.aggregate_camera(rows, stats(20, batch_ids=(1, 2)), window_seconds=2 * HOUR)
+    """Every defect figure is the log's; the hourly roll-up only supplies `inspected`."""
+    out = ve.aggregate_camera(hourly(200, 2), stats(20, batches=2), window_seconds=2 * HOUR)
     assert out["inspected"] == 200
     assert out["defects"] == 20
     assert out["defect_rate_pct"] == 10.0
@@ -69,7 +64,7 @@ def test_aggregate_camera_takes_defects_from_logs_and_inspected_from_hourly():
 def test_aggregate_camera_without_an_hourly_table_has_no_rate_not_zero():
     """A plant with no production_hourly_log: inspected unknown, rate None —
     never 0 inspected / 0%, which would read as a perfect line."""
-    out = ve.aggregate_camera([], stats(7), window_seconds=HOUR, inspected_known=False)
+    out = ve.aggregate_camera(None, stats(7), window_seconds=HOUR, inspected_known=False)
     assert out["inspected"] is None
     assert out["defect_rate_pct"] is None
     assert out["defects"] == 7
@@ -77,25 +72,24 @@ def test_aggregate_camera_without_an_hourly_table_has_no_rate_not_zero():
 
 
 def test_aggregate_camera_zero_inspected_has_no_rate():
-    out = ve.aggregate_camera([hourly(0)], stats(3), window_seconds=HOUR)
+    out = ve.aggregate_camera(hourly(0), stats(3), window_seconds=HOUR)
     assert out["defect_rate_pct"] is None
 
 
 def test_aggregate_camera_no_rows_is_no_data_not_zero_percent():
-    out = ve.aggregate_camera([], None, window_seconds=4 * HOUR)
+    out = ve.aggregate_camera(None, None, window_seconds=4 * HOUR)
     assert out["status"] == "no_data"
     assert out["defect_rate_pct"] is None
     assert out["defects_per_batch"] is None
 
 
 def test_aggregate_camera_partial_coverage_flagged():
-    out = ve.aggregate_camera([hourly(10, 0, 0)], stats(0), window_seconds=10 * HOUR)
+    out = ve.aggregate_camera(hourly(10, 1), stats(0), window_seconds=10 * HOUR)
     assert out["status"] == "partial"
 
 
 def test_aggregate_camera_full_coverage_is_ok():
-    rows = [hourly(10, 0, h) for h in range(10)]
-    out = ve.aggregate_camera(rows, stats(0), window_seconds=10 * HOUR)
+    out = ve.aggregate_camera(hourly(100, 10), stats(0), window_seconds=10 * HOUR)
     assert out["status"] == "ok"
 
 
@@ -114,8 +108,10 @@ def test_totals_across_recomputes_rate_not_averages_it():
 
 
 def test_totals_across_counts_a_batch_once_not_once_per_camera():
-    cameras = [{"defects": 4}, {"defects": 6}]
-    out = ve.totals_across(cameras, batch_keys={(1, 7), (1, 8)})
+    """Two cameras, each saw both batches: the caller passes the line's 2
+    distinct batches, not the 4 camera-batches the per-camera counts sum to."""
+    cameras = [{"defects": 4, "batches": 2}, {"defects": 6, "batches": 2}]
+    out = ve.totals_across(cameras, batches=2)
     assert out["batches"] == 2
     assert out["defects_per_batch"] == 5.0
 
