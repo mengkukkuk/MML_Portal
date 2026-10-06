@@ -1,6 +1,7 @@
 """Thin PostgreSQL access layer using psycopg 3."""
 import atexit
 import logging
+import math
 import threading
 from collections import deque
 from collections.abc import Sequence
@@ -1675,6 +1676,118 @@ def table_latest(
     return row
 
 
+def _series_window_query(
+    columns: dict[str, str],
+    schema: str,
+    table: str,
+    value_col: str,
+    filter_col: str | None,
+    filter_val: str | None,
+    ts_col: str,
+    minutes: int,
+    start: datetime | None,
+    end: datetime | None,
+) -> tuple[sql.Composed, list[Any]]:
+    """`SELECT value, ts` over the window and filter — shared by every series read.
+
+    Explicit aware bounds win over `minutes`. A naive plant column is compared
+    in the connection's timezone, converting the bounds rather than the indexed
+    column so the index still applies.
+    """
+    timestamp = sql.Identifier(ts_col)
+    if start is not None and columns[ts_col] == "timestamp without time zone":
+        timestamp = sql.SQL("({} AT TIME ZONE current_setting('TimeZone'))").format(timestamp)
+    query = sql.SQL(
+        "SELECT {val} AS value, {ts} AS ts FROM {tbl} WHERE {ts} >= "
+        "now() - make_interval(mins => %s)"
+    ).format(
+        val=sql.Identifier(value_col),
+        ts=timestamp,
+        tbl=sql.Identifier(schema, table),
+    )
+    params: list[Any] = [minutes]
+    if start is not None:
+        bound = sql.SQL("%s")
+        if columns[ts_col] == "timestamp without time zone":
+            bound = sql.SQL("(%s::timestamptz AT TIME ZONE current_setting('TimeZone'))")
+        query = sql.SQL(
+            "SELECT {val} AS value, {ts} AS ts FROM {tbl} "
+            "WHERE {clock} >= {bound} AND {clock} <= {bound}"
+        ).format(val=sql.Identifier(value_col), ts=timestamp,
+                 tbl=sql.Identifier(schema, table), clock=sql.Identifier(ts_col), bound=bound)
+        params = [start, end]
+    if filter_col and filter_val is not None:
+        query += sql.SQL(" AND {}::text = %s").format(sql.Identifier(filter_col))
+        params.append(filter_val)
+    return query, params
+
+
+def _is_orderable_reading(data_type: str) -> bool:
+    """Whether a value column can be ranked per bucket (min/max thinning).
+
+    Numbers, booleans and numeric arrays — the readings a trend plots. Postgres
+    orders an array element by element, so slot 0 (the measured value) leads.
+    """
+    return (
+        data_type in _NUMERIC_TYPES
+        or data_type in _BOOL_TYPES
+        or data_type in _NUMERIC_ARRAY_UDTS
+    )
+
+
+def series_step(
+    table: str,
+    value_col: str,
+    filter_col: str | None,
+    filter_val: str | None,
+    ts_col: str,
+    minutes: int,
+    datasource_id: int | None = None,
+    *,
+    limit: int,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    floor_seconds: int = 1,
+) -> int | None:
+    """Bucket size, in seconds, that fits the window's *actual* rows under `limit`.
+
+    `None` means no thinning: the rows already fit, so the chart gets every one
+    of them. A year-long window over a table that only started logging a month
+    ago used to be cut into buckets sized for the whole year, leaving a few dozen
+    points where thousands of real rows existed. Sizing by the span the data
+    occupies (first row to last) instead keeps the resolution where the data is.
+
+    Two points survive per bucket (lowest and highest reading, see table_series),
+    hence the halving. variables_tag served from the in-memory buffer is already
+    small and takes no thinning.
+    """
+    if (
+        table == "variables_tag"
+        and filter_col == "tag_name"
+        and filter_val is not None
+        and is_tag_buffered(datasource_id)
+        and value_col in tag_fields(datasource_id)
+    ):
+        return None
+    with _table_source_conn(datasource_id) as (conn, schema):
+        columns = _safe_identifiers(conn, schema, table, value_col, filter_col, ts_col)
+        query, params = _series_window_query(
+            columns, schema, table, value_col, filter_col, filter_val, ts_col,
+            minutes, start, end)
+        row = conn.execute(
+            sql.SQL("SELECT count(*) AS n, min(e.ts) AS lo, max(e.ts) AS hi FROM (")
+            + query + sql.SQL(") AS e"),
+            params,
+        ).fetchone()
+    count, first, last = row["n"], row["lo"], row["hi"]
+    if count <= limit or first is None:
+        return None
+    # `limit // 2 - 1` buckets, plus the one a boundary can add, at two rows each.
+    buckets = max(1, limit // 2 - 1)
+    span = max((last - first).total_seconds(), 1)
+    return max(floor_seconds, math.ceil(span / buckets))
+
+
 def table_series(
     table: str,
     value_col: str,
@@ -1691,11 +1804,14 @@ def table_series(
 ) -> list[dict[str, Any]]:
     """Time-ordered rows in explicit bounds, or over the last `minutes`.
 
-    `sample_seconds` keeps one row — the newest — per bucket of that many
-    seconds. It is how a year-long window draws the whole year: capping the
+    `sample_seconds` thins the window to the rows holding the lowest and the
+    highest reading in each bucket of that many seconds (see `series_step` for
+    sizing it). It is how a year-long window draws the whole year: capping the
     newest N rows instead would show a year chart holding only its last days.
-    The newest row rather than an average, because a value may be a numeric
-    array (a reading with its setpoint and limits) that has no single mean.
+    Real rows rather than an average, because a value may be a numeric array (a
+    reading with its setpoint and limits) that has no single mean, and because
+    an average would flatten the spikes. A column with no ordering (text) keeps
+    its newest row per bucket.
 
     Explicit bounds are aware datetimes validated by the series route. Naive
     plant columns use the connection's timezone and are returned as instants.
@@ -1736,41 +1852,40 @@ def table_series(
         return rows[-limit:] if limit else rows
     with _table_source_conn(datasource_id) as (conn, schema):
         columns = _safe_identifiers(conn, schema, table, value_col, filter_col, ts_col)
-        timestamp = sql.Identifier(ts_col)
-        if start is not None and columns[ts_col] == "timestamp without time zone":
-            timestamp = sql.SQL("({} AT TIME ZONE current_setting('TimeZone'))").format(timestamp)
-        query = sql.SQL(
-            "SELECT {val} AS value, {ts} AS ts FROM {tbl} WHERE {ts} >= "
-            "now() - make_interval(mins => %s)"
-        ).format(
-            val=sql.Identifier(value_col),
-            ts=timestamp,
-            tbl=sql.Identifier(schema, table),
-        )
-        params: list[Any] = [minutes]
-        if start is not None:
-            # Convert bounds rather than the indexed column in the predicate.
-            bound = sql.SQL("%s")
-            if columns[ts_col] == "timestamp without time zone":
-                bound = sql.SQL("(%s::timestamptz AT TIME ZONE current_setting('TimeZone'))")
-            query = sql.SQL(
-                "SELECT {val} AS value, {ts} AS ts FROM {tbl} "
-                "WHERE {clock} >= {bound} AND {clock} <= {bound}"
-            ).format(val=sql.Identifier(value_col), ts=timestamp,
-                     tbl=sql.Identifier(schema, table), clock=sql.Identifier(ts_col), bound=bound)
-            params = [start, end]
-        if filter_col and filter_val is not None:
-            query += sql.SQL(" AND {}::text = %s").format(sql.Identifier(filter_col))
-            params.append(filter_val)
+        query, params = _series_window_query(
+            columns, schema, table, value_col, filter_col, filter_val, ts_col,
+            minutes, start, end)
         if sample_seconds:
-            query = (
-                sql.SQL("SELECT w.value, w.ts FROM (SELECT DISTINCT ON (bucket) q.value, q.ts, "
-                        "floor(extract(epoch FROM q.ts) / %s) AS bucket FROM (")
-                + query
-                + sql.SQL(") AS q ORDER BY bucket, q.ts DESC) AS w ORDER BY w.ts ASC")
-            )
-            # No LIMIT: the caller sizes the bucket so window / bucket already
-            # fits, and a LIMIT on this ascending order would clip the newest end.
+            if _is_orderable_reading(columns[value_col]):
+                # Each bucket keeps the rows holding its lowest and highest
+                # reading, not just its newest: a counter that spikes for a few
+                # seconds is exactly what a year chart is opened to find, and
+                # one-row-per-bucket drew it only when the spike happened to be
+                # the last row of its bucket. Ordering by the raw value also
+                # orders a numeric array (slot 0 first — the measured value),
+                # and ties fall to the newest row.
+                query = (
+                    sql.SQL("SELECT w.value, w.ts FROM (SELECT q.value, q.ts, "
+                            "row_number() OVER (PARTITION BY q.bucket "
+                            "ORDER BY q.value ASC NULLS LAST, q.ts DESC) AS lo_rank, "
+                            "row_number() OVER (PARTITION BY q.bucket "
+                            "ORDER BY q.value DESC NULLS LAST, q.ts DESC) AS hi_rank "
+                            "FROM (SELECT s.value, s.ts, "
+                            "floor(extract(epoch FROM s.ts) / %s) AS bucket FROM (")
+                    + query
+                    + sql.SQL(") AS s) AS q) AS w WHERE w.lo_rank = 1 OR w.hi_rank = 1 "
+                              "ORDER BY w.ts ASC")
+                )
+            else:
+                # No ordering to take extremes by (text, json…): the newest row.
+                query = (
+                    sql.SQL("SELECT w.value, w.ts FROM (SELECT DISTINCT ON (bucket) q.value, q.ts, "
+                            "floor(extract(epoch FROM q.ts) / %s) AS bucket FROM (")
+                    + query
+                    + sql.SQL(") AS q ORDER BY bucket, q.ts DESC) AS w ORDER BY w.ts ASC")
+                )
+            # No LIMIT: the caller sizes the bucket so the result already fits,
+            # and a LIMIT on this ascending order would clip the newest end.
             params = [sample_seconds, *params]
         elif limit is None:
             query += sql.SQL(" ORDER BY {} ASC").format(sql.Identifier(ts_col))

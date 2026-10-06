@@ -212,7 +212,7 @@ export const messages = {
   'Choose a window of one year or less.': 'เลือกช่วงเวลาไม่เกิน 1 ปี',
   '{table} has no multi-value reading columns. This chart plots a column that stores a value with its setpoint and limits together.': '{table} ไม่มีคอลัมน์ค่าหลายค่า กราฟนี้ใช้คอลัมน์ที่เก็บค่าที่วัดพร้อมค่าตั้ง (setpoint) และขีดจำกัดไว้ด้วยกัน',
   '{count} points': '{count} จุด',
-  '1 reading per {step}': '1 ค่าต่อ {step}',
+  'min/max per {step}': 'ต่ำสุด/สูงสุด ต่อ {step}',
   'window clipped': 'ช่วงเวลาถูกตัด',
   'Showing the most recent {count} readings. Choose a shorter window to see the whole period.': 'แสดงเฉพาะ {count} ค่าล่าสุด เลือกช่วงเวลาที่สั้นลงเพื่อดูทั้งช่วง',
   'Loading readings…': 'กำลังโหลดค่าที่อ่าน…',

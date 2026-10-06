@@ -23,7 +23,6 @@ information_schema allowlist in db.py, per connection, so a plant database's own
 catalogue governs what may be read from it (sensitive tables are denylisted
 there); filter values are always parameterized.
 """
-import math
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -52,9 +51,8 @@ MAX_TABLE_COLUMNS = 8
 
 # The widest /series window: a year, plus a day so "same date last year" fits.
 MAX_SERIES_DAYS = 366
-# Windows longer than this are thinned to one reading per bucket (see
-# get_series). A week is the old ceiling, so every window that already worked
-# row for row still does.
+# Windows longer than this may be thinned per bucket (see get_series). A week is
+# the old ceiling, so every window that already worked row for row still does.
 SAMPLE_AFTER = timedelta(days=7)
 
 
@@ -134,8 +132,9 @@ class SeriesOut(BaseModel):
     # on a chart, so the caller is told rather than left to infer it — the same
     # reason /api/reports/logs reports it.
     truncated: bool = False
-    # Set when a long window was thinned to one reading per this many seconds
-    # (see SAMPLE_AFTER below), so the chart can say it isn't every row.
+    # Set when a long window was thinned to the lowest and highest reading per
+    # this many seconds (see SAMPLE_AFTER below), so the chart can say it isn't
+    # every row. Unset when the window's rows all fit.
     sampled_seconds: int | None = None
     datasource_id: int | None = None
     datasource_name: str | None = None
@@ -287,9 +286,11 @@ def get_series(
     a year and this query has no natural ceiling, so an unlucky binding could
     otherwise stream a plant's entire history into a chart.
 
-    Past SAMPLE_AFTER, the window is thinned to one reading per bucket sized so
-    the whole window fits under `limit` — a year then draws a year, rather than
-    the newest `limit` rows of it. Short windows are returned row for row.
+    Past SAMPLE_AFTER, a window holding more than `limit` rows is thinned to the
+    lowest and highest reading per bucket, the bucket sized to the span the data
+    actually occupies (db.series_step) — a year then draws a year, spikes
+    included, rather than the newest `limit` rows of it. A window whose rows
+    already fit, and every short window, is returned row for row.
     """
     if (start is None) != (end is None):
         raise HTTPException(422, "Provide both start and end")
@@ -301,9 +302,7 @@ def get_series(
                 422, f"Range must be greater than zero and at most {MAX_SERIES_DAYS} days")
 
     window = (end - start) if start is not None else timedelta(minutes=minutes)
-    sample_seconds = (
-        max(60, math.ceil(window.total_seconds() / limit)) if window > SAMPLE_AFTER else None
-    )
+    thin = window > SAMPLE_AFTER
 
     def number(v):
         return isinstance(v, (int, float, Decimal)) and not isinstance(v, bool)
@@ -343,6 +342,10 @@ def get_series(
         # "clipped" and "happened to return a full page" the same answer, and a
         # complete window would then tell the reader to shorten it.
         bounds = {"start": start, "end": end} if start is not None else {}
+        # Sized per source: each plant's table holds a different span of data.
+        sample_seconds = db.series_step(
+            table, value_col, filter_col, filter_val, ts_col, minutes, ds,
+            limit=limit, **bounds) if thin else None
         rows = db.table_series(table, value_col, filter_col, filter_val, ts_col,
                                minutes, ds, limit=limit + 1, sample_seconds=sample_seconds,
                                **bounds)
