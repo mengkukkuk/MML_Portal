@@ -3,7 +3,7 @@
  * (editorSelection.test.js) apart from the canvas that uses it.
  */
 
-const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v)
+export const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v)
 
 /** Ids of the nodes whose box overlaps a logical rectangle (any corner order). */
 export function nodesInRect(nodes, a, b) {

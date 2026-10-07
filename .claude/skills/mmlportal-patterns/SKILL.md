@@ -276,6 +276,32 @@ update the backend whitelist **and** the frontend `VIZ_TYPE_META` / `PARAM_SCHEM
 
 ---
 
+## Monitor page structure (`src/pages/monitor/`)
+
+`MonitorPage.jsx` only composes; don't grow it. Put new code where it belongs:
+
+- **`hooks/`** — state and effects, one concern per hook, called in dependency
+  order: `useMimicDrawings` (which drawing, `?mimic=`) → `useMimicDocument`
+  (load/seed/save, undo session) → `useMimicData` (polling, tags, custom
+  symbols) → `useMimicSelection` → `useLayoutEdits` (every canvas/inspector
+  edit) → `useDialogActions` (dialog results) → `useEditLifecycle`
+  (edit mode, save, cancel, unsaved guard). Also `useMonitorUi` (shared dialog
+  and view flags), `useEditorChrome`, `useFullscreen`, `useEditorShortcuts`,
+  `useMimicFiles`, `useNotify`. Hooks take what they need as arguments; no
+  context or global store.
+- **`view/`** — presentational components (`OverviewPanel`, `MimicViewer`,
+  `MimicEditor`, `EditorInspector`, `MonitorDialogs`, …) that receive hook
+  results as props.
+- **Pure logic** goes in plain modules with a colocated `*.test.js`:
+  `layoutOps.js` (`(doc, …) => doc` edits), `monitorStatus.js`, `sheet.js`,
+  plus the older `layoutDoc.js`, `editorSession.js`, `kpiBoxes.js`. Use
+  `.js` extensions on relative imports inside them (node `--test` has no
+  alias or JSX), and register the test file in the `npm test` script.
+- Edits to the drawing always go through the editor session's `commit`
+  (undoable) or `preview` (drag in progress) — never straight to the server.
+
+---
+
 ## Commit style
 
 Recent history uses conventional-style prefixes with an area scope, lower-case

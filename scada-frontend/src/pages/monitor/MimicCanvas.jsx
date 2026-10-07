@@ -12,6 +12,7 @@ import { NORMAL_WIRE, WirePath, wireType } from '@/components/mimic/wireTypes'
 import { fitToContents, gridStepForZoom, zoomAtPoint } from './editorViewport'
 import styles from './MimicCanvas.module.css'
 import { moveGroup, nodesInRect } from './editorSelection'
+import { VIEW_W, VIEW_H, sheetOf } from './sheet'
 
 
 /** A resolved { color, opacity } paint as the symbol group's CSS variables. */
@@ -33,8 +34,9 @@ const blobAsDataUrl = (blob) => new Promise((resolve, reject) => {
   reader.readAsDataURL(blob)
 })
 
-export const VIEW_W = 1600
-export const VIEW_H = 900
+// Sheet geometry lives in ./sheet.js so pure modules (layoutOps) can use it
+// under node --test; re-exported here for existing importers.
+export { VIEW_W, VIEW_H, sheetOf }
 const EMPTY_IDS = []
 
 /**
@@ -55,11 +57,6 @@ export const SHEET_SIZES = [
   { id: 'wide', label: 'Wide 21:9', w: 2100, h: 900 },
   { id: 'ultrawide', label: 'Ultra-wide 32:9', w: 3200, h: 900 },
 ]
-
-/** A drawing's sheet size, falling back to Standard for older documents. */
-export function sheetOf(layout) {
-  return { w: layout?.viewBox?.w || VIEW_W, h: layout?.viewBox?.h || VIEW_H }
-}
 
 export const GRID = 8
 

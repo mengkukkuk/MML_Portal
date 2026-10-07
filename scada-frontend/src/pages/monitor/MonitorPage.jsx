@@ -1,111 +1,30 @@
-import {
-  useCallback, useEffect, useMemo, useRef, useState,
-} from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useBlocker, useSearchParams } from 'react-router-dom'
-import Button from '@mui/material/Button'
-import IconButton from '@mui/material/IconButton'
+import { useCallback, useEffect, useRef } from 'react'
 import Alert from '@mui/material/Alert'
-import Snackbar from '@mui/material/Snackbar'
-import Portal from '@mui/material/Portal'
-import ChevronLeft from '@mui/icons-material/ChevronLeft'
-import ChevronRight from '@mui/icons-material/ChevronRight'
-import PanToolOutlined from '@mui/icons-material/PanToolOutlined'
-import ZoomInOutlined from '@mui/icons-material/ZoomInOutlined'
-import ZoomOutOutlined from '@mui/icons-material/ZoomOutOutlined'
-import CenterFocusStrongOutlined from '@mui/icons-material/CenterFocusStrongOutlined'
-import RestartAltOutlined from '@mui/icons-material/RestartAltOutlined'
-import FullscreenOutlined from '@mui/icons-material/FullscreenOutlined'
-import FullscreenExitOutlined from '@mui/icons-material/FullscreenExitOutlined'
-import BarChartOutlined from '@mui/icons-material/BarChartOutlined'
-import ExpandLessOutlined from '@mui/icons-material/ExpandLessOutlined'
-import ExpandMoreOutlined from '@mui/icons-material/ExpandMoreOutlined'
 import { useAuthStore } from '@/stores/auth'
 import ConnectionAlarmStrip from '@/components/ConnectionAlarm/ConnectionAlarmStrip'
-import usePlantData from '@/components/mimic/usePlantData'
-import useMimicTables from '@/components/mimic/useMimicTables'
-import { SYMBOLS, symbolDef, setCustomDefs, isCameraNode } from '@/components/mimic/symbols'
-import { NORMAL_WIRE } from '@/components/mimic/wireTypes'
-import { formatValue, worseStatus } from '@/components/mimic/tagStatus'
-import { fetchMimicLayout, fetchMimicLayouts, saveMimicLayout } from '@/api/mimic'
-import { fetchDatasources } from '@/api/datasources'
-import { fetchMimicSymbols } from '@/api/mimicAssets'
-import { apiErrorMessage } from '@/api/client'
-import MimicCanvas, { VIEW_W, VIEW_H, SHEET_SIZES, sheetOf } from './MimicCanvas'
-import GroupInspector from './GroupInspector'
-import DetailRail from './DetailRail'
-import CameraRail from './CameraRail'
-import TitleBlock from './TitleBlock'
-import { useTranslation } from '@/i18n'
-import SymbolPalette from './SymbolPalette'
-import NodeInspector from './NodeInspector'
-import EdgeInspector from './EdgeInspector'
-import SymbolBindingDialog from './SymbolBindingDialog'
-import MimicSwitcher from './MimicSwitcher'
-import CustomSymbolDialog from './CustomSymbolDialog'
-import MimicEditorToolbar from './MimicEditorToolbar'
-import MimicCommandBar from './MimicCommandBar'
-import ProductionLogDrawer from './ProductionLogDrawer'
-import ProductionLogDialog from './ProductionLogDialog'
 import KpiStrip from './KpiStrip'
-import KpiBindingDialog from './KpiBindingDialog'
-import { blankKpi, kpiPollNodes, readKpis } from './kpiBoxes'
-import {
-  ImportLayoutDialog, RevisionConflictDialog, UnsavedChangesDialog,
-} from './EditorDialogs'
-import useMimicEditorSession from './useMimicEditorSession'
-import { createMimicExport, downloadJson, parseMimicImport } from './editorFiles'
-import {
-  migrateLayout, readLegacyLayout, clearLegacyLayout, seedLayout, emptyLayout, editLock,
-} from './layoutDoc'
+import { VIEW_W } from './sheet'
+import useNotify from './hooks/useNotify'
+import useMonitorUi from './hooks/useMonitorUi'
+import useMimicDrawings from './hooks/useMimicDrawings'
+import useMimicDocument from './hooks/useMimicDocument'
+import useMimicData from './hooks/useMimicData'
+import useEditorChrome from './hooks/useEditorChrome'
+import useMimicSelection from './hooks/useMimicSelection'
+import useLayoutEdits from './hooks/useLayoutEdits'
+import useDialogActions from './hooks/useDialogActions'
+import useEditLifecycle from './hooks/useEditLifecycle'
+import useMimicFiles from './hooks/useMimicFiles'
+import useFullscreen from './hooks/useFullscreen'
+import useEditorShortcuts from './hooks/useEditorShortcuts'
+import OverviewPanel from './view/OverviewPanel'
+import ViewToolbar from './view/ViewToolbar'
+import FullscreenHead from './view/FullscreenHead'
+import MimicEditor from './view/MimicEditor'
+import MimicViewer from './view/MimicViewer'
+import AttentionStrip from './view/AttentionStrip'
+import MonitorDialogs from './view/MonitorDialogs'
 import styles from './MonitorPage.module.css'
-
-/**
- * Where a fresh install lands. /monitor drew only this plant before it could
- * hold several, so the slug is also the one the pre-server localStorage
- * drawing belongs to — no other mimic may inherit it.
- */
-const FALLBACK_SLUG = 'boiler-1'
-const FALLBACK_NAME = 'Boiler House 1'
-
-/**
- * How often the drawing asks for new numbers.
- *
- * Unlike /live panels — whose interval is stored per panel and checked against
- * `VALID_POLL_INTERVALS` in panels.py — the mimic reads through /api/schema and
- * nothing on the server bounds its rate. The floor below is ours to hold.
- */
-const CADENCES = [
-  { ms: 1000, label: '1s' },
-  { ms: 2000, label: '2s' },
-  { ms: 5000, label: '5s' },
-  { ms: 30_000, label: '30s' },
-  { ms: 60_000, label: '1m' },
-]
-
-/**
- * Behind the guard. Every poll opens a fresh libpq connection per binding
- * (`_table_source_conn`, no pool), so ten reads a second across a drawing of
- * thirty symbols is three hundred connections a second at the historian. It is
- * the right rate for commissioning one loop and the wrong one to leave running.
- */
-const FAST_CADENCES = [
-  { ms: 500, label: '500ms' },
-  { ms: 100, label: '100ms' },
-]
-
-/** Where closing the guard puts you back. */
-const GUARDED_FLOOR_MS = 1000
-
-const CADENCE_NOTE_ID = 'mimic-cadence-note'
-
-/** Where the overview panel remembers whether it was folded away. */
-const OVERVIEW_KEY = 'mml.monitor.overviewOpen'
-const PASTE_OFFSET = 24
-
-const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v)
-
-let addCounter = 0
 
 /**
  * MonitorPage — single-asset mimic for one plant (route: /monitor).
@@ -119,1724 +38,267 @@ let addCounter = 0
  * (SymbolBindingDialog), and a mimic may span several backends — one boiler
  * on a historian, a conveyor on another. Bindings and geometry are saved
  * server-side so every operator sees the same commissioned plant.
+ *
+ * This file only composes. Where things live:
+ *   hooks/    state and effects, one concern each — which drawing is open
+ *             (useMimicDrawings), its document and saving (useMimicDocument),
+ *             live data (useMimicData), selection (useMimicSelection), edits
+ *             (useLayoutEdits), dialog results (useDialogActions), the edit
+ *             session's life cycle (useEditLifecycle), files, full screen,
+ *             shortcuts.
+ *   view/     presentational components: the overview, the two modes
+ *             (MimicViewer / MimicEditor), the dialogs.
+ *   layoutOps.js, monitorStatus.js — the pure logic, unit-tested.
+ * The hooks are called in dependency order: drawings → document → data →
+ * selection → edits → lifecycle.
  */
 export default function MonitorPage() {
-  const tr = useTranslation()
-  const role = useAuthStore((s) => s.user?.role ?? null)
-  const canEdit = role === 'admin'
-  const queryClient = useQueryClient()
-
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' })
-  const notify = useCallback((message, severity = 'success') => {
-    setSnackbar({ open: true, message, severity })
-  }, [])
-
-  // --- which drawing (?mimic=<slug>) --------------------------------------
-  const [searchParams, setSearchParams] = useSearchParams()
-
-  const layoutsQuery = useQuery({ queryKey: ['mimic-layouts'], queryFn: fetchMimicLayouts })
-  const layouts = useMemo(() => layoutsQuery.data || [], [layoutsQuery.data])
-
-  const [activeSlug, setActiveSlug] = useState(null)
-  const initializedRef = useRef(false)
-
-  const putSlugInUrl = useCallback((slug) => {
-    setSearchParams((prev) => {
-      const p = new URLSearchParams(prev)
-      p.set('mimic', slug)
-      return p
-    }, { replace: true })
-  }, [setSearchParams])
-
-  useEffect(() => {
-    if (initializedRef.current || layoutsQuery.isPending) return
-    initializedRef.current = true
-    const wanted = searchParams.get('mimic')
-    const next = layouts.find((l) => l.slug === wanted)?.slug
-      ?? layouts[0]?.slug
-      ?? FALLBACK_SLUG
-    setActiveSlug(next)
-    putSlugInUrl(next)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layoutsQuery.isPending, layouts])
-
-  // The open drawing was deleted — here or in another admin's tab. Fall back to
-  // whatever is left rather than polling a slug the server no longer knows.
-  //
-  // Guards on `activeSlug` being set rather than just `initializedRef`: the
-  // effect above sets `initializedRef.current = true` synchronously but its
-  // `setActiveSlug` call doesn't land until the next render, so on the very
-  // first run after `layouts` loads this effect would otherwise still see the
-  // pre-init `null` and stomp the URL's requested slug with `layouts[0]`.
-  useEffect(() => {
-    if (!initializedRef.current || !layouts.length || !activeSlug) return
-    if (layouts.some((l) => l.slug === activeSlug)) return
-    setActiveSlug(layouts[0].slug)
-    putSlugInUrl(layouts[0].slug)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layouts])
-
-  // --- layout: server is the source of truth ------------------------------
-  const layoutQuery = useQuery({
-    queryKey: ['mimic-layout', activeSlug],
-    queryFn: () => fetchMimicLayout(activeSlug),
-    enabled: !!activeSlug,
-    // 404 is the normal first-run answer, not a failure to retry.
-    retry: (count, err) => err?.response?.status !== 404 && count < 2,
-  })
-
-  const {
-    session: editorSession,
-    document: layout,
-    load: loadLayout,
-    preview: previewLayout,
-    commit: commitLayout,
-    beginGesture,
-    endGesture,
-    abortGesture,
-    undo: undoLayout,
-    redo: redoLayout,
-    cancel: cancelLayout,
-    saved: savedLayout,
-  } = useMimicEditorSession()
-  const legacyPendingRef = useRef(false)
-  // Which slug the drawing on screen belongs to. Without this the seed guard
-  // below would read "have I seeded anything?" and a switch would keep showing
-  // the previous plant under the new plant's name.
-  const seededSlugRef = useRef(null)
-
-  useEffect(() => {
-    if (!activeSlug || seededSlugRef.current === activeSlug || layoutQuery.isPending) return
-    const server = layoutQuery.data?.doc ? migrateLayout(layoutQuery.data.doc) : null
-    seededSlugRef.current = activeSlug
-    if (server) { loadLayout(server, layoutQuery.data?.updated_at ?? null); return }
-    // Nothing on the server. An admin may still have a hand-arranged drawing
-    // in this browser from before /monitor had a backend — carry its geometry
-    // into the first save rather than replacing it with the seed. It belongs
-    // to one plant, so only that plant's slug may claim it.
-    if (activeSlug === FALLBACK_SLUG) {
-      const legacy = readLegacyLayout()
-      if (legacy) {
-        legacyPendingRef.current = true
-        loadLayout(legacy, null)
-        return
-      }
-      loadLayout(seedLayout(), null)
-      return
-    }
-    loadLayout(emptyLayout(layouts.find((l) => l.slug === activeSlug)?.name ?? activeSlug), null)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSlug, layoutQuery.isPending, layoutQuery.data, layouts, loadLayout])
-
-  // The document's own name wins: it is what the last save wrote, so it is
-  // right even in the moment before the list query catches up with a rename.
-  const activeName = layout?.name
-    || layouts.find((l) => l.slug === activeSlug)?.name
-    || FALLBACK_NAME
-
-  const nodes = useMemo(() => layout?.nodes ?? [], [layout])
-
-  // The headline strip. A pure read: `migrateLayout` already repaired this list
-  // at the document boundary, and minting an id here would mint a *new* one on
-  // every layout edit — moving the poller's query key and discarding that box's
-  // history each time an admin nudged an unrelated symbol.
-  const kpis = useMemo(() => readKpis(layout?.kpis), [layout])
-
-  /**
-   * What the plant poller is asked for: the drawing's bindings plus the
-   * strip's, in one list.
-   *
-   * The strip could have run its own query. It must not: a second clock would
-   * ignore the cadence control, and the figure above the sheet would drift a
-   * tick out of step with the symbols below it — which on a wall display is a
-   * support call about numbers that disagree.
-   */
-  const pollNodes = useMemo(
-    () => [...nodes, ...kpiPollNodes(kpis)],
-    [nodes, kpis],
-  )
-
-  /**
-   * Why this drawing cannot be edited here, or null.
-   *
-   * A save replaces the whole document, so a bundle that can only partly draw
-   * one must not offer to write it back — that is how a stale client turns
-   * "some symbols are missing" into "the real drawing is gone". One value gates
-   * the banner, the Edit button and the canvas, so they cannot disagree.
-   */
-  const lock = useMemo(() => editLock(layout), [layout])
-
-  // --- data ----------------------------------------------------------------
-  const [liveMs, setLiveMs] = useState(5000)
-  // The cover over the sub-second rates. Closed on every page load: an elevated
-  // rate is something you choose for a job in hand, not something you inherit.
-  const [fastOpen, setFastOpen] = useState(false)
-
-  const intervalMs = liveMs
-  const setIntervalMs = setLiveMs
-
-  const {
-    tags: plantTags, history, events, error: dataError, sources: connSources,
-  } = usePlantData({
-    nodes: pollNodes, pollSeconds: liveMs / 1000,
-  })
-  const anySourceFailed = connSources.some((s) => !s.ok)
-
-  // Table symbols read rows, not a reading, so they poll on their own — see
-  // useMimicTables for why that is a sibling rather than a branch inside the
-  // value poller. The result is folded back into the same tag entries so the
-  // canvas keeps one map to look things up in.
-  const tableData = useMimicTables({ nodes, pollSeconds: liveMs / 1000 })
-  const tags = useMemo(() => {
-    const ids = Object.keys(tableData)
-    if (!ids.length) return plantTags
-    const merged = { ...plantTags }
-    ids.forEach((id) => { merged[id] = { ...merged[id], table: tableData[id] } })
-    return merged
-  }, [plantTags, tableData])
-
-  const datasourcesQuery = useQuery({ queryKey: ['datasources'], queryFn: fetchDatasources })
-
-  /**
-   * The custom symbol library.
-   *
-   * Published into the symbol registry (setCustomDefs) rather than passed down as
-   * a prop, because the consumers are synchronous module functions — portPoint
-   * routes every wire, resizeBox sizes a drag — and threading an async value
-   * through all of them would turn each into a hook. See the note on CUSTOM_DEFS.
-   *
-   * A drawing renders before this lands. That is fine and expected: a custom node
-   * falls back to a frame with no picture until its definition arrives, then fills
-   * in. It is the reason the unknown-type path had to be made safe first.
-   */
-  const customSymbolsQuery = useQuery({
-    queryKey: ['mimic-symbols'],
-    queryFn: fetchMimicSymbols,
-  })
-  const customSymbols = useMemo(() => customSymbolsQuery.data || [], [customSymbolsQuery.data])
-
-  // Published during render, not in an effect. The canvas reads the registry
-  // synchronously while rendering, so an effect would fire *after* the first
-  // paint that needed the new definitions — every custom symbol would draw
-  // frameless for one frame, then pop in. Guarded by identity so it runs once
-  // per fetch, and idempotent either way.
-  const publishedRef = useRef(null)
-  if (publishedRef.current !== customSymbols) {
-    publishedRef.current = customSymbols
-    setCustomDefs(customSymbols)
-  }
-
-  const connected = useMemo(
-    () => nodes.filter((n) => n.binding?.table && n.binding?.value_col).length,
-    [nodes],
-  )
-  const backendCount = useMemo(() => {
-    const ids = new Set()
-    nodes.forEach((n) => {
-      if (n.binding?.table && n.binding?.value_col) ids.add(n.binding.datasource_id ?? 'app')
-    })
-    return ids.size
-  }, [nodes])
-
-  // Reduced over the *drawing's* nodes, not over every tag in the snapshot.
-  // The banner answers "is this plant in alarm", and a headline box that went
-  // stale because someone renamed a column is a strip problem, not a plant one
-  // — it must not light up the status a control room reads the page by.
-  const plantStatus = useMemo(
-    () => nodes.reduce((acc, n) => worseStatus(acc, tags[n.id]?.status ?? 'normal'), 'normal'),
-    [nodes, tags],
-  )
-
-  // --- selection -----------------------------------------------------------
-  // A symbol and a pipe are never selected at once: the rail shows one
-  // inspector, so two selections would leave one of them unreachable.
-  const [selectedId, setSelectedId] = useState(null)
-  // A box or shift selection of two or more symbols (editor only). Mutually
-  // exclusive with selectedId: one symbol is the inspector's, several are the
-  // group panel's.
-  const [groupIds, setGroupIds] = useState([])
-  const [selectedEdgeId, setSelectedEdgeId] = useState(null)
-  const copiedNodeRef = useRef(null)
-  const pasteCountRef = useRef(0)
-  const [editMode, setEditMode] = useState(false)
-  // Local to this page, like AppShell's sidebar collapse — the rail is a
-  // viewing preference for this drawing, not something worth persisting.
-  const [railCollapsed, setRailCollapsed] = useState(false)
-
-  /**
-   * Whether the overview panel above the drawing is open.
-   *
-   * A view preference, not part of the document: two operators watching the
-   * same plant may reasonably want different amounts of chrome, and folding the
-   * panel must never look like an edit to the drawing. Kept per browser for the
-   * same reason — and read defensively, because a private window or blocked
-   * site data makes every one of these accessors throw.
-   */
-  const [overviewOpen, setOverviewOpen] = useState(() => {
-    try {
-      return localStorage.getItem(OVERVIEW_KEY) !== 'closed'
-    } catch {
-      return true
-    }
-  })
-  const toggleOverview = useCallback(() => {
-    setOverviewOpen((open) => {
-      try {
-        localStorage.setItem(OVERVIEW_KEY, open ? 'closed' : 'open')
-      } catch { /* private mode — the preference just does not persist */ }
-      return !open
-    })
-  }, [])
-  // The hand tool, in view mode. Edit mode has `toolMode` and a toolbar to set
-  // it; a running mimic has neither, so the mode lives here and on one key.
-  const [viewPan, setViewPan] = useState(false)
-  const [productionLogOpen, setProductionLogOpen] = useState(false)
-  const [productionSettingsOpen, setProductionSettingsOpen] = useState(false)
-  /**
-   * Edit mode is only real when this admin is allowed to write this drawing.
-   * Derived here rather than beside `lock` because it reads `editMode`, which is
-   * declared with the rest of the selection state below it.
-   */
-  const editing = editMode && canEdit && !lock
-  const dirty = !!editorSession?.dirty
+  const canEdit = useAuthStore((s) => s.user?.role ?? null) === 'admin'
   const canvasRef = useRef(null)
-  // The element that goes full screen: the sheet *and* its controls, not the
-  // bare <svg>. A wall display that loses the pan tool and the zoom readout the
-  // moment it fills the screen is a picture, not a mimic.
-  const stageRef = useRef(null)
-  const [fullscreen, setFullscreen] = useState(false)
-  const [toolMode, setToolMode] = useState('select')
-  const [gridVisible, setGridVisible] = useState(true)
-  const [snapEnabled, setSnapEnabled] = useState(true)
-  const [viewport, setViewport] = useState({ x: 0, y: 0, w: VIEW_W, h: VIEW_H })
-  const [paletteOpen, setPaletteOpen] = useState(true)
-  const [inspectorOpen, setInspectorOpen] = useState(true)
-  const [compactEditor, setCompactEditor] = useState(() => (
-    typeof window !== 'undefined' && window.matchMedia('(max-width: 1399px)').matches
-  ))
-  const [importOpen, setImportOpen] = useState(false)
-  const [unsavedOpen, setUnsavedOpen] = useState(false)
-  const [conflictOpen, setConflictOpen] = useState(false)
-  const [bindingNode, setBindingNode] = useState(null)
-  const [editingKpi, setEditingKpi] = useState(null)
-  // The upload/author flow. Not per-node: a library symbol is authored once
-  // and then placed, so this is a property of the session, not of a selection.
-  const [authoring, setAuthoring] = useState(false)
 
-  const blocker = useBlocker(({ currentLocation, nextLocation }) => (
-    dirty && (
-      currentLocation.pathname !== nextLocation.pathname
-      || currentLocation.search !== nextLocation.search
-    )
-  ))
+  const { snackbar, notify, closeSnackbar } = useNotify()
+  const ui = useMonitorUi()
+  const { setConflictOpen } = ui
 
-  useEffect(() => {
-    const media = window.matchMedia('(max-width: 1399px)')
-    const syncBreakpoint = () => {
-      setCompactEditor(media.matches)
-      if (media.matches) {
-        setPaletteOpen(true)
-        setInspectorOpen(false)
-      } else {
-        setPaletteOpen(true)
-        setInspectorOpen(true)
-      }
-    }
-    syncBreakpoint()
-    media.addEventListener('change', syncBreakpoint)
-    return () => media.removeEventListener('change', syncBreakpoint)
-  }, [])
+  const { layouts, activeSlug, selectMimic } = useMimicDrawings()
 
-  const togglePalette = useCallback(() => {
-    const nextOpen = !paletteOpen
-    setPaletteOpen(nextOpen)
-    if (nextOpen && compactEditor) setInspectorOpen(false)
-  }, [compactEditor, paletteOpen])
+  const onConflict = useCallback(() => setConflictOpen(true), [setConflictOpen])
+  const doc = useMimicDocument({
+    activeSlug, layouts, notify, onConflict,
+  })
+  const {
+    layout, nodes, kpis, lock, activeName,
+  } = doc
 
-  const toggleInspector = useCallback(() => {
-    const nextOpen = !inspectorOpen
-    setInspectorOpen(nextOpen)
-    if (nextOpen && compactEditor) setPaletteOpen(false)
-  }, [compactEditor, inspectorOpen])
+  const data = useMimicData({ nodes, kpis })
+  const { tags } = data
 
-  useEffect(() => {
-    if (blocker.state === 'blocked') setUnsavedOpen(true)
-  }, [blocker.state])
+  const chrome = useEditorChrome()
+  const selection = useMimicSelection({
+    nodes,
+    edges: layout?.edges ?? [],
+    tags,
+    onReveal: chrome.revealInspector,
+  })
+  const edits = useLayoutEdits({
+    layout,
+    commitLayout: doc.commitLayout,
+    previewLayout: doc.previewLayout,
+    selection,
+    notify,
+    snapEnabled: chrome.snapEnabled,
+    wirePen: chrome.wirePen,
+    setWirePen: chrome.setWirePen,
+  })
+  const actions = useDialogActions({
+    layout, commitLayout: doc.commitLayout, kpis, ui, notify,
+  })
+  const lifecycle = useEditLifecycle({
+    canEdit, activeSlug, doc, selection, ui,
+  })
+  const { editing, editMode } = lifecycle
+  const files = useMimicFiles({
+    layout,
+    activeSlug,
+    activeName,
+    customSymbols: data.customSymbols,
+    commitLayout: doc.commitLayout,
+    notify,
+    setSelectedId: selection.setSelectedId,
+    setSelectedEdgeId: selection.setSelectedEdgeId,
+    setImportOpen: ui.setImportOpen,
+  })
+  const {
+    stageRef, fullscreen, toggleFullscreen, overlayHost,
+  } = useFullscreen()
 
-  useEffect(() => {
-    if (!dirty) return undefined
-    const guard = (event) => { event.preventDefault(); event.returnValue = '' }
-    window.addEventListener('beforeunload', guard)
-    return () => window.removeEventListener('beforeunload', guard)
-  }, [dirty])
+  useEditorShortcuts({
+    editing,
+    layout,
+    dirty: doc.dirty,
+    saving: doc.saving,
+    handleSave: lifecycle.handleSave,
+    copySelection: selection.copySelection,
+    pasteSymbol: edits.pasteSymbol,
+    undoLayout: doc.undoLayout,
+    redoLayout: doc.redoLayout,
+    deleteSelection: edits.deleteSelection,
+    nudgeNode: edits.nudgeNode,
+    selectedId: selection.selectedId,
+    selectedEdgeId: selection.selectedEdgeId,
+    productionLogOpen: ui.productionLogOpen,
+    setProductionLogOpen: ui.setProductionLogOpen,
+    setViewPan: ui.setViewPan,
+    toggleFullscreen,
+  })
 
   // Switching drawings: nothing from the old one survives. Every id here names
   // a node or pipe that is about to stop existing, and the binding dialog in
   // particular would otherwise write its result into the plant next door.
+  // Declared after useMimicDocument's seed effect on purpose — see there.
+  const { seededSlugRef, loadLayout } = doc
+  const { setSelectedId, setSelectedEdgeId, resetClipboard } = selection
+  const { setBindingNode, setProductionLogOpen, setProductionSettingsOpen } = ui
   useEffect(() => {
     if (seededSlugRef.current === null || seededSlugRef.current === activeSlug) return
     seededSlugRef.current = null
     loadLayout(null)
     setSelectedId(null)
     setSelectedEdgeId(null)
-    copiedNodeRef.current = null
-    pasteCountRef.current = 0
+    resetClipboard()
     setBindingNode(null)
     setProductionLogOpen(false)
     setProductionSettingsOpen(false)
-  }, [activeSlug, loadLayout])
+  }, [activeSlug, loadLayout]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const selectMimic = useCallback((slug) => {
-    if (!slug || slug === activeSlug) return
-    setActiveSlug(slug)
-    putSlugInUrl(slug)
-  }, [activeSlug, putSlugInUrl])
-
-  const selectedNode = nodes.find((n) => n.id === selectedId) ?? null
-  const selectedEdge = (layout?.edges ?? []).find((e) => e.id === selectedEdgeId) ?? null
-  const selectedTag = selectedId ? tags[selectedId] ?? null : null
-
-  // Below the palette/inspector breakpoint the two rails are mutually
-  // exclusive (see the toggle handlers above), so a click that selects
-  // something on the canvas has to swap them itself — otherwise the
-  // properties panel a symbol was just clicked *for* stays hidden behind
-  // the palette, and every option in it looks like it went missing.
-  const selectNode = useCallback((id) => {
-    setSelectedId(id)
-    setGroupIds([])
-    setSelectedEdgeId(null)
-    if (compactEditor) { setInspectorOpen(true); setPaletteOpen(false) }
-  }, [compactEditor])
-
-  const selectEdge = useCallback((id) => {
-    setSelectedEdgeId(id)
-    setSelectedId(null)
-    setGroupIds([])
-    if (compactEditor) { setInspectorOpen(true); setPaletteOpen(false) }
-  }, [compactEditor])
-
-  // Several at once: none clears, one is an ordinary selection, more is a group.
-  const selectMany = useCallback((ids) => {
-    const unique = [...new Set(ids)]
-    if (unique.length <= 1) {
-      selectNode(unique[0] ?? null)
-      return
-    }
-    setGroupIds(unique)
-    setSelectedId(null)
-    setSelectedEdgeId(null)
-    if (compactEditor) { setInspectorOpen(true); setPaletteOpen(false) }
-  }, [compactEditor, selectNode])
-
-  const copySelection = useCallback(() => {
-    if (!selectedNode) return false
-    copiedNodeRef.current = structuredClone(selectedNode)
-    pasteCountRef.current = 0
-    return true
-  }, [selectedNode])
-
-  const pasteSymbol = useCallback(() => {
-    const copied = copiedNodeRef.current
-    if (!copied) return false
-
-    addCounter += 1
-    pasteCountRef.current += 1
-    const offset = PASTE_OFFSET * pasteCountRef.current
-    const node = {
-      ...structuredClone(copied),
-      id: `n-new-${Date.now().toString(36)}-${addCounter}`,
-      x: clamp(copied.x + offset, 0, sheetOf(layout).w - copied.w),
-      y: clamp(copied.y + offset, 0, sheetOf(layout).h - copied.h),
-    }
-    commitLayout((prev) => ({ ...prev, nodes: [...prev.nodes, node] }))
-    selectNode(node.id)
-    return true
-  }, [commitLayout, layout, selectNode])
-
-  // --- geometry edits ------------------------------------------------------
-  const moveNode = useCallback((id, pos) => {
-    previewLayout((prev) => ({
-      ...prev,
-      nodes: prev.nodes.map((n) => (n.id === id ? { ...n, ...pos } : n)),
-    }))
-  }, [previewLayout])
-
-  // Resolved against the node in `prev` rather than the rendered one so a
-  // burst of key repeats accumulates instead of collapsing to the last one.
-  const nudgeNode = useCallback((id, dx, dy) => {
-    commitLayout((prev) => ({
-      ...prev,
-      nodes: prev.nodes.map((n) => (n.id === id
-        ? {
-          ...n,
-          x: clamp(n.x + dx, 0, sheetOf(prev).w - n.w),
-          y: clamp(n.y + dy, 0, sheetOf(prev).h - n.h),
-        }
-        : n)),
-    }))
-  }, [commitLayout])
-
-  // --- group edits ---------------------------------------------------------
-  // The canvas computes the group's positions (a rigid block, clamped as one);
-  // these only write them, through the same preview/commit path as one symbol,
-  // so a group move is one undo step.
-  const moveNodes = useCallback((updates) => {
-    const at = new Map(updates.map((u) => [u.id, u]))
-    previewLayout((prev) => ({
-      ...prev,
-      nodes: prev.nodes.map((n) => (at.has(n.id) ? { ...n, x: at.get(n.id).x, y: at.get(n.id).y } : n)),
-    }))
-  }, [previewLayout])
-
-  const nudgeNodes = useCallback((ids, dx, dy) => {
-    commitLayout((prev) => {
-      const members = prev.nodes.filter((n) => ids.includes(n.id))
-      if (!members.length) return prev
-      const sheet = sheetOf(prev)
-      // One delta for all, limited by the members nearest each edge.
-      const cx = clamp(dx, -Math.min(...members.map((n) => n.x)),
-        sheet.w - Math.max(...members.map((n) => n.x + n.w)))
-      const cy = clamp(dy, -Math.min(...members.map((n) => n.y)),
-        sheet.h - Math.max(...members.map((n) => n.y + n.h)))
-      return {
-        ...prev,
-        nodes: prev.nodes.map((n) => (ids.includes(n.id) ? { ...n, x: n.x + cx, y: n.y + cy } : n)),
-      }
-    })
-  }, [commitLayout])
-
-  const deleteNodes = useCallback((ids) => {
-    const gone = new Set(ids)
-    commitLayout((prev) => ({
-      ...prev,
-      nodes: prev.nodes.filter((n) => !gone.has(n.id)),
-      edges: prev.edges.filter((e) => !gone.has(e.from.node) && !gone.has(e.to.node)),
-    }))
-    setGroupIds([])
-    setSelectedId(null)
-    setSelectedEdgeId(null)
-  }, [commitLayout])
-
-  const setNodesOptions = useCallback((ids, patch) => {
-    commitLayout((prev) => ({
-      ...prev,
-      nodes: prev.nodes.map((n) => (ids.includes(n.id) ? { ...n, options: { ...n.options, ...patch } } : n)),
-    }))
-  }, [commitLayout])
-
-  // Sheet size. Growing is always safe; shrinking is only offered when every
-  // symbol still fits (see sheetFits), so nothing is ever left off the sheet.
-  const setSheetSize = useCallback((w, h) => {
-    commitLayout((prev) => ({ ...prev, viewBox: { w, h } }))
-  }, [commitLayout])
-
-  // Ports are fractions of the node box and edge geometry is never stored, so
-  // a resize re-routes every wire on the symbol for free. The canvas has
-  // already snapped and clamped the box.
-  const resizeNode = useCallback((id, box) => {
-    previewLayout((prev) => ({
-      ...prev,
-      nodes: prev.nodes.map((n) => (n.id === id ? { ...n, ...box } : n)),
-    }))
-  }, [previewLayout])
-
-  // Rotation was already wired end to end on the canvas — the transform is
-  // applied and resizeBox un-rotates pointer deltas — with nothing to set it.
-  // Stored in degrees, normalised so a rotated symbol reports 15° rather than 375°.
-  const rotateNode = useCallback((id, deg) => {
-    commitLayout((prev) => ({
-      ...prev,
-      nodes: prev.nodes.map((n) => (n.id === id
-        ? { ...n, rot: ((Math.round(deg) % 360) + 360) % 360 }
-        : n)),
-    }))
-  }, [commitLayout])
-
-  /**
-   * Merge a patch into one symbol's appearance options.
-   *
-   * Merged rather than replaced so each control in the inspector can send only
-   * the key it owns — the alarm tile's severity select must not have to
-   * remember and resend the condition beside it.
-   *
-   * The bag itself is untyped here on purpose. `mimic.py` stores unknown node
-   * keys as-is, so a symbol growing an option stays a pure frontend change, the
-   * same way a symbol growing a *type* already is.
-   */
-  const setNodeOptions = useCallback((id, patch) => {
-    commitLayout((prev) => ({
-      ...prev,
-      nodes: prev.nodes.map((n) => (n.id === id
-        ? { ...n, options: { ...n.options, ...patch } }
-        : n)),
-    }))
-  }, [commitLayout])
-
-  // Drawing-wide symbol colours (colour by category, per-category colour).
-  // Stored on the layout document as `theme`; the server keeps it untouched.
-  const setLayoutTheme = useCallback((patch) => {
-    commitLayout((prev) => ({ ...prev, theme: { ...(prev.theme ?? {}), ...patch } }))
-  }, [commitLayout])
-
-  // Back to the size the symbol was drawn at. Position is left alone: the
-  // symbol is where the engineer put it, and only its size was in question.
-  const resetNodeSize = useCallback((id) => {
-    commitLayout((prev) => ({
-      ...prev,
-      nodes: prev.nodes.map((n) => (n.id === id
-        ? { ...n, ...(symbolDef(n)?.defaultSize ?? { w: n.w, h: n.h }) }
-        : n)),
-    }))
-  }, [commitLayout])
-
-  // Deleting a node takes its wires with it — an edge whose endpoint is gone
-  // has no geometry to derive.
-  const deleteNode = useCallback((id) => {
-    commitLayout((prev) => ({
-      ...prev,
-      nodes: prev.nodes.filter((n) => n.id !== id),
-      edges: prev.edges.filter((e) => e.from.node !== id && e.to.node !== id),
-    }))
-    setSelectedId(null)
-    // One of the pipes that just went with it may have been the selection.
-    setSelectedEdgeId(null)
-  }, [commitLayout])
-
-  // --- balloon placement ---------------------------------------------------
-  // Stored as an offset from the symbol's own anchor, so a repositioned
-  // reading follows its equipment the next time that equipment is dragged.
-  const moveBubble = useCallback((id, offset) => {
-    previewLayout((prev) => ({
-      ...prev,
-      nodes: prev.nodes.map((n) => (n.id === id ? { ...n, bubble: { offset } } : n)),
-    }))
-  }, [previewLayout])
-
-  const resetBubble = useCallback((id) => {
-    commitLayout((prev) => ({
-      ...prev,
-      nodes: prev.nodes.map((n) => (n.id === id ? { ...n, bubble: null } : n)),
-    }))
-  }, [commitLayout])
-
-  // --- wiring --------------------------------------------------------------
-  // The pen: which line the next wire is drawn in. Held here rather than
-  // inside the picker so the canvas can preview the real line as it is being
-  // dragged, and so it survives selecting a symbol — running a fuel branch
-  // should not mean re-picking the type for every segment of it.
-  const [wirePen, setWirePen] = useState(NORMAL_WIRE)
-
-  const addEdge = useCallback((from, to) => {
-    if (from.node === to.node) {
-      notify('A wire runs between two different symbols.', 'warning')
-      return
-    }
-    const ends = { from, to: { node: to.node, port: to.port } }
-    // Direction is a drawing choice, not a fact about the plant, so a wire
-    // drawn back the other way is the same wire — select it rather than
-    // stacking a second line on the identical route.
-    const existing = layout.edges.find((e) => (
-      (e.from.node === from.node && e.from.port === from.port
-        && e.to.node === ends.to.node && e.to.port === ends.to.port)
-      || (e.from.node === ends.to.node && e.from.port === ends.to.port
-        && e.to.node === from.node && e.to.port === from.port)
-    ))
-    if (existing) {
-      selectEdge(existing.id)
-      notify('These ports are already connected.', 'info')
-      return
-    }
-    addCounter += 1
-    const id = `e-new-${Date.now().toString(36)}-${addCounter}`
-    commitLayout((prev) => ({
-      ...prev,
-      edges: [...prev.edges, {
-        id, ...ends, service: wirePen, flowNode: null,
-      }],
-    }))
-    selectEdge(id)
-  }, [commitLayout, layout, notify, selectEdge, wirePen])
-
-  // Correcting one wire's type in the inspector also picks up the pen: you
-  // reached for that line because it was the one you meant, and the next
-  // segment of the same run almost always wants it too.
-  const updateEdge = useCallback((id, patch) => {
-    if (patch.service) setWirePen(patch.service)
-    commitLayout((prev) => ({
-      ...prev,
-      edges: prev.edges.map((e) => (e.id === id ? { ...e, ...patch } : e)),
-    }))
-  }, [commitLayout])
-
-  const deleteEdge = useCallback((id) => {
-    commitLayout((prev) => ({ ...prev, edges: prev.edges.filter((e) => e.id !== id) }))
-    setSelectedEdgeId(null)
-  }, [commitLayout])
-
-  /**
-   * Drop a new symbol at the centre of the sheet.
-   *
-   * `symbolId` names a library entry and is only meaningful for `custom`. It has
-   * to be on the node from the moment it is created — the size and ports come off
-   * that entry, so a custom node without one would be placed at the generic
-   * fallback size and then jump when it resolved.
-   */
-  const addSymbol = useCallback((type, symbolId = null, point = null) => {
-    const def = symbolDef({ type, symbolId }) ?? SYMBOLS[type]
-    addCounter += 1
-    const id = `n-new-${Date.now().toString(36)}-${addCounter}`
-    const sheet = sheetOf(layout)
-    const rawX = (point?.x ?? sheet.w / 2) - def.defaultSize.w / 2
-    const rawY = (point?.y ?? sheet.h / 2) - def.defaultSize.h / 2
-    const place = (value) => (snapEnabled ? Math.round(value / 8) * 8 : Math.round(value))
-    const node = {
-      id,
-      type,
-      ...(symbolId == null ? {} : { symbolId }),
-      tagId: null,
-      binding: null,
-      label: def.label,
-      x: clamp(place(rawX), 0, sheet.w - def.defaultSize.w),
-      y: clamp(place(rawY), 0, sheet.h - def.defaultSize.h),
-      w: def.defaultSize.w,
-      h: def.defaultSize.h,
-      rot: 0,
-    }
-    commitLayout((prev) => ({ ...prev, nodes: [...prev.nodes, node] }))
-    selectNode(id)
-  }, [commitLayout, layout, selectNode, snapEnabled])
-
-  // --- persistence ---------------------------------------------------------
-  const [saving, setSaving] = useState(false)
-
-  const persist = useCallback(async (doc) => {
-    setSaving(true)
-    try {
-      const row = await saveMimicLayout(
-        activeSlug,
-        doc.name || activeName,
-        doc,
-        editorSession?.revision ?? null,
-      )
-      if (legacyPendingRef.current) {
-        clearLegacyLayout()
-        legacyPendingRef.current = false
-      }
-      // On a fresh install this PUT is what puts the fallback plant in the
-      // table for the first time, so the switcher's list is now out of date.
-      queryClient.setQueryData(['mimic-layout', activeSlug], row)
-      queryClient.invalidateQueries({ queryKey: ['mimic-layouts'] })
-      notify('Layout saved.')
-      return row
-    } catch (e) {
-      if (e?.response?.status === 409) {
-        setConflictOpen(true)
-        return null
-      }
-      notify(apiErrorMessage(e, 'Failed to save the layout.'), 'error')
-      return null
-    } finally {
-      setSaving(false)
-    }
-  }, [activeName, activeSlug, editorSession?.revision, notify, queryClient])
-
-  const deleteNodeKey = useCallback((id) => {
-    deleteNode(id)
-  }, [deleteNode])
-
-  const deleteEdgeKey = useCallback((id) => {
-    deleteEdge(id)
-  }, [deleteEdge])
-
-  // --- binding dialog ------------------------------------------------------
-  const openBinding = useCallback((node) => setBindingNode(node), [])
-
-  const applyBinding = useCallback(({ tagId, label, binding }) => {
-    const next = {
-      ...layout,
-      nodes: layout.nodes.map((n) => (n.id === bindingNode.id
-        ? { ...n, tagId, label, binding }
-        : n)),
-    }
-    commitLayout(next)
-    setBindingNode(null)
-    notify(binding ? 'Binding updated in the draft.'
-      : bindingNode.binding ? 'Symbol disconnected in the draft.'
-        : 'Symbol updated in the draft (no data source).')
-  }, [bindingNode, commitLayout, layout, notify])
-
-  const applyProductionLog = useCallback((binding) => {
-    commitLayout((previous) => ({ ...previous, productionLog: binding }))
-    setProductionSettingsOpen(false)
-    notify(binding ? 'Production log settings updated in the draft.' : 'Production log removed from the draft.')
-  }, [commitLayout, notify])
-
-  // --- headline numbers ----------------------------------------------------
-  // Every one of these goes through commitLayout, so the strip joins the same
-  // draft, undo stack and unsaved-changes guard as the drawing itself. A box is
-  // never written straight to the server.
-  const commitKpis = useCallback((next) => {
-    commitLayout((previous) => ({ ...previous, kpis: next }))
-  }, [commitLayout])
-
-  const addKpi = useCallback(() => {
-    const kpi = blankKpi()
-    commitKpis([...kpis, kpi])
-    // Opened straight away: an empty box prints an em-dash, and adding one is
-    // only ever the first half of the thing an admin came to do.
-    setEditingKpi(kpi)
-  }, [commitKpis, kpis])
-
-  const applyKpi = useCallback((next) => {
-    commitKpis(kpis.map((kpi) => (kpi.id === next.id ? next : kpi)))
-    setEditingKpi(null)
-    notify('Headline number updated in the draft.')
-  }, [commitKpis, kpis, notify])
-
-  const removeKpi = useCallback(() => {
-    if (!editingKpi) return
-    commitKpis(kpis.filter((kpi) => kpi.id !== editingKpi.id))
-    setEditingKpi(null)
-    notify('Headline number removed from the draft.')
-  }, [commitKpis, editingKpi, kpis, notify])
-
-  const toggleEdit = useCallback(() => {
-    if (!editMode) setEditMode(true)
-  }, [editMode])
-
-  const handleSave = useCallback(async () => {
-    const row = await persist(layout)
-    if (!row) return
-    savedLayout(migrateLayout(row.doc), row.updated_at)
-    setEditMode(false)
-    setSelectedEdgeId(null)
-  }, [layout, persist, savedLayout])
-
-  const finishCancel = useCallback(() => {
-    cancelLayout()
-    setEditMode(false)
+  const reloadServerRevision = () => doc.reloadServerRevision(() => {
     setSelectedId(null)
     setSelectedEdgeId(null)
     setBindingNode(null)
-    setProductionSettingsOpen(false)
-    setUnsavedOpen(false)
-  }, [cancelLayout])
-
-  const requestCancel = useCallback(() => {
-    if (dirty) setUnsavedOpen(true)
-    else finishCancel()
-  }, [dirty, finishCancel])
-
-  // "Back to how this drawing started" — which is the seeded steam skid for
-  // the plant /monitor shipped with, and a blank sheet for one an admin drew.
-  const handleReset = useCallback(() => {
-    commitLayout(activeSlug === FALLBACK_SLUG ? seedLayout() : emptyLayout(activeName))
-    setSelectedId(null)
-    setSelectedEdgeId(null)
-  }, [activeName, activeSlug, commitLayout])
-
-  const exportDraft = useCallback(() => {
-    const envelope = createMimicExport({ slug: activeSlug, name: activeName }, layout)
-    downloadJson(`${activeSlug || 'mimic'}.mml.json`, envelope)
-  }, [activeName, activeSlug, layout])
-
-  const importDraft = useCallback(async (event) => {
-    const file = event.target.files?.[0]
-    if (!file) return
-    try {
-      const parsed = parseMimicImport(JSON.parse(await file.text()), { slug: activeSlug, name: activeName })
-      const migrated = migrateLayout(parsed)
-      if (!migrated) throw new Error('The selected file is not a supported MML layout document.')
-      const imported = {
-        ...layout,
-        viewBox: migrated.viewBox,
-        nodes: migrated.nodes,
-        edges: migrated.edges,
-        name: activeName,
-      }
-      const importLock = editLock(imported)
-      if (importLock) throw new Error(importLock)
-      const importedNodes = new Map(imported.nodes.map((node) => [node.id, node]))
-      const customIds = new Set(customSymbols.map((symbol) => symbol.id))
-      const missingCustom = imported.nodes.find((node) => (
-        node.type === 'custom'
-        && (!Number.isInteger(node.symbolId) || !customIds.has(node.symbolId))
-      ))
-      if (missingCustom) {
-        throw new Error('The selected layout references a custom symbol that is not installed on this server.')
-      }
-      const badPort = imported.edges.some((edge) => (
-        !symbolDef(importedNodes.get(edge.from.node))?.ports?.[edge.from.port]
-        || !symbolDef(importedNodes.get(edge.to.node))?.ports?.[edge.to.port]
-      ))
-      if (badPort) throw new Error('The selected layout contains a wire attached to an unsupported symbol port.')
-      commitLayout(imported)
-      setSelectedId(null)
-      setSelectedEdgeId(null)
-      setImportOpen(false)
-      notify('Layout imported into the draft.', 'success')
-    } catch (error) {
-      notify(error.message || 'The selected file could not be imported.', 'error')
-    } finally {
-      event.target.value = ''
-    }
-  }, [activeName, activeSlug, commitLayout, customSymbols, layout, notify])
-
-  const reloadServerRevision = useCallback(async () => {
-    try {
-      const result = await layoutQuery.refetch({ throwOnError: true })
-      if (!result.data?.doc) throw new Error('The server revision could not be loaded.')
-      loadLayout(migrateLayout(result.data.doc), result.data.updated_at)
-      setSelectedId(null)
-      setSelectedEdgeId(null)
-      setBindingNode(null)
-      setConflictOpen(false)
-    } catch (error) {
-      notify(apiErrorMessage(error, 'The server revision could not be loaded. Your draft is still intact.'), 'error')
-    }
-  }, [layoutQuery, loadLayout, notify])
-
-  const deleteSelection = useCallback(() => {
-    if (selectedEdgeId) deleteEdge(selectedEdgeId)
-    else if (selectedId) deleteNode(selectedId)
-  }, [deleteEdge, deleteNode, selectedEdgeId, selectedId])
-
-  const rotateSelection = useCallback(() => {
-    if (selectedNode) rotateNode(selectedNode.id, (selectedNode.rot || 0) + 90)
-  }, [rotateNode, selectedNode])
-
-  const keepEditing = useCallback(() => {
-    setUnsavedOpen(false)
-    if (blocker.state === 'blocked') blocker.reset()
-  }, [blocker])
-
-  const discardUnsaved = useCallback(() => {
-    const navigating = blocker.state === 'blocked'
-    finishCancel()
-    if (navigating) blocker.proceed()
-  }, [blocker, finishCancel])
-
-  useEffect(() => {
-    if (!editing) return undefined
-    const shortcut = (event) => {
-      if (saving) return
-      if (event.defaultPrevented) return
-      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return
-      const mod = event.ctrlKey || event.metaKey
-      if (mod && event.key.toLowerCase() === 's') {
-        event.preventDefault()
-        if (dirty && !saving) handleSave()
-      } else if (mod && event.key.toLowerCase() === 'c') {
-        if (copySelection()) event.preventDefault()
-      } else if (mod && event.key.toLowerCase() === 'v') {
-        if (pasteSymbol()) event.preventDefault()
-      } else if (mod && event.key.toLowerCase() === 'z') {
-        event.preventDefault()
-        if (event.shiftKey) redoLayout()
-        else undoLayout()
-      } else if (mod && event.key.toLowerCase() === 'y') {
-        event.preventDefault()
-        redoLayout()
-      } else if (event.key === 'Delete' || event.key === 'Backspace') {
-        if (!selectedId && !selectedEdgeId) return
-        event.preventDefault()
-        deleteSelection()
-      } else if (selectedId && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
-        event.preventDefault()
-        const step = event.shiftKey ? 1 : 8
-        const [dx, dy] = {
-          ArrowLeft: [-step, 0],
-          ArrowRight: [step, 0],
-          ArrowUp: [0, -step],
-          ArrowDown: [0, step],
-        }[event.key]
-        nudgeNode(selectedId, dx, dy)
-      }
-    }
-    window.addEventListener('keydown', shortcut)
-    return () => window.removeEventListener('keydown', shortcut)
-  }, [copySelection, deleteSelection, dirty, editing, handleSave, nudgeNode, pasteSymbol, redoLayout, saving, selectedEdgeId, selectedId, undoLayout])
-
-  /**
-   * H — the hand tool, in view mode.
-   *
-   * The drawing is scaled to fit the panel, so the common case needs no
-   * panning at all. The moment an operator zooms in on one skid it does, and
-   * view mode has no toolbar to put a button on: H is the drafting convention
-   * for the hand, and it is printed on the control it toggles.
-   */
-  useEffect(() => {
-    if (!layout || editing) return undefined
-    const shortcut = (event) => {
-      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return
-      if (event.key.toLowerCase() !== 'h') return
-      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return
-      event.preventDefault()
-      setViewPan((on) => !on)
-    }
-    window.addEventListener('keydown', shortcut)
-    return () => window.removeEventListener('keydown', shortcut)
-  }, [editing, layout])
-
-  // Entering the editor hands panning to its own tool picker, so the view-mode
-  // mode must not survive — otherwise the toolbar would read "select" while
-  // the canvas still behaves like a hand.
-  useEffect(() => {
-    if (editing) {
-      setViewPan(false)
-      setProductionLogOpen(false)
-    }
-  }, [editing])
-
-  useEffect(() => {
-    if (!productionLogOpen || editing) return undefined
-    const close = (event) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      setProductionLogOpen(false)
-    }
-    window.addEventListener('keydown', close)
-    return () => window.removeEventListener('keydown', close)
-  }, [editing, productionLogOpen])
-
-  /**
-   * Full screen — the drawing on its own, for a control-room wall, and in edit
-   * mode the whole workspace: palette, sheet and inspector.
-   *
-   * Both modes used to send only the canvas, which put a viewer on a wall
-   * display with a drawing and no way to see what a symbol they clicked was
-   * reporting — same problem the editor had with no way to add or bind a
-   * symbol. `stageRef` therefore lands on the whole workspace in both modes:
-   * the editor's palette/sheet/inspector grid while editing, and the
-   * sheet/rail grid (`.body`) while viewing — one ref, because the two modes
-   * never mount at the same time.
-   *
-   * The browser owns this state: Esc, F11 and the window manager can all leave
-   * it without asking us. So this mirrors `document.fullscreenElement` from the
-   * event rather than keeping a second opinion that could go stale. Switching
-   * modes unmounts the fullscreen element, which the browser answers by exiting
-   * and firing the same event, so that case needs no cleanup of its own.
-   */
-  useEffect(() => {
-    // The null guard is load-bearing: the drawing has not mounted on the first
-    // render, so an unguarded identity test compares null to null and reports
-    // full screen before there is anything to show full screen.
-    const sync = () => setFullscreen(
-      !!stageRef.current && document.fullscreenElement === stageRef.current,
-    )
-    document.addEventListener('fullscreenchange', sync)
-    return () => document.removeEventListener('fullscreenchange', sync)
-  }, [])
-
-  const toggleFullscreen = useCallback(() => {
-    if (document.fullscreenElement) {
-      document.exitFullscreen?.().catch(() => {})
-      return
-    }
-    stageRef.current?.requestFullscreen?.().catch(() => {})
-  }, [])
-
-  // F, in both modes. Esc leaves — the browser insists on that and says so, so
-  // there is nothing here to hold it open.
-  useEffect(() => {
-    if (!layout) return undefined
-    const shortcut = (event) => {
-      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return
-      if (event.key.toLowerCase() !== 'f') return
-      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return
-      event.preventDefault()
-      toggleFullscreen()
-    }
-    window.addEventListener('keydown', shortcut)
-    return () => window.removeEventListener('keydown', shortcut)
-  }, [layout, toggleFullscreen])
-
-  /**
-   * Where overlays open.
-   *
-   * A full-screen element is the only subtree the browser paints, and every
-   * dialog here portals to `<body>` by default — which is outside it. Left
-   * alone, "Connect data source" on a wall display opens a dialog nobody can
-   * see and traps focus in it. Re-homing them into whichever element is
-   * currently full screen is what makes the editor genuinely usable there.
-   */
-  const overlayHost = fullscreen ? stageRef.current : undefined
-
-  const dotClass = plantStatus === 'crit' ? styles.dotCrit
-    : plantStatus === 'warn' ? styles.dotWarn : ''
-  // One word for the whole plant, derived once. The page header and the full
-  // screen banner are two readings of the same thing and must never differ.
-  const statusLabel = plantStatus === 'crit' ? 'Alarm'
-    : plantStatus === 'warn' ? 'Off normal' : 'Running'
+    setConflictOpen(false)
+  })
 
   // The sheet's width against the window onto it. Shared by both modes so the
   // reading does not change meaning when an admin clicks Edit layout.
-  const viewZoom = Math.round(((layout?.viewBox?.w || VIEW_W) / viewport.w) * 100)
+  const viewZoom = Math.round(((layout?.viewBox?.w || VIEW_W) / ui.viewport.w) * 100)
 
-
-  const fastActive = FAST_CADENCES.some((c) => c.ms === intervalMs)
-  // A rate in use is never hidden: closing the cover over the button you are
-  // standing on would leave the strip claiming a rate nothing on it shows.
-  const fastShown = fastOpen || fastActive
-
-  const cadenceBtn = (c, fast) => (
-    <button
-      key={c.ms}
-      type="button"
-      className={[
-        styles.cadenceBtn,
-        fast ? styles.cadenceFast : '',
-        intervalMs === c.ms ? styles.cadenceOn : '',
-      ].filter(Boolean).join(' ')}
-      aria-pressed={intervalMs === c.ms}
-      onClick={() => setIntervalMs(c.ms)}
-    >
-      {c.label}
-    </button>
-  )
-
-  const cadence = (
-    <div className={styles.cadenceWrap}>
-      <div
-        className={`${styles.cadence} ${fastActive ? styles.cadenceElevated : ''}`}
-        role="group"
-        aria-label="Poll interval"
-      >
-        {CADENCES.map((c) => cadenceBtn(c, false))}
-        {fastShown && FAST_CADENCES.map((c) => cadenceBtn(c, true))}
-        <button
-          type="button"
-          className={styles.cadenceGuard}
-          aria-expanded={fastShown}
-          aria-controls={CADENCE_NOTE_ID}
-          title={fastActive
-            ? `Return to ${GUARDED_FLOOR_MS / 1000}s and close`
-            : fastOpen ? 'Close sub-second rates' : 'Open sub-second rates'}
-          onClick={() => {
-            // Closing the cover puts the rate back, the way a guarded switch
-            // springs shut. Leaving a plant on 100ms because a panel was tidied
-            // away is exactly the outcome the guard exists to prevent.
-            if (fastActive) setIntervalMs(GUARDED_FLOOR_MS)
-            setFastOpen(!fastShown)
-          }}
-        >
-          {fastShown ? '«' : '»'}
-        </button>
-      </div>
-
-      {/* Anchored, so opening the guard cannot shove the page header taller. */}
-      {fastShown && (
-        <p className={styles.cadenceNote} id={CADENCE_NOTE_ID} role="note">
-          Each poll opens one database connection per bound symbol. Use sub-second
-          rates to commission a loop, then step back down.
-        </p>
-      )}
-    </div>
-  )
-
-  /**
-   * The banner full screen adds back.
-   *
-   * Going full screen drops the page header, and with it the first two things
-   * anyone reading a mimic from across a control room needs: which plant this
-   * is, and whether it is running.
-   *
-   * `tools` is the view-mode control cluster. It moves into this bar rather
-   * than floating over the sheet, because on a wall display the drawing is the
-   * whole point and every overlay is sitting on top of something an operator
-   * wanted to see — in the bottom corner it covered a station's own label.
-   * Between the title and the status is dead space the banner already owns.
-   */
-  const fullscreenHead = (tools = null) => (fullscreen ? (
-    <header className={styles.fsHead}>
-      <div className={styles.fsTitle}>
-        <span className={styles.fsEyebrow}>Process mimic</span>
-        <h2 className={styles.fsName}>{activeName}</h2>
-      </div>
-      {/* Full screen drops the page header, and with it the strip. A wall
-        * display is exactly when these figures are wanted most, so the banner
-        * carries them for the same reason it carries the title and the status.
-        * Read-only here: the editor is never full screen. */}
-      <KpiStrip kpis={kpis} tags={tags} inBanner />
-      {tools}
-      <span className={styles.fsState}>
-        <span className={`${styles.dot} ${dotClass}`} />
-        {statusLabel}
-      </span>
-    </header>
-  ) : null)
-
-  /**
-   * The view-mode control cluster: log, hand, zoom, fit, full screen.
-   *
-   * Defined once and rendered in one of two places — floating over the sheet
-   * when windowed, inside the banner when full screen. One definition because
-   * two copies would be two sets of controls to keep in step, and because only
-   * one may exist in the tree at a time: they carry `aria-controls` and
-   * keyboard hints that must not be duplicated.
-   */
+  // One element, placed once: in the full-screen banner when full screen, over
+  // the sheet otherwise (MimicViewer decides). Never two copies in the tree.
   const viewToolbar = (
-    <div
-      className={`${styles.viewTools} ${fullscreen ? styles.viewToolsInBanner : ''}`}
-      role="group"
-      aria-label="View controls"
-    >
-      <button
-        type="button"
-        className={`${styles.viewTool} ${productionLogOpen ? styles.viewToolOn : ''}`}
-        aria-expanded={productionLogOpen}
-        aria-controls="mimic-production-log"
-        title="Production log / บันทึกผลผลิต"
-        onClick={() => setProductionLogOpen((shown) => !shown)}
-      >
-        <BarChartOutlined fontSize="small" />
-        <span className={styles.viewLogLabel}>LOG</span>
-      </button>
-
-      <span className={styles.viewDivider} />
-
-      <button
-        type="button"
-        className={`${styles.viewTool} ${viewPan ? styles.viewToolOn : ''}`}
-        aria-pressed={viewPan}
-        aria-keyshortcuts="h"
-        title="Hand tool — drag to move the drawing inside the panel (H)"
-        onClick={() => setViewPan((on) => !on)}
-      >
-        <PanToolOutlined fontSize="small" />
-        <kbd className={styles.viewKey}>H</kbd>
-      </button>
-
-      <span className={styles.viewDivider} />
-
-      <button
-        type="button"
-        className={styles.viewTool}
-        title="Zoom out"
-        aria-label="Zoom out"
-        disabled={viewZoom <= 25}
-        onClick={() => canvasRef.current?.zoomOut()}
-      >
-        <ZoomOutOutlined fontSize="small" />
-      </button>
-      <output className={styles.viewZoom} aria-label="Drawing zoom">{viewZoom}%</output>
-      <button
-        type="button"
-        className={styles.viewTool}
-        title="Zoom in"
-        aria-label="Zoom in"
-        disabled={viewZoom >= 400}
-        onClick={() => canvasRef.current?.zoomIn()}
-      >
-        <ZoomInOutlined fontSize="small" />
-      </button>
-
-      <span className={styles.viewDivider} />
-
-      <button
-        type="button"
-        className={styles.viewTool}
-        title="Fit the drawn area to the panel"
-        aria-label="Fit contents"
-        onClick={() => canvasRef.current?.fitContents()}
-      >
-        <CenterFocusStrongOutlined fontSize="small" />
-      </button>
-      <button
-        type="button"
-        className={styles.viewTool}
-        title="Reset view"
-        aria-label="Reset view"
-        onClick={() => canvasRef.current?.resetView()}
-      >
-        <RestartAltOutlined fontSize="small" />
-      </button>
-
-      <span className={styles.viewDivider} />
-
-      <button
-        type="button"
-        className={`${styles.viewTool} ${fullscreen ? styles.viewToolOn : ''}`}
-        aria-pressed={fullscreen}
-        aria-keyshortcuts="f"
-        title={fullscreen ? 'Leave full screen (F or Esc)' : 'Show this mimic full screen (F)'}
-        onClick={toggleFullscreen}
-      >
-        {fullscreen ? <FullscreenExitOutlined fontSize="small" /> : <FullscreenOutlined fontSize="small" />}
-        <kbd className={styles.viewKey}>F</kbd>
-      </button>
-    </div>
+    <ViewToolbar
+      fullscreen={fullscreen}
+      onToggleFullscreen={toggleFullscreen}
+      productionLogOpen={ui.productionLogOpen}
+      onToggleLog={() => ui.setProductionLogOpen((shown) => !shown)}
+      viewPan={ui.viewPan}
+      onTogglePan={() => ui.setViewPan((on) => !on)}
+      viewZoom={viewZoom}
+      canvasRef={canvasRef}
+    />
   )
-
-  // The attention list's order and counts. Rank: 0 alarm, 1 off normal,
-  // 2 not connected, 3 healthy — then sheet order within a rank, so a list
-  // that doesn't change doesn't reshuffle on every poll.
-  const attention = useMemo(() => {
-    const ranked = nodes.map((node, i) => {
-      const tag = tags[node.id]
-      const rank = tag?.status === 'crit' ? 0 : tag?.status === 'warn' ? 1 : !tag ? 2 : 3
-      return { node, tag, rank, i }
-    })
-    ranked.sort((a, b) => a.rank - b.rank || a.i - b.i)
-    const count = (r) => ranked.filter((x) => x.rank === r).length
-    return { ordered: ranked, crit: count(0), warn: count(1), unbound: count(2) }
-  }, [nodes, tags])
-
-  const subtitle = nodes.length === 0
-    ? 'Empty drawing · add symbols from the palette in edit mode'
-    : connected === 0
-      ? 'No symbols connected yet'
-      : `${connected} of ${nodes.length} symbols connected · ${backendCount} ${backendCount === 1 ? 'connection' : 'connections'}`
+  const headProps = {
+    fullscreen, name: activeName, kpis, tags, status: data.plantStatus,
+  }
 
   return (
     <div className={styles.page}>
-      {/* The overview: which drawing this is, whether it is running, how often
-        * it polls, and the headline numbers — one panel rather than three
-        * loose rows, and foldable, because on a mimic the drawing is the point
-        * and everything above it is competing with the thing you came to see.
-        *
-        * What survives the fold is deliberate. The name and the running state
-        * stay: a control-room display that cannot say which plant it shows, or
-        * that it is in alarm, is worse than one with no panel at all. Edit
-        * layout stays because hiding the primary action behind a disclosure is
-        * how an admin concludes the page is broken. The cadence, the connected
-        * count and the KPI strip fold away — settings and detail, all of them
-        * still one click from view. */}
-      <section
-        className={`${styles.overview} ${overviewOpen ? '' : styles.overviewClosed}`}
-        aria-label="Mimic overview"
-      >
-        <header className={styles.bar}>
-          <div className={styles.titleWrap}>
-            <MimicSwitcher
-              layouts={layouts}
-              activeSlug={activeSlug}
-              activeName={activeName}
-              canManage={canEdit}
-              // A draft belongs to one server revision. Switching drawings is
-              // disabled until the administrator saves or cancels the session.
-              disabled={editMode}
-              onSelect={selectMimic}
-            />
-            {overviewOpen && <p className={styles.sub}>{subtitle}</p>}
-          </div>
-
-          <span className={styles.plantState}>
-            <span className={`${styles.dot} ${dotClass}`} />
-            {statusLabel}
-          </span>
-
-          <div className={styles.actions}>
-            {overviewOpen && cadence}
-
-            {canEdit && !!layout && !lock && (
-              !editMode && (
-                <Button
-                  variant="outlined"
-                  color="inherit"
-                  onClick={toggleEdit}
-                >
-                  Edit layout
-                </Button>
-              )
-            )}
-
-            <button
-              type="button"
-              className={styles.overviewToggle}
-              aria-expanded={overviewOpen}
-              aria-controls="mimic-overview-detail"
-              title={overviewOpen ? 'Collapse overview' : 'Expand overview'}
-              aria-label={overviewOpen ? 'Collapse overview' : 'Expand overview'}
-              onClick={toggleOverview}
-            >
-              {overviewOpen ? <ExpandLessOutlined fontSize="small" /> : <ExpandMoreOutlined fontSize="small" />}
-            </button>
-          </div>
-        </header>
-
-        {/* `hidden` rather than unmounted: the strip's bindings ride the shared
-          * poller either way, and remounting it on every fold would restart its
-          * entry in the snapshot for no gain. */}
-        <div id="mimic-overview-detail" hidden={!overviewOpen}>
-          {/* Not in full screen: the banner carries its own copy, and two
-            * strips in one tree would be two things to read before finding the
-            * drawing — and two identically-labelled regions for a screen
-            * reader. */}
-          {layout && !fullscreen && (
-            <KpiStrip
-              kpis={kpis}
-              tags={tags}
-              editing={editing}
-              onEdit={setEditingKpi}
-              onAdd={addKpi}
-              onReorder={commitKpis}
-            />
-          )}
-        </div>
-      </section>
+      <OverviewPanel
+        drawings={{
+          layouts,
+          activeSlug,
+          activeName,
+          canManage: canEdit,
+          switchDisabled: editMode,
+          onSelect: selectMimic,
+        }}
+        status={data.plantStatus}
+        subtitle={data.subtitle}
+        cadence={{
+          intervalMs: data.liveMs,
+          onInterval: data.setLiveMs,
+          fastOpen: data.fastOpen,
+          onFastOpen: data.setFastOpen,
+        }}
+        showEdit={canEdit && !!layout && !lock && !editMode}
+        onEdit={lifecycle.startEditing}
+        // Not in full screen: the banner carries its own copy, and two strips
+        // in one tree would be two things to read before finding the drawing —
+        // and two identically-labelled regions for a screen reader.
+        kpiStrip={layout && !fullscreen && (
+          <KpiStrip
+            kpis={kpis}
+            tags={tags}
+            editing={editing}
+            onEdit={ui.setEditingKpi}
+            onAdd={actions.addKpi}
+            onReorder={actions.commitKpis}
+          />
+        )}
+      />
 
       {/* Read-only, and why. Sits above the data error because it describes
         * the drawing itself rather than this tick's poll. */}
       {lock && <Alert severity="warning">{lock}</Alert>}
 
-      <ConnectionAlarmStrip sources={connSources} />
+      <ConnectionAlarmStrip sources={data.connSources} />
 
       {/* Named alarm tiles above already say which source and for how long;
         * the generic banner only earns its place when the strip has nothing
         * to say (e.g. a stale-but-answering source). */}
-      {dataError && !anySourceFailed && <Alert severity="warning">{dataError}</Alert>}
+      {data.dataError && !data.anySourceFailed && <Alert severity="warning">{data.dataError}</Alert>}
 
       {/* Only the drawing waits on the switch — the switcher itself stays put,
         * so the control you just used does not vanish under your cursor. */}
       {!layout && <p className={styles.loading}>Loading the plant drawing…</p>}
 
       {layout && editing && (
-        <div
-          className={`${styles.editorWorkspace} ${saving ? styles.editorWorkspaceSaving : ''}`}
-          aria-busy={saving}
-          inert={saving ? true : undefined}
-          ref={stageRef}
-        >
-          <aside className={`${styles.editorPaletteRail} ${paletteOpen ? '' : styles.editorRailClosed}`}>
-            <button
-              type="button"
-              className={styles.editorRailToggle}
-              aria-expanded={paletteOpen}
-              onClick={togglePalette}
-            >
-              {paletteOpen ? 'Hide symbols' : 'Symbols'}
-            </button>
-            {paletteOpen && (
-              <div className={styles.editorRailBody}>
-                <SymbolPalette
-                  onAdd={addSymbol}
-                  customSymbols={customSymbols}
-                  onAuthorSymbol={() => setAuthoring(true)}
-                />
-              </div>
-            )}
-          </aside>
-
-          <main className={styles.editorCenter}>
-            {/* No tools argument: edit mode has its own drafting toolbar
-              * immediately below, which already carries these controls. */}
-            {fullscreenHead()}
-            <MimicEditorToolbar
-              toolMode={toolMode}
-              onToolMode={setToolMode}
-              wirePen={wirePen}
-              onWirePen={setWirePen}
-              gridVisible={gridVisible}
-              onGridVisible={setGridVisible}
-              snapEnabled={snapEnabled}
-              onSnapEnabled={setSnapEnabled}
-              zoomPercent={viewZoom}
-              onZoomOut={() => canvasRef.current?.zoomOut()}
-              onZoomIn={() => canvasRef.current?.zoomIn()}
-              onResetView={() => canvasRef.current?.resetView()}
-              onFit={() => canvasRef.current?.fitContents()}
-              fullscreen={fullscreen}
-              onFullscreen={toggleFullscreen}
-              onSnapshot={() => canvasRef.current?.snapshot()}
-              onTogglePalette={togglePalette}
-              onToggleInspector={toggleInspector}
-              onProductionLog={() => setProductionSettingsOpen(true)}
-              productionLogConfigured={!!layout.productionLog}
-              sheet={sheetOf(layout)}
-              sheetSizes={SHEET_SIZES.map((size) => ({
-                ...size,
-                fits: layout.nodes.every((n) => n.x + n.w <= size.w && n.y + n.h <= size.h),
-              }))}
-              onSheetSize={setSheetSize}
-            />
-            <div className={styles.editorCanvas}>
-              <MimicCanvas
-                ref={canvasRef}
-                layout={layout}
-                tags={tags}
-                selectedId={selectedId}
-                onSelect={selectNode}
-                groupIds={groupIds}
-                onSelectMany={selectMany}
-                onMoveNodes={moveNodes}
-                onNudgeNodes={nudgeNodes}
-                onDeleteNodes={deleteNodes}
-                selectedEdgeId={selectedEdgeId}
-                onSelectEdge={selectEdge}
-                editMode={!saving}
-                wirePen={wirePen}
-                toolMode={toolMode}
-                gridVisible={gridVisible}
-                snapEnabled={snapEnabled}
-                onViewportChange={setViewport}
-                onGestureStart={beginGesture}
-                onGestureEnd={endGesture}
-                onGestureCancel={abortGesture}
-                onMoveNode={moveNode}
-                onNudgeNode={nudgeNode}
-                onResizeNode={resizeNode}
-                onDeleteNode={deleteNodeKey}
-                onAddEdge={addEdge}
-                onDeleteEdge={deleteEdgeKey}
-                onMoveBubble={moveBubble}
-                onOpenBinding={openBinding}
-                onDropSymbol={({ type, symbolId }, point) => addSymbol(type, symbolId, point)}
-              />
-            </div>
-            <MimicCommandBar
-              canUndo={editorSession.past.length > 0}
-              canRedo={editorSession.future.length > 0}
-              hasSelection={!!selectedNode || !!selectedEdge}
-              canRotate={!!selectedNode}
-              dirty={dirty}
-              saving={saving}
-              onUndo={undoLayout}
-              onRedo={redoLayout}
-              onRotate={rotateSelection}
-              onDelete={deleteSelection}
-              onReset={handleReset}
-              onImport={() => setImportOpen(true)}
-              onExport={exportDraft}
-              onCancel={requestCancel}
-              onSave={handleSave}
-            />
-          </main>
-
-          <aside className={`${styles.editorInspectorRail} ${inspectorOpen ? '' : styles.editorRailClosed}`}>
-            <button
-              type="button"
-              className={styles.editorRailToggle}
-              aria-expanded={inspectorOpen}
-              onClick={toggleInspector}
-            >
-              {inspectorOpen ? 'Hide inspector' : 'Inspector'}
-            </button>
-            {inspectorOpen && (
-              <div className={styles.editorRailBody}>
-                {selectedEdge ? (
-                  <EdgeInspector
-                    edge={selectedEdge}
-                    nodes={nodes}
-                    onChange={(patch) => updateEdge(selectedEdge.id, patch)}
-                    onDelete={deleteEdge}
-                    onBack={() => setSelectedEdgeId(null)}
-                  />
-                ) : groupIds.length > 1 ? (
-                  <GroupInspector
-                    nodes={layout.nodes.filter((n) => groupIds.includes(n.id))}
-                    onOptions={(patch) => setNodesOptions(groupIds, patch)}
-                    onDelete={() => deleteNodes(groupIds)}
-                    onBack={() => setGroupIds([])}
-                  />
-                ) : selectedNode ? (
-                  <NodeInspector
-                    node={selectedNode}
-                    datasources={datasourcesQuery.data || []}
-                    onConnect={() => openBinding(selectedNode)}
-                    onDelete={deleteNode}
-                    onResetBubble={resetBubble}
-                    onResetSize={resetNodeSize}
-                    onRotate={rotateNode}
-                    onOptions={setNodeOptions}
-                    theme={layout?.theme}
-                    onTheme={setLayoutTheme}
-                    onBack={() => setSelectedId(null)}
-                  />
-                ) : (
-                  <div className={styles.editorHelp}>
-                    <span>Inspector</span>
-                    <h3>Select a symbol or wire</h3>
-                    <p>Properties, datasource bindings, rotation, size, and flow rules appear here. Drag from a symbol port to create a connection.</p>
-                    <kbd>Space + drag</kbd><small>Pan canvas</small>
-                    <kbd>Ctrl/Cmd + wheel</kbd><small>Zoom at pointer</small>
-                  </div>
-                )}
-              </div>
-            )}
-          </aside>
-        </div>
+        <MimicEditor
+          layout={layout}
+          tags={tags}
+          customSymbols={data.customSymbols}
+          datasources={data.datasources}
+          doc={doc}
+          chrome={chrome}
+          selection={selection}
+          edits={edits}
+          lifecycle={lifecycle}
+          stageRef={stageRef}
+          canvasRef={canvasRef}
+          fullscreen={fullscreen}
+          onToggleFullscreen={toggleFullscreen}
+          head={<FullscreenHead {...headProps} />}
+          viewZoom={viewZoom}
+          setViewport={ui.setViewport}
+          onOpenBinding={actions.openBinding}
+          onAuthorSymbol={() => ui.setAuthoring(true)}
+          onProductionSettings={() => ui.setProductionSettingsOpen(true)}
+          onImport={() => ui.setImportOpen(true)}
+          onExport={files.exportDraft}
+        />
       )}
 
       {layout && !editing && (
-        <div className={`${styles.body} ${productionLogOpen ? styles.bodyLogOpen : ''}`} ref={stageRef}>
-          <div className={styles.stageWrap}>
-            {fullscreenHead(viewToolbar)}
-            <MimicCanvas
-              ref={canvasRef}
-              layout={layout}
-              tags={tags}
-              selectedId={selectedId}
-              onSelect={selectNode}
-              selectedEdgeId={selectedEdgeId}
-              onSelectEdge={selectEdge}
-              toolMode={viewPan ? 'pan' : 'select'}
-              onViewportChange={setViewport}
-              onMoveNode={moveNode}
-              onNudgeNode={nudgeNode}
-              onResizeNode={resizeNode}
-              onDeleteNode={deleteNodeKey}
-              onAddEdge={addEdge}
-              onDeleteEdge={deleteEdgeKey}
-              onMoveBubble={moveBubble}
-            />
-
-            <TitleBlock
-              layout={layout}
-              name={activeName}
-              // Re-rendered on every poll, so this is the time of the figures
-              // on screen. Plant-local wall clock, like the rest of the page.
-              asOf={new Date().toLocaleTimeString('en-GB', { hour12: false })}
-            />
-
-            {/* Windowed only. In full screen the same cluster is rendered
-              * into the banner above instead, so it never covers the sheet. */}
-            {!fullscreen && viewToolbar}
-
-            <ProductionLogDrawer
-              open={productionLogOpen}
-              slug={activeSlug}
-              configured={!!layout.productionLog}
-              mode={layout.productionLog?.mode ?? null}
-              canEdit={canEdit}
-              onClose={() => setProductionLogOpen(false)}
-            />
-          </div>
-
-          {/* Nothing selected means nothing to show — the rail's only content
-            * is a per-symbol readout, so an empty "no asset selected" panel
-            * just spends half the screen saying so. The canvas takes the
-            * space back until a click gives the rail something to render. */}
-          {selectedId && (
-            <div className={`${styles.railCol} ${railCollapsed ? styles.railColCollapsed : ''}`}>
-              <IconButton className={styles.railToggle} size="small" onClick={() => setRailCollapsed((c) => !c)}>
-                {railCollapsed ? <ChevronLeft fontSize="small" /> : <ChevronRight fontSize="small" />}
-              </IconButton>
-              {!railCollapsed && (
-                isCameraNode(selectedNode)
-                  ? <CameraRail node={selectedNode} tag={selectedTag} pollMs={intervalMs} container={overlayHost} />
-                  : <DetailRail tag={selectedTag} node={selectedNode} history={history[selectedId]} events={events} canBind={false} />
-              )}
-            </div>
-          )}
-        </div>
+        <MimicViewer
+          layout={layout}
+          tags={tags}
+          history={data.history}
+          events={data.events}
+          activeName={activeName}
+          activeSlug={activeSlug}
+          canEdit={canEdit}
+          intervalMs={data.liveMs}
+          selection={selection}
+          edits={edits}
+          ui={ui}
+          stageRef={stageRef}
+          canvasRef={canvasRef}
+          fullscreen={fullscreen}
+          overlayHost={overlayHost}
+          head={<FullscreenHead {...headProps} tools={viewToolbar} />}
+          toolbar={viewToolbar}
+        />
       )}
 
-      {/* สิ่งที่ต้องจัดการ — every symbol on the sheet, the ones needing a
-        * person first: alarm, then off-normal, then not connected, then the
-        * healthy rest. Clicking an entry selects the symbol on the drawing.
-        * An empty drawing has nothing to list; the bare strip would just be a
-        * box with nothing in it. */}
       {nodes.length > 0 && (
-        <section className={styles.strip} aria-label={tr('Things to handle')}>
-          <div className={styles.stripHead}>
-            <span className={styles.stripTitle}>{tr('Things to handle')}</span>
-            <span className={styles.stripCounts}>
-              {attention.crit > 0 && <span className={styles.countCrit}>{tr('{count} alarm', { count: attention.crit })}</span>}
-              {attention.warn > 0 && <span className={styles.countWarn}>{tr('{count} off normal', { count: attention.warn })}</span>}
-              {attention.unbound > 0 && <span className={styles.countUnbound}>{tr('{count} not connected', { count: attention.unbound })}</span>}
-              {!attention.crit && !attention.warn && !attention.unbound && (
-                <span className={styles.countOk}>{tr('Nothing needs attention')}</span>
-              )}
-            </span>
-          </div>
-          <div className={styles.stripItems} role="group" aria-label={tr('All plant tags')}>
-            {attention.ordered.map(({ node, tag, rank }) => {
-              const on = selectedId === node.id
-              const tone = rank === 0 ? styles.chipCrit : rank === 1 ? styles.chipWarn : ''
-              return (
-                <button
-                  key={node.id}
-                  type="button"
-                  className={`${styles.chip} ${on ? styles.chipOn : ''} ${tone} ${tag ? '' : styles.chipUnbound}`}
-                  aria-pressed={on}
-                  onClick={() => selectNode(node.id)}
-                >
-                  <span className={styles.chipId}>{node.tagId || node.label}</span>
-                  <span className={styles.chipValue}>{tag ? formatValue(tag) : '—'}</span>
-                  {tag?.unit && <span className={styles.chipUnit}>{tag.unit}</span>}
-                </button>
-              )
-            })}
-          </div>
-        </section>
+        <AttentionStrip
+          attention={data.attention}
+          selectedId={selection.selectedId}
+          onSelect={selection.selectNode}
+        />
       )}
 
-      <SymbolBindingDialog
-        open={!!bindingNode}
-        node={bindingNode}
-        container={overlayHost}
-        onClose={() => setBindingNode(null)}
-        onSave={applyBinding}
+      <MonitorDialogs
+        ui={ui}
+        actions={actions}
+        lifecycle={lifecycle}
+        files={files}
+        overlayHost={overlayHost}
+        layout={layout}
+        snackbar={snackbar}
+        onCloseSnackbar={closeSnackbar}
+        notify={notify}
+        onReloadServerRevision={reloadServerRevision}
       />
-
-      <KpiBindingDialog
-        open={!!editingKpi}
-        kpi={editingKpi}
-        container={overlayHost}
-        onClose={() => setEditingKpi(null)}
-        onSave={applyKpi}
-        onRemove={removeKpi}
-      />
-
-      <ProductionLogDialog
-        open={productionSettingsOpen}
-        binding={layout?.productionLog ?? null}
-        container={overlayHost}
-        onClose={() => setProductionSettingsOpen(false)}
-        onSave={applyProductionLog}
-      />
-
-      <CustomSymbolDialog
-        open={authoring}
-        container={overlayHost}
-        onClose={() => setAuthoring(false)}
-        onSaved={(row) => {
-          queryClient.invalidateQueries({ queryKey: ['mimic-symbols'] })
-          setAuthoring(false)
-          notify(`“${row.name}” added to the symbol library.`)
-        }}
-      />
-
-      <ImportLayoutDialog
-        open={importOpen}
-        container={overlayHost}
-        onClose={() => setImportOpen(false)}
-        onImport={importDraft}
-      />
-      <UnsavedChangesDialog
-        open={unsavedOpen}
-        container={overlayHost}
-        onStay={keepEditing}
-        onDiscard={discardUnsaved}
-      />
-      <RevisionConflictDialog
-        open={conflictOpen}
-        container={overlayHost}
-        onContinue={() => setConflictOpen(false)}
-        onExport={exportDraft}
-        onReload={reloadServerRevision}
-      />
-
-      {/* Snackbar is the one overlay here that is not a modal, so it has no
-        * container of its own to redirect — it is portalled explicitly for the
-        * same reason the dialogs are. */}
-      <Portal container={overlayHost}>
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-      >
-        <Alert
-          severity={snackbar.severity}
-          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-          sx={{ width: '100%' }}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
-      </Portal>
     </div>
   )
 }

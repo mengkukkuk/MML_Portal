@@ -28,6 +28,14 @@ import { normalizeKpis } from './kpiBoxes'
 const LEGACY_KEY = 'mml.mimic.boiler-1'
 
 /**
+ * Where a fresh install lands. /monitor drew only this plant before it could
+ * hold several, so the slug is also the one the pre-server localStorage
+ * drawing belongs to — no other mimic may inherit it.
+ */
+export const FALLBACK_SLUG = 'boiler-1'
+export const FALLBACK_NAME = 'Boiler House 1'
+
+/**
  * Structural check only — enough to know the renderer won't throw.
  *
  * Deliberately *not* a check that every symbol type is drawable: that is a fact
