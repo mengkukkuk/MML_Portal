@@ -25,3 +25,6 @@ scada-frontend/public/m_favicon.tif
 .idea/
 .DS_Store
 Thumbs.db
+
+# Skills: .claude/skills is the tracked source of truth; .agents/skills is installer-managed
+.agents/skills/
