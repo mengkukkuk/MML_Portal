@@ -127,7 +127,7 @@ The single most important split in this codebase.
 | `reports.py` | `/api/reports/*` — OEE/MES reporting: template CRUD (admin token gates template writes), report runs, CSV/Excel export |
 | `report_engine.py` | Pure state-interval arithmetic — turns `public.event_logs` transitions into machine runtime/downtime/OEE metrics |
 | `security.py` | Password hashing via stdlib `hashlib.scrypt`, JWT sign/verify, and `encrypt_secret`/`decrypt_secret` (Fernet) for `datasources.password` at rest |
-| `db.py` | Psycopg 3 access layer — all SQL lives here. `get_connection()` is **always the localhost app DB**; plant SQL goes through the per-datasource pools and `fan_out`/`fan_out_rows`. Also dynamic `variables_tag` column discovery and table init helpers |
+| `db/` | Psycopg 3 access layer, a package split by domain (`pool`, `fanout`, `users`, `tags`, `tables`, `series`, `datasources`, `mimic`, `cameras`, `reports`, …) — all SQL lives here. `import db` and `db.<name>` still work: `db/__init__.py` re-exports every name and writes attribute assignments through to the owning module. Inside the package, cross-module calls are module-qualified (`_pool.get_connection()`), never `from .pool import …`. `get_connection()` is **always the localhost app DB**; plant SQL goes through the per-datasource pools and `fan_out`/`fan_out_rows`. Also dynamic `variables_tag` column discovery and table init helpers |
 | `mailer.py` | Password-reset delivery: **Brevo HTTP API** (preferred) → SMTP fallback → log-only dev mode |
 | `config.py` | All env vars with fallback defaults, plus the hardcoded `APP_DB_*` constants |
 | `migrate_config_to_local.py` | One-shot: copy config tables from an old remote DB to localhost. Dry-run by default, `--apply` to write |

@@ -20,7 +20,8 @@ C:\dev\
 │   ├── main.py                     ← app factory: CORS, /health, mounts routers,
 │   │                                 init_*_table() on startup, runs on :8088
 │   ├── config.py                   ← reads .env (DB, JWT, account, Brevo, SMTP, cookie)
-│   ├── db.py                       ← psycopg 3 access layer (users + readings + tags + panels +
+│   ├── db/                         ← psycopg 3 access layer, a package split by domain behind
+│   │                                 an `import db` facade (users + readings + tags + panels +
 │   │                                 dashboards + datasources + mimic + reports)
 │   ├── security.py                 ← scrypt hashing + JWT (access/refresh/reset) + Fernet
 │   │                                 encrypt/decrypt for saved datasource passwords

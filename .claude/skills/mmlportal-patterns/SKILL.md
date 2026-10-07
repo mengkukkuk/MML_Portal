@@ -137,8 +137,17 @@ mounted in `main.py`. Conventions (see `panels.py`, `auth.py`):
 - Gate every endpoint with a dependency: `Depends(get_current_user)` for
   authenticated reads, `Depends(require_admin)` for admin-only writes. Unused
   injected user is named `_user` / `_admin`.
-- **All SQL lives in `db.py`** — routers call `db.list_panels(...)`,
-  `db.create_user(...)`, etc. Routers never embed SQL.
+- **All SQL lives in the `db/` package** (one module per domain: `pool`, `users`,
+  `tags`, `tables`, `series`, `datasources`, `mimic`, `cameras`, `reports`, …; see
+  `db/__init__.py`) — routers still `import db` and call `db.list_panels(...)`,
+  `db.create_user(...)`, etc. Routers never embed SQL. When adding a query: put
+  it in the module for its domain and add the name to that module's `__all__`
+  (`tests/test_db_facade.py` fails if a name is dropped). Inside `db/`, call
+  another module's function module-qualified at call time
+  (`from . import pool as _pool` → `_pool.get_connection()`), never
+  `from .pool import get_connection` — setting an attribute on `db` writes
+  through to the owning module, which is what lets tests patch `db.<name>` and
+  have every caller see it.
 - Validate against explicit whitelists (sets/frozensets at module top) and
   raise `HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=...)`
   with a human-readable message. Use the `status.HTTP_*` constants, not bare ints.

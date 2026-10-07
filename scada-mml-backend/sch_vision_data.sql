@@ -441,6 +441,50 @@ create trigger trg_sync_defect_ratio_defect
     for each row
 execute function sync_camera_defect_ratio();
 
+-- Max ratio
+CREATE OR REPLACE FUNCTION sync_camera_defect_max_ratio()
+    RETURNS TRIGGER
+    LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_code VARCHAR(50);
+    v_count_total INT;
+    v_max_defect INT;
+BEGIN
+    -- Determine affected code (NEW for INSERT/UPDATE, OLD for DELETE)
+    v_code := COALESCE(NEW.code, OLD.code);
+
+    -- Fetch latest values from both tables
+    SELECT count_total INTO v_count_total FROM camera_count_speed WHERE code = v_code;
+    SELECT max_defect INTO v_max_defect FROM camera_defect WHERE code = v_code;
+
+    -- Upsert into target table
+    IF v_count_total IS NOT NULL OR v_max_defect IS NOT NULL THEN
+        INSERT INTO camera_defect_ratio (code, count_total, max_defect)
+        VALUES (v_code, COALESCE(v_count_total, 0), COALESCE(v_max_defect, 0))
+        ON CONFLICT (code) DO UPDATE
+            SET
+                count_total = EXCLUDED.count_total,
+                max_defect = EXCLUDED.max_defect;
+    ELSE
+        -- Delete row if code no longer exists in source tables
+        DELETE FROM camera_defect_ratio WHERE code = v_code;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_sync_ratio_camera_count_speed
+    AFTER INSERT OR UPDATE OR DELETE ON camera_count_speed
+    FOR EACH ROW
+EXECUTE FUNCTION sync_camera_defect_max_ratio();
+
+CREATE TRIGGER trg_sync_ratio_camera_defect
+    AFTER INSERT OR UPDATE OR DELETE ON camera_defect
+    FOR EACH ROW
+EXECUTE FUNCTION sync_camera_defect_max_ratio();
+
 -- Production_hourly_log
 CREATE TABLE IF NOT EXISTS vision_data.production_hourly_log (
     id            bigserial   PRIMARY KEY,

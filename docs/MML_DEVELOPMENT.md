@@ -89,7 +89,9 @@ C:\dev\
 │   │                               mounts 11 routers, /health, calls db.init_*_table()
 │   │                               on startup, runs on :8088
 │   ├── config.py                 # Loads .env (DB, JWT, account, Brevo, SMTP, cookie)
-│   ├── db.py                     # psycopg 3 access layer — users CRUD, devices,
+│   ├── db/                       # psycopg 3 access layer, split by domain (pool, fanout,
+│   │                               users, tags, tables, series, mimic, cameras, reports, …);
+│   │                               `import db` facade — users CRUD, devices,
 │   │                               sensor_readings, variables_tag (dynamic discovery),
 │   │                               dashboard_panels, dashboards, datasources,
 │   │                               mimic layouts/assets/symbols, report templates
@@ -631,7 +633,7 @@ database and external datasources (see `/api/datasources`).
 | GET    | `/api/schema/latest` | `table`, `value_col`, `filter_col?`, `filter_val?`, `ts_col?`, `datasource_id?` | `{value, ts}` — newest matching row; **404** if none |
 | GET    | `/api/schema/series` | `table`, `value_col`, `ts_col`, `filter_col?`, `filter_val?`, `minutes` (1–10080, def 15), `datasource_id?` | `{points: [{ts, value}, ...]}` — time window |
 
-All table/column names are validated against an `information_schema` allowlist in `db.py`;
+All table/column names are validated against an `information_schema` allowlist in `db/` (`db/tables.py`);
 sensitive tables are denylisted. Filter values are always parameterized.
 
 ### 7.8 `/api/datasources` — saved DB connections (Bearer, any role; writes require admin)
