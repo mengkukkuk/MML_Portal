@@ -1,0 +1,134 @@
+/* One cluster, the same family as the Monitor's view controls: small, quiet,
+   bordered, with the pressed state in the accent. The chart is the subject and
+   this sits above it without competing. */
+.bar {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  max-width: 100%;
+}
+
+.tool {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+
+.tool:hover:not(:disabled) {
+  color: var(--fg);
+  background: var(--bg-panel);
+}
+
+.tool:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.tool:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.toolOn {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.toolLabel {
+  letter-spacing: 0.02em;
+}
+
+.divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 3px 4px;
+  background: var(--border-soft);
+}
+
+/* What the chart is showing against the whole window: 100% is everything. */
+.zoom {
+  min-width: 44px;
+  text-align: center;
+  color: var(--fg-dim);
+  font: 11px var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Live ---------------------------------------------------------------- */
+.lamp {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+  flex: none;
+}
+
+.liveOn {
+  color: var(--fg);
+}
+
+.liveOn .lamp {
+  background: var(--ok);
+}
+
+/* One flash per read, from a ring that fades — the lamp announces data landing,
+   it does not pulse for the sake of looking alive. */
+.lampBeat {
+  animation: beat 0.9s ease-out 1;
+}
+
+@keyframes beat {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 70%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 8px transparent;
+  }
+}
+
+.every {
+  color: var(--fg-dim);
+  font: 11px var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.stamp {
+  padding: 0 6px 0 4px;
+  color: var(--fg-dim);
+  font: 11px var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool {
+    transition: none;
+  }
+
+  .lampBeat {
+    animation: none;
+  }
+}
+
+/* Narrow: the words go, the icons and the numbers stay. */
+@media (max-width: 640px) {
+  .toolLabel {
+    display: none;
+  }
+}

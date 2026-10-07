@@ -5,6 +5,7 @@ import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker'
 import { TREND_RANGES, windowError } from './trendWindow'
 import { useQuery } from '@tanstack/react-query'
 import Checkbox from '@mui/material/Checkbox'
+import Divider from '@mui/material/Divider'
 import FormControl from '@mui/material/FormControl'
 import MenuItem from '@mui/material/MenuItem'
 import Select from '@mui/material/Select'
@@ -62,7 +63,13 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
     }
   }
   const selected = useDatasourceSelectionStore((s) => s.selected)
-  const primaryId = trendSourceId(trend, selected?.[0]?.id)
+  // Two ways to say which source: pick one (pinned in the link as `ds`), or leave
+  // it following the first source chosen in the header. The control shows which
+  // of the two is in force, so "why is this reading *that* plant" has an answer
+  // on screen instead of in the URL.
+  const headerId = selected?.[0]?.id ?? null
+  const followsHeader = trend.datasourceId == null
+  const primaryId = trendSourceId(trend, headerId)
 
   // Any configured source can be browsed, not only the header's selection —
   // the trend reads one table from one source, so it has nothing to merge.
@@ -147,11 +154,21 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
     }
   }, [datasourcesQuery.data, datasources, trend.datasourceId, set])
 
-  function pickSource(id) {
-    // A different database: every table and column below describes the old one.
+  // `''` is "follow the header". Choosing the source already being read — the
+  // header's own, pinned — changes how it is chosen, not what is read, so the
+  // table and readings stay; a different database wipes them, since every table
+  // and column below describes the old one.
+  function pickSource(value) {
+    const next = value === '' ? null : value
+    if ((next ?? headerId) === primaryId) {
+      set({ datasourceId: next })
+      return
+    }
     clampedFor.current = null
-    set({ datasourceId: id, table: '', valueCols: [], tsCol: '' })
+    set({ datasourceId: next, table: '', valueCols: [], tsCol: '' })
   }
+  const sourceName = (id) => datasources.find((d) => d.id === id)?.name
+    ?? selected?.find((d) => d.id === id)?.name
 
   function pickTable(table) {
     // Everything downstream describes the old table's columns.
@@ -182,16 +199,32 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
     <div className={`${styles.rail} report-trend-controls`}>
       <Field label={tr('Datasource')}>
         <Select
-          value={datasources.some((d) => d.id === primaryId) ? primaryId : ''}
+          value={followsHeader || !datasources.some((d) => d.id === trend.datasourceId) ? '' : trend.datasourceId}
           displayEmpty
           inputProps={{ 'aria-label': tr('Datasource') }}
           onChange={(e) => pickSource(e.target.value)}
-          renderValue={(id) => datasources.find((d) => d.id === id)?.name ?? tr('Choose a datasource')}
+          renderValue={(id) => {
+            const name = sourceName(id === '' ? primaryId : id)
+            return (
+              <>
+                {name ?? tr('Choose a datasource')}
+                {id === '' && name && <span className={styles.sourceTag}>{tr('header')}</span>}
+              </>
+            )
+          }}
         >
+          <MenuItem value="">
+            {tr('Follow the header')}
+            {headerId != null && <span className={styles.sourceDb}>{sourceName(headerId)}</span>}
+          </MenuItem>
+          <Divider component="li" />
           {datasources.map((d) => (
             <MenuItem key={d.id} value={d.id}>
               {d.name}
               <span className={styles.sourceDb}>{d.database}</span>
+              {selected?.some((h) => h.id === d.id) && (
+                <span className={styles.sourceTag}>{tr('selected in header')}</span>
+              )}
             </MenuItem>
           ))}
         </Select>

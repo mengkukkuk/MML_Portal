@@ -27,10 +27,12 @@ export function windowError(start, end) {
   return ''
 }
 
-export function resolveTrendWindow(trend, now = Date.now()) {
+export function resolveTrendWindow(trend, now = Date.now(), stepMs = 60_000) {
   if (trend.minutes === 'custom') return { start: trend.start, end: trend.end }
-  // The pickers display minutes; keep the request equally precise.
-  now = Math.floor(now / 60_000) * 60_000
+  // The pickers display minutes; keep the request equally precise. A live
+  // refresh asks for a second's precision instead (`stepMs` 1000): rounded to
+  // the minute, the newest minute of readings would never be on the chart.
+  now = Math.floor(now / stepMs) * stepMs
   return {
     start: new Date(now - trend.minutes * 60_000).toISOString(),
     end: new Date(now).toISOString(),

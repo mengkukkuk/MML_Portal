@@ -1,3 +1,49 @@
+/* The legend and the view controls share one row: what is drawn on the left,
+   how it is framed on the right. The legend takes the slack and wraps under the
+   controls on a narrow card rather than pushing them off the edge. */
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+}
+
+.barLegend {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+/* The chart and its zoom box. Dragging on it draws the box (or pans, with the
+   hand tool), so the browser's own text selection and touch scrolling must not
+   claim the gesture. ECharts sets its own cursor on the elements inside, hence
+   the !important: the stage decides what the drag will do and says so. */
+.stage {
+  position: relative;
+  user-select: none;
+  touch-action: pan-y;
+}
+
+.stage[data-tool='zoom'] * {
+  cursor: crosshair !important;
+}
+
+.stage[data-tool='hand'] * {
+  cursor: grab !important;
+}
+
+.stage[data-tool='hand']:active * {
+  cursor: grabbing !important;
+}
+
+/* The box being dragged: the slice about to fill the chart. */
+.marquee {
+  position: absolute;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-inline: 1px solid var(--accent);
+}
+
 /* The legend is the filter. One row of toggles, each carrying its own ink, so
    the control that names a reading is the control that shows or hides it —
    whether those are one reading's four roles or several readings' lines. */

@@ -32,6 +32,10 @@ import * as echarts from 'echarts'
  *   notMerge  — passed through to setOption (default true, see above)
  *   theme     — optional echarts theme name/object passed to init()
  *   onEvents  — optional { eventName: handler } map bound via chart.on()
+ *   onReady   — optional (chart | null) callback: the live instance once it is
+ *               initialised, and null when it is disposed. For callers that have
+ *               to drive the chart (dispatchAction, convertFromPixel); held in a
+ *               ref, so passing a new function never re-initialises the chart.
  *
  * Kept intentionally generic/reusable — Phase 5's LivePanel (12 viz types)
  * will be the heaviest consumer of this component.
@@ -45,9 +49,12 @@ export default function EChart({
   notMerge = true,
   theme,
   onEvents,
+  onReady,
 }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
+  const onReadyRef = useRef(onReady)
+  onReadyRef.current = onReady
 
   // Mount/dispose the chart instance itself. Deliberately does not depend
   // on `option` — only re-inits if the theme changes.
@@ -57,10 +64,12 @@ export default function EChart({
 
     const chart = echarts.getInstanceByDom(el) ?? echarts.init(el, theme)
     chartRef.current = chart
+    onReadyRef.current?.(chart)
 
     return () => {
       chart.dispose()
       if (chartRef.current === chart) chartRef.current = null
+      onReadyRef.current?.(null)
     }
   }, [theme])
 

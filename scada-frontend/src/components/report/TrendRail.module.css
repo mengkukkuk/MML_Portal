@@ -94,3 +94,17 @@
   font-size: 11px;
   color: var(--fg-dim);
 }
+
+/* Where a datasource came from: followed from the header, or one the header has
+   selected. A tag, not a colour — it has to read the same on every theme. */
+.sourceTag {
+  margin-left: var(--space-2);
+  padding: 0 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
