@@ -53,7 +53,8 @@ param(
     [string]$EnableHttps = "false",
     [int]$HttpsPort = 443,
     [string]$AppDbName = "postgres",
-    [string]$AppDbSchema = "public"
+    [string]$AppDbSchema = "public",
+    [string]$PgInstallerPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -197,7 +198,8 @@ if ($otherPgSvcs) {
 
 $pgSvc = Get-Service -Name "postgresql-x64-18" -ErrorAction SilentlyContinue
 if (-not $pgSvc -and $InstallPostgres -eq "true") {
-    $pgInstaller = Join-Path $RedistDir "postgresql-18-windows-x64.exe"
+    # Full build: {app}\redist\. Lite build: the wizard passes the copy placed next to setup.exe.
+    $pgInstaller = if ($PgInstallerPath) { $PgInstallerPath } else { Join-Path $RedistDir "postgresql-18-windows-x64.exe" }
     if (Test-Path $pgInstaller) {
         Write-Log "Installing PostgreSQL 18 silently..."
         # NOTE: EDB's installbuilder-based installer. Flags verified against the version
@@ -218,7 +220,7 @@ if (-not $pgSvc -and $InstallPostgres -eq "true") {
             Write-Result "PostgreSQL install" $true
         }
     } else {
-        Write-Result "PostgreSQL install" $false "bundled installer not found at $pgInstaller"
+        Write-Result "PostgreSQL install" $false "PostgreSQL installer not found at $pgInstaller (Lite build: place postgresql-18-windows-x64.exe next to setup.exe and re-run)"
     }
 } elseif ($pgSvc) {
     Write-Result "PostgreSQL install" $true "service already present, skipped"

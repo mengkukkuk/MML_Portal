@@ -5,12 +5,24 @@
 ; against this file. Do not run ISCC.exe directly without running build.ps1 first: staging\
 ; and redist\ won't exist.
 ;
-; Everything the target PC needs is bundled: a self-contained Python (embeddable + backend
-; deps pre-installed), the built frontend, nssm.exe, and the PostgreSQL/URL-Rewrite/ARR
-; redistributables. No internet access is required at install time.
+; Bundled: a self-contained Python (embeddable + backend deps pre-installed), the built
+; frontend, nssm.exe, and the URL-Rewrite/ARR redistributables. No internet access is required
+; at install time.
+;
+; Two variants (selected by build.ps1):
+;   Lite (default)  - PostgreSQL is NOT bundled (it is ~94% of the full installer). On a PC
+;                     without PostgreSQL 18, place postgresql-18-windows-x64.exe next to this
+;                     setup.exe; a PC that already runs PostgreSQL 18 needs nothing extra.
+;   Full (/DBundlePostgres) - the EDB PostgreSQL installer is embedded too (single ~400 MB file).
 
 #ifndef MyAppVersion
   #define MyAppVersion "0.0.0"
+#endif
+
+#ifdef BundlePostgres
+  #define PgSuffix "-Full"
+#else
+  #define PgSuffix ""
 #endif
 
 #define MyAppName "MMLPortal"
@@ -28,7 +40,7 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=Output
-OutputBaseFilename=MMLPortalSetup-{#MyAppVersion}
+OutputBaseFilename=MMLPortalSetup-{#MyAppVersion}{#PgSuffix}
 Compression=lzma2/normal
 SolidCompression=yes
 WizardStyle=modern
@@ -45,7 +57,9 @@ Source: "staging\python\*";  DestDir: "{app}\python";  Flags: recursesubdirs cre
 Source: "staging\static\*";  DestDir: "{app}\static";   Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "staging\backend\*"; DestDir: "{app}\backend";  Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "staging\tools\*";   DestDir: "{app}\tools";    Flags: recursesubdirs createallsubdirs ignoreversion
+#ifdef BundlePostgres
 Source: "redist\postgresql-18-windows-x64.exe"; DestDir: "{app}\redist"; Flags: ignoreversion
+#endif
 Source: "redist\rewrite_amd64_en-US.msi";       DestDir: "{app}\redist"; Flags: ignoreversion
 Source: "redist\requestRouter_amd64.msi";       DestDir: "{app}\redist"; Flags: ignoreversion
 Source: "scripts\postinstall.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
@@ -53,7 +67,7 @@ Source: "scripts\uninstall.ps1";   DestDir: "{app}\scripts"; Flags: ignoreversio
 
 [Run]
 Filename: "powershell.exe"; \
-    Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\postinstall.ps1"" -InstallDir ""{app}"" -Hostname ""{code:GetHostname}"" -Port {code:GetPort} -InstallPostgres {code:GetInstallPostgres} -EnableHttps {code:GetEnableHttps} -HttpsPort {code:GetHttpsPort} -AppDbName ""{code:GetAppDbName}"" -AppDbSchema ""{code:GetAppDbSchema}"""; \
+    Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\postinstall.ps1"" -InstallDir ""{app}"" -Hostname ""{code:GetHostname}"" -Port {code:GetPort} -InstallPostgres {code:GetInstallPostgres} -EnableHttps {code:GetEnableHttps} -HttpsPort {code:GetHttpsPort} -AppDbName ""{code:GetAppDbName}"" -AppDbSchema ""{code:GetAppDbSchema}"" -PgInstallerPath ""{code:GetPgInstallerPath}"""; \
     StatusMsg: "Configuring PostgreSQL, IIS, and the MMLPortal service  -  this can take several minutes..."; \
     Flags: waituntilterminated
 
@@ -90,12 +104,22 @@ begin
   HostnamePage.Values[0] := 'mmlportal.local';
   HostnamePage.Values[1] := '80';
 
+#ifdef BundlePostgres
   PostgresPage := CreateInputOptionPage(HostnamePage.ID,
     'Database', 'PostgreSQL 18 is required for MMLPortal to store configuration and data.',
     'Leave this checked on a blank PC. If PostgreSQL 18 is already installed and running, ' +
     'it will be detected automatically and this option is unchecked for you.',
     False, False);
   PostgresPage.Add('Install bundled PostgreSQL 18 silently');
+#else
+  PostgresPage := CreateInputOptionPage(HostnamePage.ID,
+    'Database', 'PostgreSQL 18 is required for MMLPortal to store configuration and data.',
+    'Leave this checked on a blank PC, and place postgresql-18-windows-x64.exe in the same ' +
+    'folder as this setup program. If PostgreSQL 18 is already installed and running, it ' +
+    'will be detected automatically and this option is unchecked for you.',
+    False, False);
+  PostgresPage.Add('Install PostgreSQL 18 silently (postgresql-18-windows-x64.exe next to setup)');
+#endif
   PostgresPage.Values[0] := not DetectExistingPostgres();
 
   DatabaseNamePage := CreateInputQueryPage(PostgresPage.ID,
@@ -147,9 +171,31 @@ begin
   Result := True;
 end;
 
+function GetPgInstallerPath(Param: string): string;
+begin
+#ifdef BundlePostgres
+  Result := ExpandConstant('{app}\redist\postgresql-18-windows-x64.exe');
+#else
+  // The src constant is the folder setup.exe was launched from.
+  Result := ExpandConstant('{src}\postgresql-18-windows-x64.exe');
+#endif
+end;
+
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
+#ifndef BundlePostgres
+  if (CurPageID = PostgresPage.ID) and PostgresPage.Values[0] and
+     (not FileExists(GetPgInstallerPath(''))) then
+  begin
+    MsgBox('postgresql-18-windows-x64.exe was not found next to this setup program:' + #13#10 +
+           GetPgInstallerPath('') + #13#10#13#10 +
+           'Copy it into the same folder as the setup program, or uncheck this option if ' +
+           'PostgreSQL 18 is already installed on this PC.', mbError, MB_OK);
+    Result := False;
+    Exit;
+  end;
+#endif
   if CurPageID = HostnamePage.ID then
   begin
     if Trim(HostnamePage.Values[0]) = '' then

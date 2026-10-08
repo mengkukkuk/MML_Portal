@@ -482,9 +482,19 @@ step 3.7 above.
 
 For a plant-floor PC with **no internet access** and no Python/Node/PostgreSQL preinstalled, the
 [`installer/`](installer/) directory produces a single double-clickable
-`MMLPortalSetup-<version>.exe` (Inno Setup) that provisions everything unattended: a bundled
-PostgreSQL 18 (silent install), a self-contained Python + backend deps, the built SPA, IIS + ARR
+`MMLPortalSetup-<version>.exe` (Inno Setup) that provisions everything unattended: a silent
+PostgreSQL 18 install, a self-contained Python + backend deps, the built SPA, IIS + ARR
 reverse proxy, the `mml-api` NSSM service, and a local hostname binding — no manual steps.
+
+Two variants are built from the same script:
+
+| Variant | File | Size | PostgreSQL |
+|---------|------|------|------------|
+| **Lite** (default) | `MMLPortalSetup-<version>.exe` | ~25 MB | Not embedded. On a PC without PostgreSQL 18, put `postgresql-18-windows-x64.exe` **in the same folder as the setup** (`build.ps1` copies it into `installer\Output\`). A PC that already runs PostgreSQL 18 needs nothing extra. |
+| **Full** (`build.ps1 -Full`) | `MMLPortalSetup-<version>-Full.exe` | ~400 MB | Embedded — single self-contained file. |
+
+PostgreSQL's EDB installer is ~94 % of the full size and is already compressed, so it is the only
+thing worth leaving out.
 
 > **Before deploying: allowlist with the plant's antivirus/EDR.** The installer is not
 > code-signed (see the comment in `installer/MMLPortal.iss`) and it bundles several binaries
@@ -509,12 +519,14 @@ reverse proxy, the `mml-api` NSSM service, and a local hostname binding — no m
 cd C:\dev
 .\installer\scripts\fetch-redist.ps1   # downloads PostgreSQL 18, IIS Rewrite/ARR, Python embeddable
 .\installer\scripts\build.ps1          # npm build, assembles self-contained Python, invokes ISCC.exe
-# -> installer\Output\MMLPortalSetup-<version>.exe
+# -> installer\Output\MMLPortalSetup-<version>.exe          (Lite, + postgresql-18-windows-x64.exe beside it)
+.\installer\scripts\build.ps1 -Full    # -> installer\Output\MMLPortalSetup-<version>-Full.exe (PostgreSQL embedded)
 ```
 
 **Run on the target PC** (fully offline, needs admin): double-click the `.exe`. The wizard asks for
-a local hostname (default `mmlportal.local`), a port (default `80`), and whether to install the
-bundled PostgreSQL (auto-unchecked if `postgresql-x64-18` is already running). It installs
+a local hostname (default `mmlportal.local`), a port (default `80`), and whether to install
+PostgreSQL (auto-unchecked if `postgresql-x64-18` is already running; on the Lite build, Next is
+blocked if it is checked but `postgresql-18-windows-x64.exe` is not beside the setup). It installs
 PostgreSQL if requested, registers the `mml-api` NSSM service, enables the IIS roles + ARR proxy,
 creates the IIS site with a host-header binding, and appends the hostname to
 `C:\Windows\System32\drivers\etc\hosts`. A full pass/fail summary is written to
