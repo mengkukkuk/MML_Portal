@@ -1,0 +1,235 @@
+{
+  "kind": "mml-mimic",
+  "exportVersion": 1,
+  "exportedAt": "2026-09-27T14:36:59.123Z",
+  "slug": "aaa",
+  "name": "camera test",
+  "doc": {
+    "kpis": [
+      {
+        "id": "kpi-mui7615d-1",
+        "label": "Batch ID",
+        "labelEn": "",
+        "binding": {
+          "expr": "",
+          "unit": "",
+          "table": "camera_count_speed",
+          "ts_col": "updated_at",
+          "decimals": 0,
+          "value_col": "batch_id",
+          "filter_col": null,
+          "filter_val": null,
+          "datasource_id": 294
+        }
+      },
+      {
+        "id": "kpi-mui7md6p-1",
+        "label": "จำนวนผลิต",
+        "labelEn": "",
+        "binding": {
+          "expr": "",
+          "unit": "ซอง",
+          "table": "camera_count_speed",
+          "ts_col": "updated_at",
+          "decimals": 0,
+          "value_col": "count_total",
+          "filter_col": "code",
+          "filter_val": "CAM002-13",
+          "datasource_id": 294
+        }
+      }
+    ],
+    "name": "camera test",
+    "edges": [
+      {
+        "id": "e-new-mujwynqb-2",
+        "to": {
+          "node": "n-new-mujwykvt-1",
+          "port": "in"
+        },
+        "from": {
+          "node": "n-new-mui7hoir-3",
+          "port": "out"
+        },
+        "service": "power_hv",
+        "flowNode": null
+      },
+      {
+        "id": "e-new-mujwziu5-4",
+        "to": {
+          "node": "n-new-mujwzdxw-3",
+          "port": "in"
+        },
+        "from": {
+          "node": "n-new-mujwykvt-1",
+          "port": "out"
+        },
+        "service": "power_hv",
+        "flowNode": null
+      },
+      {
+        "id": "e-new-mujx82fm-11",
+        "to": {
+          "node": "n-new-mujx7rvr-10",
+          "port": "in"
+        },
+        "from": {
+          "node": "n-new-mujwzdxw-3",
+          "port": "out"
+        },
+        "service": "power_hv",
+        "flowNode": null
+      }
+    ],
+    "nodes": [
+      {
+        "h": 227,
+        "w": 312,
+        "x": 168,
+        "y": 352,
+        "id": "n-new-mui7euty-2",
+        "rot": 90,
+        "type": "ipcamera",
+        "label": "กล้อง 1",
+        "tagId": "กล้อง 1",
+        "binding": null,
+        "options": {
+          "cameraId": "CAM001-13",
+          "labelSize": 24
+        }
+      },
+      {
+        "h": 208,
+        "w": 328,
+        "x": 64,
+        "y": 584,
+        "id": "n-new-mui7hoir-3",
+        "rot": 0,
+        "type": "rodmaker",
+        "label": "ขึ้นมวนบุหรี่",
+        "tagId": null,
+        "binding": null,
+        "options": {
+          "labelSize": 16
+        }
+      },
+      {
+        "h": 232,
+        "w": 312,
+        "x": 544,
+        "y": 40,
+        "id": "n-new-mujwykvt-1",
+        "rot": 0,
+        "type": "tipper",
+        "label": "Tipper",
+        "tagId": null,
+        "binding": null
+      },
+      {
+        "h": 152,
+        "w": 360,
+        "x": 1040,
+        "y": 288,
+        "id": "n-new-mujwzdxw-3",
+        "rot": 0,
+        "type": "cellophaner",
+        "label": "Cellophaner",
+        "tagId": null,
+        "binding": null
+      },
+      {
+        "h": 227,
+        "w": 312,
+        "x": 432,
+        "y": 280,
+        "id": "n-new-mujx0vhh-5",
+        "rot": 270,
+        "type": "ipcamera",
+        "label": "กล้อง 1",
+        "tagId": "กล้อง 1",
+        "binding": null,
+        "options": {
+          "cameraId": "CAM001-13",
+          "labelSize": 24
+        }
+      },
+      {
+        "h": 227,
+        "w": 312,
+        "x": 664,
+        "y": 280,
+        "id": "n-new-mujx0yq9-6",
+        "rot": 270,
+        "type": "ipcamera",
+        "label": "กล้อง 1",
+        "tagId": "กล้อง 1",
+        "binding": null,
+        "options": {
+          "cameraId": "CAM001-13",
+          "labelSize": 24
+        }
+      },
+      {
+        "h": 168,
+        "w": 216,
+        "x": 1104,
+        "y": 104,
+        "id": "n-new-mujx18y2-7",
+        "rot": 90,
+        "type": "ipcamera",
+        "label": "กล้อง 1",
+        "tagId": "กล้อง 1",
+        "binding": null,
+        "options": {
+          "cameraId": "CAM001-13",
+          "labelSize": 24
+        }
+      },
+      {
+        "h": 168,
+        "w": 216,
+        "x": 1240,
+        "y": 104,
+        "id": "n-new-mujx765e-9",
+        "rot": 90,
+        "type": "ipcamera",
+        "label": "กล้อง 1",
+        "tagId": "กล้อง 1",
+        "binding": null,
+        "options": {
+          "cameraId": "CAM001-13",
+          "labelSize": 24
+        }
+      },
+      {
+        "h": 120,
+        "w": 160,
+        "x": 1424,
+        "y": 336,
+        "id": "n-new-mujx7rvr-10",
+        "rot": 0,
+        "type": "cartoner",
+        "label": "Cartoner",
+        "tagId": null,
+        "binding": null
+      }
+    ],
+    "version": 4,
+    "viewBox": {
+      "h": 900,
+      "w": 1600
+    },
+    "productionLog": {
+      "mode": null,
+      "table": "camera_count_speed",
+      "ts_col": "updated_at",
+      "filter_col": "code",
+      "filter_val": "CAM001-13",
+      "produced_col": "batch_id",
+      "rejected_col": "count_total",
+      "datasource_id": 294,
+      "produced_filter_val": null,
+      "rejected_filter_val": null
+    }
+  }
+}

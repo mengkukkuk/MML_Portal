@@ -112,6 +112,12 @@ apiClient.interceptors.response.use(
   async (error) => {
     const original = error.config
 
+    // A request the caller aborted on purpose (AbortController) is not a failure:
+    // no retry, no log line, no auth handling. Without this the "no response at
+    // all" branch below would treat an abort as a dropped connection and quietly
+    // re-send the very request that was just cancelled.
+    if (axios.isCancel(error)) return Promise.reject(error)
+
     // Skip refresh for all /auth/ calls (login, refresh, forgot/reset-password).
     // These are public or unauthenticated flows — a 401/400 there is the real
     // error and must surface to the caller, not trigger a doomed token refresh.
@@ -161,7 +167,9 @@ apiClient.interceptors.response.use(
 
     console.error('[api]', original?.url, error.response?.status || error.code || error.message)
 
-    if (!original._networkRetry && isRetryableFailure(error) && !isAuthCall) {
+    // `_noRetry` is for callers that already manage their own retry/cache policy
+    // (the camera frame loader): a blind re-send doubles load on a slow link.
+    if (!original._networkRetry && !original._noRetry && isRetryableFailure(error) && !isAuthCall) {
       original._networkRetry = true
       await delay(RETRY_DELAY_MS)
       return apiClient(original)

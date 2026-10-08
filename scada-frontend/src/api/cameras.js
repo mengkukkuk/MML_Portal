@@ -66,7 +66,7 @@ export async function fetchCameraDefectFrames(cameraCode, slot, { limit = 30 } =
   const { data } = await apiClient.get(`/cameras/linked/${code}/defects/${slot}/frames`, {
     params: { limit },
   })
-  return data // [{ index, captured_at, size_bytes, mtime_ns }]
+  return data // [{ id, index, captured_at, size_bytes, mtime_ns }]
 }
 
 /** Passing frames for one camera. Not split by slot — an OK capture has no defect. */
@@ -86,12 +86,27 @@ export function fetchCameraFrames(cameraCode, slot, options) {
 }
 
 /**
- * Where one frame's bytes live. Kept here rather than in the blob-cache hook so
- * every path this module's router serves is described in one file.
+ * Longest side, in px, of the preview the strip asks for. The tiles are ~140 CSS
+ * px wide; this is ~2x so they stay sharp on a HiDPI screen while the file stays
+ * a few KB instead of the ~500 KB original.
  */
-export function cameraFrameImagePath(cameraCode, slot, index) {
+export const FRAME_THUMB_WIDTH = 240
+
+/**
+ * Where one frame's bytes live, addressed by its durable `id` (from the listing).
+ *
+ * Never by position: `index` shifts every time a capture lands, so a position
+ * fetched after a poll can name a different file than the one that was listed.
+ * `thumb` selects the small JPEG preview used by the strip; the default is the
+ * full-resolution original, which only the lightbox needs.
+ *
+ * Kept here rather than in the blob-cache hook so every path this module's
+ * router serves is described in one file.
+ */
+export function cameraFramePath(cameraCode, slot, frameId, { thumb = false } = {}) {
   const code = encodeURIComponent(cameraCode)
-  return slot === OK_SLOT
-    ? `/cameras/linked/${code}/ok/frames/${index}/image`
-    : `/cameras/linked/${code}/defects/${slot}/frames/${index}/image`
+  const base = slot === OK_SLOT
+    ? `/cameras/linked/${code}/ok/frames/id/${frameId}`
+    : `/cameras/linked/${code}/defects/${slot}/frames/id/${frameId}`
+  return thumb ? `${base}/thumb?w=${FRAME_THUMB_WIDTH}` : `${base}/image`
 }

@@ -37,17 +37,24 @@ function bytesLabel(bytes) {
  * not a thumbnail stretched or shrunk to fit a panel. Resolution is read off
  * that same load event and printed next to the timestamp once it lands.
  *
- * Frame identity (cameraCode/slot/index/mtime_ns) matches the strip's cache
- * key exactly, so opening a frame that is already visible as a thumbnail is
- * an instant blob-cache hit rather than a second fetch.
+ * The strip only ever downloads small previews, so opening a frame fetches the
+ * original on demand (ahead of any queued preview) and, once it lands, warms the
+ * two neighbours so arrow-key paging is instant. Frames are addressed by their
+ * durable id; the rail also stops refreshing its listing while this is open, so
+ * `frames[index]` keeps meaning the frame the operator clicked.
  */
 export default function CameraLightbox({
   cameraCode, slot, frames, index, label, container, onClose, onNavigate,
 }) {
   const frame = frames[index]
   const [natural, setNatural] = useState(null)
-  const url = useCameraFrameUrl(cameraCode, slot, frame?.index, frame?.mtime_ns)
+  // The original, jumping the queue: this is the one image the operator asked for.
+  const url = useCameraFrameUrl(cameraCode, slot, frame?.id, { priority: true })
   const total = frames.length
+  // Warm the neighbours once this one has landed, never before — on a slow link
+  // they would otherwise share bandwidth with the image being waited on.
+  useCameraFrameUrl(cameraCode, slot, url ? frames[index + 1]?.id : null)
+  useCameraFrameUrl(cameraCode, slot, url ? frames[index - 1]?.id : null)
   const imgRef = useRef(null)
 
   function readNatural(img) {
@@ -56,11 +63,11 @@ export default function CameraLightbox({
 
   useEffect(() => {
     setNatural(null)
-    // The strip already fetched every frame's blob for its thumbnails, so
-    // the browser usually finishes loading this <img> in the same tick it
-    // mounts — before a React onLoad listener can attach to catch it. Read
-    // `.complete` straight after commit as the fallback for that case;
-    // onLoad below still covers a frame that is genuinely still loading.
+    // A neighbour warmed by the prefetch is already a blob URL, so the browser
+    // can finish loading this <img> in the same tick it mounts — before a React
+    // onLoad listener can attach to catch it. Read `.complete` straight after
+    // commit as the fallback for that case; onLoad below still covers a frame
+    // that is genuinely still loading.
     const img = imgRef.current
     if (img && img.complete && img.naturalWidth) readNatural(img)
   }, [url])

@@ -123,3 +123,178 @@ def test_a_missing_ok_frame_is_a_404(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         cameras.get_linked_camera_ok_frame_image("cam-001", 0, _user=USER)
     assert exc.value.status_code == 404
+
+
+# --- id-addressed frames and thumbnails ----------------------------------------
+
+@pytest.fixture(autouse=True)
+def _isolated_caches():
+    cameras._forget_cameras()
+    cameras.camera_thumbs.clear()
+    yield
+    cameras._forget_cameras()
+    cameras.camera_thumbs.clear()
+
+
+def _real_png() -> bytes:
+    import io
+    import os
+
+    from PIL import Image
+
+    img = Image.new("RGB", (800, 600))
+    img.frombytes(os.urandom(800 * 600 * 3))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+FID = "1a2b3c4d5e6f-0badf00d"
+
+
+def test_id_addressed_image_is_immutable_and_keeps_security_headers(monkeypatch):
+    meta = FrameMeta(index=3, captured_at=None, size_bytes=len(PNG), mtime_ns=1, id=FID)
+    monkeypatch.setattr(cameras.camera_files, "read_frame_by_id", lambda *_a: (PNG, meta))
+
+    response = cameras.get_linked_camera_slot_frame_image_by_id("cam-001", 1, FID, _user=USER)
+
+    assert response.media_type == "image/png"
+    assert response.headers["cache-control"] == "private, max-age=31536000, immutable"
+    assert response.headers["content-security-policy"] == "default-src 'none'; sandbox"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["etag"] == f'"{FID}"'
+
+
+def test_id_addressed_ok_image_goes_through_the_same_gate(monkeypatch):
+    meta = FrameMeta(index=0, captured_at=None, size_bytes=len(SVG), mtime_ns=1, id=FID)
+    monkeypatch.setattr(cameras.camera_files, "read_ok_frame_by_id", lambda *_a: (SVG, meta))
+    with pytest.raises(HTTPException) as exc:
+        cameras.get_linked_camera_ok_frame_image_by_id("cam-001", FID, _user=USER)
+    assert exc.value.status_code == 400
+
+
+def test_a_missing_id_addressed_frame_is_a_404(monkeypatch):
+    def gone(*_a):
+        raise camera_files.FrameNotFound("nope")
+
+    monkeypatch.setattr(cameras.camera_files, "read_frame_by_id", gone)
+    with pytest.raises(HTTPException) as exc:
+        cameras.get_linked_camera_slot_frame_image_by_id("cam-001", 1, FID, _user=USER)
+    assert exc.value.status_code == 404
+
+
+def test_id_addressed_routes_refuse_an_out_of_range_slot():
+    with pytest.raises(HTTPException) as exc:
+        cameras.get_linked_camera_slot_frame_thumb("cam-001", 0, FID, 240, _user=USER)
+    assert exc.value.status_code == 400
+
+
+def test_thumb_is_a_small_jpeg(monkeypatch):
+    src = _real_png()
+    meta = FrameMeta(index=0, captured_at=None, size_bytes=len(src), mtime_ns=1, id=FID)
+    monkeypatch.setattr(cameras.camera_files, "read_frame_by_id", lambda *_a: (src, meta))
+
+    response = cameras.get_linked_camera_slot_frame_thumb("cam-001", 1, FID, 240, _user=USER)
+
+    assert response.media_type == "image/jpeg"
+    assert response.body[:3] == b"\xff\xd8\xff"
+    assert len(response.body) < len(src) / 10
+    assert response.headers["cache-control"] == "private, max-age=31536000, immutable"
+    assert response.headers["etag"] == f'"{FID}-240"'
+
+
+def test_a_second_thumb_request_does_not_touch_the_disk(monkeypatch):
+    src = _real_png()
+    meta = FrameMeta(index=0, captured_at=None, size_bytes=len(src), mtime_ns=1, id=FID)
+    reads = []
+
+    def read(*_a):
+        reads.append(1)
+        return src, meta
+
+    monkeypatch.setattr(cameras.camera_files, "read_frame_by_id", read)
+    first = cameras.get_linked_camera_slot_frame_thumb("cam-001", 1, FID, 240, _user=USER)
+    second = cameras.get_linked_camera_slot_frame_thumb("cam-001", 1, FID, 240, _user=USER)
+
+    assert len(reads) == 1
+    assert first.body == second.body
+
+
+def test_thumb_cache_does_not_mix_slots_widths_or_verdicts(monkeypatch):
+    src = _real_png()
+    meta = FrameMeta(index=0, captured_at=None, size_bytes=len(src), mtime_ns=1, id=FID)
+    reads = []
+
+    def read(*_a):
+        reads.append(1)
+        return src, meta
+
+    monkeypatch.setattr(cameras.camera_files, "read_frame_by_id", read)
+    monkeypatch.setattr(cameras.camera_files, "read_ok_frame_by_id", read)
+    cameras.get_linked_camera_slot_frame_thumb("cam-001", 1, FID, 240, _user=USER)
+    cameras.get_linked_camera_slot_frame_thumb("cam-001", 2, FID, 240, _user=USER)
+    cameras.get_linked_camera_slot_frame_thumb("cam-001", 1, FID, 120, _user=USER)
+    cameras.get_linked_camera_ok_frame_thumb("cam-001", FID, 240, _user=USER)
+    assert len(reads) == 4
+
+
+def test_thumb_falls_back_to_the_original_when_a_preview_cannot_be_made(monkeypatch):
+    meta = FrameMeta(index=0, captured_at=None, size_bytes=len(PNG), mtime_ns=1, id=FID)
+    monkeypatch.setattr(cameras.camera_files, "read_frame_by_id", lambda *_a: (PNG, meta))
+    monkeypatch.setattr(cameras.camera_thumbs, "make_thumbnail", lambda *_a: None)
+
+    response = cameras.get_linked_camera_slot_frame_thumb("cam-001", 1, FID, 240, _user=USER)
+
+    assert response.media_type == "image/png"
+    assert response.body == PNG
+
+
+def test_thumb_still_refuses_a_file_that_is_not_a_raster_image(monkeypatch):
+    meta = FrameMeta(index=0, captured_at=None, size_bytes=len(SVG), mtime_ns=1, id=FID)
+    monkeypatch.setattr(cameras.camera_files, "read_frame_by_id", lambda *_a: (SVG, meta))
+    with pytest.raises(HTTPException) as exc:
+        cameras.get_linked_camera_slot_frame_thumb("cam-001", 1, FID, 240, _user=USER)
+    assert exc.value.status_code == 400
+
+
+def test_frame_routes_resolve_the_camera_once_per_minute_not_per_image(monkeypatch):
+    lookups = []
+
+    def remote(_ds, code):
+        lookups.append(code)
+        return CAMERA
+
+    monkeypatch.setattr(db, "get_remote_camera_option_by_code", remote)
+    monkeypatch.setattr(cameras.camera_files.config, "CAMERA_IMAGE_ROOT", "")
+    for _ in range(30):
+        cameras.list_linked_camera_slot_frames("cam-001", 1, _user=USER)
+        cameras.list_linked_camera_ok_frames("CAM-001", _user=USER)
+    assert len(lookups) == 1
+
+
+def test_an_unknown_camera_is_not_cached(monkeypatch):
+    answers = iter([None, CAMERA])
+    monkeypatch.setattr(db, "get_remote_camera_option_by_code", lambda *_a: next(answers))
+    monkeypatch.setattr(cameras.camera_files.config, "CAMERA_IMAGE_ROOT", "")
+    with pytest.raises(HTTPException) as exc:
+        cameras.list_linked_camera_slot_frames("cam-001", 1, _user=USER)
+    assert exc.value.status_code == 404
+    assert cameras.list_linked_camera_slot_frames("cam-001", 1, _user=USER) == []
+
+
+def test_changing_the_camera_source_drops_the_cached_lookup(monkeypatch):
+    lookups = []
+    monkeypatch.setattr(
+        db, "get_remote_camera_option_by_code", lambda *_a: lookups.append(1) or CAMERA
+    )
+    monkeypatch.setattr(db, "get_datasource", lambda _id: {"id": 5})
+    monkeypatch.setattr(
+        db, "set_camera_link_source", lambda ds: {"datasource_id": ds, "datasource_name": "x"}
+    )
+    monkeypatch.setattr(cameras.camera_files.config, "CAMERA_IMAGE_ROOT", "")
+
+    cameras.list_linked_camera_ok_frames("cam-001", _user=USER)
+    cameras.set_camera_link_source(cameras.CameraLinkSourceIn(datasource_id=5), _admin=USER)
+    cameras.list_linked_camera_ok_frames("cam-001", _user=USER)
+
+    assert len(lookups) == 2

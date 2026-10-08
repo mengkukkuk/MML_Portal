@@ -1,16 +1,19 @@
 """Configured-source camera registry, defect counters, and NG frame endpoints"""
 import logging
+import threading
+import time
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any, TypeVar
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from psycopg_pool import PoolTimeout
 
 import camera_files
+import camera_thumbs
 import db
 from auth import get_current_user, require_admin
 from licensing import require_valid_license
@@ -83,7 +86,9 @@ def camera_link_source(_user: dict = Depends(get_current_user)):
 def set_camera_link_source(body: CameraLinkSourceIn, _admin: dict = Depends(require_admin)):
     if db.get_datasource(body.datasource_id) is None:
         raise _not_found("Datasource")
-    return db.set_camera_link_source(body.datasource_id)
+    saved = db.set_camera_link_source(body.datasource_id)
+    _forget_cameras()
+    return saved
 
 
 class CameraLinkOptionOut(BaseModel):
@@ -126,6 +131,36 @@ def _get_linked_camera_or_404(camera_code: str) -> tuple[int, dict[str, Any]]:
         raise _not_found()
     return ds_id, camera
 
+# Registry data (code, name, labels) barely changes, but every frame request
+# used to re-resolve it: an app-DB read for the source setting plus a query to
+# the remote camera datasource. One film strip is ~30 of those at once.
+# Only the frame routes use this; /defects keeps the live lookup.
+_CAMERA_TTL_S = 60.0
+_camera_cache: dict[str, tuple[float, int, dict[str, Any]]] = {}
+_camera_cache_lock = threading.Lock()
+
+
+def _forget_cameras() -> None:
+    with _camera_cache_lock:
+        _camera_cache.clear()
+
+
+def _get_linked_camera_cached(camera_code: str) -> tuple[int, dict[str, Any]]:
+    """`_get_linked_camera_or_404` with a short TTL. A miss is never cached."""
+    key = camera_code.lower()
+    now = time.monotonic()
+    with _camera_cache_lock:
+        hit = _camera_cache.get(key)
+        if hit is not None and now - hit[0] < _CAMERA_TTL_S:
+            return hit[1], hit[2]
+    ds_id, camera = _get_linked_camera_or_404(camera_code)
+    with _camera_cache_lock:
+        _camera_cache[key] = (time.monotonic(), ds_id, camera)
+        while len(_camera_cache) > 256:
+            _camera_cache.pop(next(iter(_camera_cache)))
+    return ds_id, camera
+
+
 # Folder-backed camera frames are always raster images.
 ALLOWED_FRAME_MIMES = {"image/png", "image/jpeg", "image/webp"}
 
@@ -147,6 +182,16 @@ _FILE_IMAGE_HEADERS = {
     "Content-Security-Policy": "default-src 'none'; sandbox",
     "X-Content-Type-Options": "nosniff",
     "Cache-Control": "private, max-age=30, must-revalidate",
+}
+
+# An id-addressed frame is one immutable capture: the id embeds the file's mtime,
+# so a file replaced in place gets a new id and a new URL. That is what makes a
+# year-long cache lifetime correct here, where the positional routes above need
+# the short one. `private` because the URL is only reachable with a token.
+_FRAME_ID_HEADERS = {
+    "Content-Security-Policy": "default-src 'none'; sandbox",
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "private, max-age=31536000, immutable",
 }
 
 # --- defect counters -----------------------------------------------------------
@@ -201,6 +246,8 @@ def linked_camera_defects(camera_code: str, _user: dict = Depends(get_current_us
 
 # --- folder-backed frames -------------------------------------------------------
 class FrameOut(BaseModel):
+    # Durable name for this capture. `index` is only its position right now.
+    id: str
     index: int
     captured_at: datetime
     size_bytes: int
@@ -220,7 +267,7 @@ def list_linked_camera_slot_frames(
     limit: int = 30,
     _user: dict = Depends(get_current_user),
 ):
-    _datasource_id, camera = _get_linked_camera_or_404(camera_code)
+    _datasource_id, camera = _get_linked_camera_cached(camera_code)
     _checked_slot(slot)
     limit = max(1, min(limit, 100))
     return camera_files.list_slot_frames(camera["code"], slot, limit=limit)
@@ -232,7 +279,7 @@ def list_linked_camera_ok_frames(
     _user: dict = Depends(get_current_user),
 ):
     """Passing frames for one camera. No slot: OK captures are uncategorized."""
-    _datasource_id, camera = _get_linked_camera_or_404(camera_code)
+    _datasource_id, camera = _get_linked_camera_cached(camera_code)
     limit = max(1, min(limit, 100))
     return camera_files.list_ok_frames(camera["code"], limit=limit)
 
@@ -259,7 +306,7 @@ def get_linked_camera_slot_frame_image(
     index: int,
     _user: dict = Depends(get_current_user),
 ):
-    _datasource_id, camera = _get_linked_camera_or_404(camera_code)
+    _datasource_id, camera = _get_linked_camera_cached(camera_code)
     _checked_slot(slot)
     return _serve_frame(lambda: camera_files.read_frame(camera["code"], slot, index))
 
@@ -269,5 +316,102 @@ def get_linked_camera_ok_frame_image(
     index: int,
     _user: dict = Depends(get_current_user),
 ):
-    _datasource_id, camera = _get_linked_camera_or_404(camera_code)
+    _datasource_id, camera = _get_linked_camera_cached(camera_code)
     return _serve_frame(lambda: camera_files.read_ok_frame(camera["code"], index))
+
+
+# --- id-addressed frames (what the UI uses) -------------------------------------
+# `index` above shifts every time a capture lands, so a client that listed frames
+# and then fetched "index 7" could be handed a different file than the one it
+# listed. These routes name the capture itself.
+
+def _checked_frame(read: Callable[[], tuple[bytes, camera_files.FrameMeta]]) -> tuple[bytes, str]:
+    """Read one frame and return (bytes, sniffed mime), or the right HTTP error."""
+    try:
+        data, _meta = read()
+    except camera_files.FrameNotFound:
+        raise _not_found("Frame") from None
+    mime = _sniff_mime(data)
+    if mime is None or mime not in ALLOWED_FRAME_MIMES:
+        raise _bad("the stored file is not a PNG, JPEG or WebP image")
+    return data, mime
+
+
+def _serve_frame_by_id(
+    read: Callable[[], tuple[bytes, camera_files.FrameMeta]], fid: str
+) -> Response:
+    data, mime = _checked_frame(read)
+    return Response(
+        content=data, media_type=mime, headers={**_FRAME_ID_HEADERS, "ETag": f'"{fid}"'},
+    )
+
+
+def _serve_thumb(
+    read: Callable[[], tuple[bytes, camera_files.FrameMeta]],
+    key: tuple, fid: str, width: int,
+) -> Response:
+    """A small JPEG preview of one frame, generated once and then kept in memory.
+
+    A cache hit does not touch the disk at all. If a preview cannot be made
+    (Pillow missing, an undecodable file) the original is served instead, so the
+    worst case is a slow tile rather than a failed one.
+    """
+    width = camera_thumbs.clamp_width(width)
+    cache_key = (*key, fid, width)
+    thumb = camera_thumbs.cached(cache_key)
+    if thumb is None:
+        data, mime = _checked_frame(read)
+        thumb = camera_thumbs.make_thumbnail(data, width)
+        if thumb is None:
+            return Response(content=data, media_type=mime, headers=_FRAME_ID_HEADERS)
+        camera_thumbs.remember(cache_key, thumb)
+    return Response(
+        content=thumb,
+        media_type="image/jpeg",
+        headers={**_FRAME_ID_HEADERS, "ETag": f'"{fid}-{width}"'},
+    )
+
+
+_THUMB_WIDTH = Query(camera_thumbs.DEFAULT_WIDTH, ge=1, le=4096, alias="w")
+
+
+@router.get("/linked/{camera_code}/defects/{slot}/frames/id/{fid}/image")
+def get_linked_camera_slot_frame_image_by_id(
+    camera_code: str, slot: int, fid: str, _user: dict = Depends(get_current_user),
+):
+    _datasource_id, camera = _get_linked_camera_cached(camera_code)
+    _checked_slot(slot)
+    return _serve_frame_by_id(lambda: camera_files.read_frame_by_id(camera["code"], slot, fid), fid)
+
+
+@router.get("/linked/{camera_code}/defects/{slot}/frames/id/{fid}/thumb")
+def get_linked_camera_slot_frame_thumb(
+    camera_code: str, slot: int, fid: str,
+    width: int = _THUMB_WIDTH, _user: dict = Depends(get_current_user),
+):
+    _datasource_id, camera = _get_linked_camera_cached(camera_code)
+    _checked_slot(slot)
+    return _serve_thumb(
+        lambda: camera_files.read_frame_by_id(camera["code"], slot, fid),
+        (camera["code"].lower(), slot), fid, width,
+    )
+
+
+@router.get("/linked/{camera_code}/ok/frames/id/{fid}/image")
+def get_linked_camera_ok_frame_image_by_id(
+    camera_code: str, fid: str, _user: dict = Depends(get_current_user),
+):
+    _datasource_id, camera = _get_linked_camera_cached(camera_code)
+    return _serve_frame_by_id(lambda: camera_files.read_ok_frame_by_id(camera["code"], fid), fid)
+
+
+@router.get("/linked/{camera_code}/ok/frames/id/{fid}/thumb")
+def get_linked_camera_ok_frame_thumb(
+    camera_code: str, fid: str,
+    width: int = _THUMB_WIDTH, _user: dict = Depends(get_current_user),
+):
+    _datasource_id, camera = _get_linked_camera_cached(camera_code)
+    return _serve_thumb(
+        lambda: camera_files.read_ok_frame_by_id(camera["code"], fid),
+        (camera["code"].lower(), "ok"), fid, width,
+    )

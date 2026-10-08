@@ -492,3 +492,149 @@ def test_a_symlinked_date_folder_cannot_escape_the_root(tmp_path, monkeypatch):
     monkeypatch.setattr(camera_files.config, "CAMERA_IMAGE_ROOT", str(root))
     assert camera_files.list_slot_frames("CAM-03", 1) == []
     assert camera_files.slots_with_frames("CAM-03") == set()
+
+
+# --- big folders, stable ids, shared scans -------------------------------------
+# A busy day folder holds well over 10k captures. These are the regressions for
+# the three ways that used to go wrong: a scan cap that dropped the newest files,
+# positional addressing that handed back a different file than the one listed,
+# and a full re-walk per image request.
+
+@pytest.fixture(autouse=True)
+def _fresh_listing_cache():
+    camera_files._list_cache.clear()
+    yield
+    camera_files._list_cache.clear()
+
+
+def _fill(directory, count, base=1_746_000_000, data=PNG):
+    """`count` files whose name order matches their age order, oldest first —
+    what a timestamped filename gives on NTFS, and the order scandir yields."""
+    directory.mkdir(parents=True, exist_ok=True)
+    for i in range(count):
+        path = directory / f"cap {i:06d}.png"
+        path.write_bytes(data)
+        os.utime(path, (base + i, base + i))
+
+
+def test_listing_is_not_truncated_at_the_old_scan_cap(image_root):
+    """With >5000 files the old code only looked at the first 5000 in directory
+    order — the *oldest* half of the day — and called that "newest"."""
+    folder = ng_day(image_root) / "defect_4"
+    total = 5_200
+    _fill(folder, total)
+
+    frames = camera_files.list_slot_frames("CAM-03", 4, limit=30)
+
+    assert len(frames) == 30
+    newest = 1_746_000_000 + total - 1
+    assert frames[0].mtime_ns == newest * 1_000_000_000
+    assert frames[-1].mtime_ns == (newest - 29) * 1_000_000_000
+
+
+def test_frame_ids_survive_a_new_capture_arriving(image_root):
+    before = camera_files.list_slot_frames("CAM-03", 1)
+    by_name_before = {f.id: f.mtime_ns for f in before}
+
+    _stamp(ng_day(image_root) / "defect_1", (("brand new.png", 1_746_599_999),))
+    camera_files._list_cache.clear()
+    after = camera_files.list_slot_frames("CAM-03", 1)
+
+    assert len(after) == len(before) + 1
+    # Every old frame is still there under the same id even though its position
+    # moved down one — the property the browser cache depends on.
+    for frame in after[1:]:
+        assert by_name_before[frame.id] == frame.mtime_ns
+    assert [f.index for f in after] == list(range(len(after)))
+
+
+def test_equal_mtimes_get_distinct_ids(image_root):
+    folder = ng_day(image_root) / "defect_1"
+    _stamp(folder, (("twin a.png", 1_746_700_000), ("twin b.png", 1_746_700_000)))
+    camera_files._list_cache.clear()
+    ids = [f.id for f in camera_files.list_slot_frames("CAM-03", 1)]
+    assert len(ids) == len(set(ids))
+
+
+def test_read_by_id_returns_exactly_the_named_capture(image_root):
+    folder = ng_day(image_root) / "defect_4"
+    folder.mkdir()
+    for i, tag in enumerate((b"one", b"two", b"three")):
+        path = folder / f"c{i}.png"
+        path.write_bytes(PNG + tag)
+        os.utime(path, (1_746_800_000 + i, 1_746_800_000 + i))
+
+    frames = camera_files.list_slot_frames("CAM-03", 4)
+    target = frames[2]                       # the oldest, i.e. c0
+    data, meta = camera_files.read_frame_by_id("CAM-03", 4, target.id)
+
+    assert data == PNG + b"one"
+    assert meta.id == target.id
+
+
+def test_read_by_id_still_finds_a_frame_that_aged_out_of_the_listing(image_root):
+    """A lightbox left open while 100+ newer captures arrive must not 404."""
+    folder = ng_day(image_root) / "defect_4"
+    _fill(folder, 150)
+    oldest_mtime = 1_746_000_000 * 1_000_000_000
+    name = "cap 000000.png"
+    fid = camera_files.frame_id(oldest_mtime, name)
+
+    data, meta = camera_files.read_frame_by_id("CAM-03", 4, fid)
+
+    assert data == PNG
+    assert meta.mtime_ns == oldest_mtime
+
+
+def test_read_by_id_for_a_frame_that_is_gone_is_not_found(image_root):
+    with pytest.raises(FrameNotFound):
+        camera_files.read_frame_by_id("CAM-03", 1, "1-00000000")
+
+
+@pytest.mark.parametrize("fid", [
+    "", "..", "../..", r"..\..", "a/b", r"C:\Windows", "NUL", "con.png",
+    "1746591325", "xyz-00000000", "1-2", "1-0000000", "1-000000000",
+    "1" * 17 + "-00000000", "A1-00000000", "1-0000000G", "1\x00-00000000",
+    " 1-00000000", "1-00000000 ", "\uff11-00000000",
+])
+def test_malformed_frame_ids_never_reach_the_filesystem(image_root, fid, monkeypatch):
+    def boom(*_a, **_k):
+        raise AssertionError("a malformed id must be rejected before any scan")
+
+    monkeypatch.setattr(camera_files, "_find_by_id", boom)
+    with pytest.raises(FrameNotFound):
+        camera_files.read_frame_by_id("CAM-03", 1, fid)
+    with pytest.raises(FrameNotFound):
+        camera_files.read_ok_frame_by_id("CAM-03", fid)
+
+
+def test_thirty_concurrent_requests_share_one_scan(image_root, monkeypatch):
+    real = camera_files._scan_newest
+    calls = []
+
+    def counting(directory, *a, **k):
+        calls.append(directory)
+        return real(directory, *a, **k)
+
+    monkeypatch.setattr(camera_files, "_scan_newest", counting)
+    frames = camera_files.list_slot_frames("CAM-03", 1)
+    for f in frames * 10:
+        camera_files.read_frame_by_id("CAM-03", 1, f.id)
+
+    assert len(calls) == 1
+
+
+def test_a_new_capture_shows_up_once_the_shared_scan_expires(image_root, monkeypatch):
+    monkeypatch.setattr(camera_files, "_LIST_TTL_S", 0.0)
+    first = camera_files.list_slot_frames("CAM-03", 1)
+    _stamp(ng_day(image_root) / "defect_1", (("late arrival.png", 1_746_900_000),))
+    second = camera_files.list_slot_frames("CAM-03", 1)
+    assert len(second) == len(first) + 1
+
+
+def test_the_scan_cache_is_bounded(image_root, monkeypatch):
+    monkeypatch.setattr(camera_files, "_LIST_CACHE_DIRS", 2)
+    for slot in (1, 2, 4):
+        (ng_day(image_root) / f"defect_{slot}").mkdir(exist_ok=True)
+        camera_files.list_slot_frames("CAM-03", slot)
+    assert len(camera_files._list_cache) <= 2

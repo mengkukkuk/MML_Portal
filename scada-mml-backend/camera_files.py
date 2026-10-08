@@ -38,13 +38,20 @@ An unconfigured or missing root is not an error. Every entry point degrades to
 contact sheet rather than a 500 — which matters, because under NSSM the service
 may run as an account that cannot read a user-profile path.
 """
+import heapq
+import logging
 import os
 import re
+import threading
+import time
+import zlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 import config
+
+logger = logging.getLogger("mml-api.camera_files")
 
 # Slots are positions in camera_defect.defect_array; the folder tree uses the
 # same numbering, so defect_3 on disk is element 3 of the array.
@@ -88,9 +95,31 @@ _RESERVED = {"CON", "PRN", "AUX", "NUL"} | {
     f"{stem}{n}" for stem in ("COM", "LPT") for n in range(1, 10)
 }
 
-# A pathological directory must not turn one request into an unbounded stat
-# storm. Far above any real camera folder.
+# Bound on the cheap "does this folder have anything" / "which subfolder"
+# walks, which stop at the first hit and never need the whole directory.
 _MAX_SCAN_ENTRIES = 5000
+
+# Bound on the *frame* scan, which does need the whole directory: "newest" is
+# only meaningful over every file. A day folder on a busy line holds well over
+# 10k captures, and scandir yields in directory order (name order on NTFS, which
+# for timestamped names is oldest first) - so truncating at 5000 here once made
+# the strip show the oldest half of the day. The ceiling only exists so a
+# runaway folder cannot pin a worker forever; hitting it is logged, not silent.
+_SCAN_CEILING = 200_000
+
+# How many of the newest frames a scan keeps. Equals the router's `limit` cap,
+# so every listing and every id lookup the UI can issue is served from it.
+_LIST_KEEP = 100
+
+# One scan is shared by every request inside this window. A strip fires ~30
+# image requests at once; without this each one re-walked the same 10k+ files.
+# Short enough that a new capture appears on the next poll.
+_LIST_TTL_S = 2.0
+_LIST_CACHE_DIRS = 64
+
+# A frame id: `<mtime_ns hex>-<crc32 of file name, hex>`. Anything else is
+# rejected before the filesystem is touched.
+_FID_RE = re.compile(r"^[0-9a-f]{1,16}-[0-9a-f]{8}$")
 
 
 class FrameNotFound(Exception):
@@ -102,15 +131,18 @@ class FrameMeta:
     """One frame, addressed by its position in the newest-first listing.
 
     `index` is positional and therefore not stable across writes: a new capture
-    landing in the folder shifts every older frame down one. `mtime_ns` is what
-    makes a fetched frame identifiable — it goes into the browser's cache key
-    and the ETag, so a file replaced in place is not served stale.
+    landing in the folder shifts every older frame down one. `id` is what names
+    a capture durably — it goes into the browser's cache key and the image URL,
+    and because it embeds the mtime a file replaced in place gets a new id.
     """
 
     index: int
     captured_at: datetime
     size_bytes: int
     mtime_ns: int
+    # Stable name for this exact capture (see frame_id). Unlike `index` it does
+    # not change when newer files arrive, so it is what the browser caches by.
+    id: str = ""
 
 
 def root() -> Path | None:
@@ -316,33 +348,79 @@ def _has_any_file(directory: str) -> bool:
     return False
 
 
-def _newest_first(directory: Path) -> list[tuple[int, int, Path]]:
-    """(mtime_ns, size, path) for every regular file, newest first.
+def frame_id(mtime_ns: int, name: str) -> str:
+    """Durable id for one capture: its mtime plus a checksum of its file name.
 
-    Ordered by mtime rather than by parsing the filename: the names the vision
-    system writes carry a timestamp but also spaces ("Screenshot 2025-05-07
-    111525.png"), and mtime has been verified to match that timestamp exactly.
-    Trusting the filesystem's own clock costs nothing and cannot misparse.
+    The checksum is only a tie-break for two files stamped in the same
+    nanosecond (an FTP burst that preserves times); it is never used as, or
+    joined into, a path.
     """
-    entries: list[tuple[int, int, Path]] = []
-    with os.scandir(directory) as scan:
-        for seen, entry in enumerate(scan):
-            if seen >= _MAX_SCAN_ENTRIES:
-                break
-            if not entry.is_file():
-                continue
-            info = entry.stat()
-            entries.append((info.st_mtime_ns, info.st_size, Path(entry.path)))
-    entries.sort(key=lambda e: e[0], reverse=True)
-    return entries
+    crc = zlib.crc32(name.encode("utf-8", "surrogatepass"))
+    return f"{mtime_ns:x}-{crc:08x}"
 
 
-def _meta(index: int, mtime_ns: int, size: int) -> FrameMeta:
+# (mtime_ns, size, file name, full path)
+_Entry = tuple[int, int, str, Path]
+
+_list_cache: dict[str, tuple[float, list[_Entry]]] = {}
+_list_lock = threading.Lock()
+
+
+def _scan_newest(directory: Path, keep: int = _LIST_KEEP) -> list[_Entry]:
+    """The `keep` newest regular files, newest first, over the *whole* folder.
+
+    heapq.nlargest holds `keep` entries however large the folder is, so this is
+    one pass over the directory with O(keep) memory. Ordered by mtime rather
+    than a parsed filename: the vision system's names carry a timestamp but
+    also spaces ("Screenshot 2025-05-07 111525.png"), and mtime was verified to
+    match it exactly. Ties break on name so the order is deterministic.
+    """
+    def entries():
+        with os.scandir(directory) as scan:
+            for seen, entry in enumerate(scan):
+                if seen >= _SCAN_CEILING:
+                    logger.warning(
+                        "frame scan of %s stopped at %d entries; newer files may be missed",
+                        directory, _SCAN_CEILING,
+                    )
+                    return
+                if not entry.is_file():
+                    continue
+                info = entry.stat()
+                yield (info.st_mtime_ns, info.st_size, entry.name, Path(entry.path))
+
+    return heapq.nlargest(keep, entries(), key=lambda e: (e[0], e[2]))
+
+
+def _newest_first(directory: Path) -> list[_Entry]:
+    """`_scan_newest`, shared between concurrent callers for a couple of seconds.
+
+    Single-flight under one lock: when 30 image requests arrive together the
+    first does the scan and the other 29 reuse it, instead of each re-walking
+    the folder. A short TTL (not a directory-mtime check) because a network
+    share does not reliably bump a folder's mtime when a file is added.
+    """
+    key = str(directory)
+    with _list_lock:
+        now = time.monotonic()
+        hit = _list_cache.get(key)
+        if hit is not None and now - hit[0] < _LIST_TTL_S:
+            return hit[1]
+        entries = _scan_newest(directory)
+        _list_cache[key] = (time.monotonic(), entries)
+        while len(_list_cache) > _LIST_CACHE_DIRS:
+            _list_cache.pop(next(iter(_list_cache)))
+        return entries
+
+
+def _meta(index: int, entry: _Entry) -> FrameMeta:
+    mtime_ns, size, name, _path = entry
     return FrameMeta(
         index=index,
         captured_at=datetime.fromtimestamp(mtime_ns / 1_000_000_000),
         size_bytes=size,
         mtime_ns=mtime_ns,
+        id=frame_id(mtime_ns, name),
     )
 
 
@@ -354,23 +432,50 @@ def _frames_in(directory: Path | None, limit: int) -> list[FrameMeta]:
         entries = _newest_first(directory)
     except OSError:
         return []
-    return [
-        _meta(i, mtime_ns, size)
-        for i, (mtime_ns, size, _path) in enumerate(entries[:limit])
-    ]
+    return [_meta(i, e) for i, e in enumerate(entries[:limit])]
+
+
+def _open_entry(directory: Path, entry: _Entry, index: int) -> tuple[bytes, FrameMeta]:
+    """Read one already-located frame, enforcing the size ceiling and containment.
+
+    The size is checked from the directory entry *before* the read, so an
+    oversized file is refused without ever being pulled into memory. Returns raw
+    bytes rather than a path or file object on purpose: the caller sniffs the
+    magic bytes before serving them, and a FileResponse would have skipped both
+    that and the size ceiling - the two checks that matter most for a file this
+    application did not write.
+    """
+    _mtime_ns, size, _name, path = entry
+    if size > MAX_FRAME_BYTES:
+        raise FrameNotFound(
+            f"frame is {size // 1024} KB; the limit is {MAX_FRAME_BYTES // 1024} KB"
+        )
+
+    # The listing came from scandir inside an already-contained directory, but
+    # the file itself is resolved and re-checked: between the scan and the read
+    # it is still a path we are choosing to trust.
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as exc:
+        raise FrameNotFound("frame is gone") from exc
+    if not resolved.is_relative_to(directory):
+        raise FrameNotFound("frame resolved outside its folder")
+    if not resolved.is_file():
+        raise FrameNotFound("not a regular file")
+
+    try:
+        data = resolved.read_bytes()
+    except OSError as exc:
+        raise FrameNotFound("cannot read the frame") from exc
+
+    return data, _meta(index, entry)
 
 
 def _read_in(directory: Path | None, index: int) -> tuple[bytes, FrameMeta]:
-    """Read one frame's bytes by its position in the newest-first listing.
+    """Read one frame by its position in the newest-first listing.
 
-    Raises FrameNotFound for any missing piece. The size is checked from the
-    directory entry *before* the read, so an oversized file is refused without
-    ever being pulled into memory.
-
-    Returns raw bytes rather than a path or a file object on purpose: the
-    caller sniffs the magic bytes before serving them, and a FileResponse would
-    have skipped both that and the size ceiling — the two checks that matter
-    most for a file this application did not write.
+    Kept for the positional routes. Position drifts as captures arrive, so the
+    UI uses `_read_in_by_id`; this stays so an older client keeps working.
     """
     if directory is None:
         raise FrameNotFound("no such camera, slot or verdict folder")
@@ -384,28 +489,50 @@ def _read_in(directory: Path | None, index: int) -> tuple[bytes, FrameMeta]:
 
     if index >= len(entries):
         raise FrameNotFound(f"no frame at index {index}")
+    return _open_entry(directory, entries[index], index)
 
-    mtime_ns, size, path = entries[index]
-    if size > MAX_FRAME_BYTES:
-        raise FrameNotFound(
-            f"frame is {size // 1024} KB; the limit is {MAX_FRAME_BYTES // 1024} KB"
-        )
 
-    # The listing above came from scandir inside an already-contained
-    # directory, but the file itself is resolved and re-checked: between the
-    # scan and the read it is still a path we are choosing to trust.
-    resolved = path.resolve(strict=True)
-    if not resolved.is_relative_to(directory):
-        raise FrameNotFound("frame resolved outside its folder")
-    if not resolved.is_file():
-        raise FrameNotFound("not a regular file")
+def _find_by_id(directory: Path, fid: str) -> tuple[int, _Entry] | None:
+    """Locate a capture by id: the shared newest-N listing first, else one scan.
 
+    The fallback matters for a long-open lightbox: a frame that has since aged
+    out of the newest 100 still exists and is still addressable.
+    """
+    for i, entry in enumerate(_newest_first(directory)):
+        if frame_id(entry[0], entry[2]) == fid:
+            return i, entry
+    mtime_ns = int(fid.split("-", 1)[0], 16)
+    with os.scandir(directory) as scan:
+        for seen, dirent in enumerate(scan):
+            if seen >= _SCAN_CEILING:
+                break
+            if not dirent.is_file():
+                continue
+            info = dirent.stat()
+            if info.st_mtime_ns == mtime_ns and frame_id(mtime_ns, dirent.name) == fid:
+                return -1, (info.st_mtime_ns, info.st_size, dirent.name, Path(dirent.path))
+    return None
+
+
+def _read_in_by_id(directory: Path | None, fid: str) -> tuple[bytes, FrameMeta]:
+    """Read the one capture `fid` names. Same guarantees as `_read_in`.
+
+    `fid` is validated against a strict pattern before anything else, and it is
+    only ever *compared* with names that came out of scandir - it never reaches
+    a path. The caller still cannot name a file.
+    """
+    if directory is None:
+        raise FrameNotFound("no such camera, slot or verdict folder")
+    if not isinstance(fid, str) or not _FID_RE.fullmatch(fid):
+        raise FrameNotFound("malformed frame id")
     try:
-        data = resolved.read_bytes()
+        found = _find_by_id(directory, fid)
     except OSError as exc:
-        raise FrameNotFound("cannot read the frame") from exc
-
-    return data, _meta(index, mtime_ns, size)
+        raise FrameNotFound("cannot read the frame folder") from exc
+    if found is None:
+        raise FrameNotFound("no such frame")
+    index, entry = found
+    return _open_entry(directory, entry, index)
 
 
 def list_slot_frames(code: str, slot: int, limit: int = 30) -> list[FrameMeta]:
@@ -426,3 +553,13 @@ def list_ok_frames(code: str, limit: int = 30) -> list[FrameMeta]:
 def read_ok_frame(code: str, index: int) -> tuple[bytes, FrameMeta]:
     """One passing frame's bytes, addressed by newest-first position."""
     return _read_in(_ok_dir(code), index)
+
+
+def read_frame_by_id(code: str, slot: int, fid: str) -> tuple[bytes, FrameMeta]:
+    """One rejected frame's bytes, addressed by its durable id."""
+    return _read_in_by_id(_slot_dir(code, slot), fid)
+
+
+def read_ok_frame_by_id(code: str, fid: str) -> tuple[bytes, FrameMeta]:
+    """One passing frame's bytes, addressed by its durable id."""
+    return _read_in_by_id(_ok_dir(code), fid)

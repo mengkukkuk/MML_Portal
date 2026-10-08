@@ -83,9 +83,14 @@ function slotLabel(slot) {
 }
 
 function Frame({
-  cameraCode, slot, frame, label, onOpen,
+  cameraCode, slot, frame, label, onOpen, near,
 }) {
-  const url = useCameraFrameUrl(cameraCode, slot, frame.index, frame.mtime_ns)
+  // Fetch only once the tile is in or next to the visible window, and keep it
+  // fetched afterwards: letting `near` go false again would drop the image and
+  // flicker it back to the placeholder as the strip slides past.
+  const [wanted, setWanted] = useState(near)
+  if (near && !wanted) setWanted(true)
+  const url = useCameraFrameUrl(cameraCode, slot, frame.id, { thumb: true, enabled: wanted })
   const isOk = slot === OK_SLOT
 
   function activate(e) {
@@ -145,6 +150,9 @@ const MIN_CAUSE_COUNT = 2
 
 /** Thumbnails in view at once. Keep in step with `.frame`'s flex-basis. */
 const FRAMES_IN_VIEW = 3
+// Thumbnails fetched beyond the visible three, so a one-step slide never shows a
+// placeholder. The rest of the (up to 30) are fetched as the strip reaches them.
+const FRAMES_PREFETCH = 3
 
 export default function CameraRail({
   node, tag, pollMs = 5000, container,
@@ -239,7 +247,10 @@ export default function CameraRail({
     queryKey: ['camera-frames', cameraSourceKey, camera?.code, slotFilter],
     queryFn: () => fetchCameraFrames(camera.code, slotFilter, { limit: 30 }),
     enabled: !!camera && slotFilter != null,
-    refetchInterval,
+    // Paused while the lightbox is open. It is addressed by position in this
+    // listing, so a refresh that slid a new capture in would swap the frame
+    // under the operator's eyes; it resumes the moment they close it.
+    refetchInterval: lightboxIndex != null ? false : refetchInterval,
     refetchIntervalInBackground: true,
     placeholderData: keepPreviousData,
   })
@@ -488,11 +499,14 @@ export default function CameraRail({
             <div className={styles.strip} ref={stripRef} onScroll={handleStripScroll}>
               {stripFrames.map((f, i) => (
                 <Frame
-                  key={`${f.index}-${f.mtime_ns}`}
+                  // The durable id, not the position: a new capture shifts every
+                  // index, and keying on it remounted all thirty tiles.
+                  key={f.id}
                   cameraCode={camera.code}
                   slot={slotFilter}
                   frame={f}
                   label={activeLabel}
+                  near={i < slideIndex + FRAMES_IN_VIEW + FRAMES_PREFETCH}
                   onOpen={() => setLightboxIndex(i)}
                 />
               ))}
