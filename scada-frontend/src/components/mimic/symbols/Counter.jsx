@@ -1,4 +1,4 @@
-import { isNumeric } from '../tagStatus'
+import { groupDigits, isNumeric } from '../tagStatus'
 import useValueTransition from '../useValueTransition'
 import s from './symbols.module.css'
 
@@ -38,7 +38,7 @@ export default function Counter({ node, tag }) {
   const bound = tag?.value !== undefined && tag?.value !== null
   const fault = bound && !numeric
 
-  const text = numeric ? tag.value.toFixed(decimals) : fault ? 'ERR' : '––'
+  const text = numeric ? groupDigits(tag.value, decimals) : fault ? 'ERR' : '––'
 
   const pad = Math.min(10, w * 0.07)
   const wellX = pad

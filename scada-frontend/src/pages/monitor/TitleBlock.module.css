@@ -60,7 +60,7 @@
 }
 
 .value {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--sym-ink);
@@ -102,7 +102,7 @@
 }
 
 .keyCount {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 10px;
   color: var(--fg-dim);
 }

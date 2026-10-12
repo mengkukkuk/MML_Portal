@@ -72,12 +72,7 @@ export default function KpiStrip({
           {bound ? formatValue(tag) : '—'}
           {unit && bound && <i className={styles.unit}>{unit}</i>}
         </span>
-        <span className={styles.foot}>
-          {!bound ? 'ยังไม่ได้เลือกค่า / No reading selected'
-            : waiting ? 'กำลังอ่าน / Waiting for a reading'
-              : stale ? 'ข้อมูลเดิม / Last known'
-                : kpi.binding?.value_col}
-        </span>
+
       </>
     )
 

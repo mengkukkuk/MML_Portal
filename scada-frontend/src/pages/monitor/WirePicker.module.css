@@ -38,7 +38,7 @@
 
 .eyebrow {
   grid-area: eyebrow;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -64,7 +64,7 @@
 
 .chevron {
   grid-area: chevron;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 9px;
   color: var(--fg-dim);
   transition: transform 140ms ease-out;

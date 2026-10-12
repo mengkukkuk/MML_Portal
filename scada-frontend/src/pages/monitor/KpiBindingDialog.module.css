@@ -20,7 +20,7 @@
 }
 
 .titleSub {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 11px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -54,7 +54,7 @@
   margin: 0;
   padding-bottom: var(--space-2);
   border-bottom: 1px solid var(--border-soft);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.16em;
@@ -103,7 +103,7 @@
 }
 
 .mono {
-  font-family: var(--font-mono) !important;
+  font-family: var(--font-sans) !important;
   font-variant-numeric: tabular-nums;
 }
 
@@ -143,7 +143,7 @@
 }
 
 .previewValue {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-variant-numeric: tabular-nums;
   font-size: 30px;
   font-weight: 500;

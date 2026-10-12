@@ -66,7 +66,7 @@
 }
 
 .value {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-variant-numeric: tabular-nums;
   font-size: 29px;
   font-weight: 500;
@@ -90,7 +90,7 @@
 }
 
 .foot {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 11px;
   line-height: 1.4;
   color: var(--fg-dim);

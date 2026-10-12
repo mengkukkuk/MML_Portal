@@ -20,6 +20,7 @@ import { formatEvery, trendRefreshMs, windowSpanMs } from '../trendRefresh'
 import { readingTitle } from '../readingGroups'
 import styles from './blocks.module.css'
 import chart from './EnvelopeTrend.module.css'
+import { groupDigits } from '@/utils/numberFormat'
 
 /**
  * EnvelopeTrend — one device's reading against its setpoint and limits.
@@ -80,7 +81,7 @@ const trendGrid = (range) => ({
 })
 
 const fmt = (n) =>
-  n == null || Number.isNaN(n) ? '—' : Number(n).toLocaleString(undefined, {
+  n == null || Number.isNaN(n) ? '—' : Number(n).toLocaleString('en-US', {
     maximumFractionDigits: 3,
   })
 
@@ -275,7 +276,7 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
 
   const latest = points.length ? points[points.length - 1] : null
   const note = [
-    total ? tr('{count} points', { count: total.toLocaleString() }) : null,
+    total ? tr('{count} points', { count: groupDigits(total) }) : null,
     query.sampled ? tr('min/max per {step}', { step: fmtStep(query.sampled) }) : null,
     query.truncated ? tr('window clipped') : null,
     primary?.name,
@@ -365,7 +366,7 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
 
       {query.truncated && (
         <p className={styles.warning}>
-          {tr('Showing the most recent {count} readings. Choose a shorter window to see the whole period.', { count: MAX_POINTS.toLocaleString() })}
+          {tr('Showing the most recent {count} readings. Choose a shorter window to see the whole period.', { count: groupDigits(MAX_POINTS) })}
         </p>
       )}
 

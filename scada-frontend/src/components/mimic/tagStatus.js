@@ -1,3 +1,5 @@
+import { groupDigits } from '@/utils/numberFormat'
+
 /**
  * tagStatus — the vocabulary every mimic tag is described in, shared by the
  * demo simulator and the live poller.
@@ -97,11 +99,13 @@ export function statusColor(status) {
   return 'var(--ok)'
 }
 
+export { groupDigits }
+
 /** Formats a tag's live number for a readout. Never returns undefined. */
 export function formatValue(tag) {
   if (!tag) return '—'
   if (tag.display == null) return tag.state ? tag.state.toUpperCase() : '—'
-  return tag.display.toFixed(tag.decimals ?? 0)
+  return groupDigits(tag.display, tag.decimals ?? 0)
 }
 
 /**

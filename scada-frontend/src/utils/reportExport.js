@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs'
 import { fetchReportLogs } from '@/api/reports'
 import { fmtPeriod, isMultiSource } from '@/components/report/reportFormat'
 import { describeRange } from '@/components/report/reportRange'
+import { groupDigits } from '@/utils/numberFormat'
 
 /**
  * Builds the xlsx export: Summary, Defect Reasons, Defects Over Time, Quality
@@ -307,7 +308,7 @@ async function buildBatchLog(wb, meta, filters) {
     const warn = sheet.getRow(start + (page.rows?.length ?? 0) + 1)
     warn.getCell(1).value = meta.tr(
       'TRUNCATED — {total} rows matched, only the first {cap} are included. Narrow the window or the camera selection for a complete export.',
-      { total: page.total.toLocaleString(), cap: EXPORT_ROW_CAP.toLocaleString() },
+      { total: groupDigits(page.total), cap: groupDigits(EXPORT_ROW_CAP) },
     )
     warn.getCell(1).font = { bold: true, color: { argb: 'FFEF4444' } }
   }

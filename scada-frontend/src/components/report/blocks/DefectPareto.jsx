@@ -3,6 +3,7 @@ import EChart from '@/components/charts/EChart'
 import { useTranslation } from '@/i18n'
 import ReportBlock from './ReportBlock'
 import styles from './blocks.module.css'
+import { groupDigits } from '@/utils/numberFormat'
 
 /**
  * DefectPareto — defect types ranked, with the cumulative % line that makes it
@@ -44,8 +45,8 @@ export default function DefectPareto({ block, result }) {
           if (!r) return ''
           return [
             `<b>${labels[i]}</b>`,
-            `${tr('Count')}: ${r.count.toLocaleString()}`,
-            `${tr('Batches')}: ${r.batches.toLocaleString()}`,
+            `${tr('Count')}: ${groupDigits(r.count)}`,
+            `${tr('Batches')}: ${groupDigits(r.batches)}`,
             `${tr('Cumulative')}: ${r.cumulative_pct?.toFixed(1)}%`,
           ].join('<br/>')
         },

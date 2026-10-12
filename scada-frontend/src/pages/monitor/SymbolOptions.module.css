@@ -20,7 +20,7 @@
 .sectionTitle {
   padding-bottom: var(--space-2);
   border-bottom: 1px solid var(--border-soft);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 11px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -36,7 +36,7 @@
 
 .hint code {
   padding: 0 3px;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 11px;
   color: var(--fg-muted);
   background: var(--bg-elev);
@@ -101,7 +101,7 @@
   width: 100%;
   height: var(--ctl-h);
   padding: 7px 9px;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 13px;
   color: var(--fg);
   background: var(--bg-app);
@@ -123,7 +123,7 @@
 
 .error {
   margin: 0;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 11px;
   line-height: 1.45;
   color: var(--crit);
@@ -169,7 +169,7 @@
   width: 12px;
   height: var(--ctl-h);
   line-height: var(--ctl-h);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 11px;
   color: var(--fg-dim);
   text-align: right;
@@ -261,7 +261,7 @@
   min-width: 0;
   padding: 0 6px;
   overflow: hidden;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -307,7 +307,7 @@
   min-width: 0;
   height: var(--ctl-h);
   padding: 7px 9px;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 13px;
   color: var(--fg);
   background: var(--bg-app);
@@ -384,7 +384,7 @@
   width: 100%;
   height: var(--ctl-h);
   padding: 7px 9px;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-variant-numeric: tabular-nums;
   font-size: 13px;
   color: var(--fg);
@@ -572,6 +572,6 @@
 .opacityValue {
   flex: 0 0 34px;
   text-align: right;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   color: var(--fg-muted);
 }

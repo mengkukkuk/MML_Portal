@@ -1,4 +1,5 @@
 import { colorAt } from '@/utils/seriesPalette'
+import { groupDigits } from '@/utils/numberFormat'
 import {
   WARN_COLOR, CRIT_COLOR, thresholdColor, tickLineColor, axisTextColor, primaryTextColor,
 } from './shared'
@@ -37,7 +38,7 @@ export default function buildGaugeOption(spec, index, opts = {}, isMulti = false
   stops.push([1, crit != null ? CRIT_COLOR : (warn != null ? WARN_COLOR : color)])
   const val = spec.latest?.value ?? min
   const pc = thresholdColor(val, color, warn, crit)
-  const fmtGauge = (v) => (decimals == null ? `${v}` : Number(v).toFixed(decimals))
+  const fmtGauge = (v) => groupDigits(v, decimals)
   // Small multiples can shrink to ~84px cells, so thin the ring and use fewer,
   // smaller scale labels there to keep the scale inside the dial.
   return {

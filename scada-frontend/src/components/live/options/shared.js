@@ -11,6 +11,8 @@
  * vizType -> builder lookup in index.js.
  */
 
+import { groupDigits, isDigits } from '@/utils/numberFormat'
+
 export const WARN_COLOR = '#e6a23c'
 export const CRIT_COLOR = '#f56c6c'
 
@@ -55,7 +57,7 @@ export const primaryTextColor = () => cssVar('--fg', '#e6edf7')
 export function fmtValue(v, decimals, labels) {
   if (v == null) return '—'
   if (labels && (v === 0 || v === 1)) return labels[v]
-  return decimals == null ? `${v}` : Number(v).toFixed(decimals)
+  return isDigits(v) ? groupDigits(v, decimals) : `${v}`
 }
 
 /**

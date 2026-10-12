@@ -51,7 +51,7 @@
 }
 
 .tagId {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 20px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -92,7 +92,7 @@
 }
 
 .code {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 11px;
   padding: 2px 8px;
   border-radius: var(--radius-sm);
@@ -138,7 +138,7 @@
 }
 
 .ngValue {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 28px;
   font-weight: 500;
   line-height: 1;
@@ -231,7 +231,7 @@
 }
 
 .causeCount {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 11px;
   color: var(--fg-dim);
   white-space: nowrap;
@@ -280,7 +280,7 @@
 
 .clearBtn {
   font: inherit;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 10px;
   background: none;
   border: 1px solid var(--border);
@@ -296,7 +296,7 @@
 }
 
 .stripPos {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 11px;
   color: var(--fg-dim);
   padding: 0 2px;
@@ -409,7 +409,7 @@
 }
 
 .frameLoading {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 11px;
   font-weight: 600;
   color: var(--crit);
@@ -433,7 +433,7 @@
 .frame figcaption em {
   display: block;
   font-style: normal;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   color: var(--fg-dim);
 }
 

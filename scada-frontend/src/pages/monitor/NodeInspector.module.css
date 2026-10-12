@@ -30,7 +30,7 @@
   background: none;
   border: 0;
   cursor: pointer;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 11px;
   letter-spacing: 0.08em;
   color: var(--fg-dim);
@@ -41,7 +41,7 @@
 }
 
 .eyebrow {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -57,7 +57,7 @@
 }
 
 .tagId {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 12px;
   letter-spacing: 0.1em;
   color: var(--accent);
@@ -72,7 +72,7 @@
 .sectionTitle {
   padding-bottom: var(--space-2);
   border-bottom: 1px solid var(--border-soft);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 11px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -100,7 +100,7 @@
 }
 
 .mono {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-variant-numeric: tabular-nums;
 }
 
@@ -130,7 +130,7 @@
   color: var(--fg-muted);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
@@ -154,7 +154,7 @@
 
 .rotValue {
   flex: 1;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--fg);

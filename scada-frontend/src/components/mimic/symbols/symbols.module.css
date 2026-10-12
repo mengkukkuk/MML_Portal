@@ -180,7 +180,7 @@
 }
 
 .readout {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 13px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
@@ -219,7 +219,7 @@
    a totaliser's figures is fixed here. Tabular is not cosmetic: a digit that
    changes width makes the whole number appear to shift. */
 .counterValue {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
@@ -240,7 +240,7 @@
 }
 
 .boxValue {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   fill: var(--fg);
@@ -253,7 +253,7 @@
    one step from the counter's 600 because a grid of bold figures is a wall —
    a single totaliser has nothing to compete with, a column of twenty does. */
 .tableCell {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
@@ -609,7 +609,7 @@
 }
 
 .bubbleValue {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 15px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
@@ -620,7 +620,7 @@
 }
 
 .bubbleUnit {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 9px;
   font-weight: 400;
   fill: var(--fg-dim);

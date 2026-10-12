@@ -10,6 +10,7 @@ import { useTranslation } from '@/i18n'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { fmtDateTime, fmtNumber, isMultiSource } from '../reportFormat'
 import styles from './blocks.module.css'
+import { groupDigits } from '@/utils/numberFormat'
 
 /**
  * RawLogTable — the audit trail under the analysis: the actual
@@ -75,7 +76,7 @@ export default function RawLogTable({ block, filters }) {
   return (
     <ReportBlock
       title={tr(block?.title ?? 'Defect Batch Log')}
-      note={total ? tr('{count} rows', { count: total.toLocaleString() }) : undefined}
+      note={total ? tr('{count} rows', { count: groupDigits(total) }) : undefined}
     >
       <TextField
         size="small"
@@ -145,7 +146,7 @@ export default function RawLogTable({ block, filters }) {
 
       <div className={styles.pager}>
         <span>
-          {tr('{from}–{to} of {total}', { from: from.toLocaleString(), to: to.toLocaleString(), total: total.toLocaleString() })}
+          {tr('{from}–{to} of {total}', { from: groupDigits(from), to: groupDigits(to), total: groupDigits(total) })}
         </span>
         <div className={styles['pager__buttons']}>
           <Button

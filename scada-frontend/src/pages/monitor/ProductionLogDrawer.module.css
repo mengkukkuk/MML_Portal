@@ -75,10 +75,10 @@
   border-radius: 3px;
   background: var(--bg-elev);
   color: var(--fg);
-  font: 600 14px var(--font-mono);
+  font: 600 14px var(--font-sans);
 }
 .summary small { margin-left: 4px; color: var(--fg-dim); font: 9px var(--font-display); text-transform: uppercase; }
-.summary b { margin-left: 4px; color: var(--fg); font: 600 17px var(--font-mono); font-variant-numeric: tabular-nums; }
+.summary b { margin-left: 4px; color: var(--fg); font: 600 17px var(--font-sans); font-variant-numeric: tabular-nums; }
 .summary .rejectValue { color: var(--crit); }
 .summary em { margin-left: auto; color: var(--fg-dim); font-size: 10px; font-style: normal; }
 .summary .stale { color: var(--warn); }
@@ -117,7 +117,7 @@
 .barReject { background: color-mix(in srgb, var(--crit) 55%, var(--bg-panel)); }
 .swatch { display: inline-block; width: 8px; height: 8px; margin-right: 5px; border-radius: 2px; background: color-mix(in srgb, var(--accent) 78%, var(--bg-panel)); }
 .swatchReject { background: color-mix(in srgb, var(--crit) 70%, var(--bg-panel)); }
-.hour { align-self: center; font: 10px var(--font-mono); font-variant-numeric: tabular-nums; }
+.hour { align-self: center; font: 10px var(--font-sans); font-variant-numeric: tabular-nums; }
 .barSlot:hover .bar:not(.barReject) { background: color-mix(in srgb, var(--accent) 52%, var(--fg-muted)); }
 .barSlot:hover .barReject,
 .barSlotActive .barReject { background: var(--crit); }

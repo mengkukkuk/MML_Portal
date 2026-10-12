@@ -212,7 +212,7 @@
 /* The live size, on the symbol being resized and nowhere else. Mono and
    tabular because a dimension is a number you compare, not prose. */
 .dimension {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   text-anchor: middle;
@@ -324,7 +324,7 @@
 }
 
 .placeholderLabel {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 11px;
   text-anchor: middle;
   fill: var(--warn);

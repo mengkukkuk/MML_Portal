@@ -4,6 +4,7 @@ import { useTranslation } from '@/i18n'
 import ReportBlock from './ReportBlock'
 import { cameraLabel, fmtPeriod, isMultiSource } from '../reportFormat'
 import styles from './blocks.module.css'
+import { groupDigits } from '@/utils/numberFormat'
 
 /**
  * Camera defect timeline — one row per camera, one cell per period, shaded by
@@ -53,7 +54,7 @@ export default function ThroughputTimeline({ block, result }) {
           formatter: (p) => [
             `<b>${categories[p.data[1]]}</b>`,
             fmtPeriod(periodList[p.data[0]], bucket),
-            `${tr('Defects')}: ${p.data[2].toLocaleString()}`,
+            `${tr('Defects')}: ${groupDigits(p.data[2])}`,
           ].join('<br/>'),
         },
         xAxis: {
@@ -108,7 +109,7 @@ export default function ThroughputTimeline({ block, result }) {
   return (
     <ReportBlock
       title={title}
-      note={tr('{count} periods · peak {max} defects', { count: periodCount, max: max.toLocaleString() })}
+      note={tr('{count} periods · peak {max} defects', { count: periodCount, max: groupDigits(max) })}
     >
       <EChart option={option} height={`${height}px`} />
     </ReportBlock>

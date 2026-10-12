@@ -55,7 +55,7 @@
 }
 
 .tagId {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 20px;
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -76,7 +76,7 @@
 }
 
 .value {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 36px;
   font-weight: 500;
   line-height: 1;
@@ -88,14 +88,14 @@
 .valueCrit { color: var(--crit); }
 
 .unit {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 14px;
   color: var(--fg-muted);
 }
 
 .delta {
   margin-left: auto;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--fg-muted);
@@ -155,7 +155,7 @@
 .limits {
   display: flex;
   justify-content: space-between;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 11px;
   color: var(--fg-dim);
 }
@@ -185,7 +185,7 @@
 }
 
 .metaVal {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   color: var(--fg-muted);
   text-align: right;
 }
@@ -209,7 +209,7 @@
 }
 
 .eventTime {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   color: var(--fg-dim);
   font-size: 11px;
 }

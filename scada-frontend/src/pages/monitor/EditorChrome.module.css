@@ -60,7 +60,7 @@
 /* The sheet names carry their size ("Extra large · 3200×1800"), so the select is wider than the wire one. */
 .sheetSelect select { width: 200px; }
 .zoomGroup { margin-left: auto; }
-.zoomValue { width: 48px; color: var(--fg); text-align: center; font: 11px var(--font-mono); }
+.zoomValue { width: 48px; color: var(--fg); text-align: center; font: 11px var(--font-sans); }
 .drawerTools { display: none; }
 
 .commandBar {
@@ -79,7 +79,7 @@
 .saveButton:disabled { opacity: .35; cursor: not-allowed; }
 .toolButton:disabled:hover { color: var(--fg-muted); background: transparent; }
 .saveCluster { margin-left: auto; }
-.dirtyState { display: inline-flex; align-items: center; gap: 7px; margin-right: 6px; color: var(--fg-dim); font: 11px var(--font-mono); }
+.dirtyState { display: inline-flex; align-items: center; gap: 7px; margin-right: 6px; color: var(--fg-dim); font: 11px var(--font-sans); }
 .dirtyState > span { width: 7px; height: 7px; border-radius: 50%; background: var(--fg-dim); }
 .dirtyStateOn { color: var(--warn); }
 .dirtyStateOn > span { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 18%, transparent); }

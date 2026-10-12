@@ -10,6 +10,7 @@ import {
 import useCameraFrameUrl from '@/components/mimic/useCameraFrameUrl'
 import CameraLightbox from './CameraLightbox'
 import styles from './CameraRail.module.css'
+import { groupDigits } from '@/utils/numberFormat'
 
 /**
  * CameraRail — the view-mode detail panel for an ipcamera symbol.
@@ -388,7 +389,7 @@ export default function CameraRail({
         {hasBatch ? (
           <>
             <span className={styles.ngValue}>
-              {(defects?.total ?? 0).toLocaleString()}
+              {groupDigits((defects?.total ?? 0))}
             </span>
             <span className={styles.ngLabel}>
               {T.defectTotal}

@@ -112,7 +112,7 @@
 /* The slug is the address, not decoration — an admin renaming a drawing needs
  * to see which link it answers to. */
 .rowSlug {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 11px;
   letter-spacing: 0.04em;
   color: var(--fg-dim);

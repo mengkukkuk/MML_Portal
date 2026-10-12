@@ -4,6 +4,7 @@ import { useTranslation } from '@/i18n'
 import ReportBlock from './ReportBlock'
 import { defectPalette, fmtPeriod } from '../reportFormat'
 import styles from './blocks.module.css'
+import { groupDigits } from '@/utils/numberFormat'
 
 /**
  * DefectTrend — defects per period, stacked by defect type.
@@ -88,8 +89,8 @@ export default function DefectTrend({ block, result }) {
             const nonZero = params.filter((p) => p.value > 0)
             const total = nonZero.reduce((sum, p) => sum + p.value, 0)
             return [
-              `<b>${fmtPeriod(periods[params[0]?.dataIndex], bucket)}</b> · ${tr('Total')} ${total.toLocaleString()}`,
-              ...nonZero.map((p) => `${p.marker}${p.seriesName}: ${p.value.toLocaleString()}`),
+              `<b>${fmtPeriod(periods[params[0]?.dataIndex], bucket)}</b> · ${tr('Total')} ${groupDigits(total)}`,
+              ...nonZero.map((p) => `${p.marker}${p.seriesName}: ${groupDigits(p.value)}`),
             ].join('<br/>')
           },
         },

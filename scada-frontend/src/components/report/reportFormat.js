@@ -1,5 +1,6 @@
 import dayjs from 'dayjs'
 import { colorAt } from '@/utils/seriesPalette'
+import { groupDigits } from '@/utils/numberFormat'
 
 /**
  * Shared formatting and palette for the vision/camera-QC report blocks.
@@ -97,10 +98,7 @@ export function defectRateColor(ratePct, warnPct = 2, critPct = 5) {
 /** Count/ratio → string; `null` stays a visible dash, like fmtPercent. */
 export function fmtNumber(value, digits = 0) {
   if (value == null || Number.isNaN(value)) return '—'
-  return Number(value).toLocaleString(undefined, {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  })
+  return groupDigits(value, digits)
 }
 
 /**

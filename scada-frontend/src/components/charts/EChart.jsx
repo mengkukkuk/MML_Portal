@@ -2,6 +2,18 @@ import { useEffect, useRef } from 'react'
 import * as echarts from 'echarts'
 
 /**
+ * ECharts paints to <canvas>, which can't resolve `var(--font-sans)`, so left
+ * alone every axis label and tooltip falls back to the browser's default sans
+ * instead of the face the rest of the app uses. Read the computed stack once
+ * per setOption so a token change reaches the chart on its next draw.
+ */
+function appFontFamily() {
+  if (typeof window === 'undefined') return undefined
+  const v = getComputedStyle(document.documentElement).getPropertyValue('--font-sans').trim()
+  return v || undefined
+}
+
+/**
  * EChart — thin, generic wrapper around the ECharts core (raw `echarts`
  * package, not `echarts-for-react`) chosen over the latter for precise
  * control of the three failure modes called out in the migration plan:
@@ -78,7 +90,8 @@ export default function EChart({
   useEffect(() => {
     const chart = chartRef.current
     if (!chart || chart.isDisposed()) return
-    chart.setOption(option ?? {}, { notMerge, lazyUpdate: true })
+    // An option that brings its own textStyle wins outright; the rest inherit the app face.
+    chart.setOption({ textStyle: { fontFamily: appFontFamily() }, ...option }, { notMerge, lazyUpdate: true })
   }, [option, notMerge])
 
   // Bind/rebind user event handlers.

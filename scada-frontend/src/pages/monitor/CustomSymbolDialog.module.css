@@ -213,7 +213,7 @@
   padding: 1px 6px;
   background: var(--bg-elev);
   border-radius: 999px;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 10px;
   color: var(--fg-dim);
 }

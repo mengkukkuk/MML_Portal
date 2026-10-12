@@ -12,13 +12,13 @@
   border-radius: var(--radius-sm);
   background: var(--bg-app);
   color: var(--fg);
-  font: 12px var(--font-mono);
+  font: 12px var(--font-sans);
 }
 .grid select:focus-visible,
 .grid input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .grid select:disabled { opacity: .5; }
 .full { grid-column: 1 / -1; }
 .preview { display: flex; gap: var(--space-4); margin: 0; padding: var(--space-3); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--fg-muted); font-size: 12px; }
-.preview b { margin-left: 5px; color: var(--fg); font: 600 15px var(--font-mono); }
+.preview b { margin-left: 5px; color: var(--fg); font: 600 15px var(--font-sans); }
 .spacer { flex: 1 1 auto; }
 @media (max-width: 680px) { .grid { grid-template-columns: minmax(0, 1fr); } .full { grid-column: auto; } }
