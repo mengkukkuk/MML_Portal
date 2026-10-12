@@ -1,6 +1,6 @@
 export const UNIT_GROUPS = [
   {
-    category: 'Misc',
+    category: 'Percent',
     units: [
       { label: 'Percent (%)', value: '%' },
       { label: 'Per mille (‰)', value: '‰' },
