@@ -8,6 +8,24 @@ export const UNIT_GROUPS = [
     ],
   },
   {
+    category: 'Cigarettes',
+    units: [
+      { label: 'มวน', value:'มวน'},
+      { label: 'ซอง', value: 'ซอง' },
+      { label: 'Carton', value: 'Carton' },
+    ],
+  },
+  {
+    category: 'Speed',
+    units: [
+      { label: 'Metres/second (m/s)', value: 'm/s' },
+      { label: 'Kilometres/hour (km/h)', value: 'km/h' },
+      { label: 'Revolutions/minute (rpm)', value: 'rpm' },
+      { label: 'Units/minute (dpm)', value: 'units/min' },
+      { label: 'Defects/minute (dpm)', value: 'defects/min' },
+    ],
+  },
+  {
     category: 'Temperature',
     units: [
       { label: 'Celsius (°C)', value: '°C' },
@@ -64,15 +82,6 @@ export const UNIT_GROUPS = [
       { label: 'Kilometre (km)', value: 'km' },
       { label: 'Inch (in)', value: 'in' },
       { label: 'Foot (ft)', value: 'ft' },
-    ],
-  },
-  {
-    category: 'Speed',
-    units: [
-      { label: 'Metres/second (m/s)', value: 'm/s' },
-      { label: 'Kilometres/hour (km/h)', value: 'km/h' },
-      { label: 'Revolutions/minute (rpm)', value: 'rpm' },
-      { label: 'Defects/minute (dpm)', value: 'dpm' }
     ],
   },
   {
@@ -147,4 +156,5 @@ export const UNIT_GROUPS = [
       { label: 'Acidity (pH)', value: 'pH' },
     ],
   },
+
 ]

@@ -4,6 +4,7 @@ import DeleteOutlineOutlined from '@mui/icons-material/DeleteOutlineOutlined'
 import RestartAltOutlined from '@mui/icons-material/RestartAltOutlined'
 import Rotate90DegreesCwOutlined from '@mui/icons-material/Rotate90DegreesCwOutlined'
 import { symbolDef, bubbleSpec, bubbleMoved } from '@/components/mimic/symbols'
+import { BUBBLE_SHAPES, bubbleHidden, bubbleShape } from '@/components/mimic/bubbleShape'
 import SymbolOptions, { SymbolColour } from './SymbolOptions'
 import styles from './NodeInspector.module.css'
 
@@ -30,6 +31,8 @@ export default function NodeInspector({
   // means, the same way `resized`/`rot` above resolve their own defaults.
   const labelSize = node.options?.labelSize ?? 12
   const bubbleSize = node.options?.bubbleSize ?? 34
+  const balloonOff = bubbleHidden(node)
+  const shape = bubbleShape(node.options)
   const setLabelSize = (v) => onOptions(node.id, { labelSize: Math.max(8, Math.min(32, v)) })
   const setBubbleSize = (v) => onOptions(node.id, { bubbleSize: Math.max(16, Math.min(80, v)) })
   const connection = b?.datasource_id == null
@@ -140,10 +143,38 @@ export default function NodeInspector({
       {bubble && (
         <div className={styles.section}>
           <div className={styles.sectionTitle}>Balloon</div>
+          <div className={styles.rotRow} role="group" aria-label="Balloon visibility">
+            {[[false, 'Shown'], [true, 'Hidden']].map(([off, text]) => (
+              <button
+                key={text}
+                type="button"
+                className={`${styles.rotBtn} ${balloonOff === off ? styles.rotOn : ''}`}
+                aria-pressed={balloonOff === off}
+                onClick={() => onOptions(node.id, { bubbleHidden: off ? true : undefined })}
+              >
+                {text}
+              </button>
+            ))}
+          </div>
           <p className={styles.hint}>
-            Drag the reading itself to move it. The offset is kept from the
-            symbol, so the balloon travels with it.
+            {balloonOff
+              ? 'The reading is not drawn on the sheet. Its data source is unchanged.'
+              : 'Drag the reading itself to move it. The offset is kept from the symbol, so the balloon travels with it.'}
           </p>
+          <div className={styles.rotRow} role="group" aria-label="Balloon shape">
+            {BUBBLE_SHAPES.map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                className={`${styles.rotBtn} ${shape === id ? styles.rotOn : ''}`}
+                aria-pressed={shape === id}
+                disabled={balloonOff}
+                onClick={() => onOptions(node.id, { bubbleShape: id === 'circle' ? undefined : id })}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <dl className={styles.summary}>
             <dt>Offset</dt>
             <dd className={styles.mono}>{bubble.offset[0]}, {bubble.offset[1]}</dd>
@@ -152,7 +183,7 @@ export default function NodeInspector({
             fullWidth
             color="inherit"
             startIcon={<RestartAltOutlined />}
-            disabled={!bubbleMoved(node)}
+            disabled={balloonOff || !bubbleMoved(node)}
             onClick={() => onResetBubble(node.id)}
           >
             Reset balloon position
@@ -162,6 +193,7 @@ export default function NodeInspector({
             <button
               type="button"
               className={styles.rotBtn}
+              disabled={balloonOff}
               onClick={() => setBubbleSize(bubbleSize - 4)}
             >
               −
@@ -170,6 +202,7 @@ export default function NodeInspector({
             <button
               type="button"
               className={styles.rotBtn}
+              disabled={balloonOff}
               onClick={() => setBubbleSize(bubbleSize + 4)}
             >
               +
@@ -179,7 +212,7 @@ export default function NodeInspector({
             fullWidth
             color="inherit"
             startIcon={<RestartAltOutlined />}
-            disabled={node.options?.bubbleSize == null}
+            disabled={balloonOff || node.options?.bubbleSize == null}
             onClick={() => onOptions(node.id, { bubbleSize: undefined })}
           >
             Reset balloon size

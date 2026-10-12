@@ -15,6 +15,7 @@ import { fetchSchemaTables, fetchSchemaColumns, fetchSchemaValues, fetchSchemaLa
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { symbolDef } from '@/components/mimic/symbols'
 import InstrumentBubble from '@/components/mimic/InstrumentBubble'
+import { bubbleShape } from '@/components/mimic/bubbleShape'
 import { deriveTag } from '@/components/mimic/deriveTag'
 import { compileExpr } from '@/utils/mathExpr'
 import { buildDefectLabelsByCode, resolveTagLabel } from '@/utils/defectLabels'
@@ -810,10 +811,9 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
                   <InstrumentBubble
                     tag={previewTag}
                     tagId={form.tagId}
-                    anchorX={ax}
-                    anchorY={ay}
                     cx={ax + bubble.offset[0]}
                     cy={ay + bubble.offset[1]}
+                    shape={bubbleShape(node.options)}
                   />
                 )}
               </svg>

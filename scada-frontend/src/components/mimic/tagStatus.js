@@ -1,4 +1,4 @@
-import { groupDigits } from '@/utils/numberFormat'
+import { groupDigits } from '../../utils/numberFormat.js'
 
 /**
  * tagStatus — the vocabulary every mimic tag is described in, shared by the
