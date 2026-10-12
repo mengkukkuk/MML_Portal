@@ -72,7 +72,6 @@ export default function KpiStrip({
           {bound ? formatValue(tag) : '—'}
           {unit && bound && <i className={styles.unit}>{unit}</i>}
         </span>
-
       </>
     )
 

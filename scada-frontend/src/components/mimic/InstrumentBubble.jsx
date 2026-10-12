@@ -1,21 +1,26 @@
+import {
+  BUBBLE_BASE_RADIUS, bubbleGeometry, bubbleSplitInset, bubbleTextWidth,
+} from './bubbleShape'
 import { formatValue } from './tagStatus'
 import useValueTransition from './useValueTransition'
 import s from './symbols/symbols.module.css'
 
-const R = 34
+const R = BUBBLE_BASE_RADIUS
 
 /**
  * InstrumentBubble — an ISA-5.1 balloon that carries the live reading.
  *
  * The convention is a circle split by a hairline, function letters above the
- * loop number, tethered to its equipment by a dotted lead line. The one
- * deviation, and the page's signature, is that the lower half shows the live
- * value rather than the loop number: the drawing *is* the instrument, so the
- * mimic needs no floating value cards over the top of it.
+ * loop number. The one deviation, and the page's signature, is that the lower
+ * half shows the live value rather than the loop number: the drawing *is* the
+ * instrument, so the mimic needs no floating value cards over the top of it.
+ *
+ * There is no lead line back to the equipment. The balloon is placed beside its
+ * symbol and moves with it, and a dotted tether across the drawing read as a
+ * pipe or a signal wire to anyone who did not know the convention.
  *
  * Props:
  *   cx, cy            bubble centre, logical units
- *   anchorX, anchorY  where on the equipment the lead line starts
  *   tag               one entry from the plant snapshot, or null when the
  *                     symbol has no datasource bound yet
  *   tagId             the loop id to print when there is no tag to read it off
@@ -24,9 +29,21 @@ const R = 34
  *                     Every offset below was hand-tuned around R=34, so the
  *                     whole glyph scales from that ratio rather than just the
  *                     circle growing around fixed-size text.
+ *   shape             'circle' (default) | 'square' | 'box' | 'pill' — see
+ *                     bubbleShape.js. The size setting stays the radius for
+ *                     every shape, so changing shape never changes how big the
+ *                     text is.
  */
+
+/** The outline as a circle or a rounded rectangle, sized from one radius. */
+export function BubbleOutline({ shape = 'circle', cx, cy, radius = R, textWidth = 0, ...rest }) {
+  if (shape === 'circle') return <circle cx={cx} cy={cy} r={radius} {...rest} />
+  const { hw, hh, rx } = bubbleGeometry(shape, radius, textWidth)
+  return <rect x={cx - hw} y={cy - hh} width={hw * 2} height={hh * 2} rx={rx} {...rest} />
+}
+
 export default function InstrumentBubble({
-  cx, cy, anchorX, anchorY, tag, tagId = null, radius = R,
+  cx, cy, tag, tagId = null, radius = R, shape = 'circle',
 }) {
   const scale = radius / R
   const { pulse, dir, crossed } = useValueTransition(tag)
@@ -47,12 +64,10 @@ export default function InstrumentBubble({
 
   const status = tag?.status ?? 'stale'
 
-  // Lead line stops at the circle's edge rather than at its centre.
-  const dx = cx - anchorX
-  const dy = cy - anchorY
-  const dist = Math.hypot(dx, dy) || 1
-  const edgeX = cx - (dx / dist) * radius
-  const edgeY = cy - (dy / dist) * radius
+  const text = formatValue(tag)
+  const textWidth = bubbleTextWidth(text, label)
+  const { hw } = bubbleGeometry(shape, radius, textWidth)
+  const inset = bubbleSplitInset(shape, scale)
 
   const ringTint = crossed && status === 'crit' ? s.ringCrit
     : crossed && status === 'warn' ? s.ringWarn
@@ -62,15 +77,29 @@ export default function InstrumentBubble({
 
   return (
     <g className={`${statusClass} ${tag ? '' : s.bubbleUnbound}`}>
-      <path className={s.bubbleLead} d={`M ${anchorX} ${anchorY} L ${edgeX} ${edgeY}`} />
       {/* key={pulse} is what makes this fire once per *displayed* change */}
-      <circle key={pulse} className={`${s.ring} ${ringTint}`} cx={cx} cy={cy} r={radius} />
-      <circle className={s.bubbleFace} cx={cx} cy={cy} r={radius} />
+      <BubbleOutline
+        key={pulse}
+        shape={shape}
+        className={`${s.ring} ${ringTint}`}
+        cx={cx}
+        cy={cy}
+        radius={radius}
+        textWidth={textWidth}
+      />
+      <BubbleOutline
+        shape={shape}
+        className={s.bubbleFace}
+        cx={cx}
+        cy={cy}
+        radius={radius}
+        textWidth={textWidth}
+      />
       <line
         className={s.bubbleSplit}
-        x1={cx - radius + 3 * scale}
+        x1={cx - hw + inset}
         y1={cy - 6 * scale}
-        x2={cx + radius - 3 * scale}
+        x2={cx + hw - inset}
         y2={cy - 6 * scale}
       />
       <text className={s.bubbleTag} x={cx} y={cy - 13 * scale} style={{ fontSize: 11 * scale }}>
@@ -84,7 +113,7 @@ export default function InstrumentBubble({
         y={cy + 12 * scale}
         style={{ fontSize: 15 * scale }}
       >
-        {formatValue(tag)}
+        {text}
       </text>
       {tag?.unit && (
         <text className={s.bubbleUnit} x={cx} y={cy + 24 * scale} style={{ fontSize: 9 * scale }}>

@@ -5,9 +5,12 @@ import {
 import {
   symbolDef, portPoint, bubbleSpec,
 } from '@/components/mimic/symbols'
-import InstrumentBubble from '@/components/mimic/InstrumentBubble'
+import InstrumentBubble, { BubbleOutline } from '@/components/mimic/InstrumentBubble'
+import {
+  bubbleGeometry, bubbleHidden, bubbleShape, bubbleTextWidth,
+} from '@/components/mimic/bubbleShape'
 import { resolveSymbolPaint, symbolColorStyle } from '@/components/mimic/symbolColors'
-import { isFlowing } from '@/components/mimic/tagStatus'
+import { formatValue, isFlowing } from '@/components/mimic/tagStatus'
 import { NORMAL_WIRE, WirePath, wireType } from '@/components/mimic/wireTypes'
 import { fitToContents, gridStepForZoom, zoomAtPoint } from './editorViewport'
 import styles from './MimicCanvas.module.css'
@@ -526,7 +529,7 @@ const MimicCanvas = forwardRef(function MimicCanvas({
     capture(evt)
   }, [capture, focusStage, toLogical, toolMode])
 
-  const handleBubblePointerDown = useCallback((evt, node, anchor, centre) => {
+  const handleBubblePointerDown = useCallback((evt, node, anchor, centre, textWidth) => {
     if (evt.button !== 0 || toolMode === 'pan' || spaceHeldRef.current) return
     evt.stopPropagation()
     focusStage()
@@ -541,10 +544,14 @@ const MimicCanvas = forwardRef(function MimicCanvas({
       ay: anchor.y,
       ox: p.x - centre.x,
       oy: p.y - centre.y,
-      // An admin's balloon-size override changes the drag bounds below, so
-      // the clamp always matches the balloon actually being dragged rather
-      // than assuming every balloon is the default radius.
-      radius: node.options?.bubbleSize ?? BUBBLE_R,
+      // An admin's balloon size and shape change the drag bounds below, so the
+      // clamp always matches the balloon actually being dragged rather than
+      // assuming every balloon is a default-sized circle.
+      ...bubbleGeometry(
+        bubbleShape(node.options),
+        node.options?.bubbleSize ?? BUBBLE_R,
+        textWidth,
+      ),
     }
     onGestureStart?.()
     capture(evt)
@@ -610,8 +617,8 @@ const MimicCanvas = forwardRef(function MimicCanvas({
       // Stored as an offset from the anchor, so the balloon keeps its relative
       // placement when the symbol itself is moved afterwards.
       onMoveBubble(drag.id, [
-        Math.round(clamp(p.x - drag.ox, drag.radius + 4, baseView.w - drag.radius - 4) - drag.ax),
-        Math.round(clamp(p.y - drag.oy, drag.radius + 16, baseView.h - drag.radius - 4) - drag.ay),
+        Math.round(clamp(p.x - drag.ox, drag.hw + 4, baseView.w - drag.hw - 4) - drag.ax),
+        Math.round(clamp(p.y - drag.oy, drag.hh + 16, baseView.h - drag.hh - 4) - drag.ay),
       ])
       return
     }
@@ -1105,7 +1112,7 @@ const MimicCanvas = forwardRef(function MimicCanvas({
           // An unbound loop still gets its balloon (empty), so the drawing
           // reads as commissioned-in-progress rather than as a symbol that
           // never had an instrument.
-          if (!spec || (!tag && !node.tagId)) return null
+          if (!spec || (!tag && !node.tagId) || bubbleHidden(node)) return null
           const anchor = {
             x: node.x + spec.anchor[0] * node.w,
             y: node.y + spec.anchor[1] * node.h,
@@ -1114,29 +1121,32 @@ const MimicCanvas = forwardRef(function MimicCanvas({
           // An admin's per-node override (NodeInspector's Balloon size
           // stepper), or the ISA-standard default.
           const bubbleRadius = node.options?.bubbleSize ?? BUBBLE_R
+          const shape = bubbleShape(node.options)
+          const textWidth = bubbleTextWidth(formatValue(tag), tag?.id ?? node.tagId ?? '')
           return (
             <g
               key={`b-${node.id}`}
               className={editMode ? styles.bubbleEditing : undefined}
               onPointerDown={editMode
-                ? (e) => handleBubblePointerDown(e, node, anchor, centre)
+                ? (e) => handleBubblePointerDown(e, node, anchor, centre, textWidth)
                 : undefined}
             >
               <InstrumentBubble
                 tag={tag}
                 tagId={node.tagId}
-                anchorX={anchor.x}
-                anchorY={anchor.y}
                 cx={centre.x}
                 cy={centre.y}
                 radius={bubbleRadius}
+                shape={shape}
               />
               {editMode && (
-                <circle
+                <BubbleOutline
                   className={styles.bubbleHandle}
+                  shape={shape}
                   cx={centre.x}
                   cy={centre.y}
-                  r={bubbleRadius}
+                  radius={bubbleRadius}
+                  textWidth={textWidth}
                 />
               )}
             </g>

@@ -590,13 +590,6 @@
   stroke-width: 1;
 }
 
-.bubbleLead {
-  fill: none;
-  stroke: var(--sym-ink);
-  stroke-width: 1;
-  stroke-dasharray: 2 4;
-}
-
 .bubbleTag {
   font-family: var(--font-display);
   font-size: 11px;

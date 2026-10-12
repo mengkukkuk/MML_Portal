@@ -328,7 +328,190 @@ export default function SettingsPage() {
         </div>
       </header>
 
-      {/* ── Module 1 · Appearance ──────────────────────────────────────── */}
+      {/* ── Module 1 · Data sources ────────────────────────────────────── */}
+      <section className={`${styles.mod} ${collapsed.datasources ? styles.modCollapsed : ''}`}>
+        <header className={styles.modHead} onClick={() => toggle('datasources')}>
+          <span className={styles.modTag}>{tr("Data sources")}</span>
+          <span className={styles.modSub}>{tr("Saved database connections")}</span>
+          {isAdmin && (
+              <Button
+                  className={styles.modAction}
+                  variant="contained"
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    openCreateDs()
+                  }}
+              >{tr("+ Add connection")}</Button>
+          )}
+          <ChevronRightRounded
+              className={`${styles.modChevron} ${!collapsed.datasources ? styles.modChevronOpen : ''}`}
+          />
+        </header>
+        {!collapsed.datasources && (
+            <div className={styles.modBody}>
+              {!isAdmin && (
+                  <p className={styles.dsReadonly}>
+                    <span className={styles.led} /> {tr("Only administrators can manage connections.")}</p>
+              )}
+
+              {dsError && dsError?.response?.status !== 403 && (
+                  <Alert severity="error">{tr("Failed to load connections.")}</Alert>
+              )}
+
+              {datasources.length > 0 ? (
+                  <div className={styles.conns}>
+                    {datasources.map((ds) => (
+                        <div className={styles.conn} key={ds.id}>
+                          <span className={testLedClass(rowTest[ds.id]?.state)} />
+                          <div className={styles.connMain}>
+                      <span className={styles.connName}>
+                        {ds.name}
+                        <span className={styles.connType}>{ds.type}</span>
+                      </span>
+                            <span className={styles.connDsn}>
+                        {ds.username}@{ds.host}:{ds.port}/{ds.database} · schema={ds.db_schema} · sslmode=
+                              {ds.sslmode}
+                      </span>
+                            {rowTest[ds.id]?.message && (
+                                <span className={styles.connResult}>
+                          {tr(rowTest[ds.id].message)}
+                                  {rowTest[ds.id].serverVersion && ` · ${rowTest[ds.id].serverVersion}`}
+                        </span>
+                            )}
+                          </div>
+                          {isAdmin && (
+                              <div className={styles.connActions}>
+                                <Button
+                                    size="small"
+                                    loading={rowTest[ds.id]?.state === 'testing'}
+                                    onClick={() => testRow(ds)}
+                                >{tr("Test")}</Button>
+                                <Button size="small" onClick={() => openEditDs(ds)}>{tr("Edit")}</Button>
+                                <Button size="small" color="error" onClick={() => openDeleteDs(ds)}>{tr("Delete")}</Button>
+                              </div>
+                          )}
+                        </div>
+                    ))}
+                  </div>
+              ) : (
+                  !dsLoading && (
+                      <p className={styles.dsEmpty}>{tr("No saved connections yet.")}{isAdmin && tr(" Add one to make it selectable when editing a Live panel.")}
+                      </p>
+                  )
+              )}
+            </div>
+        )}
+      </section>
+
+      {/* ── Module 2 · Camera source ───────────────────────────────────── */}
+      <section className={`${styles.mod} ${collapsed.cameraSource ? styles.modCollapsed : ''}`}>
+        <header className={styles.modHead} onClick={() => toggle('cameraSource')}>
+          <span className={styles.modTag}>{tr("Camera source")}</span>
+          <span className={styles.modSub}>{tr("Where Monitor camera identity reads from")}</span>
+          <ChevronRightRounded
+              className={`${styles.modChevron} ${!collapsed.cameraSource ? styles.modChevronOpen : ''}`}
+          />
+        </header>
+        {!collapsed.cameraSource && (
+            <div className={styles.modBody}>
+              <p className={styles.fldHint}>{tr("The Monitor camera picker, rail identity, and defect counts read from one required saved connection. NG frame images remain in the configured image folder and are matched by camera code.")}</p>
+              {!isAdmin && (
+                  <p className={styles.dsReadonly}>
+                    <span className={styles.led} /> {tr("Only administrators can change this.")}</p>
+              )}
+              <div className={styles.acqRow}>
+                <div className={styles.acqLabel}>
+                  <p className={styles.fldLabel}>{tr("Camera list source")}</p>
+                </div>
+                <div className={styles.acqCtl}>
+                  <FormControl size="small" sx={{ minWidth: 260 }}>
+                    <Select
+                        value={cameraSource?.datasource_id ?? ''}
+                        disabled={!isAdmin || cameraSourceMutation.isPending}
+                        displayEmpty
+                        onChange={(e) => cameraSourceMutation.mutate(e.target.value)}
+                    >
+                      <MenuItem value="" disabled>{tr("Select camera source")}</MenuItem>
+                      {datasources.map((ds) => (
+                          <MenuItem key={ds.id} value={ds.id}>{ds.name}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </div>
+              </div>
+            </div>
+        )}
+      </section>
+
+      {/* ── Module 3 · Acquisition ─────────────────────────────────────── */}
+      <section className={`${styles.mod} ${collapsed.acquisition ? styles.modCollapsed : ''}`}>
+        <header className={styles.modHead} onClick={() => toggle('acquisition')}>
+          <span className={styles.modTag}>{tr("Acquisition")}</span>
+          <span className={styles.modSub}>{tr("Default polling cadence")}</span>
+          <ChevronRightRounded
+              className={`${styles.modChevron} ${!collapsed.acquisition ? styles.modChevronOpen : ''}`}
+          />
+        </header>
+        {!collapsed.acquisition && (
+            <div className={styles.modBody}>
+              <div className={styles.acqRow}>
+                <div className={styles.acqLabel}>
+                  <p className={styles.fldLabel}>{tr("Default poll interval")}</p>
+                  <p className={styles.fldHint}>{tr("Sliding-window refresh used by Live & Trends tiles.")}</p>
+                </div>
+                <div className={styles.acqCtl}>
+                  <TextField
+                      size="small"
+                      type="number"
+                      className={styles.pollField}
+                      value={pollSeconds}
+                      slotProps={{ htmlInput: { min: 1, max: 3600 } }}
+                      onChange={(e) => {
+                        const raw = e.target.value
+                        // Never coerce a transiently-blank number field to 0 —
+                        // ignore until a real digit lands (matches el-input-number's
+                        // clamped-to-min behaviour rather than MUI's Number('')===0).
+                        if (raw === '') return
+                        const n = Number(raw)
+                        if (Number.isFinite(n)) setPollSeconds(Math.min(3600, Math.max(1, Math.round(n))))
+                      }}
+                  />
+                  <span className={styles.acqUnit}>{tr("seconds")}</span>
+                  <div className={styles.chips}>
+                    {POLL_PRESETS.map((p) => (
+                        <button
+                            key={p.s}
+                            type="button"
+                            className={`${styles.chip} ${pollSeconds === p.s ? styles.chipOn : ''}`}
+                            onClick={() => setPollSeconds(p.s)}
+                        >
+                          {p.label}
+                        </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className={`${styles.acqRow} ${styles.acqRowDivider}`}>
+                <div className={styles.acqLabel}>
+                  <p className={styles.fldLabel}>{tr("Critical-alarm notifications")}</p>
+                  <p className={styles.fldHint}>{tr("Surface a desktop toast when a critical alarm trips.")}</p>
+                </div>
+                <div className={styles.acqCtl}>
+                  <span className={ledClass(notifyOnCritical ? 'crit' : '')} />
+                  <Switch
+                      checked={notifyOnCritical}
+                      onChange={(e) => setNotifyOnCritical(e.target.checked)}
+                  />
+                  <span className={styles.acqState}>{notifyOnCritical ? tr("ARMED") : tr("OFF")}</span>
+                </div>
+              </div>
+            </div>
+        )}
+      </section>
+
+      {/* ── Module 4 · Appearance ──────────────────────────────────────── */}
       <section className={`${styles.mod} ${collapsed.appearance ? styles.modCollapsed : ''}`}>
         <header className={styles.modHead} onClick={() => toggle('appearance')}>
           <span className={styles.modTag}>{tr("Appearance")}</span>
@@ -379,189 +562,6 @@ export default function SettingsPage() {
                   <span className={styles.plateBlurb}>{tr(t.blurb)}</span>
                 </button>
               ))}
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* ── Module 2 · Acquisition ─────────────────────────────────────── */}
-      <section className={`${styles.mod} ${collapsed.acquisition ? styles.modCollapsed : ''}`}>
-        <header className={styles.modHead} onClick={() => toggle('acquisition')}>
-          <span className={styles.modTag}>{tr("Acquisition")}</span>
-          <span className={styles.modSub}>{tr("Default polling cadence")}</span>
-          <ChevronRightRounded
-            className={`${styles.modChevron} ${!collapsed.acquisition ? styles.modChevronOpen : ''}`}
-          />
-        </header>
-        {!collapsed.acquisition && (
-          <div className={styles.modBody}>
-            <div className={styles.acqRow}>
-              <div className={styles.acqLabel}>
-                <p className={styles.fldLabel}>{tr("Default poll interval")}</p>
-                <p className={styles.fldHint}>{tr("Sliding-window refresh used by Live & Trends tiles.")}</p>
-              </div>
-              <div className={styles.acqCtl}>
-                <TextField
-                  size="small"
-                  type="number"
-                  className={styles.pollField}
-                  value={pollSeconds}
-                  slotProps={{ htmlInput: { min: 1, max: 3600 } }}
-                  onChange={(e) => {
-                    const raw = e.target.value
-                    // Never coerce a transiently-blank number field to 0 —
-                    // ignore until a real digit lands (matches el-input-number's
-                    // clamped-to-min behaviour rather than MUI's Number('')===0).
-                    if (raw === '') return
-                    const n = Number(raw)
-                    if (Number.isFinite(n)) setPollSeconds(Math.min(3600, Math.max(1, Math.round(n))))
-                  }}
-                />
-                <span className={styles.acqUnit}>{tr("seconds")}</span>
-                <div className={styles.chips}>
-                  {POLL_PRESETS.map((p) => (
-                    <button
-                      key={p.s}
-                      type="button"
-                      className={`${styles.chip} ${pollSeconds === p.s ? styles.chipOn : ''}`}
-                      onClick={() => setPollSeconds(p.s)}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className={`${styles.acqRow} ${styles.acqRowDivider}`}>
-              <div className={styles.acqLabel}>
-                <p className={styles.fldLabel}>{tr("Critical-alarm notifications")}</p>
-                <p className={styles.fldHint}>{tr("Surface a desktop toast when a critical alarm trips.")}</p>
-              </div>
-              <div className={styles.acqCtl}>
-                <span className={ledClass(notifyOnCritical ? 'crit' : '')} />
-                <Switch
-                  checked={notifyOnCritical}
-                  onChange={(e) => setNotifyOnCritical(e.target.checked)}
-                />
-                <span className={styles.acqState}>{notifyOnCritical ? tr("ARMED") : tr("OFF")}</span>
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* ── Module 3 · Data sources ────────────────────────────────────── */}
-      <section className={`${styles.mod} ${collapsed.datasources ? styles.modCollapsed : ''}`}>
-        <header className={styles.modHead} onClick={() => toggle('datasources')}>
-          <span className={styles.modTag}>{tr("Data sources")}</span>
-          <span className={styles.modSub}>{tr("Saved database connections")}</span>
-          {isAdmin && (
-            <Button
-              className={styles.modAction}
-              variant="contained"
-              size="small"
-              onClick={(e) => {
-                e.stopPropagation()
-                openCreateDs()
-              }}
-            >{tr("+ Add connection")}</Button>
-          )}
-          <ChevronRightRounded
-            className={`${styles.modChevron} ${!collapsed.datasources ? styles.modChevronOpen : ''}`}
-          />
-        </header>
-        {!collapsed.datasources && (
-          <div className={styles.modBody}>
-            {!isAdmin && (
-              <p className={styles.dsReadonly}>
-                <span className={styles.led} /> {tr("Only administrators can manage connections.")}</p>
-            )}
-
-            {dsError && dsError?.response?.status !== 403 && (
-              <Alert severity="error">{tr("Failed to load connections.")}</Alert>
-            )}
-
-            {datasources.length > 0 ? (
-              <div className={styles.conns}>
-                {datasources.map((ds) => (
-                  <div className={styles.conn} key={ds.id}>
-                    <span className={testLedClass(rowTest[ds.id]?.state)} />
-                    <div className={styles.connMain}>
-                      <span className={styles.connName}>
-                        {ds.name}
-                        <span className={styles.connType}>{ds.type}</span>
-                      </span>
-                      <span className={styles.connDsn}>
-                        {ds.username}@{ds.host}:{ds.port}/{ds.database} · schema={ds.db_schema} · sslmode=
-                        {ds.sslmode}
-                      </span>
-                      {rowTest[ds.id]?.message && (
-                        <span className={styles.connResult}>
-                          {tr(rowTest[ds.id].message)}
-                          {rowTest[ds.id].serverVersion && ` · ${rowTest[ds.id].serverVersion}`}
-                        </span>
-                      )}
-                    </div>
-                    {isAdmin && (
-                      <div className={styles.connActions}>
-                        <Button
-                          size="small"
-                          loading={rowTest[ds.id]?.state === 'testing'}
-                          onClick={() => testRow(ds)}
-                        >{tr("Test")}</Button>
-                        <Button size="small" onClick={() => openEditDs(ds)}>{tr("Edit")}</Button>
-                        <Button size="small" color="error" onClick={() => openDeleteDs(ds)}>{tr("Delete")}</Button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              !dsLoading && (
-                <p className={styles.dsEmpty}>{tr("No saved connections yet.")}{isAdmin && tr(" Add one to make it selectable when editing a Live panel.")}
-                </p>
-              )
-            )}
-          </div>
-        )}
-      </section>
-
-      {/* ── Module 4 · Camera source ───────────────────────────────────── */}
-      <section className={`${styles.mod} ${collapsed.cameraSource ? styles.modCollapsed : ''}`}>
-        <header className={styles.modHead} onClick={() => toggle('cameraSource')}>
-          <span className={styles.modTag}>{tr("Camera source")}</span>
-          <span className={styles.modSub}>{tr("Where Monitor camera identity reads from")}</span>
-          <ChevronRightRounded
-            className={`${styles.modChevron} ${!collapsed.cameraSource ? styles.modChevronOpen : ''}`}
-          />
-        </header>
-        {!collapsed.cameraSource && (
-          <div className={styles.modBody}>
-            <p className={styles.fldHint}>{tr("The Monitor camera picker, rail identity, and defect counts read from one required saved connection. NG frame images remain in the configured image folder and are matched by camera code.")}</p>
-            {!isAdmin && (
-              <p className={styles.dsReadonly}>
-                <span className={styles.led} /> {tr("Only administrators can change this.")}</p>
-            )}
-            <div className={styles.acqRow}>
-              <div className={styles.acqLabel}>
-                <p className={styles.fldLabel}>{tr("Camera list source")}</p>
-              </div>
-              <div className={styles.acqCtl}>
-                <FormControl size="small" sx={{ minWidth: 260 }}>
-                  <Select
-                    value={cameraSource?.datasource_id ?? ''}
-                    disabled={!isAdmin || cameraSourceMutation.isPending}
-                    displayEmpty
-                    onChange={(e) => cameraSourceMutation.mutate(e.target.value)}
-                  >
-                    <MenuItem value="" disabled>{tr("Select camera source")}</MenuItem>
-                    {datasources.map((ds) => (
-                      <MenuItem key={ds.id} value={ds.id}>{ds.name}</MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </div>
             </div>
           </div>
         )}
