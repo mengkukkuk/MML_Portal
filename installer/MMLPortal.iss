@@ -34,6 +34,11 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName=C:\MMLPortal
+; Always ask for the install path. Inno's default (auto) silently skips this page whenever a
+; previous MMLPortal install exists, so an upgrade could never be pointed at another folder.
+; The page is pre-filled with the previous path (UsePreviousAppDir defaults to yes), and a move
+; carries backend\.env over -- see CurStepChanged.
+DisableDirPage=no
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
@@ -93,6 +98,27 @@ const
   NET_HTTPS_PORT = 2;
   DB_NAME = 0;
   DB_SCHEMA = 1;
+
+{ Install path of the previous MMLPortal install, or '' on a first install. Read from Inno's
+  own uninstall entry for this AppId (64-bit view, since the app installs in 64-bit mode). }
+function PreviousAppDir(): string;
+begin
+  Result := '';
+  RegQueryStringValue(HKLM64,
+    'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#StringChange(SetupSetting("AppId"), "{{", "{")}_is1',
+    'Inno Setup: App Path', Result);
+  Result := RemoveBackslashUnlessRoot(Result);
+end;
+
+{ True when an existing install is being re-pointed at a different folder. }
+function IsMovingInstall(): Boolean;
+var
+  Prev: string;
+begin
+  Prev := PreviousAppDir();
+  Result := (Prev <> '') and
+    (CompareText(Prev, RemoveBackslashUnlessRoot(WizardDirValue())) <> 0);
+end;
 
 function DetectExistingPostgres(): Boolean;
 begin
@@ -226,7 +252,17 @@ end;
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
-  if CurPageID = NetworkPage.ID then
+  if (CurPageID = wpSelectDir) and IsMovingInstall() then
+  begin
+    { The service and IIS site are rebuilt from the new folder by postinstall.ps1, and the
+      settings file is copied across below, but the old folder itself is left in place. }
+    Result := MsgBox('MMLPortal is currently installed in:' + #13#10 + '    ' + PreviousAppDir() + #13#10#13#10 +
+      'Setup will move it to:' + #13#10 + '    ' + WizardDirValue() + #13#10#13#10 +
+      'Your settings (backend\.env: database password and login secret) are copied to the new ' +
+      'folder. The old folder is left in place; delete it once the new install is working.' + #13#10#13#10 +
+      'Move the installation?', mbConfirmation, MB_YESNO) = IDYES;
+  end
+  else if CurPageID = NetworkPage.ID then
   begin
     if UseHostnameCheck.Checked and (Trim(NetworkPage.Values[NET_HOSTNAME]) = '') then
     begin
@@ -356,5 +392,19 @@ begin
     DelTree(ExpandConstant('{app}\python'), True, True, True);
     DelTree(ExpandConstant('{app}\static'), True, True, True);
     DelTree(ExpandConstant('{app}\tools'), True, True, True);
+
+    { Moving an existing install to a new folder: bring backend\.env along. It holds the
+      generated database password and JWT secret (DPAPI machine-scoped, so still readable
+      here); without it postinstall.ps1 would fall back to the default DB password and every
+      connection to the existing PostgreSQL would fail. Never overwrite a .env already there. }
+    if IsMovingInstall() and FileExists(PreviousAppDir() + '\backend\.env') and
+       not FileExists(ExpandConstant('{app}\backend\.env')) then
+    begin
+      ForceDirectories(ExpandConstant('{app}\backend'));
+      if not FileCopy(PreviousAppDir() + '\backend\.env', ExpandConstant('{app}\backend\.env'), True) then
+        MsgBox('Could not copy settings from ' + PreviousAppDir() + '\backend\.env.' + #13#10 +
+          'Copy that file into ' + ExpandConstant('{app}\backend') + ' by hand before starting MMLPortal.',
+          mbError, MB_OK);
+    end;
   end;
 end;
