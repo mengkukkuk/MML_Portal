@@ -162,7 +162,7 @@ export function usePanelSeries(panel, { filterOverride = null } = {}) {
  */
 export function buildSeriesList(
   seriesSpecs,
-  { seriesPoints, seriesLatest, unitFor, deviceUnit, boolCols, boolLabels },
+  { seriesPoints, seriesLatest, seriesLimits, unitFor, deviceUnit, boolCols, boolLabels },
 ) {
   const flags = new Set(boolCols || [])
   return seriesSpecs.map((s, i) => ({
@@ -185,6 +185,8 @@ export function buildSeriesList(
       : undefined,
     points: seriesPoints[s.key] || [],
     latest: seriesLatest[s.key] || null,
+    // Live warn/crit setpoints from bound columns (gauge only); null = manual.
+    limits: seriesLimits?.[s.key] || null,
   }))
 }
 

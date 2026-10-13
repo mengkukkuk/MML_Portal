@@ -209,7 +209,30 @@
   gap: var(--space-2);
 }
 
+/* Setpoint-column pickers: under the gauge options and in each per-series
+   override, a picker plus a clear-to-manual button. */
+.setpointGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.setpointRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.setpointSelect {
+  flex: 1;
+  min-width: 0;
+}
+
 @media (max-width: 700px) {
+  .setpointGrid {
+    grid-template-columns: 1fr;
+  }
   .gaugeGrid {
     grid-template-columns: repeat(2, 1fr);
   }

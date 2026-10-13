@@ -73,7 +73,7 @@ export default function LivePanel({
   const pollSeconds = panel.poll_interval_seconds || 5
 
   const {
-    seriesPoints, seriesLatest, resolvedSpecs, unit, error, isLoading, isFetching, isReseeding,
+    seriesPoints, seriesLatest, seriesLimits, resolvedSpecs, unit, error, isLoading, isFetching, isReseeding,
   } = usePanelPolling({
     panel, seriesSpecs, seriesTags, isTag, isTable, mathFn, rangeMinutes, refreshSignal, onUpdated,
   })
@@ -90,12 +90,13 @@ export default function LivePanel({
     () => buildSeriesList(specs, {
       seriesPoints,
       seriesLatest,
+      seriesLimits,
       unitFor,
       deviceUnit: unit,
       boolCols: opts.boolCols,
       boolLabels: opts.boolLabels,
     }),
-    [specs, seriesPoints, seriesLatest, unitFor, unit, opts.boolCols, opts.boolLabels],
+    [specs, seriesPoints, seriesLatest, seriesLimits, unitFor, unit, opts.boolCols, opts.boolLabels],
   )
   const isMulti = seriesList.length > 1
 

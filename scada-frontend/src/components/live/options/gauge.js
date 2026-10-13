@@ -15,12 +15,29 @@ import {
  */
 export function gaugeParamsFor(spec, opts = {}) {
   const override = opts.gaugeSeries?.[spec.unitKey] || {}
+  // A setpoint column's live reading (spec.limits, filled by the poll) beats
+  // the typed number; the typed number stays as the fallback for when the
+  // column is unset, unreadable, or null on this row.
+  const live = spec.limits || {}
   return {
     min: override.min ?? Number(opts.min ?? 0),
     max: override.max ?? Number(opts.max ?? 100),
     decimals: override.decimals ?? opts.decimals,
-    warn: override.warn ?? opts.warn,
-    crit: override.crit ?? opts.crit,
+    warn: live.warn ?? override.warn ?? opts.warn,
+    crit: live.crit ?? override.crit ?? opts.crit,
+  }
+}
+
+/**
+ * Which columns (same table, same filter row as the series) supply this
+ * series' live warn/crit setpoints. Per-series override first, then the
+ * panel-wide binding; null when the limit is manual-only.
+ */
+export function gaugeLimitColsFor(spec, opts = {}) {
+  const override = opts.gaugeSeries?.[spec.unitKey] || {}
+  return {
+    warnCol: override.warnCol || opts.warnCol || null,
+    critCol: override.critCol || opts.critCol || null,
   }
 }
 

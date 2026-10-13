@@ -87,6 +87,8 @@ const EMPTY_COLS = {
 // array it gets back — the same convention Reports' EnvelopeTrend uses. Text
 // is still absent: nothing on this page can draw it.
 const VALUE_KINDS = ['value_columns', 'bool_columns', 'array_value_columns']
+// A gauge setpoint has to be a number: flags are left out.
+const SETPOINT_KINDS = ['value_columns', 'array_value_columns']
 
 // Options that only mean something against a measurement. Hidden -- not
 // cleared -- when every bound column is a flag: a stored warn on a panel
@@ -170,6 +172,10 @@ export default function PanelEditorDialog({
 
   const valueGroups = useMemo(
     () => groupColumns(schemaCols, VALUE_KINDS),
+    [schemaCols],
+  )
+  const setpointGroups = useMemo(
+    () => groupColumns(schemaCols, SETPOINT_KINDS),
     [schemaCols],
   )
   // Same query key Reports, Events, Alarms and the Monitor camera rail use, so
@@ -499,6 +505,15 @@ export default function PanelEditorDialog({
     else delete g[key]
     setValue('gaugeSeries', g)
   }
+  function setGaugeSeriesCol(key, field, col) {
+    const g = { ...gaugeSeriesMap }
+    const entry = { ...(g[key] || {}) }
+    if (col) entry[field] = col
+    else delete entry[field]
+    if (Object.keys(entry).length) g[key] = entry
+    else delete g[key]
+    setValue('gaugeSeries', g)
+  }
   function hasGaugeOverride(key) {
     return !!gaugeSeriesMap[key] && Object.keys(gaugeSeriesMap[key]).length > 0
   }
@@ -790,6 +805,19 @@ export default function PanelEditorDialog({
                             />
                           ))}
                         </div>
+                        <div className={styles.setpointGrid}>
+                          {LIMIT_COL_FIELDS.map(({ field, label }) => (
+                            <SetpointColumnPicker
+                              key={field}
+                              label={label}
+                              value={gaugeSeriesMap[key]?.[field] || null}
+                              placeholder={watch(`options.${field}`) ? 'Panel column' : 'Manual value'}
+                              onChange={(col) => setGaugeSeriesCol(key, field, col)}
+                              groups={setpointGroups}
+                              labelFor={labelForColumn}
+                            />
+                          ))}
+                        </div>
                       </AccordionDetails>
                     </Accordion>
                   ))}
@@ -915,6 +943,27 @@ export default function PanelEditorDialog({
                   {VIZ_TYPE_META.find((v) => v.value === chartType)?.label} options
                 </div>
                 <ParamFields schema={currentSchema} control={control} />
+                {chartType === 'gauge' && (
+                  <>
+                    <div className={styles.setpointGrid}>
+                      {LIMIT_COL_FIELDS.map(({ field, label }) => (
+                        <SetpointColumnPicker
+                          key={field}
+                          label={label}
+                          value={watch(`options.${field}`) || null}
+                          placeholder="Manual value"
+                          onChange={(col) => setValue(`options.${field}`, col || null)}
+                          groups={setpointGroups}
+                          labelFor={labelForColumn}
+                        />
+                      ))}
+                    </div>
+                    <p className={styles.hint}>
+                      A setpoint column is read from the same row as each series and overrides the
+                      number above. The number is used while the column has no value.
+                    </p>
+                  </>
+                )}
               </div>
 
               <div className={styles.pair}>
@@ -1038,6 +1087,43 @@ function ColumnSelect({
         )}
       </Select>
     </FormControl>
+  )
+}
+
+const LIMIT_COL_FIELDS = [
+  { field: 'warnCol', label: 'Warning setpoint column' },
+  { field: 'critCol', label: 'Critical setpoint column' },
+]
+
+// Optional column binding for a gauge limit, with a clear button back to the
+// manual number. Empty is a real choice here, unlike the value-column picker.
+function SetpointColumnPicker({
+  label, value, onChange, groups, labelFor, placeholder,
+}) {
+  return (
+    <div className={styles.submenuField}>
+      <label className={styles.submenuLabel}>{label}</label>
+      <div className={styles.setpointRow}>
+        <ColumnSelect
+          className={styles.setpointSelect}
+          value={value}
+          onChange={(v) => onChange(v || null)}
+          groups={groups}
+          labelFor={labelFor}
+          placeholder={placeholder}
+          searchable
+        />
+        <IconButton
+          size="small"
+          title="Use the manual value"
+          aria-label={`Clear ${label.toLowerCase()}`}
+          disabled={!value}
+          onClick={() => onChange(null)}
+        >
+          <CloseIcon fontSize="inherit" />
+        </IconButton>
+      </div>
+    </div>
   )
 }
 

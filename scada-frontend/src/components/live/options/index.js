@@ -7,7 +7,7 @@ import buildHeatmapOption from './heatmap'
 import buildScatterOption from './scatter'
 import buildStateTimelineOption from './stateTimeline'
 import buildCandlestickOption from './candlestick'
-import buildGaugeOption, { gaugeParamsFor } from './gauge'
+import buildGaugeOption, { gaugeParamsFor, gaugeLimitColsFor } from './gauge'
 import buildStatSparklineOption from './stat'
 import buildTableRows from './table'
 import { WARN_COLOR, CRIT_COLOR, thresholdColor, fmtValue } from './shared'
@@ -46,6 +46,7 @@ export function buildGenericOption(vizType, seriesList, opts) {
 export {
   buildGaugeOption,
   gaugeParamsFor,
+  gaugeLimitColsFor,
   buildStatSparklineOption,
   buildTableRows,
   WARN_COLOR,
