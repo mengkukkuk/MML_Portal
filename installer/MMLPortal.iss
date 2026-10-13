@@ -67,7 +67,7 @@ Source: "scripts\uninstall.ps1";   DestDir: "{app}\scripts"; Flags: ignoreversio
 
 [Run]
 Filename: "powershell.exe"; \
-    Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\postinstall.ps1"" -InstallDir ""{app}"" -Hostname ""{code:GetHostname}"" -Port {code:GetPort} -InstallPostgres {code:GetInstallPostgres} -EnableHttps {code:GetEnableHttps} -HttpsPort {code:GetHttpsPort} -AppDbName ""{code:GetAppDbName}"" -AppDbSchema ""{code:GetAppDbSchema}"" -PgInstallerPath ""{code:GetPgInstallerPath}"""; \
+    Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\postinstall.ps1"" -InstallDir ""{app}"" {code:GetHostnameArg} -Port {code:GetPort} -InstallPostgres {code:GetInstallPostgres} -EnableHttps {code:GetEnableHttps} -HttpsPort {code:GetHttpsPort} -AppDbName ""{code:GetAppDbName}"" -AppDbSchema ""{code:GetAppDbSchema}"" -PgInstallerPath ""{code:GetPgInstallerPath}"""; \
     StatusMsg: "Configuring PostgreSQL, IIS, and the MMLPortal service  -  this can take several minutes..."; \
     Flags: waituntilterminated
 
@@ -78,11 +78,21 @@ Filename: "powershell.exe"; \
 
 [Code]
 var
-  HostnamePage: TInputQueryWizardPage;
-  PostgresPage: TInputOptionWizardPage;
-  DatabaseNamePage: TInputQueryWizardPage;
-  HttpsPage: TInputOptionWizardPage;
-  HttpsPortPage: TInputQueryWizardPage;
+  { Page 1: how operators reach the site (hostname, HTTP port, HTTPS). }
+  NetworkPage: TInputQueryWizardPage;
+  UseHostnameCheck: TNewCheckBox;
+  HttpsCheck: TNewCheckBox;
+  { Page 2: the database (bundled PostgreSQL, database name, schema). }
+  DatabasePage: TInputQueryWizardPage;
+  InstallPostgresCheck: TNewCheckBox;
+
+const
+  { Edit indexes on NetworkPage and DatabasePage. }
+  NET_HOSTNAME = 0;
+  NET_PORT = 1;
+  NET_HTTPS_PORT = 2;
+  DB_NAME = 0;
+  DB_SCHEMA = 1;
 
 function DetectExistingPostgres(): Boolean;
 begin
@@ -91,63 +101,95 @@ begin
   Result := RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\postgresql-x64-18');
 end;
 
+{ An input-query page has no checkbox of its own. Add one where prompt `Index` sits and push
+  that prompt and every field below it (up to `Count` fields on the page) down to make room. }
+function InsertCheckBox(Page: TInputQueryWizardPage; Index, Count: Integer;
+  const Caption: string): TNewCheckBox;
+var
+  Shift, i: Integer;
+begin
+  Result := TNewCheckBox.Create(Page);
+  Result.Parent := Page.Surface;
+  Result.Caption := Caption;
+  Result.Left := Page.PromptLabels[Index].Left;
+  Result.Top := Page.PromptLabels[Index].Top;
+  Result.Width := Page.SurfaceWidth;
+  Result.Height := ScaleY(17);
+  Shift := Result.Height + ScaleY(6);
+  for i := Index to Count - 1 do
+  begin
+    Page.PromptLabels[i].Top := Page.PromptLabels[i].Top + Shift;
+    Page.Edits[i].Top := Page.Edits[i].Top + Shift;
+  end;
+end;
+
+procedure SetFieldEnabled(Page: TInputQueryWizardPage; Index: Integer; Enabled: Boolean);
+begin
+  Page.PromptLabels[Index].Enabled := Enabled;
+  Page.Edits[Index].Enabled := Enabled;
+end;
+
+procedure NetworkChecksClick(Sender: TObject);
+begin
+  SetFieldEnabled(NetworkPage, NET_HOSTNAME, UseHostnameCheck.Checked);
+  SetFieldEnabled(NetworkPage, NET_HTTPS_PORT, HttpsCheck.Checked);
+end;
+
 procedure InitializeWizard();
 begin
-  HostnamePage := CreateInputQueryPage(wpSelectDir,
-    'Local network address', 'How will operators reach MMLPortal on this network?',
-    'Choose the hostname and port the site will answer on. Other PCs on the same LAN will ' +
-    'need their own hosts-file entry or a DNS record pointing this hostname at this ' +
-    'server''s IP address to browse to it  -  this installer only configures the server ' +
-    'itself.');
-  HostnamePage.Add('Local hostname (e.g. mmlportal.local):', False);
-  HostnamePage.Add('Port:', False);
-  HostnamePage.Values[0] := 'mmlportal.local';
-  HostnamePage.Values[1] := '80';
+  NetworkPage := CreateInputQueryPage(wpSelectDir,
+    'Network and security', 'How will operators reach MMLPortal on this network?',
+    'Without a hostname the site answers on any name or IP of this server. With one, other ' +
+    'LAN PCs need a hosts-file or DNS entry for it. HTTPS uses a self-signed certificate ' +
+    '(exported to the install folder''s certs\ for client PCs to trust).');
+  NetworkPage.Add('Local hostname (e.g. mmlportal.local):', False);
+  NetworkPage.Add('HTTP port:', False);
+  NetworkPage.Add('HTTPS port:', False);
+  NetworkPage.Values[NET_HOSTNAME] := 'mmlportal.local';
+  NetworkPage.Values[NET_PORT] := '80';
+  NetworkPage.Values[NET_HTTPS_PORT] := '443';
 
+  UseHostnameCheck := InsertCheckBox(NetworkPage, NET_HOSTNAME, 3,
+    'Use a local hostname (IIS host header)');
+  UseHostnameCheck.Checked := False;
+  UseHostnameCheck.OnClick := @NetworkChecksClick;
+
+  { Recommended: without it, login credentials and session cookies cross the network in
+    plain text. }
+  HttpsCheck := InsertCheckBox(NetworkPage, NET_HTTPS_PORT, 3,
+    'Enable HTTPS with a self-signed certificate (recommended)');
+  HttpsCheck.Checked := True;
+  HttpsCheck.OnClick := @NetworkChecksClick;
+  NetworkChecksClick(nil);
+
+  DatabasePage := CreateInputQueryPage(NetworkPage.ID,
+    'Database', 'PostgreSQL 18 stores MMLPortal''s configuration and data.',
 #ifdef BundlePostgres
-  PostgresPage := CreateInputOptionPage(HostnamePage.ID,
-    'Database', 'PostgreSQL 18 is required for MMLPortal to store configuration and data.',
-    'Leave this checked on a blank PC. If PostgreSQL 18 is already installed and running, ' +
-    'it will be detected automatically and this option is unchecked for you.',
-    False, False);
-  PostgresPage.Add('Install bundled PostgreSQL 18 silently');
+    'Leave the install option checked on a blank PC; it is unchecked for you when ' +
+    'PostgreSQL 18 is already installed. Keep the default database and schema unless your ' +
+    'DBA provisioned one (letters, digits and underscores only).');
 #else
-  PostgresPage := CreateInputOptionPage(HostnamePage.ID,
-    'Database', 'PostgreSQL 18 is required for MMLPortal to store configuration and data.',
-    'Leave this checked on a blank PC, and place postgresql-18-windows-x64.exe in the same ' +
-    'folder as this setup program. If PostgreSQL 18 is already installed and running, it ' +
-    'will be detected automatically and this option is unchecked for you.',
-    False, False);
-  PostgresPage.Add('Install PostgreSQL 18 silently (postgresql-18-windows-x64.exe next to setup)');
+    'Leave the install option checked on a blank PC and put postgresql-18-windows-x64.exe ' +
+    'next to this setup program; it is unchecked for you when PostgreSQL 18 is already ' +
+    'installed. Keep the default database and schema unless your DBA provisioned one.');
 #endif
-  PostgresPage.Values[0] := not DetectExistingPostgres();
+  DatabasePage.Add('Database name:', False);
+  DatabasePage.Add('Schema:', False);
+  DatabasePage.Values[DB_NAME] := 'postgres';
+  DatabasePage.Values[DB_SCHEMA] := 'public';
 
-  DatabaseNamePage := CreateInputQueryPage(PostgresPage.ID,
-    'Database', 'Which database and schema should MMLPortal use?',
-    'Leave the defaults on a blank PC. If your DBA already provisioned a database for this ' +
-    'install (e.g. "mmllocal" / "localbase"), enter its name and schema here instead. Letters, ' +
-    'digits, and underscores only.');
-  DatabaseNamePage.Add('Database name:', False);
-  DatabaseNamePage.Add('Schema:', False);
-  DatabaseNamePage.Values[0] := 'postgres';
-  DatabaseNamePage.Values[1] := 'public';
+  InstallPostgresCheck := InsertCheckBox(DatabasePage, DB_NAME, 2,
+#ifdef BundlePostgres
+    'Install bundled PostgreSQL 18 silently');
+#else
+    'Install PostgreSQL 18 silently (postgresql-18-windows-x64.exe next to setup)');
+#endif
+  InstallPostgresCheck.Checked := not DetectExistingPostgres();
+end;
 
-  HttpsPage := CreateInputOptionPage(DatabaseNamePage.ID,
-    'HTTPS', 'Encrypt traffic between browsers and this server with a self-signed certificate.',
-    'Recommended: without this, login credentials and session cookies travel in plain text ' +
-    'over the network. Browsers will still show a security warning until the generated ' +
-    'certificate is imported into "Trusted Root Certification Authorities" on each PC that ' +
-    'browses to this site  -  the certificate file is exported to {app}\certs\ after install ' +
-    'for that purpose.',
-    False, False);
-  HttpsPage.Add('Enable HTTPS with a self-signed certificate');
-  HttpsPage.Values[0] := True;
-
-  HttpsPortPage := CreateInputQueryPage(HttpsPage.ID,
-    'HTTPS port', 'Which port should the encrypted (HTTPS) site answer on?',
-    'Leave this at 443 unless another site on this server already uses it.');
-  HttpsPortPage.Add('HTTPS port:', False);
-  HttpsPortPage.Values[0] := '443';
+function IsValidPort(const Value: string): Boolean;
+begin
+  Result := (StrToIntDef(Trim(Value), -1) >= 1) and (StrToIntDef(Trim(Value), -1) <= 65535);
 end;
 
 function IsValidDbIdentifier(const Value: string): Boolean;
@@ -184,78 +226,86 @@ end;
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
-#ifndef BundlePostgres
-  if (CurPageID = PostgresPage.ID) and PostgresPage.Values[0] and
-     (not FileExists(GetPgInstallerPath(''))) then
+  if CurPageID = NetworkPage.ID then
   begin
-    MsgBox('postgresql-18-windows-x64.exe was not found next to this setup program:' + #13#10 +
-           GetPgInstallerPath('') + #13#10#13#10 +
-           'Copy it into the same folder as the setup program, or uncheck this option if ' +
-           'PostgreSQL 18 is already installed on this PC.', mbError, MB_OK);
-    Result := False;
-    Exit;
-  end;
-#endif
-  if CurPageID = HostnamePage.ID then
-  begin
-    if Trim(HostnamePage.Values[0]) = '' then
+    if UseHostnameCheck.Checked and (Trim(NetworkPage.Values[NET_HOSTNAME]) = '') then
     begin
-      MsgBox('Please enter a local hostname.', mbError, MB_OK);
+      MsgBox('Please enter a local hostname, or uncheck "Use a local hostname".', mbError, MB_OK);
       Result := False;
     end
-    else if (StrToIntDef(HostnamePage.Values[1], -1) < 1) or
-            (StrToIntDef(HostnamePage.Values[1], -1) > 65535) then
+    else if not IsValidPort(NetworkPage.Values[NET_PORT]) then
     begin
-      MsgBox('Please enter a valid port number (1-65535).', mbError, MB_OK);
+      MsgBox('Please enter a valid HTTP port number (1-65535).', mbError, MB_OK);
+      Result := False;
+    end
+    else if HttpsCheck.Checked and not IsValidPort(NetworkPage.Values[NET_HTTPS_PORT]) then
+    begin
+      MsgBox('Please enter a valid HTTPS port number (1-65535).', mbError, MB_OK);
+      Result := False;
+    end
+    else if HttpsCheck.Checked and
+            (StrToInt(Trim(NetworkPage.Values[NET_PORT])) =
+             StrToInt(Trim(NetworkPage.Values[NET_HTTPS_PORT]))) then
+    begin
+      MsgBox('The HTTP and HTTPS ports must be different.', mbError, MB_OK);
       Result := False;
     end;
   end
-  else if CurPageID = DatabaseNamePage.ID then
+  else if CurPageID = DatabasePage.ID then
   begin
-    if not IsValidDbIdentifier(Trim(DatabaseNamePage.Values[0])) then
+#ifndef BundlePostgres
+    if InstallPostgresCheck.Checked and (not FileExists(GetPgInstallerPath(''))) then
+    begin
+      MsgBox('postgresql-18-windows-x64.exe was not found next to this setup program:' + #13#10 +
+             GetPgInstallerPath('') + #13#10#13#10 +
+             'Copy it into the same folder as the setup program, or uncheck this option if ' +
+             'PostgreSQL 18 is already installed on this PC.', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+#endif
+    if not IsValidDbIdentifier(Trim(DatabasePage.Values[DB_NAME])) then
     begin
       MsgBox('Please enter a valid database name (letters, digits, underscores only; must not ' +
              'start with a digit; max 63 characters).', mbError, MB_OK);
       Result := False;
     end
-    else if not IsValidDbIdentifier(Trim(DatabaseNamePage.Values[1])) then
+    else if not IsValidDbIdentifier(Trim(DatabasePage.Values[DB_SCHEMA])) then
     begin
       MsgBox('Please enter a valid schema name (letters, digits, underscores only; must not ' +
              'start with a digit; max 63 characters).', mbError, MB_OK);
       Result := False;
     end;
-  end
-  else if CurPageID = HttpsPortPage.ID then
-  begin
-    if HttpsPage.Values[0] and
-       ((StrToIntDef(HttpsPortPage.Values[0], -1) < 1) or
-        (StrToIntDef(HttpsPortPage.Values[0], -1) > 65535)) then
-    begin
-      MsgBox('Please enter a valid port number (1-65535).', mbError, MB_OK);
-      Result := False;
-    end;
   end;
-end;
-
-function ShouldSkipPage(PageID: Integer): Boolean;
-begin
-  { No point asking for an HTTPS port if HTTPS itself was left unchecked. }
-  Result := (PageID = HttpsPortPage.ID) and (not HttpsPage.Values[0]);
 end;
 
 function GetHostname(Param: string): string;
 begin
-  Result := Trim(HostnamePage.Values[0]);
+  if UseHostnameCheck.Checked then
+    Result := Trim(NetworkPage.Values[NET_HOSTNAME])
+  else
+    Result := '';
+end;
+
+{ The whole -Hostname argument, or nothing. Windows PowerShell's -File mode does not
+  reliably pass an empty quoted argument through, so a blank hostname is omitted rather
+  than sent as -Hostname "". postinstall.ps1 treats a missing hostname as "no host header". }
+function GetHostnameArg(Param: string): string;
+begin
+  if GetHostname('') = '' then
+    Result := ''
+  else
+    Result := '-Hostname "' + GetHostname('') + '"';
 end;
 
 function GetPort(Param: string): string;
 begin
-  Result := Trim(HostnamePage.Values[1]);
+  Result := Trim(NetworkPage.Values[NET_PORT]);
 end;
 
 function GetInstallPostgres(Param: string): string;
 begin
-  if PostgresPage.Values[0] then
+  if InstallPostgresCheck.Checked then
     Result := 'true'
   else
     Result := 'false';
@@ -263,17 +313,17 @@ end;
 
 function GetAppDbName(Param: string): string;
 begin
-  Result := Trim(DatabaseNamePage.Values[0]);
+  Result := Trim(DatabasePage.Values[DB_NAME]);
 end;
 
 function GetAppDbSchema(Param: string): string;
 begin
-  Result := Trim(DatabaseNamePage.Values[1]);
+  Result := Trim(DatabasePage.Values[DB_SCHEMA]);
 end;
 
 function GetEnableHttps(Param: string): string;
 begin
-  if HttpsPage.Values[0] then
+  if HttpsCheck.Checked then
     Result := 'true'
   else
     Result := 'false';
@@ -281,8 +331,8 @@ end;
 
 function GetHttpsPort(Param: string): string;
 begin
-  if HttpsPage.Values[0] then
-    Result := Trim(HttpsPortPage.Values[0])
+  if HttpsCheck.Checked then
+    Result := Trim(NetworkPage.Values[NET_HTTPS_PORT])
   else
     Result := '443';
 end;

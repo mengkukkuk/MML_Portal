@@ -19,7 +19,10 @@
     python\, static\, backend\, tools\ (copied by [Files]).
 
 .PARAMETER Hostname
-    Local hostname the site should answer on, e.g. mmlportal.local.
+    Optional local hostname the site should answer on, e.g. mmlportal.local. When given it
+    becomes the IIS host header, gets a hosts-file entry and names the HTTPS certificate.
+    When omitted or blank the site is bound with no host header, so it answers on any name
+    or IP address of this server; URLs and the certificate then use this computer's name.
 
 .PARAMETER Port
     IIS site port. Default 80.
@@ -45,7 +48,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)] [string]$InstallDir,
-    [Parameter(Mandatory)] [string]$Hostname,
+    [string]$Hostname = "",
     [int]$Port = 80,
     [string]$InstallPostgres = "true",
     [string]$ServiceName = "mml-api",
@@ -58,6 +61,16 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+$Hostname = $Hostname.Trim()
+# Blank hostname = no IIS host header: the site answers on any name/IP of this server.
+$HasHostname = $Hostname -ne ""
+# The name used wherever one is unavoidable (base URL, CORS, certificate subject).
+$SiteHost = if ($HasHostname) { $Hostname } else { $env:COMPUTERNAME.ToLower() }
+
+function Get-BaseUrl([string]$scheme, [string]$name, [int]$p, [int]$defaultPort) {
+    if ($p -eq $defaultPort) { "${scheme}://$name" } else { "${scheme}://${name}:${p}" }
+}
 
 # Windows PowerShell 5.1's .NET Framework HttpClient doesn't always default to TLS 1.2 on
 # older Windows builds -- without this, Step 10's Invoke-RestMethod calls against an HTTPS
@@ -320,13 +333,20 @@ Write-Log "Step 2: .env"
 try {
     $envFile    = Join-Path $BackendDir ".env"
     $envExample = Join-Path $BackendDir ".env.example"
-    $httpBaseUrl  = if ($Port -eq 80) { "http://$Hostname" } else { "http://${Hostname}:${Port}" }
-    $httpsBaseUrl = if ($HttpsPort -eq 443) { "https://$Hostname" } else { "https://${Hostname}:${HttpsPort}" }
+    $httpBaseUrl  = Get-BaseUrl "http"  $SiteHost $Port 80
+    $httpsBaseUrl = Get-BaseUrl "https" $SiteHost $HttpsPort 443
     # Password-reset links (APP_BASE_URL) should point at the encrypted site when one exists --
     # CORS_ORIGINS lists both so the API still accepts requests from whichever binding a browser
     # tab happens to be on (e.g. an old bookmark still using http://).
     $baseUrl     = if ($EnableHttps -eq "true") { $httpsBaseUrl } else { $httpBaseUrl }
-    $corsOrigins = if ($EnableHttps -eq "true") { "$httpBaseUrl,$httpsBaseUrl" } else { $httpBaseUrl }
+    # Without a host header the site is reached by computer name or localhost (or IP), so
+    # each name a browser can use is listed as an origin.
+    $originHosts = if ($HasHostname) { @($Hostname) } else { @($SiteHost, "localhost") }
+    $origins = foreach ($h in $originHosts) {
+        Get-BaseUrl "http" $h $Port 80
+        if ($EnableHttps -eq "true") { Get-BaseUrl "https" $h $HttpsPort 443 }
+    }
+    $corsOrigins = $origins -join ","
 
     $isNewEnv = -not (Test-Path $envFile)
     if ($isNewEnv) {
@@ -563,7 +583,13 @@ try {
             $_.bindingInformation -match "^\*?:$Port`:$" -or $_.bindingInformation -match "^:$Port`:$"
         }
         if ($conflict) {
-            Write-Log "Default Web Site has a wildcard binding on port $Port  -  this will conflict with the MMLPortal host-header binding. Consider stopping/rebinding Default Web Site." "WARN"
+            if ($HasHostname) {
+                Write-Log "Default Web Site has a wildcard binding on port $Port  -  this will conflict with the MMLPortal host-header binding. Consider stopping/rebinding Default Web Site." "WARN"
+            } else {
+                # Two sites on the same IP:port with no host header cannot both run: IIS
+                # refuses to start the second one.
+                Write-Log "Default Web Site already answers on port $Port with no host header, and MMLPortal (no hostname) needs the same binding  -  MMLPortal will not start until Default Web Site is stopped or rebound, or a hostname / different port is chosen." "WARN"
+            }
         }
     }
 
@@ -583,9 +609,11 @@ try {
     if (Get-Website -Name "MMLPortal" -ErrorAction SilentlyContinue) {
         Remove-Website -Name "MMLPortal"
     }
+    # An empty -HostHeader gives the binding "*:<port>:" -- every name and IP of this server.
     New-Website -Name "MMLPortal" -PhysicalPath $StaticDir -Port $Port -HostHeader $Hostname -ApplicationPool "MMLPortalPool" | Out-Null
 
-    Write-Result "IIS site created" $true "MMLPortal -> $StaticDir (host header: $Hostname`:$Port)"
+    $hostLabel = if ($HasHostname) { "host header: $Hostname`:$Port" } else { "no host header, any name on port $Port" }
+    Write-Result "IIS site created" $true "MMLPortal -> $StaticDir ($hostLabel)"
 } catch {
     Write-Result "IIS site created" $false $_.Exception.Message
 }
@@ -601,18 +629,21 @@ if ($EnableHttps -eq "true") {
         # invalidate any trust a client machine already established by importing the old
         # one into its Trusted Root store.
         $existingCert = Get-ChildItem Cert:\LocalMachine\My |
-            Where-Object { $_.Subject -eq "CN=$Hostname" -and $_.NotAfter -gt (Get-Date) } |
+            Where-Object { $_.Subject -eq "CN=$SiteHost" -and $_.NotAfter -gt (Get-Date) } |
             Sort-Object NotAfter -Descending | Select-Object -First 1
 
         if ($existingCert) {
             $cert = $existingCert
-            Write-Log "Reusing existing self-signed certificate for $Hostname (thumbprint $($cert.Thumbprint), expires $($cert.NotAfter))."
+            Write-Log "Reusing existing self-signed certificate for $SiteHost (thumbprint $($cert.Thumbprint), expires $($cert.NotAfter))."
         } else {
-            $cert = New-SelfSignedCertificate -DnsName $Hostname -CertStoreLocation "Cert:\LocalMachine\My" `
-                -FriendlyName "MMLPortal ($Hostname)" -NotAfter (Get-Date).AddYears(10) `
+            # Without a hostname the certificate names this computer and localhost, the two
+            # names a browser is most likely to use for a site with no host header.
+            $certNames = if ($HasHostname) { @($Hostname) } else { @($SiteHost, "localhost") }
+            $cert = New-SelfSignedCertificate -DnsName $certNames -CertStoreLocation "Cert:\LocalMachine\My" `
+                -FriendlyName "MMLPortal ($SiteHost)" -NotAfter (Get-Date).AddYears(10) `
                 -KeyExportPolicy Exportable -KeyUsage DigitalSignature, KeyEncipherment `
                 -Type SSLServerAuthentication
-            Write-Log "Generated new self-signed certificate for $Hostname (thumbprint $($cert.Thumbprint), valid until $($cert.NotAfter))."
+            Write-Log "Generated new self-signed certificate for $SiteHost (thumbprint $($cert.Thumbprint), valid until $($cert.NotAfter))."
         }
 
         # Trust it on this machine so the server itself doesn't show the browser warning --
@@ -644,19 +675,24 @@ if ($EnableHttps -eq "true") {
         Add-Type -Path "$env:WinDir\System32\inetsrv\Microsoft.Web.Administration.dll" -ErrorAction Stop
         $sm = New-Object Microsoft.Web.Administration.ServerManager
         $site = $sm.Sites["MMLPortal"]
-        $bindingInfo = "*:${HttpsPort}:$Hostname"
-        $site.Bindings.Add($bindingInfo, $cert.GetCertHash(), "My", [Microsoft.Web.Administration.SslFlags]::Sni) | Out-Null
+        if ($HasHostname) {
+            $site.Bindings.Add("*:${HttpsPort}:$Hostname", $cert.GetCertHash(), "My", [Microsoft.Web.Administration.SslFlags]::Sni) | Out-Null
+        } else {
+            # SNI needs a host name to select on; with none, the certificate is bound to the
+            # whole port instead (the 0.0.0.0:<port> SSL binding cleared above).
+            $site.Bindings.Add("*:${HttpsPort}:", $cert.GetCertHash(), "My") | Out-Null
+        }
         $sm.CommitChanges()
 
         # Export the public cert (no private key) so it can be pushed to every OTHER PC that
         # will browse to this site -- importing it into their Trusted Root store is the only
         # way to clear the "Not secure" warning there; it cannot be done remotely from here.
-        $certExportPath = Join-Path $InstallDir "certs\$Hostname.cer"
+        $certExportPath = Join-Path $InstallDir "certs\$SiteHost.cer"
         New-Item -ItemType Directory -Force -Path (Split-Path $certExportPath) | Out-Null
         Export-Certificate -Cert $cert -FilePath $certExportPath -Type CERT | Out-Null
 
         Write-Result "HTTPS binding" $true "port $HttpsPort, thumbprint $($cert.Thumbprint)"
-        Write-Log "Exported public certificate to $certExportPath -- import this into 'Trusted Root Certification Authorities' (Local Machine) on every OTHER PC that will browse to https://$Hostname to clear the browser warning there too (this server already trusts it)." "WARN"
+        Write-Log "Exported public certificate to $certExportPath -- import this into 'Trusted Root Certification Authorities' (Local Machine) on every OTHER PC that will browse to https://$SiteHost to clear the browser warning there too (this server already trusts it)." "WARN"
     } catch {
         Write-Result "HTTPS binding" $false $_.Exception.Message
     }
@@ -666,18 +702,22 @@ if ($EnableHttps -eq "true") {
 
 # -- Step 9  -  hosts file -------------------------------------------------------------
 Write-Log "Step 9: hosts file entry"
-$hostsPath = "$env:WinDir\System32\drivers\etc\hosts"
-try {
-    $hostsContent = Get-Content $hostsPath -ErrorAction Stop
-    if ($hostsContent -notmatch "\s$([regex]::Escape($Hostname))\s*$") {
-        Add-Content -Path $hostsPath -Value "127.0.0.1`t$Hostname"
-        Write-Result "Hosts file entry" $true "added 127.0.0.1  $Hostname"
-    } else {
-        Write-Result "Hosts file entry" $true "already present"
+if ($HasHostname) {
+    $hostsPath = "$env:WinDir\System32\drivers\etc\hosts"
+    try {
+        $hostsContent = Get-Content $hostsPath -ErrorAction Stop
+        if ($hostsContent -notmatch "\s$([regex]::Escape($Hostname))\s*$") {
+            Add-Content -Path $hostsPath -Value "127.0.0.1`t$Hostname"
+            Write-Result "Hosts file entry" $true "added 127.0.0.1  $Hostname"
+        } else {
+            Write-Result "Hosts file entry" $true "already present"
+        }
+        Write-Log "NOTE: other PCs on the LAN need their own hosts entry (pointing at this server's real LAN IP, not 127.0.0.1) or a DNS A record for '$Hostname' to resolve it." "WARN"
+    } catch {
+        Write-Result "Hosts file entry" $false $_.Exception.Message
     }
-    Write-Log "NOTE: other PCs on the LAN need their own hosts entry (pointing at this server's real LAN IP, not 127.0.0.1) or a DNS A record for '$Hostname' to resolve it." "WARN"
-} catch {
-    Write-Result "Hosts file entry" $false $_.Exception.Message
+} else {
+    Write-Log "No local hostname chosen -- no hosts-file entry needed. Browse to this server by name or IP on port $Port."
 }
 
 # -- Step 10  -  verification ----------------------------------------------------------
@@ -691,9 +731,16 @@ try {
 }
 
 try {
-    $r = Invoke-RestMethod -Uri "$baseUrl/api/auth/login" -Method Post -ContentType "application/json" `
-         -Body '{"username":"admin","password":"admin123"}' -TimeoutSec 10 -Headers @{ Host = $Hostname }
-    Write-Result "Login through IIS proxy" ([bool]$r.access_token) "$baseUrl/api/auth/login"
+    # With no host header the site answers on localhost, which the certificate also names.
+    $checkUrl = $baseUrl
+    $checkHeaders = @{ Host = $Hostname }
+    if (-not $HasHostname) {
+        $checkUrl = if ($EnableHttps -eq "true") { Get-BaseUrl "https" "localhost" $HttpsPort 443 } else { Get-BaseUrl "http" "localhost" $Port 80 }
+        $checkHeaders = @{}
+    }
+    $r = Invoke-RestMethod -Uri "$checkUrl/api/auth/login" -Method Post -ContentType "application/json" `
+         -Body '{"username":"admin","password":"admin123"}' -TimeoutSec 10 -Headers $checkHeaders
+    Write-Result "Login through IIS proxy" ([bool]$r.access_token) "$checkUrl/api/auth/login"
 } catch {
     Write-Result "Login through IIS proxy" $false $_.Exception.Message
 }
