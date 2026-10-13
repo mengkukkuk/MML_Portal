@@ -55,6 +55,51 @@
   font-variant-numeric: tabular-nums;
 }
 
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  flex: none;
+}
+
+.toolBtn {
+  color: var(--fg-muted);
+}
+
+.toolBtn:hover:not(:disabled) {
+  color: var(--fg);
+}
+
+.toolBtn:disabled {
+  color: var(--fg-dim);
+  opacity: 0.5;
+}
+
+.actualBtn {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.zoomPct {
+  min-width: 3.4em;
+  text-align: center;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Fingertip-sized targets on touch screens. */
+@media (pointer: coarse) {
+  .toolBtn,
+  .closeBtn {
+    padding: 10px;
+  }
+}
+
 .closeBtn {
   flex: none;
   color: var(--fg-muted);
@@ -84,21 +129,38 @@
   color: var(--fg);
 }
 
-/* Centers a smaller-than-viewport image; for a larger one, the auto margin
- * resolves to real space instead of a negative offset, so the full frame
- * stays reachable by scroll/drag rather than clipping at the near edge —
- * the classic pitfall of `justify-content: center` on scrollable flex. */
+/* The image is drawn at natural size and moved/scaled by an inline transform
+ * (see imageViewport.js), so the stage itself never scrolls. touch-action: none
+ * hands finger drags and pinches to the pointer handlers instead of the page. */
 .viewport {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
-  overflow: auto;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.pannable {
+  cursor: grab;
+}
+
+.panning {
+  cursor: grabbing;
 }
 
 .img {
-  margin: auto;
+  position: absolute;
+  top: 0;
+  left: 0;
   display: block;
   max-width: none;
+  transform-origin: 0 0;
+  will-change: transform;
+  -webkit-user-drag: none;
+  pointer-events: none;
 }
 
 .loading {
