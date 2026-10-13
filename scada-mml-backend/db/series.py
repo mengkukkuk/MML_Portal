@@ -61,8 +61,9 @@ def _series_window_query(
                  tbl=sql.Identifier(schema, table), clock=sql.Identifier(ts_col), bound=bound)
         params = [start, end]
     if filter_col and filter_val is not None:
-        query += sql.SQL(" AND {}::text = %s").format(sql.Identifier(filter_col))
-        params.append(filter_val)
+        clause, param = _tables._filter_clause(columns, filter_col, filter_val)
+        query += sql.SQL(" AND ") + clause
+        params.append(param)
     return query, params
 
 
@@ -310,7 +311,7 @@ def production_log_hourly(
         # Identifier validation below queries information_schema, so establish
         # the request snapshot before even that first read.
         conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
-        _tables._safe_identifiers(
+        columns = _tables._safe_identifiers(
             conn, schema, table, ts_col, produced_col, rejected_col, filter_col
         )
         table_sql = sql.Identifier(schema, table)
@@ -326,8 +327,9 @@ def production_log_hourly(
             where = sql.SQL("")
             params: list[Any] = []
             if filter_col and value is not None:
-                where = sql.SQL(" AND {}::text = %s").format(sql.Identifier(filter_col))
-                params.append(value)
+                clause, param = _tables._filter_clause(columns, filter_col, value)
+                where = sql.SQL(" AND ") + clause
+                params.append(param)
             baseline = conn.execute(
                 sql.SQL(
                     "SELECT {fields} FROM {table} "
@@ -362,8 +364,9 @@ def production_log_hourly(
             where = sql.SQL("")
             params: list[Any] = []
             if filter_col and filter_val is not None:
-                where = sql.SQL(" AND {}::text = %s").format(sql.Identifier(filter_col))
-                params.append(filter_val)
+                clause, param = _tables._filter_clause(columns, filter_col, filter_val)
+                where = sql.SQL(" AND ") + clause
+                params.append(param)
             rows = conn.execute(
                 sql.SQL(
                     "SELECT {ts} AS ts, {produced} AS produced, {rejected} AS rejected "
@@ -429,15 +432,16 @@ def table_rows(
     one row per device.
     """
     with _tables._table_source_conn(datasource_id) as (conn, schema):
-        _tables._safe_identifiers(conn, schema, table, *columns, filter_col, ts_col)
+        types = _tables._safe_identifiers(conn, schema, table, *columns, filter_col, ts_col)
         query = sql.SQL("SELECT {cols} FROM {tbl}").format(
             cols=sql.SQL(", ").join(sql.Identifier(c) for c in columns),
             tbl=sql.Identifier(schema, table),
         )
         params: list[Any] = []
         if filter_col and filter_val is not None:
-            query += sql.SQL(" WHERE {}::text = %s").format(sql.Identifier(filter_col))
-            params.append(filter_val)
+            clause, param = _tables._filter_clause(types, filter_col, filter_val)
+            query += sql.SQL(" WHERE ") + clause
+            params.append(param)
         if ts_col:
             query += sql.SQL(" ORDER BY {} DESC NULLS LAST").format(sql.Identifier(ts_col))
         query += sql.SQL(" LIMIT %s")

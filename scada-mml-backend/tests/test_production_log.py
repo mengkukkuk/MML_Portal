@@ -376,7 +376,7 @@ def test_tag_mode_reads_each_counter_under_its_own_filter_on_one_snapshot(monkey
         yield Connection(), "public"
 
     monkeypatch.setattr(db, "_table_source_conn", source_conn)
-    monkeypatch.setattr(db, "_safe_identifiers", lambda *_args: None)
+    monkeypatch.setattr(db, "_safe_identifiers", lambda *_args: {})
 
     db.production_log_hourly(_eav_binding())
 
@@ -415,7 +415,7 @@ def test_wide_mode_still_reads_both_counters_from_one_row_stream(monkeypatch):
         yield Connection(), "public"
 
     monkeypatch.setattr(db, "_table_source_conn", source_conn)
-    monkeypatch.setattr(db, "_safe_identifiers", lambda *_args: None)
+    monkeypatch.setattr(db, "_safe_identifiers", lambda *_args: {})
 
     db.production_log_hourly(_binding())
 

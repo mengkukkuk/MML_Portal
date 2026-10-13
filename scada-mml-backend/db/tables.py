@@ -27,6 +27,7 @@ __all__ = [
     "_TS_TYPES",
     "_TYPE_BADGES",
     "_allowed_tables",
+    "_filter_clause",
     "_is_array_type",
     "_primary_key_columns",
     "_safe_identifiers",
@@ -340,6 +341,31 @@ def _safe_identifiers(conn, schema: str, table: str, *cols: str | None) -> dict[
     return columns
 
 
+_INT_TYPES = ("smallint", "integer", "bigint")
+
+
+def _filter_clause(columns: dict[str, str], filter_col: str, filter_val: str) -> tuple[sql.Composed, Any]:
+    """``{col} = %s`` for a filter, without defeating the column's index.
+
+    Filters used to be written ``{col}::text = %s`` for every column so one text
+    value could match any type. On an integer column -- a device or line id --
+    that cast hides the column from its btree index and every poll scans. When
+    the column is an integer and the value is the integer's own canonical text,
+    compare as integers: the rows matched are exactly the ones the text compare
+    matched ("07" is not "7" as text, so it keeps the text path). Everything else
+    keeps the text compare -- on text/varchar it is already a no-op for the
+    planner.
+    """
+    if columns.get(filter_col) in _INT_TYPES:
+        try:
+            as_int = int(filter_val)
+        except ValueError:
+            as_int = None
+        if as_int is not None and str(as_int) == filter_val:
+            return sql.SQL("{} = %s").format(sql.Identifier(filter_col)), as_int
+    return sql.SQL("{}::text = %s").format(sql.Identifier(filter_col)), filter_val
+
+
 def _primary_key_columns(conn, schema: str, table: str) -> set[str]:
     """Primary-key column names for a table (used to drop id-like cols)."""
     rows = conn.execute(
@@ -461,7 +487,7 @@ def _latest_on(
     ts_col: str | None,
 ) -> dict[str, Any] | None:
     """`table_latest`'s query, on a connection the caller already holds."""
-    _safe_identifiers(conn, schema, table, value_col, filter_col, ts_col)
+    columns = _safe_identifiers(conn, schema, table, value_col, filter_col, ts_col)
     ts_select = (
         sql.SQL(", {} AS ts").format(sql.Identifier(ts_col))
         if ts_col else sql.SQL(", NULL AS ts")
@@ -471,8 +497,9 @@ def _latest_on(
     )
     params: list[Any] = []
     if filter_col and filter_val is not None:
-        query += sql.SQL(" WHERE {}::text = %s").format(sql.Identifier(filter_col))
-        params.append(filter_val)
+        clause, param = _filter_clause(columns, filter_col, filter_val)
+        query += sql.SQL(" WHERE ") + clause
+        params.append(param)
     if ts_col:
         query += sql.SQL(" ORDER BY {} DESC NULLS LAST").format(sql.Identifier(ts_col))
     query += sql.SQL(" LIMIT 1")
