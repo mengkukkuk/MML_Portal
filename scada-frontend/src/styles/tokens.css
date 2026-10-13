@@ -48,6 +48,9 @@
    * as drawn ink rather than as grey: near-white on the dark faceplates (black
    * would vanish into navy), true black on paper — see that block. */
   --sym-ink: var(--fg);
+  /* The glass of a camera lens. Unlike the ink it must stay dark on the light
+   * faceplate too — a pale lens is a hole in the drawing, not a piece of glass. */
+  --sym-lens: #04080f;
 }
 
 /* ---------------------------------------------------------------------------
@@ -121,6 +124,7 @@
   --warn: #b8810f;
   --crit: #be3b2b;
   --sym-ink: #0b0d0f;
+  --sym-lens: #141c26;
 }
 
 /* Re-skin the app smoothly when the operator swaps faceplates. */

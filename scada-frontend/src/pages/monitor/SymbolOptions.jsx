@@ -8,6 +8,10 @@ import {
   MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, TIME_FORMATS, tableColumns, tableRowLimit,
 } from '@/components/mimic/symbols/DataTable'
 import { MAX_CASES } from '@/components/mimic/conditions'
+import {
+  CAMERA_STYLES, DEFAULT_CAMERA_STYLE, DEFAULT_PLATE_PLACEMENT, PLATE_PLACEMENTS,
+  cameraStyle, platePlacement,
+} from '@/components/mimic/symbols/cameraStyle'
 import { fetchCameraLinkOptions } from '@/api/cameras'
 import { fetchSchemaColumns } from '@/api/schema'
 import { compileCondition } from '@/utils/mathExpr'
@@ -560,6 +564,63 @@ function CameraLink({ node, onChange }) {
 }
 
 /**
+ * How an IP camera is drawn: which drawing, and for the smart one where its ID
+ * plate goes. Appearance, like everything else on this rail, and stored the same
+ * way (see cameraStyle.js) — each choice is written only when it is not the
+ * default, and picking the default again clears the key.
+ *
+ * The plate choice is offered with the smart drawing only. The classic one has
+ * no plate, and a control that did nothing would only invite the question why.
+ * The stored value is left alone when the drawing changes, so going back to
+ * smart finds the plate where it was put.
+ */
+function CameraStyle({ node, onChange }) {
+  const style = cameraStyle(node.options)
+  const placement = platePlacement(node.options)
+  const chosenStyle = CAMERA_STYLES.find((c) => c.id === style)
+  const chosenPlacement = PLATE_PLACEMENTS.find((p) => p.id === placement)
+
+  return (
+    <div className={styles.section}>
+      <div className={styles.sectionTitle}>Style</div>
+      <p className={styles.hint}>{chosenStyle.hint}</p>
+      <label className={styles.field}>
+        <span>Drawing</span>
+        <select
+          value={style}
+          onChange={(e) => onChange({
+            cameraStyle: e.target.value === DEFAULT_CAMERA_STYLE ? undefined : e.target.value,
+          })}
+        >
+          {CAMERA_STYLES.map(({ id, label }) => (
+            <option key={id} value={id}>{label}</option>
+          ))}
+        </select>
+      </label>
+
+      {style === 'smart' && (
+        <>
+          <label className={styles.field}>
+            <span>ID plate</span>
+            <select
+              value={placement}
+              onChange={(e) => onChange({
+                platePlacement: e.target.value === DEFAULT_PLATE_PLACEMENT ? undefined : e.target.value,
+              })}
+            >
+              {PLATE_PLACEMENTS.map(({ id, label }) => (
+                <option key={id} value={id}>{label}</option>
+              ))}
+            </select>
+          </label>
+          <p className={styles.hint}>{chosenPlacement.hint}</p>
+        </>
+      )}
+    </div>
+  )
+}
+
+/**
  * One swatch-and-honeycomb colour row: the current colour (or a dashed
  * "default" hexagon), a caption, and — once opened — the palette.
  */
@@ -745,7 +806,14 @@ export default function SymbolOptions({ node, onChange }) {
   }
 
   if (node.type === 'ipcamera') {
-    return <CameraLink node={node} onChange={onChange} />
+    // The link first, because it is a rule about the data above it; the style
+    // after it, which leaves it next to the colour section it belongs with.
+    return (
+      <>
+        <CameraLink node={node} onChange={onChange} />
+        <CameraStyle node={node} onChange={onChange} />
+      </>
+    )
   }
 
   if (node.type === 'led') {
