@@ -67,9 +67,10 @@ def test_plant_query_reads_the_configured_schema(source):
     assert [r["location"] for r in rows] == ["Line 9"]
 
 
-def test_none_is_the_app_db_on_public():
+def test_none_is_the_app_db_on_app_schema():
+    import config
     with db._table_source_conn(None) as (_conn, schema):
-        assert schema == "public"
+        assert schema == config.APP_DB_SCHEMA
 
 
 def test_unknown_datasource_raises_rather_than_falling_back():
@@ -300,6 +301,11 @@ def test_test_datasource_reports_decrypt_failure_as_ok_false(monkeypatch):
         raise RuntimeError("Stored password could not be decrypted - key mismatch")
 
     monkeypatch.setattr(db, "get_datasource_secret", _raise)
+    # The route reads password-free metadata first and 404s on an unknown id;
+    # stub it so the call reaches the decrypt path this test is about.
+    monkeypatch.setattr(
+        db, "get_datasource", lambda _id: {"id": 1, "host": "h", "database": "d"}
+    )
     result = datasources_router.test_datasource(
         datasources_router.DatasourceTestIn(datasource_id=1)
     )

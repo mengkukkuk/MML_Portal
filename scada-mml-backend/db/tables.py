@@ -168,7 +168,7 @@ _DATETIME_TYPES = (
 def _table_source_conn(datasource_id: int | None):
     """Yield ``(conn, schema)`` for every *plant data* query.
 
-    ``None`` → the app database + the ``public`` schema. Otherwise a pooled
+    ``None`` → the app database + its configured ``APP_DB_SCHEMA``. Otherwise a pooled
     connection to the saved datasource, using its configured schema. Raises
     ``ValueError`` if the datasource id is unknown; ``psycopg.Error`` and
     ``PoolTimeout`` propagate when it can't be reached so ``fan_out`` can record
