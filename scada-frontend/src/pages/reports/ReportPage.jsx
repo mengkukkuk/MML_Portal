@@ -73,11 +73,11 @@ import styles from './ReportPage.module.css'
  *
  * Two readers, two tabs. "QC Summary" is the analyst's page — how many
  * defects, which types, trending which way, which cameras are over threshold.
- * "Engineering" is where a finding gets chased down — batch by batch, camera
+ * "analysis" is where a finding gets chased down — batch by batch, camera
  * by camera, slot by slot, down to the raw log rows. A block's tab follows
  * from its type (BLOCK_TAB), so every saved template splits the same way; the
  * template still decides which blocks exist and their order within a tab. The
- * tab is in the URL (?tab=engineering) like everything else a link should
+ * tab is in the URL (?tab=analysis) like everything else a link should
  * reproduce, and only the open tab is mounted — the raw log's paging query
  * never runs for someone who only reads the summary.
  */
@@ -96,7 +96,7 @@ const BLOCK_COMPONENTS = {
 
 const TABS = [
   { key: 'summary', label: 'QC Summary' },
-  { key: 'engineering', label: 'Engineering' },
+  { key: 'analysis', label: 'Analysis' },
 ]
 
 const BLOCK_TAB = {
@@ -105,10 +105,10 @@ const BLOCK_TAB = {
   pareto: 'summary',
   exceptions: 'summary',
   summary_table: 'summary',
-  batch_matrix: 'engineering',
-  defect_grid: 'engineering',
-  timeline: 'engineering',
-  raw_log: 'engineering',
+  batch_matrix: 'analysis',
+  defect_grid: 'analysis',
+  timeline: 'analysis',
+  raw_log: 'analysis',
 }
 
 // Blocks the server can satisfy from a /run call. `raw_log` is absent on
@@ -263,7 +263,7 @@ export default function ReportPage() {
     [blocks, tab],
   )
   const tabCounts = useMemo(() => {
-    const counts = { summary: 0, engineering: 0 }
+    const counts = { summary: 0, analysis: 0 }
     blocks.forEach((b) => { if (BLOCK_COMPONENTS[b.type]) counts[BLOCK_TAB[b.type] ?? 'summary'] += 1 })
     return counts
   }, [blocks])

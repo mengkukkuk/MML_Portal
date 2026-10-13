@@ -37,9 +37,9 @@ export default function TitleBlock({ layout, name, asOf }) {
   }, [layout?.nodes, theme])
 
   return (
-    <aside className={styles.block} aria-label={tr('Drawing title block')}>
+    <aside className={styles.block} aria-label={tr('Panel title block')}>
       <div className={`${styles.cell} ${styles.cellWide}`}>
-        <span className={styles.label}>{tr('Drawing')}</span>
+        <span className={styles.label}>{tr('Panel')}</span>
         <span className={styles.name}>{name}</span>
       </div>
       <div className={styles.cell}>

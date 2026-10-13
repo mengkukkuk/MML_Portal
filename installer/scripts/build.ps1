@@ -71,6 +71,15 @@ function Abort([string]$msg) {
     Write-Host "`n[FATAL] $msg" -ForegroundColor Red
     exit 1
 }
+function Write-Log {
+    param(
+        [string]$Message,
+        [string]$Color = "Green"
+    )
+
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Write-Host "[$timestamp] $Message" -ForegroundColor $Color
+}
 
 if (-not $Version) {
     $pkg = Get-Content (Join-Path $FrontendSrc "package.json") -Raw | ConvertFrom-Json
@@ -266,7 +275,7 @@ if ($LASTEXITCODE -ne 0) { Abort "ISCC.exe compilation failed (exit $LASTEXITCOD
 $outName = if ($Full) { "MMLPortalSetup-$Version-Full.exe" } else { "MMLPortalSetup-$Version.exe" }
 $outFile = Join-Path $OutputDir $outName
 Write-Host "`n============================================================" -ForegroundColor Green
-Write-Host "  Build complete: installer\Output\$outName ($([math]::Round((Get-Item $outFile).Length / 1MB, 1)) MB)" -ForegroundColor Green
+Write-Log "  Build complete: installer\Output\$outName ($([math]::Round((Get-Item $outFile).Length / 1MB, 1)) MB)"
 
 if (-not $Full) {
     # Lite setup expects the PostgreSQL installer in the same folder; stage it there so the
