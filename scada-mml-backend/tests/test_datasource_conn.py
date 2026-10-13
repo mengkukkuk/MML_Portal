@@ -311,3 +311,39 @@ def test_test_datasource_reports_decrypt_failure_as_ok_false(monkeypatch):
     )
     assert result.ok is False
     assert "decrypted" in result.message
+
+
+# --- plant connection hardening ---------------------------------------------
+def test_plant_connections_carry_the_statement_timeout(source, monkeypatch):
+    """Applied at connect time, so a runaway report query frees its worker."""
+    import config
+    monkeypatch.setattr(config, "PLANT_STATEMENT_TIMEOUT_MS", 4321)
+    db.drop_pool(source["id"])
+    with db._table_source_conn(source["id"]) as (conn, _schema):
+        value = conn.execute("SHOW statement_timeout").fetchone()["statement_timeout"]
+    assert value == "4321ms"
+
+
+def test_statement_timeout_zero_sends_no_option(source, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "PLANT_STATEMENT_TIMEOUT_MS", 0)
+    db.drop_pool(source["id"])
+    pool, _schema = db._build_pool(source["id"])
+    try:
+        assert "options" not in pool.kwargs
+        assert pool.kwargs["keepalives"] == 1
+    finally:
+        pool.close()
+
+
+def test_plant_pools_check_connections_but_the_app_pool_does_not(source):
+    from psycopg_pool import ConnectionPool
+
+    plant, _ = db._build_pool(source["id"])
+    app, _ = db._build_pool(None)
+    try:
+        assert plant._check == ConnectionPool.check_connection
+        assert app._check is None
+    finally:
+        plant.close()
+        app.close()

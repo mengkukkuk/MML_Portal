@@ -113,6 +113,13 @@ MAX_SELECTED_DATASOURCES = int(os.getenv("MAX_SELECTED_DATASOURCES", "8"))
 # asked again (db/tables.py). 0 turns the cache off.
 SCHEMA_CACHE_TTL_S = float(os.getenv("SCHEMA_CACHE_TTL_S", "60"))
 
+# Server-side cap on any one statement against a plant database. fan_out stops
+# *waiting* after FANOUT_TIMEOUT_S, but the query keeps running and keeps its
+# worker and pooled connection; this is what actually frees them. Set well
+# above the poll path so only runaway report/trend reads hit it. 0 disables
+# (e.g. behind a connection pooler that rejects startup options).
+PLANT_STATEMENT_TIMEOUT_MS = int(os.getenv("PLANT_STATEMENT_TIMEOUT_MS", "30000"))
+
 # --- Secrets at rest ---------------------------------------------------------
 #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 #

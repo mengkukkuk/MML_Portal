@@ -158,6 +158,15 @@ def db_state() -> dict[str, Any]:
     }
 
 
+# TCP keepalives for plant connections. A plant behind a VPN or a flaky switch
+# can vanish without a FIN; without probes, a pooled socket to it looks idle and
+# healthy, and a query on it blocks until the OS retransmission timeout gives
+# up. These notice a dead peer in ~a minute instead.
+_PLANT_KEEPALIVES = dict(
+    keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=3,
+)
+
+
 def _build_pool(datasource_id: int | None) -> tuple["ConnectionPool", str]:
     """Construct (but do not block on) a pool for one database.
 
@@ -188,7 +197,10 @@ def _build_pool(datasource_id: int | None) -> tuple["ConnectionPool", str]:
             host=ds["host"], port=ds["port"], dbname=ds["database"],
             user=ds["username"], password=ds["password"], sslmode=ds["sslmode"],
             connect_timeout=config.DB_CONNECT_TIMEOUT,
+            **_PLANT_KEEPALIVES,
         )
+        if config.PLANT_STATEMENT_TIMEOUT_MS > 0:
+            kwargs["options"] = f"-c statement_timeout={config.PLANT_STATEMENT_TIMEOUT_MS}"
         # min_size=0: a saved-but-unselected datasource must hold zero sockets.
         min_size, max_size = 0, config.DS_POOL_MAX
         schema = ds.get("db_schema") or "public"
@@ -197,6 +209,11 @@ def _build_pool(datasource_id: int | None) -> tuple["ConnectionPool", str]:
         kwargs={**kwargs, "row_factory": dict_row},
         min_size=min_size, max_size=max_size,
         timeout=config.DB_CONNECT_TIMEOUT,
+        # Plant links drop and plant servers restart. Without a check the pool
+        # hands out the dead socket, the first query fails, and the source is
+        # fast-failed for _DS_RETRY_AFTER_S over a connection that a fresh one
+        # would have replaced. The app DB is localhost and skips the round trip.
+        check=ConnectionPool.check_connection if datasource_id is not None else None,
         open=False, name=f"ds-{datasource_id}",
     )
     pool.open(wait=False)
