@@ -239,8 +239,15 @@ def drop_pool(datasource_id: int) -> None:
     with _ds_down_lock:
         _ds_down_until.pop(datasource_id, None)
         _ds_probing.discard(datasource_id)
+    _forget_schema_cache()
     if pool is not None:
         pool.close()
+
+
+def _forget_schema_cache() -> None:
+    # Imported here: tables imports this module, so a top-level import would cycle.
+    from . import tables as _tables
+    _tables.forget_schema_cache()
 
 
 def close_all_pools() -> None:
@@ -251,6 +258,7 @@ def close_all_pools() -> None:
         _pools.clear()
         _pool_schemas.clear()
         _pool_schemas[None] = config.APP_DB_SCHEMA
+    _forget_schema_cache()
     for pool in pools:
         try:
             pool.close()

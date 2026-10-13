@@ -1,7 +1,10 @@
 """Plant-table access: schema introspection, the per-source connection, latest values."""
 
+from collections.abc import Hashable
 from contextlib import contextmanager
 import logging
+import threading
+import time
 from typing import Any
 
 from psycopg import sql
@@ -32,6 +35,7 @@ __all__ = [
     "_type_badge",
     "describe_table",
     "distinct_column_values",
+    "forget_schema_cache",
     "list_schema_tables",
     "table_latest",
 ]
@@ -264,12 +268,70 @@ def _table_columns(conn, schema: str, table: str) -> dict[str, str]:
     }
 
 
+# --- Introspection cache ------------------------------------------------------
+# `_safe_identifiers` gates every plant read, and uncached it costs two
+# information_schema queries -- slow catalog views -- before the one query the
+# caller actually wanted. Panels and Monitor symbols run it on every poll, so it
+# was two thirds of the polling load on each plant. Table structure changes on
+# the scale of deployments, not polls.
+#
+# Only *positive* answers are cached, and a miss is re-verified fresh before it
+# is believed: a table or column created a moment ago is accepted at once. The
+# one thing that can be stale (for at most the TTL) is a dropped column, and a
+# query against one fails as UndefinedColumn, which fan_out already reports.
+_SCHEMA_CACHE_MAX = 512
+_schema_cache: dict[Hashable, tuple[float, dict[str, str]]] = {}
+_schema_cache_lock = threading.Lock()
+
+
+def _schema_cache_key(conn, schema: str, table: str) -> Hashable | None:
+    """Which database a connection points at, or None to skip caching.
+
+    Keyed by the server rather than a datasource id because the connection is
+    all `_safe_identifiers` is handed; two saved datasources that point at the
+    same database rightly share an entry. A stand-in connection without real
+    connection info (tests) is never cached.
+    """
+    try:
+        info = conn.info
+        return (info.host, info.port, info.dbname, schema, table)
+    except AttributeError:
+        return None
+
+
+def forget_schema_cache() -> None:
+    """Drop every cached table description -- a datasource was edited or removed."""
+    with _schema_cache_lock:
+        _schema_cache.clear()
+
+
+def _known_columns(conn, schema: str, table: str, *, fresh: bool = False) -> dict[str, str]:
+    """`_table_columns`, served from the introspection cache while it is fresh."""
+    ttl = config.SCHEMA_CACHE_TTL_S
+    key = _schema_cache_key(conn, schema, table) if ttl > 0 else None
+    if key is not None and not fresh:
+        with _schema_cache_lock:
+            hit = _schema_cache.get(key)
+        if hit is not None and time.monotonic() - hit[0] < ttl:
+            return hit[1]
+    columns = _table_columns(conn, schema, table)
+    if key is not None:
+        with _schema_cache_lock:
+            _schema_cache[key] = (time.monotonic(), columns)
+            while len(_schema_cache) > _SCHEMA_CACHE_MAX:
+                _schema_cache.pop(next(iter(_schema_cache)))
+    return columns
+
+
 def _safe_identifiers(conn, schema: str, table: str, *cols: str | None) -> dict[str, str]:
     """Validate table + columns; return the table's {col: type} map.
 
     Each non-None column must exist on the table. Raises ValueError otherwise.
     """
-    columns = _table_columns(conn, schema, table)
+    columns = _known_columns(conn, schema, table)
+    if any(c is not None and c not in columns for c in cols):
+        # Never refuse on a cached answer: the column may be new.
+        columns = _known_columns(conn, schema, table, fresh=True)
     for c in cols:
         if c is not None and c not in columns:
             raise ValueError(f"Column not in {table!r}: {c!r}")

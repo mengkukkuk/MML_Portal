@@ -109,6 +109,10 @@ FANOUT_MAX_WORKERS = int(os.getenv("FANOUT_MAX_WORKERS", "8"))
 FANOUT_TIMEOUT_S = int(os.getenv("FANOUT_TIMEOUT_S", "12"))
 MAX_SELECTED_DATASOURCES = int(os.getenv("MAX_SELECTED_DATASOURCES", "8"))
 
+# How long a plant table's column list is trusted before information_schema is
+# asked again (db/tables.py). 0 turns the cache off.
+SCHEMA_CACHE_TTL_S = float(os.getenv("SCHEMA_CACHE_TTL_S", "60"))
+
 # --- Secrets at rest ---------------------------------------------------------
 #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 #
