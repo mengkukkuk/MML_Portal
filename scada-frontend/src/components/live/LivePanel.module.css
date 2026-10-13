@@ -109,7 +109,7 @@
 
 .panel__title {
   margin: 0;
-  font-size: 14px;
+  font-size: calc(14px * var(--title-scale, 1));
   font-weight: 600;
   color: var(--fg);
   white-space: nowrap;
@@ -329,7 +329,7 @@
 }
 
 .panel__num {
-  font-size: 24px;
+  font-size: calc(24px * var(--text-scale, 1));
   font-weight: 700;
   color: var(--fg);
   font-variant-numeric: tabular-nums;
@@ -338,7 +338,7 @@
 }
 
 .panel__unit {
-  font-size: 13px;
+  font-size: calc(13px * var(--text-scale, 1));
   color: var(--fg-muted);
 }
 
@@ -346,7 +346,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   color: var(--fg);
   font-variant-numeric: tabular-nums;
   padding: 2px 9px;
@@ -367,14 +367,14 @@
 .panel__error {
   color: #f5a524;
   margin: 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
 }
 
 .panel__alert {
   align-self: flex-start;
   display: inline-flex;
   align-items: center;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
   font-weight: 600;
   letter-spacing: 0.02em;
   color: #ffd7d7;
@@ -434,7 +434,7 @@
 }
 
 .panel__minilabel {
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   flex-shrink: 0;
   margin-top: 0px;
   text-align: center;
@@ -472,7 +472,7 @@
 
 .panel__statnum {
   /* Scales with the tile: 46px on a roomy tile, down to 20px on a small one. */
-  font-size: clamp(20px, min(30cqh, 16cqw), 46px);
+  font-size: calc(clamp(20px, min(30cqh, 16cqw), 46px) * var(--text-scale, 1));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -484,7 +484,7 @@
 }
 
 .panel__stat--multi .panel__statnum {
-  font-size: clamp(16px, 9cqw, 26px);
+  font-size: calc(clamp(16px, 9cqw, 26px) * var(--text-scale, 1));
 }
 
 .panel__stat--multi .panel__statrow {
@@ -502,7 +502,7 @@
 }
 
 .panel__statlabel {
-  font-size: 11px;
+  font-size: calc(11px * var(--text-scale, 1));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -524,7 +524,7 @@
 .panel__table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-scale, 1));
 }
 
 .panel__table th {
@@ -572,10 +572,10 @@
 
 @container panel (max-width: 280px) or (max-height: 220px) {
   .panel__num {
-    font-size: 18px;
+    font-size: calc(18px * var(--text-scale, 1));
   }
   .panel__chip {
-    font-size: 11px;
+    font-size: calc(11px * var(--text-scale, 1));
     padding: 1px 7px;
   }
 }

@@ -47,7 +47,7 @@ import {
 } from '@/utils/columnKinds'
 import {
   VIZ_TYPE_META, PARAM_SCHEMA, POLL_INTERVAL_OPTIONS, CONNECTORS,
-  defaultOptions, toNullableNumber, legacyBinding, buildPanelPayload,
+  defaultOptions, TEXT_SIZE_KEYS, toNullableNumber, legacyBinding, buildPanelPayload,
 } from './panelPayload'
 import ParamFields from './ParamFields'
 import styles from './PanelEditorDialog.module.css'
@@ -397,8 +397,13 @@ export default function PanelEditorDialog({
   }
 
   function onVizTypeChange(type) {
+    // Text size is a property of the tile, not the chart: keep it across a
+    // type switch while every type-specific option resets to its default.
+    const prev = getValues('options') || {}
+    const kept = {}
+    for (const k of TEXT_SIZE_KEYS) if (prev[k] != null) kept[k] = prev[k]
     setValue('chart_type', type)
-    setValue('options', defaultOptions(type))
+    setValue('options', { ...defaultOptions(type), ...kept })
   }
 
   // --- value-column management -----------------------------------------

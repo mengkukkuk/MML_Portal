@@ -17,7 +17,7 @@ import {
 import { usePanelPolling } from './usePanelPolling'
 import {
   buildGenericOption, buildGaugeOption, buildStatSparklineOption, buildTableRows,
-  thresholdColor, fmtValue,
+  thresholdColor, fmtValue, textScaleOf, scaleFonts,
 } from './options'
 import styles from './LivePanel.module.css'
 
@@ -111,9 +111,15 @@ export default function LivePanel({
   // One shared ECharts option object for the 9 "generic" viz types — pure
   // function, no hooks, memoized so <EChart notMerge> doesn't diff a fresh
   // object identity on every render that didn't actually change the data.
+  // Per-panel text size steps (options.titleSize / options.textSize). The DOM
+  // text reads them as CSS variables on the <article>; chart text is canvas,
+  // so its fontSizes are multiplied into the ECharts option instead.
+  const titleScale = textScaleOf(opts.titleSize)
+  const textScale = textScaleOf(opts.textSize)
+
   const option = useMemo(
-    () => (isGeneric ? buildGenericOption(vizType, seriesList, opts) : null),
-    [isGeneric, vizType, seriesList, opts],
+    () => (isGeneric ? scaleFonts(buildGenericOption(vizType, seriesList, opts), textScale) : null),
+    [isGeneric, vizType, seriesList, opts, textScale],
   )
 
   const tableRows = useMemo(() => buildTableRows(seriesList, opts), [seriesList, opts])
@@ -133,7 +139,10 @@ export default function LivePanel({
   const pollLabel = POLL_INTERVALS.find((it) => it.value === pollSeconds)?.label || `${pollSeconds}s`
 
   return (
-    <article className={`${styles.panel} ${isReseeding ? styles['panel--reseeding'] : ''}`}>
+    <article
+      className={`${styles.panel} ${isReseeding ? styles['panel--reseeding'] : ''}`}
+      style={{ '--title-scale': titleScale, '--text-scale': textScale }}
+    >
       {/* Indeterminate bar pinned to the tile's top edge. Absolutely positioned
           so showing it never reflows the panel body — the values underneath
           stay exactly where they are while the new data lands. */}
@@ -358,7 +367,7 @@ export default function LivePanel({
               <EChart
                 key={`gauge-${s.key}`}
                 className={styles.panel__minichart}
-                option={buildGaugeOption(s, i, opts, isMulti)}
+                option={scaleFonts(buildGaugeOption(s, i, opts, isMulti), textScale)}
               />
               {isMulti && (
                 <span className={styles.panel__minilabel} style={{ color: colorAt(i) }}>{s.label}</span>

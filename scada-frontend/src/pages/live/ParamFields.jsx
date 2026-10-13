@@ -49,7 +49,7 @@ export default function ParamFields({ schema, control }) {
                     onChange={(e) => field.onChange(e.target.value)}
                   >
                     {(f.options || []).map((o) => (
-                      <MenuItem key={o} value={o}>{o}</MenuItem>
+                      <MenuItem key={o} value={o}>{f.optionLabels?.[o] ?? o}</MenuItem>
                     ))}
                   </Select>
                 )

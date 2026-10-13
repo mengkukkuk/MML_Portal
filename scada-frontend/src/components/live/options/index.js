@@ -10,7 +10,9 @@ import buildCandlestickOption from './candlestick'
 import buildGaugeOption, { gaugeParamsFor, gaugeLimitColsFor } from './gauge'
 import buildStatSparklineOption from './stat'
 import buildTableRows from './table'
-import { WARN_COLOR, CRIT_COLOR, thresholdColor, fmtValue } from './shared'
+import {
+  WARN_COLOR, CRIT_COLOR, thresholdColor, fmtValue, textScaleOf, scaleFonts,
+} from './shared'
 
 /**
  * vizType -> builder lookup for the 9 "generic" viz types LivePanel renders
@@ -53,4 +55,6 @@ export {
   CRIT_COLOR,
   thresholdColor,
   fmtValue,
+  textScaleOf,
+  scaleFonts,
 }

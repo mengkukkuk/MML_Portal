@@ -157,3 +157,46 @@ export function tooltipAxis(seriesList, decimals) {
     },
   }
 }
+
+// --- per-panel text size ---------------------------------------------------
+// options.titleSize / options.textSize: a step, not a pixel size, because
+// every tile already scales its type off its own box (container queries,
+// isMulti-shrunk chart fonts). The step multiplies whatever size that
+// responsive logic picked, so a "Large" tile stays proportionate at any size.
+export const TEXT_SIZE_STEPS = { S: 0.85, M: 1, L: 1.25, XL: 1.5 }
+export const textScaleOf = (step) => TEXT_SIZE_STEPS[step] ?? 1
+
+// Text-bearing ECharts blocks. One without its own fontSize renders at
+// ECharts' built-in 12px, so scaling has to supply a size rather than skip it.
+const TEXT_BLOCKS = new Set(['axisLabel', 'label', 'textStyle', 'detail', 'nameTextStyle', 'pageTextStyle'])
+// ECharts' own defaults: 12px everywhere except tooltip text (14px).
+const ECHARTS_DEFAULT_FONT = 12
+const ECHARTS_TOOLTIP_FONT = 14
+
+/**
+ * Multiply every `fontSize` in an ECharts option by `k` (axis labels, legend,
+ * gauge readout, pie labels…), and give text blocks that lean on ECharts'
+ * default size an explicit scaled one. Applies to every viz type the same
+ * way, since it works on the finished option rather than inside builders.
+ * Returns the option unchanged at k === 1 so memoised identities survive for
+ * the default size.
+ */
+export function scaleFonts(option, k) {
+  if (!option || k === 1) return option
+  const scale = (n) => Math.round(n * k * 10) / 10
+  const walk = (v, parentKey, inTooltip) => {
+    if (Array.isArray(v)) return v.map((x) => walk(x, parentKey, inTooltip))
+    if (!v || typeof v !== 'object') return v
+    const out = {}
+    for (const [key, val] of Object.entries(v)) {
+      out[key] = key === 'fontSize' && typeof val === 'number'
+        ? scale(val)
+        : walk(val, key, inTooltip || key === 'tooltip')
+    }
+    if (TEXT_BLOCKS.has(parentKey) && out.fontSize == null) {
+      out.fontSize = scale(inTooltip ? ECHARTS_TOOLTIP_FONT : ECHARTS_DEFAULT_FONT)
+    }
+    return out
+  }
+  return walk(option, null, false)
+}

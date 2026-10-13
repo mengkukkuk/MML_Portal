@@ -119,6 +119,17 @@ export const PARAM_SCHEMA = {
   ],
 }
 
+// Text-size steps every viz type shares, appended to each schema below.
+// Values are keys of TEXT_SIZE_STEPS (components/live/options/shared.js).
+const TEXT_SIZE_OPTIONS = ['S', 'M', 'L', 'XL']
+const TEXT_SIZE_LABELS = { S: 'Small', M: 'Normal', L: 'Large', XL: 'Extra large' }
+export const TEXT_SIZE_KEYS = ['titleSize', 'textSize']
+const TEXT_SIZE_FIELDS = [
+  { key: 'titleSize', label: 'Title size', type: 'enum', options: TEXT_SIZE_OPTIONS, optionLabels: TEXT_SIZE_LABELS, default: 'M' },
+  { key: 'textSize', label: 'Value & label size', type: 'enum', options: TEXT_SIZE_OPTIONS, optionLabels: TEXT_SIZE_LABELS, default: 'M' },
+]
+for (const type of Object.keys(PARAM_SCHEMA)) PARAM_SCHEMA[type].push(...TEXT_SIZE_FIELDS)
+
 export function defaultOptions(type) {
   const out = {}
   for (const f of PARAM_SCHEMA[type] || []) out[f.key] = f.default
