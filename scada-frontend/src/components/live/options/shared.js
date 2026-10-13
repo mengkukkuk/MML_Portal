@@ -43,6 +43,11 @@ export const splitLineColor = () => cssVar('--border-soft', 'rgba(255,255,255,0.
 // above but shouldn't be the primary text colour either.
 export const tickLineColor = () => cssVar('--fg-dim', 'rgba(255,255,255,0.25)')
 export const primaryTextColor = () => cssVar('--fg', '#e6edf7')
+// Theme alarm tokens (paper uses deeper, print-safe tones than the dark
+// themes). Distinct from WARN_COLOR/CRIT_COLOR, which double as series-palette
+// entries and so can't signal an alarm on a series drawn in the same hue.
+export const warnColor = () => cssVar('--warn', '#f59e0b')
+export const critColor = () => cssVar('--crit', '#ef4444')
 
 /** Format a raw value for display; `decimals == null` means "as-is".
  *
