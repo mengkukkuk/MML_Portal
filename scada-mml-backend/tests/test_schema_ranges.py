@@ -123,7 +123,7 @@ def test_a_year_window_is_accepted_and_thinned_by_the_step_the_data_needs(client
     end = START + timedelta(days=365)
     response = request(client, start=START.isoformat(), end=end.isoformat(), limit=5000)
     assert response.status_code == 200
-    assert steps[0][1] == {'limit': 5000, 'start': START, 'end': end}
+    assert steps[0][1] == {'limit': 5000, 'step': None, 'start': START, 'end': end}
     assert seen[0]['sample_seconds'] == 1800
     assert response.json()['series'][0]['sampled_seconds'] == 1800
 
@@ -157,7 +157,40 @@ def test_a_week_is_still_returned_row_for_row(client, monkeypatch):
     assert seen[0]['sample_seconds'] is None
 
 
-def test_sampled_sql_keeps_the_lowest_and_highest_row_per_bucket_without_clipping(monkeypatch):
+def test_whole_thins_a_short_window_instead_of_clipping_it(client, monkeypatch):
+    """The report trend asks for the whole window: a day too dense for `limit`
+    is thinned across the day, never cut to its newest rows."""
+    seen, steps = [], []
+    monkeypatch.setattr(db, 'series_step', lambda *a, **k: steps.append(k) or 60)
+    monkeypatch.setattr(db, 'table_series', lambda *a, **k: seen.append(k) or [])
+    end = START + timedelta(days=1)
+    response = request(client, start=START.isoformat(), end=end.isoformat(),
+                       limit=20000, whole='true')
+    assert response.status_code == 200
+    assert steps[0]['limit'] == 20000
+    assert seen[0]['sample_seconds'] == 60
+    assert response.json()['series'][0]['truncated'] is False
+
+
+def test_whole_returns_a_window_that_fits_row_for_row(client, monkeypatch):
+    seen = []
+    monkeypatch.setattr(db, 'series_step', lambda *a, **k: None)
+    monkeypatch.setattr(db, 'table_series', lambda *a, **k: seen.append(k) or [])
+    end = START + timedelta(hours=6)
+    response = request(client, start=START.isoformat(), end=end.isoformat(), whole='true')
+    assert response.status_code == 200
+    assert seen[0]['sample_seconds'] is None
+    assert response.json()['series'][0]['sampled_seconds'] is None
+
+
+def test_the_point_budget_is_capped(client):
+    end = START + timedelta(days=1)
+    over = request(client, start=START.isoformat(), end=end.isoformat(),
+                   limit=schema.MAX_SERIES_POINTS + 1)
+    assert over.status_code == 422
+
+
+def test_sampled_sql_keeps_first_lowest_highest_and_last_row_per_bucket_without_clipping(monkeypatch):
     conn = _RecordingConn()
     _stub_conn(monkeypatch, conn)
     monkeypatch.setattr(db, '_safe_identifiers', lambda *a, **k: {
@@ -167,7 +200,10 @@ def test_sampled_sql_keeps_the_lowest_and_highest_row_per_bucket_without_clippin
     query = _query_text(conn)
     assert 'floor(extract(epoch FROM s.ts) / %s) AS bucket' in query
     assert 'ORDER BY q.value ASC NULLS LAST' in query and 'ORDER BY q.value DESC NULLS LAST' in query
-    assert 'lo_rank = 1 OR w.hi_rank = 1' in query
+    # M4: the first and last rows join each bucket to its neighbours at the
+    # right height, instead of a diagonal from one peak to the next floor.
+    assert 'ORDER BY q.ts ASC) AS first_rank' in query and 'ORDER BY q.ts DESC) AS last_rank' in query
+    assert 'lo_rank = 1 OR w.hi_rank = 1 OR w.first_rank = 1 OR w.last_rank = 1' in query
     # A LIMIT on the ascending result would drop the newest buckets.
     assert 'LIMIT' not in query and query.endswith('ORDER BY w.ts ASC')
     assert conn.params == [3600, START, END]
@@ -194,12 +230,12 @@ class _ExtentConn(_RecordingConn):
         return self.row
 
 
-def _step(monkeypatch, conn, limit=5000):
+def _step(monkeypatch, conn, limit=5000, step=None):
     _stub_conn(monkeypatch, conn)
     monkeypatch.setattr(db, '_safe_identifiers', lambda *a, **k: {
         **COLUMNS, 'recorded_at': 'timestamp with time zone'})
     return db.series_step('probe', 'reading', None, None, 'recorded_at', 10, 1,
-                          limit=limit, start=START, end=END)
+                          limit=limit, start=START, end=END, step=step)
 
 
 def test_step_is_none_when_the_rows_already_fit(monkeypatch):
@@ -208,12 +244,45 @@ def test_step_is_none_when_the_rows_already_fit(monkeypatch):
 
 
 def test_step_is_sized_to_the_span_the_data_occupies_not_the_window(monkeypatch):
-    # 20 days of data inside a year-long window: 2 rows per bucket, so
-    # limit // 2 - 1 buckets over the 20 days, not over the 365.
+    # 20 days of data inside a year-long window: 4 rows per bucket, so
+    # limit // 4 - 1 buckets over the 20 days, not over the 365.
     conn = _ExtentConn(100_000, START, START + timedelta(days=20))
-    assert _step(monkeypatch, conn) == -(-20 * 86400 // 2499)
+    assert _step(monkeypatch, conn) == -(-20 * 86400 // 1249)
 
 
 def test_step_never_drops_below_one_second(monkeypatch):
     conn = _ExtentConn(6000, START, START + timedelta(seconds=30))
     assert _step(monkeypatch, conn) == 1
+
+
+def test_a_requested_step_is_kept_when_the_rows_fit(monkeypatch):
+    # A day of 10 s rows at a 5 min tier: thirty rows a bucket, so
+    # bucketed at exactly the tier asked for — not at a size fitted to `limit`.
+    conn = _ExtentConn(8640, START, START + timedelta(days=1))
+    assert _step(monkeypatch, conn, limit=20000, step=300) == 300
+
+
+def test_a_requested_step_finer_than_the_rows_sends_every_row(monkeypatch):
+    conn = _ExtentConn(2520, START, START + timedelta(hours=7))
+    assert _step(monkeypatch, conn, limit=20000, step=10) is None
+
+
+def test_a_requested_step_is_raised_when_the_rows_would_not_fit(monkeypatch):
+    conn = _ExtentConn(100_000, START, START + timedelta(days=20))
+    assert _step(monkeypatch, conn, limit=5000, step=60) == -(-20 * 86400 // 1249)
+
+
+def test_step_is_passed_through_and_must_be_positive(client, monkeypatch):
+    steps = []
+    monkeypatch.setattr(db, 'series_step', lambda *a, **k: steps.append(k) or 300)
+    monkeypatch.setattr(db, 'table_series', lambda *a, **k: [])
+    end = START + timedelta(hours=6)
+    assert request(client, start=START.isoformat(), end=end.isoformat(), step=300).status_code == 200
+    assert steps[0]['step'] == 300
+    assert request(client, start=START.isoformat(), end=end.isoformat(), step=0).status_code == 422
+
+
+def test_a_tier_at_the_logger_rate_is_every_row_despite_an_odd_gap(monkeypatch):
+    # Seven hours of 10 s rows with one 9 s gap: one row more than the buckets.
+    conn = _ExtentConn(2522, START, START + timedelta(hours=7))
+    assert _step(monkeypatch, conn, limit=20000, step=10) is None

@@ -92,3 +92,19 @@ test('a slider joins on long windows and shares the view', () => {
   assert.deepEqual(zoom.map((z) => z.type), ['inside', 'slider'])
   assert.deepEqual([zoom[1].startValue, zoom[1].endValue], [1, 2])
 })
+
+test('the zoom buttons step through fixed levels', async () => {
+  const { ZOOM_LEVELS, zoomLevel, nextLevel } = await import('./trendZoom.js')
+  const week = { from: 0, to: 7 * 24 * HOUR }
+  let view = zoomLevel(null, week, 1)
+  assert.equal(view.to - view.from, 3 * 24 * HOUR)
+  view = zoomLevel(view, week, 1)
+  assert.equal(view.to - view.from, 2 * 24 * HOUR)
+  // From a free wheel zoom (say 70 min) the next level in is the next one below.
+  const free = { from: 10 * HOUR, to: 10 * HOUR + 70 * 60_000, follow: false }
+  assert.equal(nextLevel(free, week, 1), HOUR)
+  assert.equal(nextLevel(free, week, -1), 2 * HOUR)
+  // Out past the widest level below the window is the whole window.
+  assert.equal(zoomLevel({ from: 0, to: 3 * 24 * HOUR, follow: false }, week, -1), null)
+  assert.ok(ZOOM_LEVELS.every((l, i) => i === 0 || l > ZOOM_LEVELS[i - 1]))
+})

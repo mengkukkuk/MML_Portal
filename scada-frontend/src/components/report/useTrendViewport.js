@@ -1,7 +1,6 @@
 import { useCallback, useReducer, useRef, useState } from 'react'
 import {
-  ZOOM_STEP, canZoomIn, canZoomOut, resolveView, selectionToView, viewFromRange, zoomBy,
-  zoomPercent,
+  canZoomIn, canZoomOut, resolveView, selectionToView, viewFromRange, zoomLevel, zoomPercent,
 } from './trendZoom'
 
 /** A pointer drag shorter than this is a click, not a zoom box. */
@@ -76,8 +75,10 @@ export default function useTrendViewport({ full, resetKey }) {
     })
   }, [])
 
-  const zoomIn = useCallback(() => show(zoomBy(viewRef.current, fullRef.current, ZOOM_STEP)), [show])
-  const zoomOut = useCallback(() => show(zoomBy(viewRef.current, fullRef.current, 1 / ZOOM_STEP)), [show])
+  // The buttons step through fixed spans (trendZoom.js ZOOM_LEVELS), so the
+  // same clicks always give the same picture; the wheel and the box are free.
+  const zoomIn = useCallback(() => show(zoomLevel(viewRef.current, fullRef.current, 1)), [show])
+  const zoomOut = useCallback(() => show(zoomLevel(viewRef.current, fullRef.current, -1)), [show])
   const reset = useCallback(() => show(null), [show])
 
   // --- the zoom box -----------------------------------------------------------
@@ -151,6 +152,11 @@ export default function useTrendViewport({ full, resetKey }) {
     stageProps,
     currentView,
     percent: zoomPercent(viewRef.current, full),
+    // The time on screen, for the readout: what a zoom level *is*.
+    span: (() => {
+      const shown = resolveView(viewRef.current, full)
+      return shown ? shown.to - shown.from : full.to - full.from
+    })(),
     canZoomIn: canZoomIn(viewRef.current, full),
     canZoomOut: canZoomOut(viewRef.current, full),
     zoomIn,

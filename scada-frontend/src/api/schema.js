@@ -53,9 +53,13 @@ export async function fetchSchemaLatest({
 }
 
 export async function fetchSchemaSeries({
-  table, valueCol, tsCol, filterCol, filterVal, minutes = 15, start, end, limit, datasourceId,
+  table, valueCol, tsCol, filterCol, filterVal, minutes = 15, start, end, limit, whole, step,
+  datasourceId, signal,
 }) {
   const { data } = await apiClient.get('/schema/series', {
+    // Lets a caller drop a read nobody is waiting for (a zoom tile scrolled
+    // past) instead of queueing it on a small plant connection pool.
+    signal,
     params: {
       table,
       value_col: valueCol,
@@ -68,6 +72,11 @@ export async function fetchSchemaSeries({
       // Omitted keeps the server's own default. Only a caller that can offer a
       // week-long window needs to think about the ceiling.
       limit: limit ?? undefined,
+      // The whole window at any length: thinned to fit `limit` rather than
+      // clipped to its newest rows (schema.py get_series).
+      whole: whole || undefined,
+      // A bucket size in seconds: the chart's resolution tier (trendDetail.js).
+      step: step ?? undefined,
       datasource_id: datasourceId ?? undefined,
     },
   })

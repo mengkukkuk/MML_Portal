@@ -17,15 +17,56 @@
 export const ZOOM_STEP = 1.5
 
 // A reading is never more often than this, so a narrower view is just a blur.
-const MIN_SPAN_FLOOR_MS = 10_000
+const MIN_SPAN_FLOOR_MS = 60_000
+// The narrowest view is this fraction of the window. A zoomed view is re-read
+// at its own resolution (trendDetail.js), so this only stops a year-long
+// window being zoomed to a minute in one long wheel spin.
+const MIN_SPAN_FRACTION = 1 / 20_000
 // How close to the window's end counts as "the newest edge".
 const FOLLOW_SLACK_MS = 1000
 
 const spanOf = (range) => range.to - range.from
 
-/** The narrowest view allowed: a five-hundredth of the window, never under 10 s. */
+/** The narrowest view allowed: a sliver of the window, never under a minute. */
 export function minSpan(full) {
-  return Math.max(MIN_SPAN_FLOOR_MS, Math.round(spanOf(full) / 500))
+  return Math.max(MIN_SPAN_FLOOR_MS, Math.round(spanOf(full) * MIN_SPAN_FRACTION))
+}
+
+const MIN = 60_000
+const HR = 60 * MIN
+const DAY = 24 * HR
+
+/**
+ * The spans the zoom buttons step through. The wheel and the zoom box still
+ * land anywhere; the buttons always land on one of these, so "zoom in twice"
+ * from a week is always the same day-wide picture.
+ */
+export const ZOOM_LEVELS = [
+  MIN, 2 * MIN, 5 * MIN, 10 * MIN, 15 * MIN, 30 * MIN,
+  HR, 2 * HR, 3 * HR, 6 * HR, 12 * HR,
+  DAY, 2 * DAY, 3 * DAY, 7 * DAY, 14 * DAY, 30 * DAY, 60 * DAY, 90 * DAY, 180 * DAY,
+]
+
+/**
+ * The next zoom level in (`dir` > 0) or out (`dir` < 0) from the view's span.
+ * Null when there is none — past the narrowest, or out to the whole window.
+ */
+export function nextLevel(view, full, dir) {
+  const current = resolveView(view, full)
+  const span = spanOf(current ?? full)
+  const usable = ZOOM_LEVELS.filter((l) => l >= minSpan(full) && l < spanOf(full))
+  if (dir > 0) return [...usable].reverse().find((l) => l < span * 0.99) ?? null
+  return usable.find((l) => l > span * 1.01) ?? null
+}
+
+/**
+ * Zoom to the next level, around the view's centre — or its right edge when it
+ * follows live data. Out past the widest level is the whole window (null).
+ */
+export function zoomLevel(view, full, dir) {
+  const level = nextLevel(view, full, dir)
+  if (level == null) return dir > 0 ? resolveView(view, full) : null
+  return zoomToSpan(view, full, level)
 }
 
 /**
@@ -63,8 +104,13 @@ export function resolveView(view, full) {
  */
 export function zoomBy(view, full, factor) {
   const current = resolveView(view, full) ?? { from: full.from, to: full.to, follow: false }
+  return zoomToSpan(view, full, spanOf(current) / factor)
+}
+
+function zoomToSpan(view, full, wanted) {
+  const current = resolveView(view, full) ?? { from: full.from, to: full.to, follow: false }
   const fullSpan = spanOf(full)
-  const span = Math.min(fullSpan, Math.max(minSpan(full), spanOf(current) / factor))
+  const span = Math.min(fullSpan, Math.max(minSpan(full), wanted))
   const anchorAt = current.follow ? 1 : 0.5
   const anchor = current.from + spanOf(current) * anchorAt
   let from = anchor - span * anchorAt
@@ -86,10 +132,7 @@ export function zoomPercent(view, full) {
   return shown ? Math.round((spanOf(full) / spanOf(shown)) * 100) : 100
 }
 
-export const canZoomIn = (view, full) => {
-  const shown = resolveView(view, full)
-  return spanOf(shown ?? full) / ZOOM_STEP >= minSpan(full) * 0.999
-}
+export const canZoomIn = (view, full) => nextLevel(view, full, 1) != null
 export const canZoomOut = (view, full) => !!resolveView(view, full)
 
 /**

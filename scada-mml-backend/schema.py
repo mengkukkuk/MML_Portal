@@ -54,6 +54,10 @@ MAX_SERIES_DAYS = 366
 # Windows longer than this may be thinned per bucket (see get_series). A week is
 # the old ceiling, so every window that already worked row for row still does.
 SAMPLE_AFTER = timedelta(days=7)
+# The most rows one /series answer may carry. A trend asks for its own budget
+# under this; the ceiling only stops a hand-written URL from asking for a
+# plant's whole history in one response.
+MAX_SERIES_POINTS = 200_000
 
 
 def _detail(e: Exception) -> str:
@@ -261,7 +265,9 @@ def get_series(
     filter_col: str | None = Query(None),
     filter_val: str | None = Query(None),
     minutes: int = Query(15, ge=1, le=MAX_SERIES_DAYS * 1440),
-    limit: int = Query(5000, ge=1, le=50000),
+    limit: int = Query(5000, ge=1, le=MAX_SERIES_POINTS),
+    whole: bool = False,
+    step: int | None = None,
     datasource_id: int | None = Query(None),
     _user: dict = Depends(get_current_user),
     datasource_ids: list[int | None] = Depends(active_datasources),
@@ -291,7 +297,23 @@ def get_series(
     actually occupies (db.series_step) — a year then draws a year, spikes
     included, rather than the newest `limit` rows of it. A window whose rows
     already fit, and every short window, is returned row for row.
+
+    `whole` asks for the whole window at any length: a window of any span whose
+    rows exceed `limit` is thinned the same way instead of clipped to its newest
+    rows, so the answer always covers the period asked for and is never
+    `truncated`. The report trend reads this way — the window it is shown is the
+    window it plots — and zooms in by asking again for the slice on screen, which
+    then fits row for row.
+
+    `step` asks for a bucket size in seconds — the chart's resolution tier, from
+    its pixel width. Buckets sit on the epoch, so one step over one stretch of
+    time always gives the same points, whichever range they were asked inside:
+    a zoom that crosses no tier changes nothing on screen. The step is raised
+    only if the rows would not fit under `limit`, and dropped when the rows are
+    no denser than one per bucket (`sampled_seconds` is then null).
     """
+    if step is not None and step < 1:
+        raise HTTPException(422, "step must be at least one second")
     if (start is None) != (end is None):
         raise HTTPException(422, "Provide both start and end")
     if start is not None:
@@ -302,7 +324,7 @@ def get_series(
                 422, f"Range must be greater than zero and at most {MAX_SERIES_DAYS} days")
 
     window = (end - start) if start is not None else timedelta(minutes=minutes)
-    thin = window > SAMPLE_AFTER
+    thin = whole or step is not None or window > SAMPLE_AFTER
 
     def number(v):
         return isinstance(v, (int, float, Decimal)) and not isinstance(v, bool)
@@ -345,7 +367,7 @@ def get_series(
         # Sized per source: each plant's table holds a different span of data.
         sample_seconds = db.series_step(
             table, value_col, filter_col, filter_val, ts_col, minutes, ds,
-            limit=limit, **bounds) if thin else None
+            limit=limit, step=step, **bounds) if thin else None
         rows = db.table_series(table, value_col, filter_col, filter_val, ts_col,
                                minutes, ds, limit=limit + 1, sample_seconds=sample_seconds,
                                **bounds)

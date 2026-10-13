@@ -92,8 +92,13 @@ def series_step(
     start: datetime | None = None,
     end: datetime | None = None,
     floor_seconds: int = 1,
+    step: int | None = None,
 ) -> int | None:
     """Bucket size, in seconds, that fits the window's *actual* rows under `limit`.
+
+    `step` asks for that bucket size (a chart's resolution tier). It is raised
+    only when the rows would not fit under `limit` at it, and dropped (`None`)
+    when the rows average two or fewer per bucket.
 
     `None` means no thinning: the rows already fit, so the chart gets every one
     of them. A year-long window over a table that only started logging a month
@@ -101,8 +106,8 @@ def series_step(
     points where thousands of real rows existed. Sizing by the span the data
     occupies (first row to last) instead keeps the resolution where the data is.
 
-    Two points survive per bucket (lowest and highest reading, see table_series),
-    hence the halving. variables_tag served from the in-memory buffer is already
+    Up to four rows survive per bucket (first, lowest, highest and last — see
+    table_series), hence the quartering. variables_tag served from the in-memory buffer is already
     small and takes no thinning.
     """
     if (
@@ -124,12 +129,24 @@ def series_step(
             params,
         ).fetchone()
     count, first, last = row["n"], row["lo"], row["hi"]
-    if count <= limit or first is None:
+    if first is None:
         return None
-    # `limit // 2 - 1` buckets, plus the one a boundary can add, at two rows each.
-    buckets = max(1, limit // 2 - 1)
     span = max((last - first).total_seconds(), 1)
-    return max(floor_seconds, math.ceil(span / buckets))
+    if step:
+        # A requested step is a resolution tier: the same step over the same
+        # stretch draws the same points whatever range was asked, because
+        # buckets sit on the epoch. Rows averaging two or fewer a bucket are sent
+        # as they are: bucketing keeps up to four, so it would drop none of them
+        # (a logger's odd 9 s gap must not tip a 10 s tier into "sampled").
+        if count <= limit and count <= 2 * (span / step + 1):
+            return None
+        floor_seconds = max(floor_seconds, step)
+    elif count <= limit:
+        return None
+    # `limit // 4 - 1` buckets, plus the one a boundary can add, at four rows each.
+    buckets = max(1, limit // 4 - 1)
+    fit = math.ceil(span / buckets) if count > limit else 1
+    return max(floor_seconds, fit)
 
 
 def table_series(
@@ -148,8 +165,8 @@ def table_series(
 ) -> list[dict[str, Any]]:
     """Time-ordered rows in explicit bounds, or over the last `minutes`.
 
-    `sample_seconds` thins the window to the rows holding the lowest and the
-    highest reading in each bucket of that many seconds (see `series_step` for
+    `sample_seconds` thins the window to four rows per bucket of that many
+    seconds — its first, lowest, highest and last (M4; see `series_step` for
     sizing it). It is how a year-long window draws the whole year: capping the
     newest N rows instead would show a year chart holding only its last days.
     Real rows rather than an average, because a value may be a numeric array (a
@@ -201,23 +218,30 @@ def table_series(
             minutes, start, end)
         if sample_seconds:
             if _is_orderable_reading(columns[value_col]):
-                # Each bucket keeps the rows holding its lowest and highest
-                # reading, not just its newest: a counter that spikes for a few
-                # seconds is exactly what a year chart is opened to find, and
-                # one-row-per-bucket drew it only when the spike happened to be
-                # the last row of its bucket. Ordering by the raw value also
-                # orders a numeric array (slot 0 first — the measured value),
-                # and ties fall to the newest row.
+                # Each bucket keeps its first, lowest, highest and last row
+                # (M4). The extremes are what a long chart is opened to find —
+                # a counter that spikes for a few seconds — and the first and
+                # last are what join one bucket to the next at the right height:
+                # with the extremes alone, a line that stops mid-bucket is drawn
+                # as a diagonal from one bucket's peak to the next one's floor,
+                # a sawtooth of measurements nobody took. Ordering by the raw
+                # value also orders a numeric array (slot 0 first — the measured
+                # value), and ties fall to the newest row.
                 query = (
                     sql.SQL("SELECT w.value, w.ts FROM (SELECT q.value, q.ts, "
                             "row_number() OVER (PARTITION BY q.bucket "
                             "ORDER BY q.value ASC NULLS LAST, q.ts DESC) AS lo_rank, "
                             "row_number() OVER (PARTITION BY q.bucket "
-                            "ORDER BY q.value DESC NULLS LAST, q.ts DESC) AS hi_rank "
+                            "ORDER BY q.value DESC NULLS LAST, q.ts DESC) AS hi_rank, "
+                            "row_number() OVER (PARTITION BY q.bucket "
+                            "ORDER BY q.ts ASC) AS first_rank, "
+                            "row_number() OVER (PARTITION BY q.bucket "
+                            "ORDER BY q.ts DESC) AS last_rank "
                             "FROM (SELECT s.value, s.ts, "
                             "floor(extract(epoch FROM s.ts) / %s) AS bucket FROM (")
                     + query
                     + sql.SQL(") AS s) AS q) AS w WHERE w.lo_rank = 1 OR w.hi_rank = 1 "
+                              "OR w.first_rank = 1 OR w.last_rank = 1 "
                               "ORDER BY w.ts ASC")
                 )
             else:

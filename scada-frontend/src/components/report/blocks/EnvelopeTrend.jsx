@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useQueries } from '@tanstack/react-query'
 import ReportBlock from './ReportBlock'
 import EChart from '@/components/charts/EChart'
@@ -18,6 +18,9 @@ import TrendToolbar from '../TrendToolbar'
 import { buildDataZoom } from '../trendZoom'
 import { formatEvery, trendRefreshMs, windowSpanMs } from '../trendRefresh'
 import { readingTitle } from '../readingGroups'
+import {
+  TILE_BUCKETS, cadenceOf, floorStep, spliceDetail, tierStep, tilesFor,
+} from '../trendDetail'
 import styles from './blocks.module.css'
 import chart from './EnvelopeTrend.module.css'
 import { groupDigits } from '@/utils/numberFormat'
@@ -64,9 +67,39 @@ const GRIDLINE = 'rgba(255,255,255,0.05)'
 
 const ROLE_COLOR = { value: INK, setpoint: RULE, high: EDGE, low: EDGE }
 
-// Enough resolution for a week at a glance without shipping a plant's whole
-// history to the browser. Surfaced as `truncated` when it bites.
-const MAX_POINTS = 5000
+// Rows per reading per answer — a safety ceiling, not the resolution. What is
+// drawn is set by the tier (trendDetail.js): a step from a fixed ladder sized
+// to the chart's pixels, bucketed on the epoch, so the same zoom always draws
+// the same points. The window is always read whole (`whole`); the server only
+// coarsens the step if a tier would not fit under this.
+const POINT_BUDGET = 20_000
+// A tile is TILE_BUCKETS buckets at up to four rows each.
+const TILE_BUDGET = TILE_BUCKETS * 4 + 8
+
+// How long the view has to sit still before the tiles on screen are read.
+const DETAIL_SETTLE_MS = 250
+
+// The grid's left + right margins (trendGrid): the plot is this much narrower
+// than the block.
+const GRID_X = 76
+
+/** The plot's width in pixels, kept current with the block's. */
+function usePlotWidth() {
+  const ref = useRef(null)
+  const [width, setWidth] = useState(0)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return undefined
+    const measure = () => setWidth(Math.max(200, Math.round(el.clientWidth - GRID_X)))
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+  return [ref, width]
+}
+
+const tileKey = (t) => `${t.step}:${t.from}`
 
 // Past a week the window is rarely full — a table that began logging last month
 // fills a sliver of a year's axis — so long windows get a slider to zoom into
@@ -98,6 +131,7 @@ function toPoints(series) {
 
 /** 3600 → "1 h", 86400 → "1 d": the sampling step, in the note. */
 function fmtStep(seconds) {
+  if (seconds < 60) return `${seconds} s`
   if (seconds >= 86_400) return `${Math.round(seconds / 86_400)} d`
   if (seconds >= 3600) return `${Math.round(seconds / 360) / 10} h`
   return `${Math.round(seconds / 60)} min`
@@ -149,6 +183,13 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
   // asking it N times keeps each reading independently cached and
   // independently *failable* — a column the plant has since dropped costs its
   // own line, not the whole chart.
+  // The tier the whole window is drawn at. Waits for the plot to be measured:
+  // the step comes from its width, and guessing would read the window twice.
+  const [plotRef, plotPx] = usePlotWidth()
+  const windowStep = plotPx
+    ? tierStep(Date.parse(range.end) - Date.parse(range.start), plotPx)
+    : null
+
   const query = useQueries({
     queries: cols.map((col) => ({
       // `range` identifies *which* window was asked for (it changes on Apply and
@@ -157,9 +198,9 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
       // is on its way instead of blanking every few seconds.
       queryKey: [
         'trend', 'series', primary?.id ?? 'app', trend.table, col,
-        trend.tsCol, range.start, range.end,
+        trend.tsCol, range.start, range.end, windowStep,
       ],
-      queryFn: async () => {
+      queryFn: async ({ signal }) => {
         // A relative window is resolved when the read is made, to the second —
         // the answer carries the window it covers, and the axis follows that.
         const window = relative ? resolveTrendWindow(trend, Date.now(), 1000) : range
@@ -169,12 +210,15 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
           tsCol: trend.tsCol,
           start: window.start,
           end: window.end,
-          limit: MAX_POINTS,
+          limit: POINT_BUDGET,
+          whole: true,
+          step: windowStep,
           datasourceId: primary?.id ?? undefined,
+          signal,
         })
         return { ...data, window }
       },
-      enabled: ready,
+      enabled: ready && !!windowStep,
       refetchInterval: following && ready ? refreshMs : false,
     })),
     // Collapsed here rather than in the body: `useQueries` hands back a fresh
@@ -186,11 +230,10 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
       // The first failure is the one reported. Several columns failing is
       // almost always one cause — the table, the window, the connection.
       error: results.find((r) => r.error)?.error ?? null,
-      truncated: results.some((r) => r.data?.series?.[0]?.truncated),
-      // Past a week, a window holding more rows than MAX_POINTS is thinned to
-      // each bucket's lowest and highest reading so a whole year fits and its
-      // spikes survive (schema.py SAMPLE_AFTER); the step is the same for every
-      // column. Unset when every row came back.
+      // A window holding more rows than POINT_BUDGET is thinned to a few rows
+      // per bucket so the whole of it fits and its spikes survive (schema.py
+      // get_series); the step is the same for every column. Unset when every
+      // row came back.
       sampled: results.find((r) => r.data?.series?.[0]?.sampled_seconds)?.data?.series?.[0]?.sampled_seconds ?? null,
       sources: results.find((r) => r.data?.sources)?.data?.sources,
       // The window the newest answer covers, and when it landed.
@@ -207,13 +250,104 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
     resetKey: [primary?.id ?? 'app', trend.table, colKey, trend.tsCol, range.start, range.end].join('|'),
   })
 
+  // A zoomed view is read again at its own tier, as fixed tiles (trendDetail.js),
+  // once it sits still for a moment — a wheel spin or a pan asks once, where it
+  // stops. Only when that tier is finer than the window's: otherwise the
+  // overview already draws the view as finely as the screen can show.
+  const full = { from: Date.parse(chartRange.start), to: Date.parse(chartRange.end) }
+  const view = viewport.currentView()
+  // Never finer than the rows themselves: learned from the first tile that
+  // came back row for row, and kept for this binding.
+  const [cadence, setCadence] = useState(null)
+  useEffect(() => setCadence(null), [primary?.id, trend.table, trend.tsCol])
+  const viewStep = view && plotPx
+    ? Math.max(tierStep(view.to - view.from, plotPx), floorStep(cadence))
+    : null
+  const wanted = view && viewStep && windowStep && viewStep < windowStep
+    ? tilesFor(view, full, viewStep)
+    : []
+  const wantedKey = wanted.map(tileKey).join(',')
+  // `tiles` are the ones being read now; `held` are the last set, kept drawn
+  // underneath until these land so a tier change never flashes back to the
+  // coarse overview.
+  const [tiles, setTiles] = useState({ tiles: [], held: [] })
+  useEffect(() => {
+    const id = setTimeout(() => setTiles((prev) => (
+      prev.tiles.map(tileKey).join(',') === wantedKey ? prev
+        : { tiles: wanted, held: wanted.length ? prev.tiles : [] }
+    )), wanted.length ? DETAIL_SETTLE_MS : 0)
+    return () => clearTimeout(id)
+    // Keyed by the tiles: `wanted` is a fresh array every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantedKey])
+
+  const windowEnd = full.to
+  const jobs = useMemo(() => {
+    const now = new Set(tiles.tiles.map(tileKey))
+    const all = [...tiles.held.filter((t) => !now.has(tileKey(t))), ...tiles.tiles]
+    return all.flatMap((tile) => cols.map((col, i) => ({ tile, col, i, current: now.has(tileKey(tile)) })))
+  }, [tiles, cols])
+
+  const detail = useQueries({
+    queries: jobs.map(({ tile, col }) => {
+      // The tile holding "now" keeps growing; every other one is history.
+      const growing = tile.to > windowEnd - refreshMs
+      return {
+        queryKey: [
+          'trend', 'tile', primary?.id ?? 'app', trend.table, col, trend.tsCol, tile.step, tile.from,
+        ],
+        queryFn: async ({ signal }) => {
+          const data = await fetchSchemaSeries({
+            table: trend.table,
+            valueCol: col,
+            tsCol: trend.tsCol,
+            start: new Date(tile.from).toISOString(),
+            end: new Date(tile.to).toISOString(),
+            limit: TILE_BUDGET,
+            whole: true,
+            step: tile.step,
+            datasourceId: primary?.id ?? undefined,
+            signal,
+          })
+          return data.series?.[0] ?? null
+        },
+        enabled: ready,
+        staleTime: growing ? 0 : Infinity,
+        refetchInterval: following && ready && growing ? refreshMs : false,
+      }
+    }),
+    combine: (results) => results.map((r) => r.data ?? null),
+  })
+
+  // Overview, then the held tiles, then the current ones on top — each in
+  // place of what it covers.
+  const merged = (i) => {
+    let out = toPoints(query.series[i])
+    jobs.forEach((job, k) => {
+      if (job.i === i && detail[k]) out = spliceDetail(out, toPoints(detail[k]), job.tile)
+    })
+    return out
+  }
+  const currentTiles = jobs.map((job, k) => (job.current ? detail[k] : null)).filter(Boolean)
+  const detailOn = currentTiles.length > 0
+  const detailSampled = currentTiles.find((t) => t.sampled_seconds)?.sampled_seconds ?? null
+  const rawTile = currentTiles.find((t) => !t.sampled_seconds && t.points?.length > 2)
+  useEffect(() => {
+    const c = rawTile ? cadenceOf(toPoints(rawTile)) : null
+    if (c && cadence == null) setCadence(c)
+  }, [rawTile, cadence])
+
   const series = query.series[0]
 
   // Empty in a comparison, rather than quietly holding the *first* column's
   // array. Everything below — arity, the roles, the readout — describes one
   // reading's envelope, and there is no such thing here. Emptying it at the
   // source is what makes that structural instead of a guard on each consumer.
-  const points = useMemo(() => (multi ? [] : toPoints(series)), [multi, series])
+  const points = useMemo(
+    () => (multi ? [] : merged(0)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [multi, series, jobs, detail],
+  )
 
   // One entry per selected reading, for the comparison chart and its key.
   // Colour is positional and the picker preserves order, so a reading keeps
@@ -223,9 +357,10 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
       col,
       label: readingTitle(groups, col),
       color: colorAt(i),
-      points: toPoints(query.series[i]),
+      points: merged(i),
     })),
-    [cols, groups, query.series],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cols, groups, query.series, jobs, detail],
   )
 
   // Arity is read off the data, never assumed. Postgres ignores an array's
@@ -277,8 +412,12 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
   const latest = points.length ? points[points.length - 1] : null
   const note = [
     total ? tr('{count} points', { count: groupDigits(total) }) : null,
-    query.sampled ? tr('min/max per {step}', { step: fmtStep(query.sampled) }) : null,
-    query.truncated ? tr('window clipped') : null,
+    // What the zoomed slice is drawn from when there is one, else the overview.
+    detailOn
+      ? (detailSampled
+        ? tr('min/max per {step}', { step: fmtStep(detailSampled) })
+        : tr('every reading in view'))
+      : query.sampled ? tr('min/max per {step}', { step: fmtStep(query.sampled) }) : null,
     primary?.name,
   ].filter(Boolean).join(' · ')
 
@@ -338,7 +477,7 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
 
   return (
     <ReportBlock title={title} note={note || undefined}>
-      <div className={chart.bar}>
+      <div className={chart.bar} ref={plotRef}>
         <div className={chart.barLegend}>{legend}</div>
         {hasChart && (
           <TrendToolbar
@@ -363,12 +502,6 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
       )}
 
       <SourceStatus sources={query.sources} />
-
-      {query.truncated && (
-        <p className={styles.warning}>
-          {tr('Showing the most recent {count} readings. Choose a shorter window to see the whole period.', { count: groupDigits(MAX_POINTS) })}
-        </p>
-      )}
 
       {rangeError ? <p className={styles.warning}>{tr(rangeError)}</p> : !total ? (
         <>

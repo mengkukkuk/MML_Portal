@@ -3,6 +3,7 @@ import ZoomInOutlined from '@mui/icons-material/ZoomInOutlined'
 import ZoomOutOutlined from '@mui/icons-material/ZoomOutOutlined'
 import ZoomOutMapOutlined from '@mui/icons-material/ZoomOutMapOutlined'
 import { useTranslation } from '@/i18n'
+import { spanLabel } from './trendDetail'
 import styles from './TrendToolbar.module.css'
 
 const clock = (ms) => new Date(ms).toLocaleTimeString('en-GB', { hour12: false })
@@ -26,7 +27,7 @@ const zoomLabel = (percent) => (percent >= 1000 ? `×${Math.round(percent / 100)
  */
 export default function TrendToolbar({ viewport, live }) {
   const tr = useTranslation()
-  const { hand, percent } = viewport
+  const { hand, percent, span } = viewport
 
   const liveTitle = !live.canFollow
     ? tr('A fixed window does not change. Choose a relative window to follow live data.')
@@ -59,7 +60,11 @@ export default function TrendToolbar({ viewport, live }) {
       >
         <ZoomOutOutlined fontSize="small" />
       </button>
-      <output className={styles.zoom} aria-label={tr('Chart zoom')}>{zoomLabel(percent)}</output>
+      {/* The span on screen is the zoom level: "1 h" says what is being read,
+          "×156" only how far from the window it is — kept for the tooltip. */}
+      <output className={styles.zoom} aria-label={tr('Chart zoom')} title={zoomLabel(percent)}>
+        {spanLabel(span)}
+      </output>
       <button
         type="button"
         className={styles.tool}
