@@ -103,3 +103,53 @@ def test_cache_hit_refreshes_recency(monkeypatch):
     camera_thumbs.remember("c", b"C")
     assert camera_thumbs.cached("b") is None
     assert camera_thumbs.cached("a") == b"A"
+
+
+def test_concurrent_misses_for_one_tile_generate_it_once():
+    import threading
+    import time
+
+    made = []
+    start = threading.Barrier(4)
+
+    def produce():
+        made.append(1)
+        time.sleep(0.05)  # long enough that the other callers arrive mid-generation
+        return b"thumb"
+
+    results = []
+
+    def worker():
+        start.wait()
+        results.append(camera_thumbs.get_or_make(("cam", 1, "f", 240), produce))
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert results == [b"thumb"] * 4
+    assert len(made) == 1
+    assert camera_thumbs._inflight == {}
+
+
+def test_a_failed_preview_is_not_cached_and_releases_its_gate():
+    calls = []
+
+    def produce():
+        calls.append(1)
+        return None
+
+    assert camera_thumbs.get_or_make("k", produce) is None
+    assert camera_thumbs.get_or_make("k", produce) is None
+    assert len(calls) == 2
+    assert camera_thumbs._inflight == {}
+
+
+def test_an_error_while_producing_releases_the_gate():
+    def produce():
+        raise RuntimeError("disk gone")
+
+    with pytest.raises(RuntimeError):
+        camera_thumbs.get_or_make("k", produce)
+    assert camera_thumbs._inflight == {}

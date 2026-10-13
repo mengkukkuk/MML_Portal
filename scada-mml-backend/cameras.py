@@ -357,14 +357,22 @@ def _serve_thumb(
     worst case is a slow tile rather than a failed one.
     """
     width = camera_thumbs.clamp_width(width)
-    cache_key = (*key, fid, width)
-    thumb = camera_thumbs.cached(cache_key)
-    if thumb is None:
+    original: list[tuple[bytes, str]] = []
+
+    def produce() -> bytes | None:
         data, mime = _checked_frame(read)
         thumb = camera_thumbs.make_thumbnail(data, width)
         if thumb is None:
-            return Response(content=data, media_type=mime, headers=_FRAME_ID_HEADERS)
-        camera_thumbs.remember(cache_key, thumb)
+            original.append((data, mime))
+        return thumb
+
+    thumb = camera_thumbs.get_or_make((*key, fid, width), produce)
+    if thumb is None:
+        data, mime = original[0]
+        # Short-lived on purpose: this URL names a *preview*, and the year-long
+        # immutable lifetime would pin the full original in every browser's
+        # cache at that URL even after previews work again (Pillow installed).
+        return Response(content=data, media_type=mime, headers=_FILE_IMAGE_HEADERS)
     return Response(
         content=thumb,
         media_type="image/jpeg",

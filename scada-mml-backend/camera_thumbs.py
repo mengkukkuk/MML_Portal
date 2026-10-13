@@ -20,7 +20,7 @@ import io
 import logging
 import threading
 from collections import OrderedDict
-from collections.abc import Hashable
+from collections.abc import Callable, Hashable
 
 try:  # Pillow is a runtime dependency, but a missing wheel must not break the API.
     from PIL import Image
@@ -100,6 +100,39 @@ def remember(key: Hashable, thumb: bytes) -> None:
         _cache.move_to_end(key)
         while len(_cache) > _MAX_ENTRIES:
             _cache.popitem(last=False)
+
+
+# One gate per thumbnail being generated right now. A strip opening asks for
+# the same thirty tiles from every viewer at once; without this each concurrent
+# miss decoded and resized the same ~500 KB original.
+_inflight: dict[Hashable, threading.Lock] = {}
+
+
+def get_or_make(key: Hashable, produce: Callable[[], bytes | None]) -> bytes | None:
+    """The cached thumbnail for `key`, generating it at most once at a time.
+
+    `produce` runs under a per-key gate, so concurrent callers for the same key
+    wait for the first and then read its result from the cache. A None from
+    `produce` (no preview possible) is not cached; each caller that sees it
+    re-runs `produce`, which is how it gets its own fallback bytes.
+    """
+    hit = cached(key)
+    if hit is not None:
+        return hit
+    with _lock:
+        gate = _inflight.setdefault(key, threading.Lock())
+    try:
+        with gate:
+            hit = cached(key)
+            if hit is None:
+                hit = produce()
+                if hit is not None:
+                    remember(key, hit)
+            return hit
+    finally:
+        with _lock:
+            if _inflight.get(key) is gate:
+                del _inflight[key]
 
 
 def clear() -> None:

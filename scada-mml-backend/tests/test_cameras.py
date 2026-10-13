@@ -247,6 +247,9 @@ def test_thumb_falls_back_to_the_original_when_a_preview_cannot_be_made(monkeypa
 
     assert response.media_type == "image/png"
     assert response.body == PNG
+    # Never the year-long immutable lifetime: that would pin the full original
+    # at the preview URL in the browser even after previews start working.
+    assert response.headers["cache-control"] == "private, max-age=30, must-revalidate"
 
 
 def test_thumb_still_refuses_a_file_that_is_not_a_raster_image(monkeypatch):

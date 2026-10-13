@@ -363,7 +363,12 @@ def frame_id(mtime_ns: int, name: str) -> str:
 _Entry = tuple[int, int, str, Path]
 
 _list_cache: dict[str, tuple[float, list[_Entry]]] = {}
+# Guards the cache dict and the per-directory locks, never a scan.
 _list_lock = threading.Lock()
+# One lock per folder, held across that folder's scan. A scan of a slow network
+# share takes seconds; under one global lock every other camera's listing
+# queued behind it.
+_scan_locks: dict[str, threading.Lock] = {}
 
 
 def _scan_newest(directory: Path, keep: int = _LIST_KEEP) -> list[_Entry]:
@@ -395,21 +400,26 @@ def _scan_newest(directory: Path, keep: int = _LIST_KEEP) -> list[_Entry]:
 def _newest_first(directory: Path) -> list[_Entry]:
     """`_scan_newest`, shared between concurrent callers for a couple of seconds.
 
-    Single-flight under one lock: when 30 image requests arrive together the
+    Single-flight per folder: when 30 image requests arrive together the
     first does the scan and the other 29 reuse it, instead of each re-walking
-    the folder. A short TTL (not a directory-mtime check) because a network
+    the folder -- while a different camera's folder scans in parallel. A short TTL (not a directory-mtime check) because a network
     share does not reliably bump a folder's mtime when a file is added.
     """
     key = str(directory)
     with _list_lock:
-        now = time.monotonic()
-        hit = _list_cache.get(key)
-        if hit is not None and now - hit[0] < _LIST_TTL_S:
+        scan_lock = _scan_locks.setdefault(key, threading.Lock())
+    with scan_lock:
+        with _list_lock:
+            hit = _list_cache.get(key)
+        if hit is not None and time.monotonic() - hit[0] < _LIST_TTL_S:
             return hit[1]
         entries = _scan_newest(directory)
-        _list_cache[key] = (time.monotonic(), entries)
-        while len(_list_cache) > _LIST_CACHE_DIRS:
-            _list_cache.pop(next(iter(_list_cache)))
+        with _list_lock:
+            _list_cache[key] = (time.monotonic(), entries)
+            while len(_list_cache) > _LIST_CACHE_DIRS:
+                evicted = next(iter(_list_cache))
+                _list_cache.pop(evicted)
+                _scan_locks.pop(evicted, None)
         return entries
 
 

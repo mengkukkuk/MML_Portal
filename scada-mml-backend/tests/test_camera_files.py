@@ -638,3 +638,36 @@ def test_the_scan_cache_is_bounded(image_root, monkeypatch):
         (ng_day(image_root) / f"defect_{slot}").mkdir(exist_ok=True)
         camera_files.list_slot_frames("CAM-03", slot)
     assert len(camera_files._list_cache) <= 2
+
+
+def test_one_slow_folder_scan_does_not_block_another_folder(monkeypatch, tmp_path):
+    """Each folder scans under its own lock: two scans must be able to overlap."""
+    import threading
+
+    both_inside = threading.Barrier(2, timeout=2)
+    real = camera_files._scan_newest
+
+    def slow(directory, *a, **k):
+        both_inside.wait()  # raises BrokenBarrierError if the scans were serialized
+        return real(directory, *a, **k)
+
+    monkeypatch.setattr(camera_files, "_scan_newest", slow)
+    camera_files._list_cache.clear()
+    dirs = [tmp_path / "a", tmp_path / "b"]
+    for d in dirs:
+        d.mkdir()
+    errors = []
+
+    def scan(d):
+        try:
+            camera_files._newest_first(d)
+        except threading.BrokenBarrierError as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=scan, args=(d,)) for d in dirs]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    camera_files._list_cache.clear()
+    assert errors == []
