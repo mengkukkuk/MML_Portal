@@ -29,7 +29,7 @@ from typing import Any
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import db
 from auth import active_datasources, get_current_user
@@ -255,6 +255,113 @@ def get_latest(
             detail={"error": "No matching row", "sources": reports},
         )
     return {"readings": readings, "sources": reports}
+
+
+# --- /latest, batched --------------------------------------------------------
+# The poll path. A Live tile reads one value per series and a Monitor drawing one
+# per bound symbol, so each tick used to be N requests -- and the browser runs
+# ~6 at a time, so a large drawing queued behind itself. One batch is one
+# request, one fan-out, and one connection per source for every binding on it.
+
+MAX_LATEST_BATCH = 200
+
+
+class LatestSpecIn(BaseModel):
+    table: str = Field(..., min_length=1)
+    value_col: str = Field(..., min_length=1)
+    filter_col: str | None = None
+    # A filter value arrives as text on the GET route; JSON may carry a number.
+    filter_val: str | int | float | None = None
+    ts_col: str | None = None
+    datasource_id: int | None = None
+
+
+class LatestBatchIn(BaseModel):
+    items: list[LatestSpecIn] = Field(..., max_length=MAX_LATEST_BATCH)
+
+
+class LatestBatchItemOut(BaseModel):
+    """One binding's answer, shaped like the GET route's response or error.
+
+    `status` is what GET /latest would have returned for this binding alone:
+    200 with `readings`, 404 when no source had a row, 400 when every source
+    failed -- with `detail` carrying the same body that route raises, so the
+    client can surface the identical per-source report.
+    """
+    status: int
+    readings: list[LatestOut] = []
+    sources: list[SourceReport] = []
+    detail: Any = None
+
+
+class LatestBatchOut(BaseModel):
+    results: list[LatestBatchItemOut]
+
+
+@router.post("/latest/batch", response_model=LatestBatchOut)
+def get_latest_batch(
+    body: LatestBatchIn,
+    _user: dict = Depends(get_current_user),
+    datasource_ids: list[int | None] = Depends(active_datasources),
+):
+    """GET /latest for many bindings at once, with per-binding results.
+
+    Each item targets its own `datasource_id` when given (a pinned symbol), else
+    the header selection -- exactly as the GET route decides. Items are grouped
+    by source and every source is read once, concurrently, on one connection.
+    """
+    specs = [
+        {
+            "table": it.table, "value_col": it.value_col, "filter_col": it.filter_col,
+            "filter_val": None if it.filter_val is None else str(it.filter_val),
+            "ts_col": it.ts_col,
+        }
+        for it in body.items
+    ]
+    targets = [
+        [it.datasource_id] if it.datasource_id is not None else list(datasource_ids)
+        for it in body.items
+    ]
+    by_source: dict[int | None, list[int]] = {}
+    for i, ids in enumerate(targets):
+        for ds in ids:
+            by_source.setdefault(ds, []).append(i)
+
+    def read(ds: int | None) -> dict[int, db.LatestResult]:
+        idxs = by_source[ds]
+        return dict(zip(idxs, db.table_latest_many([specs[i] for i in idxs], ds)))
+
+    reports = {
+        r["datasource_id"]: r
+        for r in db.fan_out(list(by_source), read, label="table latest batch")
+    } if by_source else {}
+
+    results: list[dict[str, Any]] = []
+    for i, ids in enumerate(targets):
+        readings: list[dict[str, Any]] = []
+        sources: list[dict[str, Any]] = []
+        for ds in ids:
+            report = reports[ds]
+            name = report["datasource_name"]
+            if not report["ok"]:
+                sources.append({"datasource_id": ds, "datasource_name": name,
+                                "ok": False, "error": report["error"]})
+                continue
+            # fan_out reduces a source-wide schema miss to an empty list.
+            ok, row, error = (report["result"] or {}).get(i, (True, None, None))
+            sources.append({"datasource_id": ds, "datasource_name": name,
+                            "ok": ok, "error": error})
+            if row:
+                readings.append({**row, "datasource_id": ds, "datasource_name": name})
+        if readings:
+            results.append({"status": 200, "readings": readings, "sources": sources})
+        elif sources and all(not s["ok"] for s in sources):
+            results.append({"status": 400, "sources": sources,
+                            "detail": {"error": sources[0]["error"], "sources": sources}})
+        else:
+            results.append({"status": 404, "sources": sources,
+                            "detail": {"error": "No matching row", "sources": sources}})
+    return {"results": results}
 
 
 @router.get("/series", response_model=SeriesListOut)

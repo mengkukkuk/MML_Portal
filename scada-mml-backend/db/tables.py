@@ -1,6 +1,6 @@
 """Plant-table access: schema introspection, the per-source connection, latest values."""
 
-from collections.abc import Hashable
+from collections.abc import Hashable, Sequence
 from contextlib import contextmanager
 import logging
 import threading
@@ -37,7 +37,9 @@ __all__ = [
     "distinct_column_values",
     "forget_schema_cache",
     "list_schema_tables",
+    "LatestResult",
     "table_latest",
+    "table_latest_many",
 ]
 
 # --- Generic table data-source (source='table') -----------------------------
@@ -431,6 +433,52 @@ def distinct_column_values(
     return [r["v"] for r in rows]
 
 
+def _buffered_latest(
+    table: str,
+    value_col: str,
+    filter_col: str | None,
+    filter_val: str | None,
+    datasource_id: int | None,
+) -> dict[str, Any] | None:
+    """The tag buffer's answer for a `variables_tag` read, or None to query SQL."""
+    if (
+        table == "variables_tag"
+        and filter_col == "tag_name"
+        and filter_val is not None
+        and _tags.is_tag_buffered(datasource_id)
+    ):
+        return _tags.buffered_tag_latest(filter_val, value_col, datasource_id)
+    return None
+
+
+def _latest_on(
+    conn,
+    schema: str,
+    table: str,
+    value_col: str,
+    filter_col: str | None,
+    filter_val: str | None,
+    ts_col: str | None,
+) -> dict[str, Any] | None:
+    """`table_latest`'s query, on a connection the caller already holds."""
+    _safe_identifiers(conn, schema, table, value_col, filter_col, ts_col)
+    ts_select = (
+        sql.SQL(", {} AS ts").format(sql.Identifier(ts_col))
+        if ts_col else sql.SQL(", NULL AS ts")
+    )
+    query = sql.SQL("SELECT {val} AS value{ts} FROM {tbl}").format(
+        val=sql.Identifier(value_col), ts=ts_select, tbl=sql.Identifier(schema, table)
+    )
+    params: list[Any] = []
+    if filter_col and filter_val is not None:
+        query += sql.SQL(" WHERE {}::text = %s").format(sql.Identifier(filter_col))
+        params.append(filter_val)
+    if ts_col:
+        query += sql.SQL(" ORDER BY {} DESC NULLS LAST").format(sql.Identifier(ts_col))
+    query += sql.SQL(" LIMIT 1")
+    return conn.execute(query, params).fetchone()
+
+
 def table_latest(
     table: str,
     value_col: str,
@@ -446,30 +494,65 @@ def table_latest(
     would return a frozen row. Serve the newest buffered sample instead, falling
     back to the direct SQL query only when the buffer is empty.
     """
-    if (
-        table == "variables_tag"
-        and filter_col == "tag_name"
-        and filter_val is not None
-        and _tags.is_tag_buffered(datasource_id)
-    ):
-        buffered = _tags.buffered_tag_latest(filter_val, value_col, datasource_id)
-        if buffered is not None:
-            return buffered
+    buffered = _buffered_latest(table, value_col, filter_col, filter_val, datasource_id)
+    if buffered is not None:
+        return buffered
     with _table_source_conn(datasource_id) as (conn, schema):
-        _safe_identifiers(conn, schema, table, value_col, filter_col, ts_col)
-        ts_select = (
-            sql.SQL(", {} AS ts").format(sql.Identifier(ts_col))
-            if ts_col else sql.SQL(", NULL AS ts")
+        return _latest_on(conn, schema, table, value_col, filter_col, filter_val, ts_col)
+
+
+#: One `table_latest_many` answer: (ok, row or None, error detail or None).
+LatestResult = tuple[bool, dict[str, Any] | None, str | None]
+
+
+def table_latest_many(
+    specs: Sequence[dict[str, Any]], datasource_id: int | None = None
+) -> list[LatestResult]:
+    """`table_latest` for several bindings on ONE connection to one source.
+
+    The Monitor and Live pages poll one value per bound symbol. Read one at a
+    time, each paid its own pool checkout, fast-fail claim and round trip; a
+    40-symbol drawing was 40 of each per tick against the same plant.
+
+    Each spec is ``{table, value_col, filter_col, filter_val, ts_col}``. Results
+    come back in spec order and each binding fails on its own: a bad column name
+    is that binding's error, never its neighbours'. A table or column the source
+    simply does not have is an empty answer, matching fan_out's
+    ``soft_schema_errors``. Only a lost connection (OperationalError) escapes,
+    because that is the *source* failing, and `_table_source_conn` must see it to
+    record the outage.
+    """
+    out: list[LatestResult | None] = [None] * len(specs)
+    pending: list[int] = []
+    for i, spec in enumerate(specs):
+        buffered = _buffered_latest(
+            spec["table"], spec["value_col"], spec.get("filter_col"),
+            spec.get("filter_val"), datasource_id,
         )
-        query = sql.SQL("SELECT {val} AS value{ts} FROM {tbl}").format(
-            val=sql.Identifier(value_col), ts=ts_select, tbl=sql.Identifier(schema, table)
-        )
-        params: list[Any] = []
-        if filter_col and filter_val is not None:
-            query += sql.SQL(" WHERE {}::text = %s").format(sql.Identifier(filter_col))
-            params.append(filter_val)
-        if ts_col:
-            query += sql.SQL(" ORDER BY {} DESC NULLS LAST").format(sql.Identifier(ts_col))
-        query += sql.SQL(" LIMIT 1")
-        row = conn.execute(query, params).fetchone()
-    return row
+        if buffered is not None:
+            out[i] = (True, buffered, None)
+        else:
+            pending.append(i)
+    if pending:
+        with _table_source_conn(datasource_id) as (conn, schema):
+            for i in pending:
+                spec = specs[i]
+                try:
+                    row = _latest_on(
+                        conn, schema, spec["table"], spec["value_col"],
+                        spec.get("filter_col"), spec.get("filter_val"), spec.get("ts_col"),
+                    )
+                    out[i] = (True, row, None)
+                except ValueError as e:
+                    out[i] = (False, None, _pool._first_line(e) or "Invalid binding")
+                except psycopg.OperationalError:
+                    raise
+                except (psycopg.errors.UndefinedTable, psycopg.errors.UndefinedColumn):
+                    # A failed statement aborts the transaction; the next binding
+                    # on this connection needs a clean one.
+                    conn.rollback()
+                    out[i] = (True, None, None)
+                except psycopg.Error as e:
+                    conn.rollback()
+                    out[i] = (False, None, _pool._first_line(e) or type(e).__name__)
+    return out  # type: ignore[return-value]

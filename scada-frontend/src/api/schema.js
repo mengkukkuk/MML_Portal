@@ -1,4 +1,5 @@
 import { apiClient } from './client'
+import { createLatestBatcher } from './latestBatcher'
 
 /**
  * Schema-introspection API — backs the generic table data source.
@@ -36,20 +37,35 @@ export async function fetchSchemaValues(table, column, limit = 500, datasourceId
   return data // [string]
 }
 
-export async function fetchSchemaLatest({
+const latestBatch = createLatestBatcher(async (items) => {
+  const { data } = await apiClient.post('/schema/latest/batch', { items })
+  return data.results
+})
+
+/**
+ * Newest row for one binding. Called once per series/symbol per poll; calls made
+ * together are sent as one POST /schema/latest/batch (see latestBatcher.js), so
+ * callers keep this one-binding signature and the same resolve/reject shapes.
+ */
+export function fetchSchemaLatest({
   table, valueCol, filterCol, filterVal, tsCol, datasourceId,
 }) {
-  const { data } = await apiClient.get('/schema/latest', {
-    params: {
-      table,
-      value_col: valueCol,
-      filter_col: filterCol || undefined,
-      filter_val: filterVal ?? undefined,
-      ts_col: tsCol || undefined,
-      datasource_id: datasourceId ?? undefined,
-    },
-  })
-  return data // { readings: [{ value, ts, datasource_id, datasource_name }], sources }
+  // The batch is validated as a whole, so one unfinished binding (a dialog
+  // mid-edit) would 422 every symbol it was batched with. Refuse it alone, as
+  // the standalone GET would have.
+  if (!table || !valueCol) {
+    const err = new Error('table and valueCol are required')
+    err.response = { status: 422, data: { detail: err.message } }
+    return Promise.reject(err)
+  }
+  return latestBatch({
+    table,
+    value_col: valueCol,
+    filter_col: filterCol || null,
+    filter_val: filterVal == null ? null : String(filterVal),
+    ts_col: tsCol || null,
+    datasource_id: datasourceId ?? null,
+  }) // { readings: [{ value, ts, datasource_id, datasource_name }], sources }
 }
 
 export async function fetchSchemaSeries({
