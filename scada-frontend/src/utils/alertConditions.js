@@ -11,11 +11,18 @@
  *       { lhs: 'Pressure2', op: '>',  rhsType: 'value',  rhs: 20, connector: 'AND' },
  *   ] }
  *
- * `rhsType: 'series'` makes `rhs` another series label (e.g. P1 > P2). The
- * first row carries no connector; every later row carries 'AND' | 'OR'.
+ * `rhsType: 'series'` makes `rhs` another series label (e.g. P1 > P2).
+ * `rhsType: 'panel'` makes `rhs` a column of the panel's table (e.g. a setpoint
+ * column), read live from the same row as the series. The first row carries no
+ * connector; every later row carries 'AND' | 'OR'.
  */
 
 const EPS = 1e-9
+
+// Panel-column values share the `vars` map with series labels; the prefix keeps
+// a column that happens to share a series' name from colliding with it.
+export const PANEL_VAR_PREFIX = 'panel:'
+export const panelVarKey = (col) => PANEL_VAR_PREFIX + col
 
 const COMPARATORS = {
   '=': (a, b) => Math.abs(a - b) <= EPS,
@@ -30,7 +37,9 @@ export const COMPARATOR_OPS = Object.keys(COMPARATORS)
 // True only when both operands resolve to finite numbers and the comparison holds.
 function evalRow(row, vars) {
   const lhs = vars[row.lhs]
-  const rhs = row.rhsType === 'series' ? vars[row.rhs] : Number(row.rhs)
+  const rhs = row.rhsType === 'series' ? vars[row.rhs]
+    : row.rhsType === 'panel' ? vars[panelVarKey(row.rhs)]
+      : Number(row.rhs)
   const cmp = COMPARATORS[row.op]
   if (!cmp || !Number.isFinite(lhs) || !Number.isFinite(rhs)) return false
   return cmp(lhs, rhs)
@@ -61,6 +70,18 @@ export function conditionRefs(condition) {
   for (const r of condition?.rows || []) {
     add(r.lhs)
     if (r.rhsType === 'series') add(r.rhs)
+  }
+  return out
+}
+
+/** Ordered, de-duped table columns referenced by `rhsType: 'panel'` rows. */
+export function panelColumnRefs(conditions) {
+  const out = []
+  const seen = new Set()
+  for (const c of conditions || []) {
+    for (const r of c?.rows || []) {
+      if (r.rhsType === 'panel' && r.rhs && !seen.has(r.rhs)) { seen.add(r.rhs); out.push(r.rhs) }
+    }
   }
   return out
 }

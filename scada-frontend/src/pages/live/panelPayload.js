@@ -305,7 +305,7 @@ export function buildPanelPayload({
       if (r.rhsType === 'series' && !known.has(r.rhs)) {
         return { ok: false, error: `Condition references unknown series "${r.rhs}".` }
       }
-      const row = { lhs: r.lhs, op: r.op, rhsType: r.rhsType, rhs: r.rhsType === 'series' ? r.rhs : Number(r.rhs) }
+      const row = { lhs: r.lhs, op: r.op, rhsType: r.rhsType, rhs: (r.rhsType === 'series' || r.rhsType === 'panel') ? r.rhs : Number(r.rhs) }
       if (rows.length) row.connector = r.connector === 'OR' ? 'OR' : 'AND'
       rows.push(row)
     }

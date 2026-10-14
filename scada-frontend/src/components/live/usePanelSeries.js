@@ -2,7 +2,7 @@ import { useCallback, useMemo } from 'react'
 import { compileExpr } from '@/utils/mathExpr'
 import { colorAt } from '@/utils/seriesPalette'
 import { DEFAULT_BOOL_LABELS } from '@/utils/columnKinds'
-import { alertingSeries } from '@/utils/alertConditions'
+import { alertingSeries, panelVarKey } from '@/utils/alertConditions'
 import { GENERIC_VIZ_TYPES, HEADER_VALUE_VIZ_TYPES } from './options'
 
 // Poll interval selector — values are seconds, kept in sync with backend whitelist.
@@ -162,7 +162,7 @@ export function usePanelSeries(panel, { filterOverride = null } = {}) {
  */
 export function buildSeriesList(
   seriesSpecs,
-  { seriesPoints, seriesLatest, seriesLimits, unitFor, deviceUnit, boolCols, boolLabels },
+  { seriesPoints, seriesLatest, seriesLimits, seriesPanelCols, unitFor, deviceUnit, boolCols, boolLabels },
 ) {
   const flags = new Set(boolCols || [])
   return seriesSpecs.map((s, i) => ({
@@ -187,6 +187,8 @@ export function buildSeriesList(
     latest: seriesLatest[s.key] || null,
     // Live warn/crit setpoints from bound columns (gauge only); null = manual.
     limits: seriesLimits?.[s.key] || null,
+    // Table columns alert conditions compare against (rhsType 'panel'); null = none.
+    panelCols: seriesPanelCols?.[s.key] || null,
   }))
 }
 
@@ -198,6 +200,9 @@ export function computeAlertSeries(panel, seriesList) {
   const conds = panel.options?.conditions
   if (!Array.isArray(conds) || !conds.length) return []
   const vars = {}
-  for (const s of seriesList) if (s.latest) vars[s.valueCol] = s.latest.value
+  for (const s of seriesList) {
+    if (s.latest) vars[s.valueCol] = s.latest.value
+    for (const [col, v] of Object.entries(s.panelCols || {})) vars[panelVarKey(col)] = v
+  }
   return alertingSeries(conds, vars)
 }

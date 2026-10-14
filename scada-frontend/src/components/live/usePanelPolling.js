@@ -8,10 +8,12 @@ import {
   mergeSources, sourcesFromError, connectionErrorMessage, isConnectionError,
 } from '@/utils/sourceHealth'
 import { gaugeLimitColsFor } from './options/gauge'
+import { panelColumnRefs } from '@/utils/alertConditions'
 
 const POLL_RETRY_DELAY_MS = 4000
 // Stable identity for panels with no setpoint columns, so seriesList memo holds.
 const EMPTY_LIMITS = {}
+const EMPTY_COLS = []
 
 // Never blank the chart: if every point has aged out of the window (a stale
 // or lagging source), keep the most recent one so time-series/bar still
@@ -407,6 +409,44 @@ async function fetchGaugeLimits({ panel, seriesSpecs, mathFn, limitCols, prevLim
   return limits
 }
 
+// --- alert-condition panel columns ----------------------------------------
+/**
+ * Latest value of each table column an alert condition compares against
+ * (`rhsType: 'panel'`). Read like the gauge setpoints: same table, the same
+ * filter row as each series, through the panel's math expression. A failed read
+ * keeps last round's value so a condition does not flicker off for one poll.
+ *
+ * Returns `{ [seriesKey]: { [column]: number } }`.
+ */
+async function fetchPanelColumns({ panel, seriesSpecs, mathFn, cols, prev }) {
+  if (!cols.length) return {}
+  const jobs = []
+  for (const spec of seriesSpecs) for (const col of cols) jobs.push({ spec, col })
+
+  const results = await Promise.allSettled(jobs.map((j) => fetchSchemaLatest({
+    table: panel.table_name, valueCol: j.col, filterCol: panel.filter_col,
+    filterVal: j.spec.filterVal, tsCol: panel.ts_col, datasourceId: panel.datasource_id,
+  })))
+  const out = {}
+  const prevCols = prev || {}
+  results.forEach((res, i) => {
+    const { spec, col } = jobs[i]
+    if (res.status !== 'fulfilled') {
+      for (const [k, v] of Object.entries(prevCols)) {
+        if (JSON.parse(k)[1] === spec.key && v[col] != null) out[k] = { ...out[k], [col]: v[col] }
+      }
+      return
+    }
+    for (const row of res.value.readings) {
+      const raw = arrayValueOf(row.value)
+      if (raw == null || !Number.isFinite(Number(raw))) continue
+      const key = seriesKey(spec.key, row.datasource_id)
+      out[key] = { ...out[key], [col]: applyExpr(mathFn, Number(raw)) }
+    }
+  })
+  return out
+}
+
 const PULSE_MS = 450
 
 /**
@@ -485,6 +525,13 @@ export function usePanelPolling({ panel, seriesSpecs, seriesTags, isTag, isTable
   // instead of waiting for the next scheduled poll to pick up the new config.
   const limitColsKey = useMemo(() => JSON.stringify(limitCols), [limitCols])
 
+  // Columns the alert conditions compare against; only a table source has a row to read.
+  const panelCols = useMemo(
+    () => (isTable ? panelColumnRefs(panel.options?.conditions) : EMPTY_COLS),
+    [isTable, panel.options?.conditions],
+  )
+  const panelColsKey = useMemo(() => JSON.stringify(panelCols), [panelCols])
+
   const queryKey = useMemo(() => ([
     'live-panel-series',
     panel.source, panel.device_id, panel.metric,
@@ -493,7 +540,8 @@ export function usePanelPolling({ panel, seriesSpecs, seriesTags, isTag, isTable
     panel.datasource_id,
     refreshSignal,
     limitColsKey,
-  ]), [panel.source, panel.device_id, panel.metric, rangeMinutes, seriesTags, panel.table_name, panel.filter_col, panel.ts_col, panel.datasource_id, refreshSignal, limitColsKey])
+    panelColsKey,
+  ]), [panel.source, panel.device_id, panel.metric, rangeMinutes, seriesTags, panel.table_name, panel.filter_col, panel.ts_col, panel.datasource_id, refreshSignal, limitColsKey, panelColsKey])
 
   const hashedKey = useMemo(() => JSON.stringify(queryKey), [queryKey])
   const pollSeconds = panel.poll_interval_seconds || 5
@@ -502,13 +550,15 @@ export function usePanelPolling({ panel, seriesSpecs, seriesTags, isTag, isTable
     queryKey,
     queryFn: async () => {
       const prev = accumRef.current.get(hashedKey)
-      const [result, limits] = await Promise.all([
+      const [result, limits, panelColVals] = await Promise.all([
         prev
           ? pollFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinutes, prev })
           : seedFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinutes }),
         fetchGaugeLimits({ panel, seriesSpecs, mathFn, limitCols, prevLimits: prev?.limits }),
+        fetchPanelColumns({ panel, seriesSpecs, mathFn, cols: panelCols, prev: prev?.panelCols }),
       ])
       result.limits = limits
+      result.panelCols = panelColVals
       // Only the live key's accumulator is worth keeping — any other entry
       // belongs to a superseded config (or an old refreshSignal) and can never
       // be read again, so without this the map grows for the page's lifetime.
@@ -559,6 +609,8 @@ export function usePanelPolling({ panel, seriesSpecs, seriesTags, isTag, isTable
     seriesLatest: query.data?.latest || {},
     // Live gauge warn/crit setpoints read from columns, keyed like seriesLatest.
     seriesLimits: query.data?.limits || EMPTY_LIMITS,
+    // Latest values of table columns referenced by alert conditions, keyed like seriesLatest.
+    seriesPanelCols: query.data?.panelCols || EMPTY_LIMITS,
     // The configured specs expanded across the sources that actually answered.
     // Null until the first response lands — the caller falls back to the
     // unexpanded specs so the tile can render its labels before any data.

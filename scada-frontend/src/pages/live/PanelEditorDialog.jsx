@@ -552,7 +552,10 @@ export default function PanelEditorDialog({
     setValue('conditions', arr)
   }
   function onRhsTypeChange(ci, ri, rhsType) {
-    updateRow(ci, ri, { rhsType, rhs: rhsType === 'series' ? (conditionSeriesOptions[0] || null) : 0 })
+    const rhs = rhsType === 'series' ? (conditionSeriesOptions[0] || null)
+      : rhsType === 'panel' ? (setpointGroups[0]?.options[0]?.name || null)
+        : 0
+    updateRow(ci, ri, { rhsType, rhs })
   }
 
   // --- save ----------------------------------------------------------------
@@ -882,10 +885,23 @@ export default function PanelEditorDialog({
                             <Select value={row.rhsType} onChange={(e) => onRhsTypeChange(ci, ri, e.target.value)}>
                               <MenuItem value="value">value</MenuItem>
                               <MenuItem value="series">series</MenuItem>
+                              {(setpointGroups.length > 0 || row.rhsType === 'panel') && (
+                                <MenuItem value="panel">panel</MenuItem>
+                              )}
                             </Select>
                           </FormControl>
 
-                          {row.rhsType !== 'series' ? (
+                          {row.rhsType === 'panel' ? (
+                            <ColumnSelect
+                              className={styles.condRhs}
+                              value={row.rhs}
+                              onChange={(col) => updateRow(ci, ri, { rhs: col })}
+                              groups={setpointGroups}
+                              labelFor={labelForColumn}
+                              placeholder="column"
+                              searchable
+                            />
+                          ) : row.rhsType !== 'series' ? (
                             <TextField
                               size="small"
                               type="number"
@@ -916,7 +932,7 @@ export default function PanelEditorDialog({
                   ))}
                   <Button size="small" onClick={addCondition}>+ Add condition</Button>
                   <p className={styles.hint}>
-                    Pick a series, a comparator and a value (or another series). The pill shows <code>series ALERTS</code> when true.
+                    Pick a series, a comparator and a value, another series, or a table column (<em>panel</em>). The pill shows <code>series ALERTS</code> when true.
                   </p>
                 </AccordionDetails>
               </Accordion>
