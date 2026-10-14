@@ -289,7 +289,7 @@ def test_datasource(body: DatasourceTestIn, _admin: dict = Depends(require_admin
     password = body.password if body.password else stored_password
 
     if not host or not database:
-        return TestResult(ok=False, message="Host and database are required.")
+        return TestResult(ok=False, message="Host/database are required.")
 
     try:
         with psycopg.connect(

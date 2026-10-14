@@ -43,7 +43,7 @@ export default function TitleBlock({ layout, name, asOf }) {
         <span className={styles.name}>{name}</span>
       </div>
       <div className={styles.cell}>
-        <span className={styles.label}>{tr('As of')}</span>
+        <span className={styles.label}>{tr('At Time')}</span>
         <span className={styles.value}>{asOf}</span>
       </div>
       {key.length > 0 && (
