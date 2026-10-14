@@ -11,9 +11,10 @@ This file is the **deployment-focused** guide; deeper internals live in
 
 ```
 C:\dev\
-├── README.md                       ← this file
-├── MML_DEVELOPMENT.md              ← architecture & developer reference
-├── workflow.html                   ← interactive end-to-end system workflow
+├── docs\                          ← documentation: this file (README.md), MML_DEVELOPMENT.md
+│                                     (architecture & developer reference), CLAUDE.md / AGENTS.md
+│                                     (agent guides), workflow.html + other interactive flow diagrams
+├── installer\                      ← Inno Setup offline installer (MMLPortal.iss, scripts\build.ps1, …)
 ├── verify_prod.ps1                 ← admin script: verifies service + IIS proxy
 │
 ├── scada-mml-backend\              ← FastAPI service (Python 3.14)
@@ -39,6 +40,14 @@ C:\dev\
 │   ├── mimic.py                    ← /api/mimic router (SCADA mimic layout + symbols)
 │   ├── events.py                   ← /api/events router (read-only event log aggregation)
 │   ├── alarms.py                   ← /api/alarms router (read-only alarm logs + acknowledgement)
+│   ├── cameras.py                  ← /api/cameras router (camera source, defect summaries, NG/OK frames + thumbs)
+│   ├── camera_files.py             ← the only reader of CAMERA_IMAGE_ROOT (read-only, traversal-hardened)
+│   ├── camera_thumbs.py            ← bounded in-memory JPEG thumbnail cache (Pillow)
+│   ├── licensing.py                ← /api/license router + offline Ed25519 license verification
+│   ├── verify_license.py           ← CLI license check (used by install.ps1)
+│   ├── system.py                   ← /api/system router (admin: DB + credential-encryption status)
+│   ├── production_log.py           ← hourly aggregation of cumulative production counters
+│   ├── vision_report_engine.py     ← camera-QC (defect) report math
 │   ├── reports.py                  ← /api/reports router (OEE / production reporting)
 │   ├── report_engine.py            ← report generation state-machine + interval logic
 │   ├── mailer.py                   ← Brevo HTTP API → SMTP fallback → log-only delivery
@@ -66,25 +75,30 @@ C:\dev\
     ├── src\
     │   ├── api\                    ← client.js (axios + auth interceptor), auth.js, users.js,
     │   │                             devices.js, alarms.js, readings.js, tags.js, panels.js,
-    │   │                             dashboards.js, datasources.js, mimic.js, events.js, reports.js
-    │   ├── stores\                 ← Zustand: auth, users, devices, alarms, connection
+    │   │                             dashboards.js, datasources.js, mimic.js, events.js, reports.js,
+    │   │                             cameras.js, license.js, health.js, schema.js,
+    │   │                             latestBatcher.js (many latest reads → one POST /schema/latest/batch)
+    │   ├── stores\                 ← Zustand: auth, connection, license, settings, datasourceSelection
+    │   ├── i18n\                   ← English / Thai UI strings (useTranslation)
     │   ├── pages\                  ← page components:
     │   │  ├── LoginPage, ResetPasswordPage (public)
     │   │  ├── DevicesPage, AlarmsPage, EventPage, SettingsPage (authenticated)
     │   │  ├── AccountsPage (admin-only)
+    │   │  ├── ActivateLicensePage (replaces the shell when the license is missing/blocked)
+    │   │  ├── ap/APPage (A&P prototype on fixture data)
     │   │  ├── live/LivePage + supporting files
-    │   │  ├── monitor/MonitorPage + mimic editor components
+    │   │  ├── monitor/MonitorPage + mimic editor, camera rail/lightbox, view/ + hooks/
     │   │  ├── reports/ReportPage, ReportBuilderPage
     │   │  └── NotFoundPage
     │   ├── components\             ← shared UI:
     │   │  ├── AppHeader, AppSidebar, ConnectionPill
     │   │  ├── charts/EChart (generic ECharts wrapper)
-    │   │  ├── live/LivePanel + options/ (9 viz-type builders) + polling hooks
+    │   │  ├── live/LivePanel + options/ (12 viz-type builders) + polling hooks
     │   │  ├── mimic/symbol library + hooks
-    │   │  └── report/report block components
+    │   │  └── report/report blocks + signal-trend modules
     │   ├── utils\                  ← mathExpr.js (safe transform evaluator),
     │   │                             seriesPalette.js (deterministic colour pick),
-    │   │                             alertConditions.js
+    │   │                             alertConditions.js, numberFormat.js
     │   ├── lib\, layouts\          ← utilities, layout wrappers
     │   ├── theme\, styles\         ← MUI theme + global styles
     │   └── router\routes.jsx       ← React Router v7 routes + RequireAuth guard
@@ -362,7 +376,7 @@ that connection's password from Settings → Data sources.
 | `ACCESS_EXPIRE_MIN` | `30` | Access-token lifetime (minutes) |
 | `REFRESH_EXPIRE_DAYS` | `7` | Refresh-token lifetime (days). Stored as `HttpOnly` cookie. |
 | `RESET_EXPIRE_MIN` | `30` | Password-reset-token lifetime (minutes) |
-| `ENCRYPTION_KEY` | *(empty)* | Optional. Encrypts saved plant-datasource passwords at rest. Blank keeps today's plaintext storage — nothing breaks either way. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Setting it encrypts new/changed passwords immediately and sweeps existing plaintext rows into the encrypted form on the next boot; a value without the `fernet$` prefix is always treated as legacy plaintext, so turning this on is never disruptive. |
+| `ENCRYPTION_KEY` / `ENCRYPTION_KEY_FILE` | *(empty)* | Fernet key that encrypts saved plant-datasource passwords at rest. **Fail-closed:** with no usable key the API refuses to save a non-empty datasource password rather than storing it in cleartext. The offline installer provisions a machine-bound, DPAPI-wrapped key in ProgramData (`ENCRYPTION_KEY_FILE`, authoritative when set) so it survives reinstalls — **back it up**: if it is lost, saved passwords become unreadable (`recovery_required` on `GET /api/system/db`) until an admin re-enters them. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Setting it encrypts new/changed passwords immediately and sweeps existing plaintext rows into the encrypted form on the next boot; a value without the `fernet$` prefix is always treated as legacy plaintext, so turning this on is never disruptive. |
 
 ### 4.3 Account management
 
@@ -419,6 +433,26 @@ After editing `.env`, **restart the service** so the new vars are loaded:
 |---|---|---|
 | `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated list of allowed browser origins. **Must include your production URL** (e.g. `https://scada.example.local`) once deployed — wildcards are not allowed because `allow_credentials=True`. |
 | `COOKIE_SECURE` | `false` | When `true`, the refresh-token cookie has `Secure` set (HTTPS only). **Set to `true` in production behind HTTPS.** |
+
+### 4.6 Licensing and camera images
+
+| Key | Default | Purpose |
+|---|---|---|
+| `LICENSE_FILE_PATH` | `C:\TBCLC\tbclicense.lic` | Where the signed license file is read from and where **Activate** writes it. |
+| `LICENSE_WARNING_WINDOW_DAYS` | `14` | Days before expiry that the UI shows an "expiring soon" banner (cosmetic only). |
+| `CAMERA_IMAGE_ROOT` | *(empty)* | Root of the vision system's frame folders: `<root>\<camera code>\NG\<date>\defect_<slot>\*.png` and `<root>\<camera code>\OK\<date>\*.png`. Read-only; only the newest date folder is listed. Empty → camera panels show no frames. |
+
+The license is verified **offline** (Ed25519 signature, no license server). States: `valid` → `grace`
+(full function, banner shown) → `blocked`. While it is `missing` or `blocked` the SPA shows the
+activation page instead of the app; an admin pastes the token or uploads the `.lic` file there
+(`POST /api/license/activate` verifies it before writing, so a bad paste never replaces a good license).
+`GET /api/license/status` is unauthenticated, like `/health`.
+
+> **Check the license path after an install.** `install.ps1` offers to save a pasted license to
+> `C:\ProgramData\MMLPortal\license.lic` (and `.env.example` shows that path commented out), but the
+> backend's built-in default is `C:\TBCLC\tbclicense.lic`. Unless `LICENSE_FILE_PATH` is set in `.env`
+> to the same path the installer wrote, the service will not see the installer-written license — set
+> it explicitly, or activate from the UI instead.
 
 ---
 
@@ -494,7 +528,17 @@ Two variants are built from the same script:
 | **Full** (`build.ps1 -Full`) | `MMLPortalSetup-<version>-Full.exe` | ~400 MB | Embedded — single self-contained file. |
 
 PostgreSQL's EDB installer is ~94 % of the full size and is already compressed, so it is the only
-thing worth leaving out.
+thing worth leaving out. To keep the Lite build small, `build.ps1` also trims the bundled Python
+(removes `pip` and `__pycache__` — nothing on the target PC calls pip) and leaves `venv`, `logs`,
+`tests` and `.claude` out of the backend payload; `tzdata` and Pillow (camera thumbnails) must stay.
+
+**Upgrading or moving an install.** The wizard always shows the install-folder page, pre-filled
+with the previous location. Choosing a *different* folder is treated as a move: Setup asks for
+confirmation, copies `backend\.env` (database password and login secret, DPAPI-protected) into the
+new folder — never overwriting an `.env` already there — and `postinstall.ps1` rebuilds the
+`mml-api` service and IIS site from the new path. **The old folder is left in place**; delete it
+once the new install works. If the `.env` copy fails, Setup tells you to copy it by hand before
+starting MMLPortal (without it the backend falls back to the default DB password and cannot connect).
 
 > **Before deploying: allowlist with the plant's antivirus/EDR.** The installer is not
 > code-signed (see the comment in `installer/MMLPortal.iss`) and it bundles several binaries
@@ -614,6 +658,8 @@ place — same data-safety stance as `scada-mml-backend\uninstall.ps1`.
 | **`/accounts` page redirects to `/`** | The current user isn't `role='admin'`. Sign in as `admin`, or promote a user via `UPDATE users SET role='admin' WHERE username='you'`. |
 | **New numeric column on `public.variables_tag` doesn't show up in the panel editor** | Fields are introspected once per process and cached. `Restart-Service mml-api` to re-discover. |
 | **`Failed to fetch dynamically imported module …Page.jsx` in dev** | Two Vite servers are fighting over port 5173. Kill stray `node` processes (`Get-CimInstance Win32_Process -Filter "Name='node.exe'" \| Where CommandLine -like '*vite*' \| Stop-Process -Force`). |
+| **Every page shows the activation screen / API returns a license error** | License state is `missing` or `blocked`. Activate from the UI (admin), or check `LICENSE_FILE_PATH` — see §4.6 for the installer-vs-default path mismatch. `GET /api/license/status` shows the state. |
+| **Camera rail shows no frames / `409 Camera source is not configured`** | Choose the camera datasource in Settings (409), and set `CAMERA_IMAGE_ROOT` to the vision system's folder (empty → no frames). Only the newest `<date>` folder is read. |
 | **`psql` not found** | Add `C:\Program Files\PostgreSQL\18\bin` to PATH, or call the full path. |
 
 For architecture, code internals, the full API reference, and the dynamic `variables_tag` introspection,

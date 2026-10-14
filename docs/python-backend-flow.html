@@ -262,6 +262,7 @@
 </style>
 </head>
 <body>
+<div style="margin:0;padding:10px 16px;background:#3a2f0b;color:#f2d98a;border-bottom:1px solid #7a6420;font:14px/1.45 system-ui,sans-serif"><b>Request flow.</b> The steps cover auth, readings, tags, panels and the datasource fan-out. Routers added later (cameras, license, system) follow the same pattern and are documented in <code>MML_DEVELOPMENT.md</code> &sect;7.14&ndash;7.15.</div>
 
 <header>
   <div class="badges">
@@ -289,7 +290,7 @@
     <div class="row" style="align-items:center;">
       <div class="node c-blue" id="n-client">
         <div class="tag">Caller</div>
-        <div class="name">Vue Frontend</div>
+        <div class="name">React Frontend</div>
         <div class="detail">Axios + Bearer header<br>HttpOnly cookie auto-sent</div>
         <div class="tt">Axios apiClient sends<br>Authorization: Bearer &lt;token&gt;<br>Browser auto-attaches refresh cookie</div>
       </div>
@@ -542,16 +543,16 @@
 
   <div class="v-arrow" id="va-db">
     <div class="line"></div><div class="tip"></div>
-    <div class="label">db.py opens psycopg3 connection per call</div>
+    <div class="label">db/ opens psycopg3 connection per call</div>
   </div>
 
   <!-- ════ L5: DB ════ -->
   <div class="layer">
-    <div class="layer-label">⑥ db.py + PostgreSQL — Data Layer</div>
+    <div class="layer-label">⑥ db/ + PostgreSQL — Data Layer</div>
     <div class="row" style="gap:10px; align-items:flex-start; flex-wrap:wrap;">
 
       <div class="node c-teal" id="n-db">
-        <div class="tag">db.py</div>
+        <div class="tag">db/</div>
         <div class="name">psycopg3 layer</div>
         <div class="detail">
           get_connection()<br>
@@ -673,7 +674,7 @@
 
   <!-- ════ L7: RESPONSE ════ -->
   <div class="layer">
-    <div class="layer-label">⑧ Response — back to Vue</div>
+    <div class="layer-label">⑧ Response — back to the SPA</div>
     <div class="chip-grid">
       <div class="chip c-cyan" id="resp-200">
         <b>200 / 201</b>
@@ -701,7 +702,7 @@
   <!-- ════ EXPLAIN ════ -->
   <div class="explain" id="explain">
     <h3><span class="sn" id="en">1</span> <span id="et">Uvicorn — ASGI Server Entry</span></h3>
-    <p id="eb">When the Vue frontend sends an HTTP request (e.g. <code>POST /api/auth/login</code>), Uvicorn receives it on <code>0.0.0.0:8088</code>. Uvicorn is an <b>ASGI server</b> — it handles async I/O and passes each request to the FastAPI app as an ASGI scope. In production you'd run it behind Nginx or NSSM (Windows service). The <code>/health</code> endpoint is available without auth for liveness monitoring.</p>
+    <p id="eb">When the React frontend sends an HTTP request (e.g. <code>POST /api/auth/login</code>), Uvicorn receives it on <code>0.0.0.0:8088</code>. Uvicorn is an <b>ASGI server</b> — it handles async I/O and passes each request to the FastAPI app as an ASGI scope. In production you'd run it behind Nginx or NSSM (Windows service). The <code>/health</code> endpoint is available without auth for liveness monitoring.</p>
   </div>
 
 </div><!-- /canvas -->
@@ -710,7 +711,7 @@
 const STEPS = [
   {
     title: "Uvicorn — ASGI Server Entry",
-    body: `When the Vue frontend sends an HTTP request (e.g. <code>POST /api/auth/login</code>), Uvicorn receives it on <code>0.0.0.0:8088</code>. Uvicorn is an <b>ASGI server</b> — it handles async I/O and passes each request to the FastAPI app as an ASGI scope. In production you'd run it behind Nginx or NSSM (Windows service). The <code>/health</code> endpoint is available without auth for liveness monitoring.`,
+    body: `When the React frontend sends an HTTP request (e.g. <code>POST /api/auth/login</code>), Uvicorn receives it on <code>0.0.0.0:8088</code>. Uvicorn is an <b>ASGI server</b> — it handles async I/O and passes each request to the FastAPI app as an ASGI scope. In production you'd run it behind Nginx or NSSM (Windows service). The <code>/health</code> endpoint is available without auth for liveness monitoring.`,
     light: ['n-client','n-uvicorn','n-fastapi','ha-client-uvi','ha-uvi-app'],
     active: ['n-client','n-uvicorn'],
     arrows: ['ha-client-uvi'],
@@ -724,7 +725,7 @@ const STEPS = [
   },
   {
     title: "CORS Middleware — Preflight & Origin Check",
-    body: `Every request passes through <b>CORSMiddleware</b> first. For cross-origin requests from the Vue dev server (<code>localhost:5173</code>), the browser sends an <code>OPTIONS</code> preflight. FastAPI handles this automatically and adds <code>Access-Control-Allow-Origin</code>, <code>Access-Control-Allow-Credentials: true</code>, and other CORS headers. <b>Without <code>allow_credentials=True</code>, the browser would not send the HttpOnly refresh cookie.</b>`,
+    body: `Every request passes through <b>CORSMiddleware</b> first. For cross-origin requests from the Vite dev server (<code>localhost:5173</code>), the browser sends an <code>OPTIONS</code> preflight. FastAPI handles this automatically and adds <code>Access-Control-Allow-Origin</code>, <code>Access-Control-Allow-Credentials: true</code>, and other CORS headers. <b>Without <code>allow_credentials=True</code>, the browser would not send the HttpOnly refresh cookie.</b>`,
     light: ['n-cors','n-health','n-uvicorn'],
     active: ['n-cors'],
     arrows: ['va-cors'],
@@ -746,7 +747,7 @@ const STEPS = [
   },
   {
     title: "POST /api/auth/refresh — Token Rotation",
-    body: `Called by Vue's Axios interceptor when an access token expires (401 response). FastAPI reads the <code>refresh_token</code> cookie via <code>Cookie(alias="refresh_token")</code>. It decodes the JWT, checks <code>type == "refresh"</code>, and checks the JTI is not in the in-memory <code>_revoked_refresh</code> set. If valid: <b>rotates the refresh token</b> (new cookie) and issues a fresh access token. <b>Note:</b> the denylist resets on server restart — acceptable for dev, but production should use a DB or Redis denylist.`,
+    body: `Called by the SPA's Axios interceptor when an access token expires (401 response). FastAPI reads the <code>refresh_token</code> cookie via <code>Cookie(alias="refresh_token")</code>. It decodes the JWT, checks <code>type == "refresh"</code>, and checks the JTI is not in the in-memory <code>_revoked_refresh</code> set. If valid: <b>rotates the refresh token</b> (new cookie) and issues a fresh access token. <b>Note:</b> the denylist resets on server restart — acceptable for dev, but production should use a DB or Redis denylist.`,
     light: ['ep-refresh','sec-verify','jwt-refresh','jwt-access','jwt-decode','tbl-users','box-auth'],
     active: ['ep-refresh','jwt-refresh','jwt-decode'],
     arrows: ['va-dep','va-sec','va-db'],
@@ -775,8 +776,8 @@ const STEPS = [
     activeBox: ['box-sec','box-jwt'],
   },
   {
-    title: "db.py — psycopg3 Data Layer (app DB vs plant DBs)",
-    body: `<code>db.py</code> is a thin wrapper over psycopg3, split across <b>two kinds of database</b>. <code>get_connection()</code> is <b>always the app/config database</b>, hardcoded to <code>localhost</code> via <code>config.APP_DB_*</code> — <code>.env</code> cannot point it elsewhere, so login, layouts and settings survive any plant outage. It holds <code>users</code>, <code>user_datasource_selection</code>, <code>dashboards</code>/<code>dashboard_panels</code>, <code>mimic_*</code>, <code>report_*</code> and <code>datasources</code> itself. <b>Plant</b> tables — <code>sensor_readings</code>, <code>variables_tag</code>, <code>event_logs</code>, <code>alarm_logs</code> — live in the saved datasources instead, reached through one lazy pool per row and read via <code>fan_out()</code> across the sources the user picked in the header. <code>row_factory=dict_row</code> means every row is a Python <code>dict</code> — no ORM.`,
+    title: "db/ — psycopg3 Data Layer (app DB vs plant DBs)",
+    body: `<code>db/</code> is a thin package (re-exported by <code>import db</code>) over psycopg3, split across <b>two kinds of database</b>. <code>get_connection()</code> is <b>always the app/config database</b>, hardcoded to <code>localhost</code> via <code>config.APP_DB_*</code> — <code>.env</code> cannot point it elsewhere, so login, layouts and settings survive any plant outage. It holds <code>users</code>, <code>user_datasource_selection</code>, <code>dashboards</code>/<code>dashboard_panels</code>, <code>mimic_*</code>, <code>report_*</code> and <code>datasources</code> itself. <b>Plant</b> tables — <code>sensor_readings</code>, <code>variables_tag</code>, <code>event_logs</code>, <code>alarm_logs</code> — live in the saved datasources instead, reached through one lazy pool per row and read via <code>fan_out()</code> across the sources the user picked in the header. <code>row_factory=dict_row</code> means every row is a Python <code>dict</code> — no ORM.`,
     light: ['n-db','tbl-users','tbl-devices','tbl-sensor','tbl-alarms'],
     active: ['n-db','tbl-users','tbl-devices','tbl-sensor','tbl-alarms'],
     arrows: ['va-db'],
@@ -789,7 +790,7 @@ const STEPS = [
     arrows: ['va-mailer'],
   },
   {
-    title: "Response — Back to Vue Axios",
+    title: "Response — Back to the SPA's Axios",
     body: `FastAPI serialises the return value through Pydantic's <code>response_model</code>. <b>200/201</b>: JSON with <code>access_token</code> + <code>user</code> object. <b>204</b>: no body (logout, delete). <b>401</b>: triggers Axios auto-refresh interceptor in <code>api/client.js</code> — queues pending requests, calls <code>/api/auth/refresh</code>, replays on success or redirects to <code>/login</code>. <b>Reset endpoints return 400</b> (not 401) intentionally — so the Axios interceptor does NOT fire on an invalid reset link. <b>403</b>: Vue Router's <code>requiresRole</code> guard redirects to <code>/overview</code>.`,
     light: ['resp-200','resp-204','resp-401','resp-403','resp-400','n-client'],
     active: ['resp-200','resp-204','resp-401','resp-403','resp-400'],

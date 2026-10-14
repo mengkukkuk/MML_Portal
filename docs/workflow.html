@@ -231,10 +231,11 @@
 </style>
 </head>
 <body>
+<div style="margin:0;padding:10px 16px;background:#3a2f0b;color:#f2d98a;border-bottom:1px solid #7a6420;font:14px/1.45 system-ui,sans-serif"><b>Partly historical.</b> Node labels were refreshed, but the step narrative still describes the original flow (before the React rewrite, multi-plant datasources, cameras and licensing). For the current system see <a style="color:#ffe9a8" href="mml-runtime-architecture.html">mml-runtime-architecture.html</a> and <a style="color:#ffe9a8" href="frontend-workflow.html">frontend-workflow.html</a>.</div>
 
 <header>
   <div class="badges">
-    <span class="badge badge-vue">Vue 3 + Vite</span>
+    <span class="badge badge-vue">React 19 + Vite</span>
     <span class="badge badge-py">FastAPI 0.136</span>
     <span class="badge badge-pg">PostgreSQL 18</span>
     <span class="badge badge-iis">IIS + ARR</span>
@@ -351,7 +352,7 @@
   <div class="row" style="gap:10px;">
     <div class="v-arrow" data-arrow="api-deps" style="flex:1;">
       <div class="line"></div><div class="tip"></div>
-      <div class="label">db.py · security.py · mailer.py</div>
+      <div class="label">db/ · security.py · mailer.py</div>
     </div>
   </div>
 
@@ -366,8 +367,8 @@
       </div>
       <div class="node c-yellow" data-node="db">
         <span class="tag">SQL layer</span>
-        <span class="name">db.py</span>
-        <span class="detail">psycopg 3 · users · sensor_readings · status_tag (dynamic columns) · dashboard_panels</span>
+        <span class="name">db/ (package)</span>
+        <span class="detail">psycopg 3 · app DB (localhost) vs per-plant pools · fan_out across selected datasources · all SQL lives here</span>
       </div>
       <div class="node c-pink" data-node="mailer">
         <span class="tag">Email</span>
@@ -460,21 +461,21 @@
       <div class="node c-cyan" data-node="grafana">
         <span class="tag">Optional</span>
         <span class="name">Grafana</span>
-        <span class="detail">Reads Postgres directly · embedded by <code>GrafanaPanel.vue</code> on Trends.</span>
+        <span class="detail">Optional external tool that reads Postgres directly. Not part of this app.</span>
       </div>
     </div>
   </div>
 
   <!-- ─────────── SPA ROUTES ─────────── -->
   <div class="layer">
-    <div class="layer-label">SPA routes (Vue Router · src/router/index.js)</div>
+    <div class="layer-label">SPA routes (React Router v7 · src/router/routes.jsx)</div>
     <div class="chip-grid">
       <div class="chip c-blue"     data-node="r-login">/login<small>public</small></div>
       <div class="chip c-blue"     data-node="r-reset">/reset-password<small>public</small></div>
-      <div class="chip c-green"    data-node="r-overview">/<small>OverviewPage</small></div>
+      <div class="chip c-green"    data-node="r-overview">/<small>redirects to /monitor</small></div>
       <div class="chip c-green"    data-node="r-devices">/devices<small>DevicesPage</small></div>
       <div class="chip c-yellow"   data-node="r-alarms">/alarms<small>AlarmsPage</small></div>
-      <div class="chip c-orange"   data-node="r-trends">/trends<small>+ embedded Grafana</small></div>
+      <div class="chip c-orange"   data-node="r-trends">/monitor<small>mimic + camera rail</small></div>
       <div class="chip c-teal"     data-node="r-live">/live<small>LivePage + LivePanel</small></div>
       <div class="chip c-purple"   data-node="r-settings">/settings<small>profile, password</small></div>
       <div class="chip c-red"      data-node="r-accounts">/accounts<small>admin only</small></div>
@@ -509,7 +510,7 @@
 
 <footer>
   <span>Docs · <a href="README.md">README.md</a> · <a href="MML_DEVELOPMENT.md">DEVELOPMENT.md</a> · <a href="CLAUDE.md">CLAUDE.md</a></span>
-  <span>Animated per-step backend view: <code>scada-mml-backend/python-backend-flow.html</code></span>
+  <span>Animated per-step backend view: <code>python-backend-flow.html</code></span>
 </footer>
 
 <script>

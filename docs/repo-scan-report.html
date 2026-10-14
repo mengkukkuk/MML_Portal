@@ -45,124 +45,120 @@
 </head>
 <body>
 <main>
-  <h1>DEV · repo-scan report</h1>
-  <p class="sub">Branch <code>tbc_poc</code> · depth <code>standard</code> · scanned 2026-10-01 · tracked files only unless noted</p>
+  <h1>DEV — repo-scan report</h1>
+  <p class="sub">Branch <code>tbc_poc</code> · depth <code>standard</code> · scanned 2026-10-14 (previous scan 2026-10-01) · tracked files only unless noted</p>
 
   <div class="kpis">
-    <div class="kpi"><b>589</b><span>tracked files</span></div>
-    <div class="kpi"><b>~67k</b><span>project code LOC (frontend + backend + installer)</span></div>
+    <div class="kpi"><b>565</b><span>tracked files (was 589)</span></div>
+    <div class="kpi"><b>~75k</b><span>project code LOC (frontend 53k + backend 21k + installer 1.7k)</span></div>
     <div class="kpi"><b>0</b><span>embedded third-party libraries in source</span></div>
-    <div class="kpi"><b>488</b><span>LOC of dead code removed (WirePicker kept)</span></div>
-    <div class="kpi"><b>~490 MB</b><span>untracked deps (all gitignored)</span></div>
+    <div class="kpi"><b>3,598 → 17 files</b><span><code>db.py</code> split into the <code>db/</code> package (4.5k LOC)</span></div>
+    <div class="kpi"><b>~1.3 GB</b><span>untracked, all gitignored (node_modules, venv, installer Output/staging/redist)</span></div>
   </div>
 
   <h2>Classification</h2>
   <div class="scroll"><table>
     <tr><th>Class</th><th>What</th><th class="n">Files</th><th class="n">LOC</th></tr>
-    <tr><td>Project code</td><td><code>scada-frontend</code> React 19 SPA</td><td class="n">330</td><td class="n">48,329</td></tr>
-    <tr><td>Project code</td><td><code>scada-mml-backend</code> FastAPI + psycopg3</td><td class="n">70</td><td class="n">17,773</td></tr>
-    <tr><td>Project code</td><td><code>installer</code> Inno Setup + PowerShell</td><td class="n">8</td><td class="n">1,175</td></tr>
-    <tr><td>Generated docs</td><td><code>docs/</code> (mostly self-contained HTML)</td><td class="n">27</td><td class="n">33,987</td></tr>
-    <tr><td>Third-party (vendored skills)</td><td><code>.claude/skills</code> + <code>.agents/skills</code>, source <code>mattpocock/skills</code></td><td class="n">133</td><td class="n">554</td></tr>
-    <tr><td>Build / IDE artifacts</td><td><code>.idea</code>, <code>.vite/deps</code>, <code>.tif</code></td><td class="n">~23</td><td class="n">–</td></tr>
+    <tr><td>Project code</td><td><code>scada-frontend</code> React 19 SPA (src: 39.4k JS/JSX + 12.2k CSS)</td><td class="n">364</td><td class="n">53,138</td></tr>
+    <tr><td>Project code</td><td><code>scada-mml-backend</code> FastAPI + psycopg3 (12.5k app, 6.2k tests, SQL)</td><td class="n">88</td><td class="n">20,903</td></tr>
+    <tr><td>Project code</td><td><code>installer</code> Inno Setup + PowerShell</td><td class="n">8</td><td class="n">1,700</td></tr>
+    <tr><td>Generated docs</td><td><code>docs/</code> (4 Markdown guides, self-contained HTML diagrams, visual-check PNGs)</td><td class="n">29</td><td class="n">38,476</td></tr>
+    <tr><td>Third-party (vendored skills)</td><td><code>.claude/skills</code>, source <code>mattpocock/skills</code> (the <code>.agents</code> mirror is no longer tracked)</td><td class="n">69</td><td class="n">5,892</td></tr>
   </table></div>
-  <p class="note">No vendored library source (FFmpeg/Boost-style) found. Third-party code lives in <code>node_modules</code> (347 MB), <code>venv</code> (80 MB), <code>.venv</code> (62 MB) and <code>dist</code> (6 MB), all correctly gitignored.</p>
+  <p class="note">No vendored library source (FFmpeg/Boost-style) found. Third-party code lives in <code>node_modules</code> (347 MB) and <code>venv</code> (100 MB), both gitignored. <code>installer/Output</code> (390 MB), <code>staging</code> (82 MB) and <code>redist</code> (381 MB) are build outputs and are ignored too.</p>
 
   <h2>Module verdicts</h2>
 
   <details open>
-    <summary><span class="tag core">Core asset</span><span class="name">scada-mml-backend/</span><span class="meta">17.8k LOC · 21 test files (4.9k LOC)</span></summary>
+    <summary><span class="tag core">Core asset</span><span class="name">scada-mml-backend/</span><span class="meta">12.5k app LOC · 26 test files (6.2k LOC)</span></summary>
     <div class="body"><ul>
-      <li>Healthy: 28% of backend LOC is tests; covers licensing, security secrets, schema coercion, report engines, camera files.</li>
-      <li><code>db.py</code> is 3,598 lines (154 KB) — one-fifth of the backend. Candidate to split by domain (tags, readings, mimic, cameras, config).</li>
-      <li>Dependency pins are mixed: <code>psycopg_pool&gt;=3.2</code> and <code>cryptography</code> are unpinned while everything else is exact; <code>pytest==7.4.0</code> is old.</li>
-      <li>Two parallel Python environments exist (<code>.venv</code> at root and <code>scada-mml-backend/venv</code>), ~142 MB combined.</li>
+      <li>Healthy: tests are about a third of the backend Python (6.2k of 18.7k lines) and cover licensing, secrets at rest, schema coercion and batching, report engines, camera files and thumbnails, the <code>db</code> facade and filter clauses.</li>
+      <li><b>Resolved since last scan:</b> <code>db.py</code> (3,598 lines) is now the <code>db/</code> package — <code>pool</code>, <code>fanout</code>, <code>tables</code>, <code>series</code>, <code>cameras</code>, <code>reports</code>, … — behind an <code>import db</code> facade (<code>tests/test_db_facade.py</code>).</li>
+      <li>New since last scan: cameras (<code>cameras.py</code>, <code>camera_files.py</code>, <code>camera_thumbs.py</code>), offline licensing (<code>licensing.py</code>), <code>system.py</code>, <code>production_log.py</code>, <code>vision_report_engine.py</code>, and <code>POST /schema/latest/batch</code>. Router count is now 15.</li>
+      <li>Dependency pins are still mixed: <code>psycopg_pool&gt;=3.2</code> and <code>cryptography</code> are unpinned while everything else is exact; <code>pytest==7.4.0</code> is old.</li>
+      <li><code>.env.example</code> lags the code: it says a blank <code>ENCRYPTION_KEY</code> "keeps plaintext behaviour", but <code>encrypt_secret</code> now fails closed. Its commented <code>LICENSE_FILE_PATH</code> sample (<code>C:\ProgramData\MMLPortal\license.lic</code>) also differs from the built-in default <code>C:\TBCLC\tbclicense.lic</code> in <code>config.py</code>, and <code>install.ps1</code> writes the license to the ProgramData path without setting the variable.</li>
     </ul></div>
   </details>
 
   <details>
-    <summary><span class="tag merge">Extract &amp; merge</span><span class="name">scada-mml-backend/ one-off scripts</span><span class="meta">7 files · 979 LOC</span></summary>
+    <summary><span class="tag merge">Extract &amp; merge</span><span class="name">scada-mml-backend/ one-off scripts</span><span class="meta">8 files</span></summary>
     <div class="body"><ul>
-      <li>Never imported: <code>_probe_alarms.py</code> (53), <code>_seed_alarms.py</code> (41) — underscore-prefixed scratch scripts; delete or move under <code>scripts/</code>.</li>
-      <li><code>simulate_data.py</code>, <code>simulate_events.py</code>, <code>seed_users.py</code>, <code>verify_license.py</code>, <code>migrate_config_to_local.py</code> are legitimate CLIs but sit beside runtime modules. Group into <code>scripts/</code> or fold into <code>plant_cli.py</code>.</li>
+      <li>Never imported: <code>_probe_alarms.py</code>, <code>_seed_alarms.py</code> — underscore-prefixed scratch scripts; delete or move under <code>scripts/</code>.</li>
+      <li><code>simulate_data.py</code>, <code>simulate_events.py</code>, <code>seed_users.py</code>, <code>verify_license.py</code>, <code>migrate_config_to_local.py</code> are legitimate CLIs but sit beside runtime modules. Group into <code>scripts/</code> or fold the shared target handling into <code>plant_cli.py</code>.</li>
     </ul></div>
   </details>
 
   <details open>
-    <summary><span class="tag core">Core asset</span><span class="name">scada-frontend/src</span><span class="meta">~48k LOC · 15 node:test files</span></summary>
+    <summary><span class="tag core">Core asset</span><span class="name">scada-frontend/src</span><span class="meta">~52k LOC · 25 node:test files (1.9k LOC)</span></summary>
     <div class="body"><ul>
-      <li><code>components/mimic</code> (75 files), <code>pages/monitor</code> (55), <code>components/report</code> (27), <code>components/live</code> (18) carry the product.</li>
-      <li>Tests only cover pure-logic modules (editor session/viewport/selection, report params, name families); no component or route tests.</li>
-      <li>Large files worth splitting: <code>MonitorPage.jsx</code> 1,842, <code>MimicCanvas.jsx</code> 1,177, <code>PanelEditorDialog.jsx</code> 1,057, <code>symbols/index.js</code> 863, <code>SymbolBindingDialog.jsx</code> 860.</li>
-      <li>Dependency set is current and lean (React 19, MUI 7, Vite 8, ECharts 6, TanStack Query 5, Zustand 5). <code>exceljs</code> is the heaviest runtime dep; confirm it is code-split.</li>
+      <li><code>pages/monitor</code> (85 files) and <code>components/mimic</code> (82) carry the product, followed by <code>components/report</code> (36) and <code>components/live</code> (18).</li>
+      <li><b>Resolved since last scan:</b> <code>MonitorPage.jsx</code> went from 1,842 to 304 lines — split into <code>view/</code> components and <code>hooks/</code> with pure, tested helpers (<code>layoutOps</code>, <code>editorSession</code>, <code>monitorStatus</code>, …). The stale <code>stores/devices.js</code> and <code>stores/alarms.js</code> are gone.</li>
+      <li>New: <code>latestBatcher.js</code> (one request per tick for all latest reads), trend modules (<code>trendDetail/Zoom/Refresh/Window</code>), <code>numberFormat.js</code>, camera rail/lightbox, per-panel text size and gauge setpoint columns, EN/TH <code>i18n</code>.</li>
+      <li>Tests still cover pure-logic modules only (editor, trend, report params, name families, batcher); there are no component or route tests.</li>
+      <li>Largest files still worth splitting: <code>MimicCanvas.jsx</code> 1,184, <code>PanelEditorDialog.jsx</code> 1,148, <code>SymbolOptions.jsx</code> 869, <code>symbols/index.js</code> 863, <code>SymbolBindingDialog.jsx</code> 860.</li>
+      <li>Dependency set is current and lean (React 19, MUI 7, Vite 8, ECharts 6, TanStack Query 5, Zustand 5). <code>exceljs</code> is already code-split (<code>import('@/utils/reportExport')</code> in <code>ReportPage</code>).</li>
     </ul></div>
   </details>
 
-  <details open>
-    <summary><span class="tag dep">Deprecate</span><span class="name">Dead frontend code</span><span class="meta">10 files · 488 LOC · removed</span></summary>
+  <details>
+    <summary><span class="tag dep">Deprecate</span><span class="name">Dead / unfinished frontend code</span><span class="meta">1 file</span></summary>
     <div class="body"><ul>
-      <li><code>pages/OverviewPage.jsx</code> + css — not imported; <code>/</code> redirects to <code>monitor</code> in <code>router/routes.jsx</code>. Still carries a Vue-era comment.</li>
-      <li><code>components/StatCard</code>, <code>components/GaugeTile</code>, <code>components/TrendChart</code> — used only by <code>OverviewPage</code>, so dead transitively.</li>
-      <li><code>stores/devices.js</code> (33) and <code>stores/alarms.js</code> (91) — no importers; only a doc comment in <code>DevicesPage.jsx</code> mentions them.</li>
-      <li><code>pages/monitor/WirePicker.jsx</code> + css (242) — not imported anywhere, but kept: it is the unfinished "wire pen" feature (commit 8c0e72c).</li>
+      <li><code>pages/monitor/WirePicker.jsx</code> + css — still not imported anywhere; kept as the unfinished "wire pen" feature. The rest of the previously listed dead set (<code>OverviewPage</code>, <code>StatCard</code>, <code>GaugeTile</code>, <code>TrendChart</code>, old stores) was removed.</li>
+      <li><code>pages/ap/</code> (A&amp;P page) renders fixture data from <code>apFixtures.js</code> — a prototype, not wired to the API. Its stylesheet (1,236 lines) is the largest in the repo.</li>
     </ul>
-    <p class="note">Detection is by import-name match plus manual confirmation of each item above; dynamic imports built from variable strings would not be seen.</p></div>
+    <p class="note">Detection is by import-name match plus manual confirmation; dynamic imports built from variable strings would not be seen.</p></div>
   </details>
 
   <details>
-    <summary><span class="tag core">Core asset</span><span class="name">installer/</span><span class="meta">8 files · 1.2k LOC</span></summary>
-    <div class="body"><ul><li>Inno Setup script plus build, redist fetch, postinstall, secret-protection and uninstall scripts. Small and focused; no issues found.</li></ul></div>
-  </details>
-
-  <details>
-    <summary><span class="tag merge">Extract &amp; merge</span><span class="name">docs/</span><span class="meta">27 files · ~4.5 MB</span></summary>
+    <summary><span class="tag core">Core asset</span><span class="name">installer/</span><span class="meta">8 files · 1.7k LOC</span></summary>
     <div class="body"><ul>
-      <li><code>CLAUDE.md</code> (16.6 KB) and <code>AGENTS.md</code> (15.6 KB) are near-duplicates; keep one canonical file and have the other point at it.</li>
-      <li><code>vue-render-flow.html</code> and Vue references in <code>CLAUDE.md</code>, <code>MML_DEVELOPMENT.md</code> and several architecture pages are stale — the frontend was converted to React and <code>package.json</code> has no Vue dependency.</li>
-      <li>Two 800 KB HTML pages plus 8 visual-check PNGs and 2 visual-check HTML/JSON files (~2.3 MB) are regeneration artifacts; consider not tracking them.</li>
-      <li><code>docs/.pr_body.md</code> is a leftover PR draft.</li>
+      <li>Inno Setup script plus build, redist fetch, postinstall, secret-protection and uninstall scripts.</li>
+      <li>Setup size work landed: Lite (~25 MB, PostgreSQL beside the setup) vs <code>-Full</code> (~400 MB), bundled Python trimmed of <code>pip</code> and <code>__pycache__</code>, and <code>.claude</code> excluded from the payload.</li>
+      <li>The wizard now always asks for the install folder; choosing a new one moves the install and carries <code>backend\.env</code> across (old folder left in place). This path has no automated test.</li>
     </ul></div>
   </details>
 
   <details>
-    <summary><span class="tag dep">Deprecate</span><span class="name">.claude/skills ⇄ .agents/skills</span><span class="meta">133 files · 2 mirrored trees</span></summary>
+    <summary><span class="tag merge">Extract &amp; merge</span><span class="name">docs/</span><span class="meta">29 files · ~4.5 MB</span></summary>
     <div class="body"><ul>
-      <li>The two trees are mirrors; only <code>mmlportal-patterns/SKILL.md</code> differs (a BOM, and <code>CLAUDE.md</code> vs <code>AGENTS.md</code> reference). <code>.claude</code> additionally holds a few extra skills.</li>
-      <li>Most skills come from the external <code>mattpocock/skills</code> repo (see <code>skills-lock.json</code>). Pick one canonical location and generate or symlink the other.</li>
+      <li>Refreshed in this pass: <code>README.md</code>, <code>MML_DEVELOPMENT.md</code>, <code>CLAUDE.md</code>, <code>AGENTS.md</code> (cameras, licensing, batching, trend, text size/setpoints, installer move, fail-closed secrets) and the node labels of <code>workflow.html</code> / <code>python-backend-flow.html</code>.</li>
+      <li><code>CLAUDE.md</code> and <code>AGENTS.md</code> remain near-duplicates; keep one canonical file and have the other point at it.</li>
+      <li><code>vue-render-flow.html</code> documents the pre-React frontend and is now marked superseded; <code>workflow.html</code> still narrates the original (pre-datasource-model) flow and is marked partly historical. Rebuild or delete them.</li>
+      <li>Two 800 KB HTML pages plus 8 visual-check PNGs and 2 visual-check HTML/JSON files (~2.3 MB) are regeneration artifacts; consider not tracking them. <code>docs/.pr_body.md</code> is a leftover PR draft.</li>
     </ul></div>
   </details>
 
   <details>
-    <summary><span class="tag dep">Deprecate</span><span class="name">Tracked artifacts</span><span class="meta">~23 files</span></summary>
+    <summary><span class="tag dep">Deprecate</span><span class="name">Tracked artifacts</span><span class="meta">a few files</span></summary>
     <div class="body"><ul>
-      <li><code>.idea/*</code> (14) and <code>scada-mml-backend/.idea/*</code> (4) — IDE state; <code>.idea/</code> is dirty in git status right now (<code>dataSources.xml</code>, <code>dbnavigator.xml</code>, …) and may hold DB connection details.</li>
-      <li><code>scada-frontend/.vite/deps/*</code> (2) — Vite cache, not in the root <code>.gitignore</code>.</li>
-      <li><code>scada-frontend/public/m_favicon.tif</code> — 1.2 MB TIFF that browsers will not use; only the PNG/SVG variants are needed.</li>
-      <li>Untracked <code>scada-mml-backend/reports_data_mapping.html</code> is a generated report; belongs in <code>docs/</code> or should be ignored.</li>
+      <li><code>verify_prod.log</code> is tracked although <code>*.log</code> is gitignored (committed before the rule).</li>
+      <li><code>.vscode/*</code>, <code>scada-frontend/.vscode/extensions.json</code> and <code>.codex/config.toml</code> are editor/tool state; decide whether they are team config or should be ignored.</li>
+      <li>Resolved since last scan: <code>.idea</code>, <code>.vite/deps</code>, the 1.2 MB TIFF favicon and the <code>.agents/skills</code> mirror are no longer tracked.</li>
     </ul></div>
   </details>
 
   <h2>Largest source files</h2>
   <div class="scroll"><table>
     <tr><th>File</th><th class="n">Lines</th><th>Relative size</th></tr>
-    <tr><td><code>scada-mml-backend/db.py</code></td><td class="n">3,598</td><td><div class="bar"><i style="width:100%"></i></div></td></tr>
-    <tr><td><code>pages/monitor/MonitorPage.jsx</code></td><td class="n">1,842</td><td><div class="bar"><i style="width:51%"></i></div></td></tr>
-    <tr><td><code>pages/ap/APPage.module.css</code></td><td class="n">1,236</td><td><div class="bar"><i style="width:34%"></i></div></td></tr>
-    <tr><td><code>pages/monitor/MimicCanvas.jsx</code></td><td class="n">1,177</td><td><div class="bar"><i style="width:33%"></i></div></td></tr>
-    <tr><td><code>pages/monitor/MonitorPage.module.css</code></td><td class="n">1,063</td><td><div class="bar"><i style="width:30%"></i></div></td></tr>
-    <tr><td><code>pages/live/PanelEditorDialog.jsx</code></td><td class="n">1,057</td><td><div class="bar"><i style="width:29%"></i></div></td></tr>
-    <tr><td><code>scada-mml-backend/mimic.py</code></td><td class="n">878</td><td><div class="bar"><i style="width:24%"></i></div></td></tr>
-    <tr><td><code>components/mimic/symbols/index.js</code></td><td class="n">863</td><td><div class="bar"><i style="width:24%"></i></div></td></tr>
+    <tr><td><code>scada-frontend/src/pages/ap/APPage.module.css</code></td><td class="n">1,236</td><td><div class="bar"><i style="width:100%"></i></div></td></tr>
+    <tr><td><code>scada-frontend/src/pages/monitor/MimicCanvas.jsx</code></td><td class="n">1,184</td><td><div class="bar"><i style="width:96%"></i></div></td></tr>
+    <tr><td><code>scada-frontend/src/pages/live/PanelEditorDialog.jsx</code></td><td class="n">1,148</td><td><div class="bar"><i style="width:93%"></i></div></td></tr>
+    <tr><td><code>scada-frontend/src/pages/monitor/MonitorPage.module.css</code></td><td class="n">1,063</td><td><div class="bar"><i style="width:86%"></i></div></td></tr>
+    <tr><td><code>scada-mml-backend/mimic.py</code></td><td class="n">878</td><td><div class="bar"><i style="width:71%"></i></div></td></tr>
+    <tr><td><code>scada-frontend/src/pages/monitor/SymbolOptions.jsx</code></td><td class="n">869</td><td><div class="bar"><i style="width:70%"></i></div></td></tr>
+    <tr><td><code>scada-frontend/src/components/mimic/symbols/index.js</code></td><td class="n">863</td><td><div class="bar"><i style="width:70%"></i></div></td></tr>
+    <tr><td><code>scada-frontend/src/pages/monitor/SymbolBindingDialog.jsx</code></td><td class="n">860</td><td><div class="bar"><i style="width:70%"></i></div></td></tr>
   </table></div>
+  <p class="note">The largest backend file is now <code>mimic.py</code> (878); the former 3,598-line <code>db.py</code> no longer exists (largest <code>db/</code> module: <code>tables.py</code>, 585).</p>
 
   <h2>Suggested next steps</h2>
   <div class="body" style="padding-left:0"><ol>
-    <li><s>Delete the dead frontend set</s> — done (488 LOC); <code>WirePicker</code> kept as in-progress work.</li>
-    <li><s>Untrack <code>.idea</code>, <code>.vite</code> and the TIFF; add to <code>.gitignore</code></s> — done.</li>
-    <li>Choose one of <code>.claude/skills</code> / <code>.agents/skills</code> and one of <code>CLAUDE.md</code> / <code>AGENTS.md</code> as canonical.</li>
-    <li>Remove or regenerate stale Vue-era docs.</li>
-    <li>Split <code>db.py</code> by domain; pin <code>psycopg_pool</code> and <code>cryptography</code>.</li>
-    <li>Housekeeping: <code>git prune</code> reports one garbage temp object at <code>.git/objects/04/tmp_obj_YGeKaU</code>.</li>
+    <li><s>Split <code>db.py</code> by domain</s> — done. <s>Delete the dead frontend set</s> — done (except <code>WirePicker</code>).</li>
+    <li>Align <code>.env.example</code> with the code (encryption key is required for saving datasource passwords; one license path) and decide where <code>install.ps1</code> should write the license.</li>
+    <li>Pin <code>psycopg_pool</code> and <code>cryptography</code>; bump <code>pytest</code>.</li>
+    <li>Pick one of <code>CLAUDE.md</code> / <code>AGENTS.md</code> as canonical; rebuild or delete <code>workflow.html</code> and <code>vue-render-flow.html</code>.</li>
+    <li><code>git rm --cached verify_prod.log</code>; decide on <code>.vscode</code> / <code>.codex</code>.</li>
+    <li>Split <code>MimicCanvas.jsx</code> and <code>PanelEditorDialog.jsx</code> along the same view/hooks lines used for <code>MonitorPage</code>.</li>
   </ol></div>
   <p class="note">Standard-depth scan: structure, imports, sizes and dependency manifests. Thread-safety, memory and API-consistency checks need <code>deep</code>.</p>
 </main>

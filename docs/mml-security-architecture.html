@@ -282,7 +282,7 @@
       <text x="691" y="338" fill="#3fb950" font-size="13" font-weight="700" text-anchor="middle">Query builder</text>
       <text x="691" y="359" fill="#8b949e" font-size="11" text-anchor="middle">values → %s parameters</text>
       <text x="691" y="379" fill="#8b949e" font-size="11" text-anchor="middle">names → allowlist + Identifier</text>
-      <text x="691" y="402" fill="#8b949e" font-size="10.5" text-anchor="middle">db.py is the only SQL author</text>
+      <text x="691" y="402" fill="#8b949e" font-size="10.5" text-anchor="middle">db/ is the only SQL author</text>
 
       <!-- zone: data -->
       <rect x="882" y="40" width="184" height="400" rx="10" fill="#0d1f14" stroke="#1e4a2c" stroke-dasharray="5 4"/>
@@ -1057,14 +1057,14 @@ _used_reset:      <span class="k">set</span>[<span class="k">str</span>] = <span
       <text x="556" y="200" fill="#58a6ff" font-size="11.5" font-weight="700" text-anchor="middle">Meanwhile: every <tspan font-family="monospace">value</tspan> — filter values, limits, time windows, ids — goes through %s parameters</text>
       <text x="556" y="222" fill="#8b949e" font-size="10.5" text-anchor="middle">Identifiers get validated-then-quoted. Values are never interpolated at all. The two paths are kept separate on purpose.</text>
     </svg>
-    <div class="svg-cap">The validation gate lives in <code>db.py</code>'s <code>_table_columns()</code> / <code>_safe_identifiers()</code> — every dynamic-SQL builder must pass through it first.</div>
+    <div class="svg-cap">The validation gate lives in <code>db/tables.py</code>'s <code>_table_columns()</code> / <code>_safe_identifiers()</code> — every dynamic-SQL builder must pass through it first.</div>
   </div>
 
   <div class="grid2">
     <div class="panel">
       <h3 class="g">What makes this sound</h3>
       <ul class="clean">
-        <li class="ok"><b>All SQL lives in one module.</b> <code class="inl">db.py</code> is the only file that writes queries — routers pass values, never fragments. One place to audit.</li>
+        <li class="ok"><b>All SQL lives in one package.</b> <code class="inl">db/</code> is the only file that writes queries — routers pass values, never fragments. One place to audit.</li>
         <li class="ok"><b>Allowlist, not sanitisation.</b> A name is accepted only if PostgreSQL itself reports it as an existing base table/column. There is no escaping heuristic to bypass.</li>
         <li class="ok"><b>Then still quoted.</b> Even a validated name goes through <code class="inl">sql.Identifier</code> rather than string concatenation — defence in depth against a name containing quotes or case surprises.</li>
         <li class="ok"><b>Bounded input.</b> Pydantic <code class="inl">Query</code> constraints cap <code class="inl">limit</code> at 2000 and the series window at 10080 minutes, so a single call cannot ask for unbounded work.</li>
@@ -1072,7 +1072,7 @@ _used_reset:      <span class="k">set</span>[<span class="k">str</span>] = <span
     </div>
     <div class="panel">
       <h3>The f-strings that are not injection</h3>
-      <pre><span class="c"># db.py — looks alarming, is not</span>
+      <pre><span class="c"># db/ — looks alarming, is not</span>
 select_metrics = <span class="s">", "</span>.join(
     <span class="k">f</span><span class="s">'{_FIELD_DB_COLUMN.get(f, f)} AS {f}'</span>
     <span class="k">for</span> f <span class="k">in</span> fields)          <span class="c"># ← from _discover_tag_fields()</span>
@@ -1163,9 +1163,9 @@ sql = <span class="k">f</span><span class="s">"SELECT tag_name, active, … {sel
           <td>Password guessing and mail-flooding are bounded only by scrypt cost and network speed.</td>
         </tr>
         <tr>
-          <td><b>10 · Datasource passwords stored plaintext</b></td>
-          <td><code>db.py</code> — <code>password TEXT</code></td>
-          <td>Deliberate parity with the app's own <code>.env</code> credential. Mitigated by the public projection and the table denylist; DB-file read access still yields them.</td>
+          <td><b>10 · Datasource passwords at rest</b></td>
+          <td><code>security.py</code> <code>encrypt_secret</code> · <code>db/datasources.py</code></td>
+          <td>Resolved since this table was written: passwords are Fernet-encrypted (<code>fernet$</code> prefix) and writes fail closed without a valid key. The installer provisions a DPAPI-wrapped key in ProgramData; legacy plaintext rows are swept at boot and undecryptable rows surface as <code>recovery_required</code> on <code>/api/system/db</code>. Residual risk: the key must be backed up, and anyone with the key and DB access can decrypt.</td>
         </tr>
         <tr>
           <td><b>11 · <code>/api/schema/*</code> open to operators</b></td>
@@ -1191,14 +1191,14 @@ sql = <span class="k">f</span><span class="s">"SELECT tag_name, active, … {sel
         <li class="ok">SQL identifiers allowlisted then quoted; values always parameterized</li>
         <li class="ok"><code class="inl">SENSITIVE_TABLES</code> keeps credential tables off the charting surface</li>
         <li class="ok"><code class="inl">mathExpr.js</code> parses instead of evaluating — no <code class="inl">eval</code>, no <code class="inl">Function</code></li>
-        <li class="ok">All SQL confined to <code class="inl">db.py</code></li>
+        <li class="ok">All SQL confined to <code class="inl">db/</code></li>
       </ul>
     </div>
     <div class="panel">
       <h3 class="p">Scope of this document</h3>
       <p style="color:var(--muted); line-height:1.7;">This is a design document describing the security architecture as implemented on branch <code class="inl">react_cvt</code>, read from source. It is not a penetration test and not an exhaustive audit — nothing here was verified by running exploits against a deployment.</p>
       <p style="color:var(--muted); line-height:1.7; margin-top:12px;">The limitations listed above are the ones legible from reading the code. Absence from this list is not evidence of absence.</p>
-      <div class="note">Files read: <code class="inl">security.py</code>, <code class="inl">auth.py</code>, <code class="inl">config.py</code>, <code class="inl">main.py</code>, <code class="inl">db.py</code>, <code class="inl">schema.py</code>, <code class="inl">datasources.py</code>, <code class="inl">mailer.py</code>, <code class="inl">seed_users.py</code>, <code class="inl">client.js</code>, <code class="inl">stores/auth.js</code>, <code class="inl">RequireAuth.jsx</code>, <code class="inl">mathExpr.js</code>, <code class="inl">web.config</code>, <code class="inl">.env.example</code>, <code class="inl">package.json</code>.</div>
+      <div class="note">Files read: <code class="inl">security.py</code>, <code class="inl">auth.py</code>, <code class="inl">config.py</code>, <code class="inl">main.py</code>, <code class="inl">db/</code>, <code class="inl">schema.py</code>, <code class="inl">datasources.py</code>, <code class="inl">mailer.py</code>, <code class="inl">seed_users.py</code>, <code class="inl">client.js</code>, <code class="inl">stores/auth.js</code>, <code class="inl">RequireAuth.jsx</code>, <code class="inl">mathExpr.js</code>, <code class="inl">web.config</code>, <code class="inl">.env.example</code>, <code class="inl">package.json</code>.</div>
     </div>
   </div>
 </section>

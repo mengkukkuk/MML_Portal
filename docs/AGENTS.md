@@ -107,18 +107,24 @@ The single most important split in this codebase.
 ### Backend Layout
 | File | Role |
 |------|------|
-| `main.py` | FastAPI app factory, CORS middleware, 12 router mounts, `init_*` table-creation calls on startup |
+| `main.py` | FastAPI app factory, CORS middleware, 15 router mounts (auth, users, readings, tags, schema, panels, dashboards, datasources, mimic, events, alarms, reports, cameras, system, license), `init_*` table-creation calls on startup |
 | `auth.py` | 8 auth endpoints (login, register, me, refresh, logout, change-password, forgot-password, reset-password) |
 | `users.py` | Admin CRUD at `/api/users` |
 | `readings.py` | `/api/readings/*` — devices, metrics, latest reading, sliding-window series (reads `public.sensor_readings`) |
 | `tags.py` | `/api/tags/*` — distinct tag names, dynamic numeric fields, latest row from `public.variables_tag` |
 | `panels.py` | `/api/panels/*` — CRUD for the admin-managed Live dashboard (`dashboard_panels` table); admin token gates writes |
-| `schema.py` | `/api/schema/*` — table/column introspection for generic data source bindings in Live panels |
+| `schema.py` | `/api/schema/*` — table/column introspection for generic data source bindings in Live panels, plus `/rows` (newest N rows for the Monitor `table` symbol), `/series` (epoch-aligned min/max bucketing for the Trend) and `POST /latest/batch` (many bindings' latest value in one request — see `latestBatcher.js`) |
 | `dashboards.py` | `/api/dashboards/*` — multi-board grouping for Live panels (admin token gates writes) |
 | `datasources.py` | `/api/datasources/*` — plant connection CRUD (admin gates writes; test endpoint probes real connections) **and** `/selection` GET/PUT/DELETE, the per-user header choice (any role, max 8) |
 | `sources.py` | `SourceReport` — the per-source `ok`/`error` block every fanned-out response carries, plus a tz-safe sort key for merging plants |
 | `mimic.py` | `/api/mimic/*` — layout CRUD for `/monitor` drawings, asset uploads, symbol/wire binding validation (admin token gates writes) |
-| `cameras.py` | `/api/cameras/*` — required camera-source selection, camera-code binding options, remote defect summaries, and read-only folder-backed NG frames |
+| `cameras.py` | `/api/cameras/*` — required camera-source selection (`link-source`), camera-code binding options, remote defect summaries, and read-only folder-backed NG/OK frames with `/thumb` previews |
+| `camera_files.py` | Only module that touches the inspection-image folder (`CAMERA_IMAGE_ROOT/<code>/NG|OK/<date>/…`); newest date folder only, callers address frames by integer id, never by filename; traversal-hardened and DB/HTTP-free |
+| `camera_thumbs.py` | Bounded LRU cache of small JPEG previews (Pillow) for the camera film strip; never raises into a request — falls back to the original bytes |
+| `licensing.py` | Offline Ed25519-signed license (`LICENSE_FILE_PATH`, default `C:\TBCLC\tbclicense.lic`): states `missing`/`valid`/`grace`/`blocked`; `GET /api/license/status` (public), `POST /api/license/activate` (admin); `require_valid_license` gates every data router and `require_entitlement("reports")` gates reports. `verify_license.py` is the installer's CLI check |
+| `system.py` | `/api/system/db` — admin-only app-DB + per-datasource health, credential-encryption status |
+| `production_log.py` | Pure hourly aggregation of cumulative PLC production counters (counter resets handled) |
+| `vision_report_engine.py` | Pure camera-QC report math (defect pareto/matrix/period buckets) — the vision counterpart of `report_engine.py` |
 | `events.py` | `/api/events/*` — read-only event-log endpoints backing the Events page |
 | `alarms.py` | `/api/alarms/*` — read-only alarm-log endpoints with Acknowledge action for the Alarms page |
 | `reports.py` | `/api/reports/*` — OEE/MES reporting: template CRUD (admin token gates template writes), report runs, CSV/Excel export |
@@ -137,22 +143,23 @@ Password hash format: `scrypt$<salt_hex>$<digest_hex>` (no third-party wheel nee
 
 ### Frontend Layout
 - `src/pages/` — root pages: `DevicesPage`, `AlarmsPage`, `EventPage`, `LoginPage`,
-  `ResetPasswordPage`, `SettingsPage`, `AccountsPage` (admin-only), `NotFoundPage`; plus subdirs:
+  `ResetPasswordPage`, `SettingsPage`, `AccountsPage` (admin-only), `ActivateLicensePage` (rendered by `App.jsx` instead of the shell while the license is `missing`/`blocked`), `NotFoundPage`; plus subdirs:
+  - `pages/ap/` — **`APPage`** (`/ap`, A&P analysis/prediction prototype; data is fixtures in `apFixtures.js`, not the API)
   - `pages/live/` — **`LivePage`** (admin-managed live grid), `DashboardSwitcher`, `PanelEditorDialog`, `ParamFields`, `panelPayload.js`
-  - `pages/monitor/` — **`MonitorPage`** (interactive SCADA mimic), `MimicCanvas`, `MimicSwitcher`, `DetailRail`, `NodeInspector`, `EdgeInspector`, `SymbolPalette`, `SymbolBindingDialog`, `CustomSymbolDialog`, `WirePicker`, `defaultLayout.js`, `layoutDoc.js`
-  - `pages/reports/` — **`ReportPage`** (viewer), `ReportBuilderPage` (admin-only template editor)
+  - `pages/monitor/` — **`MonitorPage`** (interactive SCADA mimic), `MimicCanvas`, `MimicSwitcher`, `DetailRail`, `NodeInspector`, `EdgeInspector`, `SymbolPalette`, `SymbolBindingDialog`, `CustomSymbolDialog`, `WirePicker`, `CameraRail`/`CameraLightbox` (NG/OK film strip, zoom/pan/pinch), `KpiStrip`/`KpiBindingDialog`, `ProductionLogDrawer`, `defaultLayout.js`, `layoutDoc.js`; the page is split into `view/` (`MimicViewer`, `MimicEditor`, `OverviewPanel`, `AttentionStrip`, …) and `hooks/` (`useMimicDocument`, `useLayoutEdits`, `useEditLifecycle`, …), with pure helpers (`layoutOps.js`, `editorSession.js`, `monitorStatus.js`, …) unit-tested
+  - `pages/reports/` — **`ReportPage`** (viewer), `ReportBuilderPage` (admin-only template editor); the signal trend lives in `components/report/` (`TrendRail`, `TrendToolbar`, `useTrendViewport`)
   - All guarded by `RequireAuth` element wrapper in `src/router/routes.jsx` (react-router-dom v7 `createBrowserRouter`)
-- `src/stores/` — Zustand stores: `auth`, `users`, `devices`, `alarms`, `connection`
+- `src/stores/` — Zustand stores: `auth`, `connection`, `license`, `settings` (per-browser prefs, e.g. default poll interval), `datasourceSelection` (mirror of the server-owned header selection; its `selectionKey` goes into query keys so a plant switch reseeds series)
 - `src/api/` — thin Axios wrappers per domain (`auth`, `users`, `devices`, `alarms`, `readings`, `tags`,
-  `panels`, `dashboards`, `datasources`, `schema`, `events`, `mimic`, `mimicAssets`, `reports`)
+  `panels`, `dashboards`, `datasources`, `schema`, `events`, `mimic`, `mimicAssets`, `reports`, `cameras`, `license`, `health`; `latestBatcher.js` coalesces per-binding latest reads within a 10 ms window into one `POST /schema/latest/batch`)
 - `src/components/` — shared UI: `AppHeader`, `AppSidebar`,
   `ConnectionPill`, plus subdirs:
-  - `components/live/` — **`LivePanel`** (Grafana-style single-tile renderer), `usePanelPolling.js`, `usePanelSeries.js`
+  - `components/live/` — **`LivePanel`** (Grafana-style single-tile renderer), `usePanelPolling.js`, `usePanelSeries.js`, `options/*.js` (one ECharts option builder per viz type)
   - `components/charts/` — `EChart.jsx` (echarts wrapper)
   - `components/mimic/` — symbol rendering: `symbols/` with per-device-type React components (Ats.jsx, Crah.jsx, Generator.jsx, Ups.jsx, Pdu.jsx, Rack.jsx, IpCamera.jsx, Lighting.jsx, ColdAisle.jsx, PcBased.jsx, CustomSymbol.jsx); plus `dynamics.js`, `wireTypes.jsx`, helpers (`deriveTag.js`, `useAssetUrl.js`, `useMimicPlant.js`, `useMockPlant.js`, `usePlantData.js`, `useValueTransition.js`, `tagStatus.js`, `mockPlant.js`), `InstrumentBubble.jsx`
-  - `components/report/` — `ReportFilterBar.jsx`, `reportFormat.js`, `reportRange.js`, plus `blocks/` with KpiStrip, SummaryTable, AlarmSummary, DowntimePareto, StateTimeline, RawLogTable, ReportBlock
+  - `components/report/` — `ReportFilterBar.jsx`, `reportFormat.js`, `reportRange.js`, plus `blocks/` with KpiStrip, SummaryTable, AlarmSummary, DowntimePareto, StateTimeline, RawLogTable, ReportBlock, and the trend modules (`trendWindow`, `trendZoom`, `trendDetail`, `trendRefresh`, `trendParams`, `readingGroups`)
 - `src/utils/` — `mathExpr.js` (safe per-panel value-transform evaluator, no `eval`/`Function`),
-  `seriesPalette.js` (deterministic per-series colour assignment), `reportExport.js` (CSV/Excel export)
+  `seriesPalette.js` (deterministic per-series colour assignment), `reportExport.js` (CSV/Excel export), `numberFormat.js` (en-US digit grouping, pinned so plant-PC locale can't change separators); `src/i18n/` provides EN/TH UI strings (`useTranslation`, see `src/i18n/README.md`)
 
 ### Live dashboard
 `/live` is admin-curated: panels are persisted in Postgres (`dashboard_panels` table)
@@ -165,6 +172,8 @@ and each tile self-polls at one of the whitelisted intervals (5s, 30s, 1m, 10m,
   so new numeric columns appear after a service restart with no schema PR.
   Multi-tag panels (`panel.options.tags`) overlay several tags as separate
   coloured series in one tile.
+
+Panels also take `options.titleSize` / `options.textSize` (`S`/`M`/`L`/`XL` → 0.85/1/1.25/1.5×, applied by `scaleFonts` over the finished ECharts option and via CSS), and gauge panels can bind warn/critical **setpoint columns** (panel-wide or per series) that are read live from the same table/filter row and fall back to the typed numbers (`gaugeLimitColsFor`, `fetchGaugeLimits`).
 
 Per-panel `options.transform` accepts a tiny expression (`value`, `+ - * / ^`,
 `abs/sqrt/pow/min/max/floor/ceil/round`) so a raw count can be displayed as
@@ -210,8 +219,8 @@ back to `SMTP_HOST=…`. Leave both empty in dev to log reset links to the
 service log instead.
 
 ## Key Docs
-- `MML_DEVELOPMENT.md` — full architecture reference, every API endpoint, schemas, local dev walkthrough
-- `README.md` — production deployment on Windows (NSSM + IIS + PostgreSQL 18) and the one-shot installer
-- `workflow.html` — interactive end-to-end system workflow (open in a browser)
-- `scada-mml-backend/python-backend-flow.html` — animated per-step backend request flow
+- `docs/MML_DEVELOPMENT.md` — full architecture reference, every API endpoint, schemas, local dev walkthrough
+- `docs/README.md` — production deployment on Windows (NSSM + IIS + PostgreSQL 18) and the one-shot installer
+- `docs/workflow.html` — interactive end-to-end system workflow (open in a browser)
+- `docs/python-backend-flow.html` — animated per-step backend request flow
 - `verify_prod.ps1` — smoke-test script for production health checks
