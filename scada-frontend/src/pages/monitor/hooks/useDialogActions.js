@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import { blankKpi } from '../kpiBoxes'
+import { blankKpi, withKpiWidth } from '../kpiBoxes'
 
 /**
  * What the binding, headline-number and production-log dialogs do to the draft
@@ -59,6 +59,13 @@ export default function useDialogActions({
     notify('Headline number updated in the draft.')
   }, [commitKpis, kpis, notify, setEditingKpi])
 
+  // A width change is a draft edit like any other (undoable, saved with the
+  // document). No toast: it is a direct manipulation and the box moving is the
+  // confirmation. `null` puts the box back to automatic.
+  const resizeKpi = useCallback((id, width) => {
+    commitKpis(kpis.map((kpi) => (kpi.id === id ? withKpiWidth(kpi, width) : kpi)))
+  }, [commitKpis, kpis])
+
   const removeKpi = useCallback(() => {
     if (!editingKpi) return
     commitKpis(kpis.filter((kpi) => kpi.id !== editingKpi.id))
@@ -67,6 +74,6 @@ export default function useDialogActions({
   }, [commitKpis, editingKpi, kpis, notify, setEditingKpi])
 
   return {
-    openBinding, applyBinding, applyProductionLog, commitKpis, addKpi, applyKpi, removeKpi,
+    openBinding, applyBinding, applyProductionLog, commitKpis, addKpi, applyKpi, resizeKpi, removeKpi,
   }
 }

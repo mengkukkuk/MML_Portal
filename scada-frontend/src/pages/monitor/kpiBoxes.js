@@ -30,6 +30,41 @@
  */
 export const KPI_LIMIT = 6
 
+/**
+ * How wide a box may be made, in CSS px.
+ *
+ * A box with no `width` is "auto": it takes an equal share of whatever the row
+ * has left, which is what every strip did before widths existed and what every
+ * stored document still means. A number pins the box to exactly that many px so
+ * a long figure (a lifetime production count runs to 10+ digits) can be given
+ * the room it needs instead of being clipped with an ellipsis.
+ *
+ * The floor keeps a box wide enough to grab and still read a label; the ceiling
+ * keeps one box from claiming a whole row of a wall display by accident.
+ */
+export const KPI_MIN_WIDTH = 96
+export const KPI_MAX_WIDTH = 640
+
+/** A width a box can legally hold, or null for "auto" (anything not a number). */
+export function clampKpiWidth(width) {
+  const n = typeof width === 'number' ? width : Number.NaN
+  if (!Number.isFinite(n)) return null
+  return Math.min(KPI_MAX_WIDTH, Math.max(KPI_MIN_WIDTH, Math.round(n)))
+}
+
+/**
+ * The same box with `width` applied, or with the key removed for auto.
+ *
+ * Removed rather than set to null so a box nobody has resized serialises
+ * exactly as it always did — a layout document should not change just because
+ * this build learned about widths.
+ */
+export function withKpiWidth(kpi, width) {
+  const { width: _previous, ...rest } = kpi
+  const next = clampKpiWidth(width)
+  return next == null ? rest : { ...rest, width: next }
+}
+
 /** Matches the repo's node/edge id convention: prefix, base36 clock, counter. */
 let addCounter = 0
 export function newKpiId() {
@@ -54,11 +89,13 @@ export function kpiIsBound(kpi) {
 
 /** The fields a box is allowed to carry, and nothing else. */
 function cleanKpi(kpi, id) {
+  const width = clampKpiWidth(kpi.width)
   return {
     id,
     label: typeof kpi.label === 'string' ? kpi.label : '',
     labelEn: typeof kpi.labelEn === 'string' ? kpi.labelEn : '',
     binding: kpi.binding ?? null,
+    ...(width == null ? {} : { width }),
   }
 }
 

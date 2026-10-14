@@ -212,6 +212,7 @@ export default function MonitorPage() {
             onEdit={ui.setEditingKpi}
             onAdd={actions.addKpi}
             onReorder={actions.commitKpis}
+            onResize={actions.resizeKpi}
           />
         )}
       />

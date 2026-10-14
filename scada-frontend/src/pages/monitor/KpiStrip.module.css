@@ -6,8 +6,8 @@
  * across a room. */
 
 .strip {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 1px;
   margin: 0 0 var(--space-4);
   background: var(--border-soft);
@@ -26,8 +26,40 @@
   max-width: 760px;
 }
 
+/* One slot in the row. Auto (the default) takes an equal share of what the row
+ * has left, never less than 170px — what `repeat(auto-fit, minmax(170px, 1fr))`
+ * used to do. A sized cell is exactly --kpi-w wide, set from the box's stored
+ * width, and never wider than the strip so a stale 600px on a narrow screen
+ * wraps instead of overflowing. */
+.cell {
+  position: relative;
+  display: flex;
+  flex: 1 1 170px;
+  min-width: 0;
+}
+
+.cellSized {
+  flex: 0 0 var(--kpi-w);
+  max-width: 100%;
+}
+
+/* While the grip is held the box tracks the pointer; a transition here would
+ * make it lag behind. */
+.cellResizing {
+  user-select: none;
+}
+
+/* Takes the leftover room when every box is pinned, in the panel colour so the
+ * hairline-coloured strip background does not show through as a block. */
+.fill {
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--bg-panel);
+}
+
 .box {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 1px;
   min-width: 0;
@@ -75,6 +107,9 @@
   color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
+  /* One line always: ellipsis only works on a single line, and a figure that
+   * wrapped would grow the box and shove the drawing below it down. */
+  white-space: nowrap;
 }
 
 .stripInBanner .value {
@@ -125,7 +160,52 @@
   background: var(--accent-soft);
 }
 
+/* The resize handle: a thin strip on the cell's right edge, invisible until the
+ * pointer or keyboard arrives. It overlays the box rather than taking space, so
+ * showing it never moves a figure. */
+.grip {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.grip::after {
+  content: '';
+  position: absolute;
+  top: 25%;
+  right: 3px;
+  bottom: 25%;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--border);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.cell:hover .grip::after,
+.grip:hover::after,
+.grip:focus-visible::after,
+.cellResizing .grip::after {
+  opacity: 1;
+}
+
+.grip:hover::after,
+.grip:focus-visible::after,
+.cellResizing .grip::after {
+  background: var(--accent);
+}
+
+.grip:focus-visible {
+  outline: none;
+}
+
 .add {
+  flex: 1 1 170px;
   display: flex;
   flex-direction: column;
   align-items: center;

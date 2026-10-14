@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  blankKpi, KPI_LIMIT, kpiIsBound, kpiPollNodes, newKpiId, normalizeKpis, readKpis,
+  blankKpi, clampKpiWidth, KPI_LIMIT, KPI_MAX_WIDTH, KPI_MIN_WIDTH, kpiIsBound, kpiPollNodes,
+  newKpiId, normalizeKpis, readKpis, withKpiWidth,
 } from './kpiBoxes.js'
 
 
@@ -132,4 +133,42 @@ test('reading caps and survives junk the same way normalize does', () => {
   assert.deepEqual(readKpis([null, 7, 'nope']), [])
   const many = Array.from({ length: KPI_LIMIT + 4 }, (_, i) => bound(`kpi-${i}`))
   assert.equal(readKpis(many).length, KPI_LIMIT)
+})
+
+// --- widths -----------------------------------------------------------------
+
+test('a box nobody has resized carries no width key at all', () => {
+  const [out] = normalizeKpis([bound('kpi-a')])
+  assert.equal('width' in out, false)
+  assert.equal('width' in readKpis([bound('kpi-a')])[0], false)
+})
+
+test('a stored width survives normalize and read, rounded to whole px', () => {
+  const stored = [{ ...bound('kpi-a'), width: 312.6 }]
+  assert.equal(normalizeKpis(stored)[0].width, 313)
+  assert.equal(readKpis(stored)[0].width, 313)
+})
+
+test('widths are clamped into the legal range', () => {
+  assert.equal(clampKpiWidth(1), KPI_MIN_WIDTH)
+  assert.equal(clampKpiWidth(99999), KPI_MAX_WIDTH)
+  assert.equal(clampKpiWidth(200), 200)
+})
+
+test('anything that is not a finite number means auto', () => {
+  for (const bad of [null, undefined, '300', Number.NaN, Infinity, {}, []]) {
+    assert.equal(clampKpiWidth(bad), null)
+    assert.equal('width' in normalizeKpis([{ ...bound('kpi-a'), width: bad }])[0], false)
+  }
+})
+
+test('withKpiWidth sets, replaces and clears without touching the rest', () => {
+  const kpi = bound('kpi-a')
+  const wide = withKpiWidth(kpi, 300)
+  assert.equal(wide.width, 300)
+  assert.equal(wide.id, 'kpi-a')
+  assert.deepEqual(wide.binding, kpi.binding)
+  assert.equal(withKpiWidth(wide, 420).width, 420)
+  assert.equal('width' in withKpiWidth(wide, null), false)
+  assert.equal(kpi.width, undefined, 'the input is not mutated')
 })
