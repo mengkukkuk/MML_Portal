@@ -12,12 +12,12 @@ import EChart from '@/components/charts/EChart'
 import { fetchSchemaValues } from '@/api/schema'
 import { colorAt } from '@/utils/seriesPalette'
 import {
-  usePanelSeries, buildSeriesList, computeAlertSeries, POLL_INTERVALS, TIME_RANGES,
+  usePanelSeries, buildSeriesList, computeSeriesAlerts, POLL_INTERVALS, TIME_RANGES,
 } from './usePanelSeries'
 import { usePanelPolling } from './usePanelPolling'
 import {
   buildGenericOption, buildGaugeOption, buildStatSparklineOption, buildTableRows,
-  thresholdColor, fmtValue, textScaleOf, scaleFonts,
+  thresholdColor, fmtValue, textScaleOf, scaleFonts, alertPillText, gaugeParamsFor,
 } from './options'
 import styles from './LivePanel.module.css'
 
@@ -101,9 +101,11 @@ export default function LivePanel({
   )
   const isMulti = seriesList.length > 1
 
-  // Series currently in alert — de-duped union of every true condition's
-  // referenced series, recomputed each poll via the hydrated seriesList.
-  const alertSeries = useMemo(() => computeAlertSeries(panel, seriesList), [panel.options, seriesList])
+  // Alerts per series ({ [key]: { level, op, limit, text } }), each series
+  // judged on its own row; recomputed each poll via the hydrated seriesList.
+  const seriesAlertMap = useMemo(() => computeSeriesAlerts(panel, seriesList), [panel.options, seriesList])
+  // Header pills for every viz type except gauge, which draws them in the dial.
+  const headerAlerts = vizType === 'gauge' ? [] : seriesList.filter((s) => seriesAlertMap[s.key])
 
   // Single-value header (first/only series).
   const firstLatest = seriesList[0]?.latest || null
@@ -295,9 +297,20 @@ export default function LivePanel({
 
       {error && <p className={styles.panel__error}>{error}</p>}
 
-      {alertSeries.length > 0 && (
-        <div className={styles.panel__alert} role="status">
-          {alertSeries.join(', ')} ALERTS
+      {headerAlerts.length > 0 && (
+        <div className={styles.panel__alerts} role="status">
+          {headerAlerts.map((s) => {
+            const alert = seriesAlertMap[s.key]
+            return (
+              <span
+                key={s.key}
+                className={`${styles.panel__alert} ${styles[`panel__alert--${alert.level}`]}`}
+                title={alert.text}
+              >
+                {s.label} · {alertPillText(alert, opts.decimals)}
+              </span>
+            )
+          })}
         </div>
       )}
 
@@ -363,18 +376,26 @@ export default function LivePanel({
 
       {vizType === 'gauge' && (
         <div className={`${styles.panel__minis} ${isMulti ? styles['panel__minis--multi'] : ''}`}>
-          {seriesList.map((s, i) => (
-            <div key={s.key} className={styles.panel__minicell}>
-              <EChart
-                key={`gauge-${s.key}`}
-                className={styles.panel__minichart}
-                option={scaleFonts(buildGaugeOption(s, i, opts, isMulti), textScale)}
-              />
-              {isMulti && (
-                <span className={styles.panel__minilabel} style={{ color: colorAt(i) }}>{s.label}</span>
-              )}
-            </div>
-          ))}
+          {seriesList.map((s, i) => {
+            const alert = seriesAlertMap[s.key] || null
+            return (
+              <div key={s.key} className={styles.panel__minicell} title={alert?.text}>
+                <EChart
+                  key={`gauge-${s.key}`}
+                  className={styles.panel__minichart}
+                  option={scaleFonts(buildGaugeOption(s, i, opts, isMulti, alert), textScale)}
+                />
+                {isMulti && (
+                  <span className={styles.panel__minilabel} style={{ color: colorAt(i) }}>{s.label}</span>
+                )}
+                {alert && (
+                  <span className={styles.panel__srOnly} role="status">
+                    {s.label} {alertPillText(alert, gaugeParamsFor(s, opts).decimals)}
+                  </span>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
 

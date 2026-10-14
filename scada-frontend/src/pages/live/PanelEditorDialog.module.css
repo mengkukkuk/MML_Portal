@@ -291,7 +291,13 @@
 
 .condActions {
   display: flex;
+  align-items: center;
   gap: 4px;
+}
+
+.condLevel {
+  width: 112px;
+  flex: 0 0 112px;
 }
 
 /* --- column pickers ------------------------------------------------------ */

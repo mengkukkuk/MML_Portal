@@ -43,6 +43,25 @@ export function gaugeLimitColsFor(spec, opts = {}) {
 
 const clamp01 = (f) => Math.min(1, Math.max(0, f))
 
+const LEVEL_WORDS = {
+  warning: { full: 'WARNING', short: 'WARN' },
+  critical: { full: 'CRITICAL', short: 'CRIT' },
+}
+
+/**
+ * Alert pill text: the level plus the limit that was crossed, e.g.
+ * "CRITICAL > 250". `short` abbreviates the level for small multiples, whose
+ * cells can shrink to ~84px. A level-only alert (the series only appears on a
+ * condition's right-hand side) prints just the level.
+ */
+export function alertPillText(alert, decimals, short = false) {
+  if (!alert) return ''
+  const words = LEVEL_WORDS[alert.level] || LEVEL_WORDS.warning
+  const level = short ? words.short : words.full
+  if (!alert.op || !Number.isFinite(alert.limit)) return level
+  return `${level} ${alert.op} ${groupDigits(alert.limit, decimals)}`
+}
+
 /**
  * Dial band as ECharts axisLine stops. The normal range is a neutral track,
  * never the series colour: the palette contains the same amber/red family as
@@ -74,8 +93,13 @@ export function gaugeBandStops({ min, span, warn, crit }, { track, warnZ, critZ 
  *   3. needle — the live value; ink-coloured while normal, alarm-coloured
  *      (with glow) once it crosses a limit. The hub keeps the series colour
  *      so each small multiple still matches its label.
+ *
+ * `alert` (from seriesAlerts) draws this series' alert pill inside the dial,
+ * between the hub and the value readout, as the needle series' title — so it
+ * stays anchored to the dial geometry at any cell size and scales with the
+ * panel's text size like every other label.
  */
-export default function buildGaugeOption(spec, index, opts = {}, isMulti = false) {
+export default function buildGaugeOption(spec, index, opts = {}, isMulti = false, alert = null) {
   const { min, max, decimals, warn, crit } = gaugeParamsFor(spec, opts)
   const span = max - min || 1
   const seriesColor = colorAt(index)
@@ -152,10 +176,32 @@ export default function buildGaugeOption(spec, index, opts = {}, isMulti = false
     data: marks,
   }
 
+  const alertC = alert ? (alert.level === 'critical' ? critC : warnC) : null
+  const pill = alert && {
+    show: true,
+    offsetCenter: [0, '20%'],
+    color: alertC,
+    fontSize: isMulti ? 9 : 11,
+    fontWeight: 700,
+    // An explicit line box, centred on both axes, so the all-caps label sits in
+    // the middle of the pill instead of riding on ECharts' default baseline.
+    lineHeight: isMulti ? 8 : 15,
+    align: 'center',
+    verticalAlign: 'middle',
+    backgroundColor: ecColor.modifyAlpha(alertC, 0.16),
+    borderColor: ecColor.modifyAlpha(alertC, 0.75),
+    borderWidth: 1,
+    borderRadius: 999,
+    padding: isMulti ? [4, 7] : [2, 9],
+    shadowColor: ecColor.modifyAlpha(alertC, 0.45),
+    shadowBlur: isMulti ? 6 : 10,
+  }
+
   const needle = {
     ...geometry,
     ...bare,
     z: 4,
+    ...(pill && { title: pill }),
     pointer: {
       show: true, width: isMulti ? 3 : 4, length: '68%',
       itemStyle: {
@@ -176,7 +222,7 @@ export default function buildGaugeOption(spec, index, opts = {}, isMulti = false
       fontWeight: 600,
       offsetCenter: [0, '78%'],
     },
-    data: [{ value: val }],
+    data: [{ value: val, ...(alert && { name: alertPillText(alert, decimals, isMulti) }) }],
   }
 
   return { series: limits ? [dial, limits, needle] : [dial, needle] }

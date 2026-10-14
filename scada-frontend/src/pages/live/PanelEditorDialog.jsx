@@ -39,7 +39,7 @@ import { fetchCameraLinkOptions } from '@/api/cameras'
 import { createPanel, updatePanel } from '@/api/panels'
 import { apiErrorMessage } from '@/api/client'
 import { colorAt } from '@/utils/seriesPalette'
-import { COMPARATOR_OPS } from '@/utils/alertConditions'
+import { COMPARATOR_OPS, levelOf } from '@/utils/alertConditions'
 import { UNIT_GROUPS } from '@/utils/units'
 import { buildDefectLabelsByCode, resolveTagLabel } from '@/utils/defectLabels'
 import {
@@ -526,30 +526,34 @@ export default function PanelEditorDialog({
   // --- alert-condition builder --------------------------------------------
   function addCondition() {
     const first = conditionSeriesOptions[0] || null
-    setValue('conditions', [...conditions, { rows: [{ lhs: first, op: '>', rhsType: 'value', rhs: 0 }] }])
+    setValue('conditions', [...conditions, { level: 'warning', rows: [{ lhs: first, op: '>', rhsType: 'value', rhs: 0 }] }])
   }
   function removeCondition(ci) {
     const arr = [...conditions]
     arr.splice(ci, 1)
     setValue('conditions', arr)
   }
+  // Copies keep every condition field (its level), not just the rows.
   function addRow(ci, connector) {
-    const arr = conditions.map((c, i) => (i === ci ? { rows: [...c.rows] } : c))
+    const arr = conditions.map((c, i) => (i === ci ? { ...c, rows: [...c.rows] } : c))
     const first = conditionSeriesOptions[0] || null
     arr[ci].rows.push({ lhs: first, op: '>', rhsType: 'value', rhs: 0, connector })
     setValue('conditions', arr)
   }
   function removeRow(ci, ri) {
-    const arr = conditions.map((c, i) => (i === ci ? { rows: [...c.rows] } : c))
+    const arr = conditions.map((c, i) => (i === ci ? { ...c, rows: [...c.rows] } : c))
     arr[ci].rows.splice(ri, 1)
     if (!arr[ci].rows.length) arr.splice(ci, 1)
     else if (ri === 0) { const { connector, ...rest } = arr[ci].rows[0]; arr[ci].rows[0] = rest }
     setValue('conditions', arr)
   }
   function updateRow(ci, ri, patch) {
-    const arr = conditions.map((c, i) => (i === ci ? { rows: [...c.rows] } : c))
+    const arr = conditions.map((c, i) => (i === ci ? { ...c, rows: [...c.rows] } : c))
     arr[ci].rows[ri] = { ...arr[ci].rows[ri], ...patch }
     setValue('conditions', arr)
+  }
+  function setConditionLevel(ci, level) {
+    setValue('conditions', conditions.map((c, i) => (i === ci ? { ...c, level } : c)))
   }
   function onRhsTypeChange(ci, ri, rhsType) {
     const rhs = rhsType === 'series' ? (conditionSeriesOptions[0] || null)
@@ -924,6 +928,16 @@ export default function PanelEditorDialog({
                         </div>
                       ))}
                       <div className={styles.condActions}>
+                        <FormControl size="small" className={styles.condLevel}>
+                          <Select
+                            value={levelOf(cond)}
+                            onChange={(e) => setConditionLevel(ci, e.target.value)}
+                            aria-label="Alert level"
+                          >
+                            <MenuItem value="warning">Warning</MenuItem>
+                            <MenuItem value="critical">Critical</MenuItem>
+                          </Select>
+                        </FormControl>
                         <Button size="small" onClick={() => addRow(ci, 'AND')}>+ AND</Button>
                         <Button size="small" onClick={() => addRow(ci, 'OR')}>+ OR</Button>
                         <Button size="small" color="error" onClick={() => removeCondition(ci)}>Remove condition</Button>
@@ -932,7 +946,7 @@ export default function PanelEditorDialog({
                   ))}
                   <Button size="small" onClick={addCondition}>+ Add condition</Button>
                   <p className={styles.hint}>
-                    Pick a series, a comparator and a value, another series, or a table column (<em>panel</em>). The pill shows <code>series ALERTS</code> when true.
+                    Pick a series, a comparator and a value, another series, or a table column (<em>panel</em>). Each condition has a level; a gauge shows its own <code>WARNING &gt; 150</code> / <code>CRITICAL &gt; 250</code> pill, other charts list the alerting series above the chart.
                   </p>
                 </AccordionDetails>
               </Accordion>

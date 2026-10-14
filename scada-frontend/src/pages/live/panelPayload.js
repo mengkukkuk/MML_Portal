@@ -309,7 +309,7 @@ export function buildPanelPayload({
       if (rows.length) row.connector = r.connector === 'OR' ? 'OR' : 'AND'
       rows.push(row)
     }
-    if (rows.length) cleanConditions.push({ rows })
+    if (rows.length) cleanConditions.push({ level: c.level === 'critical' ? 'critical' : 'warning', rows })
   }
 
   const trimmedExpr = form.mathExpr?.trim() || ''

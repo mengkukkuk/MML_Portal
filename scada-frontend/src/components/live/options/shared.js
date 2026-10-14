@@ -189,7 +189,9 @@ export function scaleFonts(option, k) {
     if (!v || typeof v !== 'object') return v
     const out = {}
     for (const [key, val] of Object.entries(v)) {
-      out[key] = key === 'fontSize' && typeof val === 'number'
+      // lineHeight scales with the font it boxes, or a fixed line box would
+      // clip (or float) larger text.
+      out[key] = (key === 'fontSize' || key === 'lineHeight') && typeof val === 'number'
         ? scale(val)
         : walk(val, key, inTooltip || key === 'tooltip')
     }

@@ -7,7 +7,7 @@ import buildHeatmapOption from './heatmap'
 import buildScatterOption from './scatter'
 import buildStateTimelineOption from './stateTimeline'
 import buildCandlestickOption from './candlestick'
-import buildGaugeOption, { gaugeParamsFor, gaugeLimitColsFor } from './gauge'
+import buildGaugeOption, { gaugeParamsFor, gaugeLimitColsFor, alertPillText } from './gauge'
 import buildStatSparklineOption from './stat'
 import buildTableRows from './table'
 import {
@@ -49,6 +49,7 @@ export {
   buildGaugeOption,
   gaugeParamsFor,
   gaugeLimitColsFor,
+  alertPillText,
   buildStatSparklineOption,
   buildTableRows,
   WARN_COLOR,

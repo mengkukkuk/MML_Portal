@@ -2,7 +2,7 @@ import { useCallback, useMemo } from 'react'
 import { compileExpr } from '@/utils/mathExpr'
 import { colorAt } from '@/utils/seriesPalette'
 import { DEFAULT_BOOL_LABELS } from '@/utils/columnKinds'
-import { alertingSeries, panelVarKey } from '@/utils/alertConditions'
+import { seriesAlerts } from '@/utils/alertConditions'
 import { GENERIC_VIZ_TYPES, HEADER_VALUE_VIZ_TYPES } from './options'
 
 // Poll interval selector — values are seconds, kept in sync with backend whitelist.
@@ -39,7 +39,7 @@ function normalizeVizType(chartType) {
  * options.value_cols x options.filters (table source) or options.tags (tag
  * source), the compiled math-transform function, and a stable per-series
  * unit resolver. Carries none of the live polling state — see
- * usePanelPolling for that, and `buildSeriesList`/`computeAlertSeries` below
+ * usePanelPolling for that, and `buildSeriesList`/`computeSeriesAlerts` below
  * for combining the two.
  *
  * Every array/function this returns is useMemo'd (or useCallback'd) with
@@ -170,6 +170,9 @@ export function buildSeriesList(
     label: s.label,
     color: colorAt(i),
     valueCol: s.valueCol,
+    // Row identity (source, filter value): alert conditions are judged per row.
+    filterVal: s.filterVal ?? null,
+    datasourceId: s.datasourceId ?? null,
     unitKey: s.unitKey,
     unit: unitFor(s, deviceUnit),
     // Keyed by column, not by series key, unlike `unit` just above: one flag
@@ -193,16 +196,11 @@ export function buildSeriesList(
 }
 
 /**
- * Series currently in alert — the de-duped union of every true condition's
- * referenced series. Recomputes each poll via the hydrated seriesList.
+ * Alerts per series — `{ [series.key]: { level, op, limit, rhsName, text } }`.
+ * Each series is judged on its own row (its own reading and setpoint columns),
+ * so two tags sharing one value column alert independently. Recomputes each
+ * poll via the hydrated seriesList.
  */
-export function computeAlertSeries(panel, seriesList) {
-  const conds = panel.options?.conditions
-  if (!Array.isArray(conds) || !conds.length) return []
-  const vars = {}
-  for (const s of seriesList) {
-    if (s.latest) vars[s.valueCol] = s.latest.value
-    for (const [col, v] of Object.entries(s.panelCols || {})) vars[panelVarKey(col)] = v
-  }
-  return alertingSeries(conds, vars)
+export function computeSeriesAlerts(panel, seriesList) {
+  return seriesAlerts(panel.options?.conditions, seriesList)
 }
