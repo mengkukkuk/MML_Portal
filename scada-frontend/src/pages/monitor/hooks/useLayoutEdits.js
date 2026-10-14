@@ -68,8 +68,8 @@ export default function useLayoutEdits({
     previewLayout((prev) => ops.patchNode(prev, id, box))
   }, [previewLayout])
 
-  // Rotation was already wired end to end on the canvas — the transform is
-  // applied and resizeBox un-rotates pointer deltas — with nothing to set it.
+  // The canvas applies the transform; resizing and moving a turned symbol are
+  // rotation-aware in nodeResize.js, so nothing here has to know about it.
   const rotateNode = useCallback((id, deg) => {
     commitLayout((prev) => ops.rotateNode(prev, id, deg))
   }, [commitLayout])

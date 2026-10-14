@@ -606,6 +606,10 @@ export const SYMBOLS = {
     defaultSize: { w: 176, h: 82 },
     ports: { signal: [0, 0.5] },
     binding: 'analog',
+    // Title can be moved to any edge (or hidden) from the inspector.
+    labelPlacement: true,
+    // Has an in-face caption (tag id / table name) the inspector can size or hide.
+    caption: true,
     bubble: null,
   },
   table: {
@@ -622,6 +626,10 @@ export const SYMBOLS = {
     // any structure, so it must be pickable from the text list too.
     binding: 'both',
     text: true,
+    // Title can be moved to any edge (or hidden) from the inspector.
+    labelPlacement: true,
+    // Has an in-face caption (tag id / table name) the inspector can size or hide.
+    caption: true,
     bubble: null,
   },
   displaybox: {
@@ -634,6 +642,10 @@ export const SYMBOLS = {
     // and the formatted number otherwise, so it needs to read either.
     binding: 'both',
     text: true,
+    // Title can be moved to any edge (or hidden) from the inspector.
+    labelPlacement: true,
+    // Has an in-face caption (tag id / table name) the inspector can size or hide.
+    caption: true,
     bubble: null,
   },
   led: {
@@ -648,6 +660,8 @@ export const SYMBOLS = {
     // binding dialog has to offer a status column for either to ever be
     // reachable, the same way it already does for the tile beside it.
     text: true,
+    // Title can be moved to any edge (or hidden) from the inspector.
+    labelPlacement: true,
     bubble: null,
   },
   alertbadge: {

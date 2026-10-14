@@ -1,4 +1,5 @@
 import s from './symbols.module.css'
+import { captionFont, clamp, labelProps, uprightFrame } from '../labelPlacement'
 
 /**
  * DataTable — the one symbol on the sheet that draws *rows* rather than a
@@ -144,7 +145,8 @@ function fit(text, widthPx, fontPx) {
 }
 
 export default function DataTable({ node, tag }) {
-  const { w, h } = node
+  // Face drawn upright whatever the quarter turn; see uprightFrame.
+  const { w, h, transform: upright } = uprightFrame(node)
   const columns = tableColumns(node)
   const data = tag?.table ?? null
   const rows = data?.rows ?? []
@@ -152,8 +154,12 @@ export default function DataTable({ node, tag }) {
 
   const pad = Math.min(10, w * 0.05)
   const wellX = pad
-  const wellY = Math.min(22, h * 0.17)
   const wellW = Math.max(8, w - pad * 2)
+  // Caption on the left, row count on the right: the caption may take 60% of
+  // the band and shrinks to fit it; the count follows the caption's size.
+  const caption = node.tagId ?? node.binding?.table ?? 'table'
+  const capPx = captionFont(node, { auto: clamp(h * 0.06, 7, 12), width: wellW * 0.6, text: caption })
+  const wellY = capPx == null ? pad : capPx + 11
   const wellH = Math.max(8, h - wellY - pad)
 
   const headH = Math.min(20, wellH * 0.24)
@@ -203,137 +209,138 @@ export default function DataTable({ node, tag }) {
     return `${base}#${n}`
   }
 
+  const title = labelProps(node)
+
   return (
-    <g className={statusClass}>
-      <rect className={s.body} x={0} y={0} width={w} height={h} rx={3} />
-      <rect className={s.well} x={wellX} y={wellY} width={wellW} height={wellH} rx={2} />
+    <>
+      <g transform={upright} className={statusClass}>
+        <rect className={s.body} x={0} y={0} width={w} height={h} rx={3} />
+        <rect className={s.well} x={wellX} y={wellY} width={wellW} height={wellH} rx={2} />
 
-      <text className={s.labelDim} x={wellX + 2} y={wellY - 5}>
-        {node.tagId ?? node.binding?.table ?? 'table'}
-      </text>
+        {capPx != null && (
+          <text className={s.labelDim} x={wellX + 2} y={wellY - 5} style={{ fontSize: `${capPx}px` }}>
+            {caption}
+          </text>
+        )}
 
-      {/* The row count, top right — a table showing six of forty is a different
-          reading from a table showing all six it has. */}
-      {!fault && rows.length > 0 && (
-        <text
-          className={s.labelDim}
-          x={wellX + wellW}
-          y={wellY - 5}
-          textAnchor="end"
-        >
-          {hidden > 0 ? `${visible} of ${rows.length}` : `${rows.length} rows`}
-        </text>
-      )}
-
-      {/* Headers. Set apart by a rule rather than a fill, so the well stays one
-          continuous recess the way the counter's does. */}
-      {geometry.map(({ spec, x, w: cw }) => (
-        <text
-          key={spec.col}
-          className={s.tableHead}
-          x={spec.align === 'right' ? x + cw - cellPad : x}
-          y={wellY + headH - headH * 0.3}
-          textAnchor={spec.align === 'right' ? 'end' : 'start'}
-          style={{ fontSize: `${headPx}px` }}
-        >
-          {fit((spec.title || spec.col).toUpperCase(), cw - cellPad, headPx)}
-        </text>
-      ))}
-      <line
-        className={s.hair}
-        x1={wellX + cellPad}
-        y1={wellY + headH}
-        x2={wellX + wellW - cellPad}
-        y2={wellY + headH}
-      />
-
-      <clipPath id={clipId}>
-        <rect
-          x={wellX}
-          y={wellY + headH}
-          width={wellW}
-          height={Math.max(0, wellH - headH)}
-        />
-      </clipPath>
-
-      <g clipPath={`url(#${clipId})`}>
-        {drawn.map((row, i) => (
-          /* Position is a CSS transform, not the SVG attribute, so it is a
-             property that can be transitioned. The enter animation touches only
-             opacity for the same reason — the two would fight over `transform`
-             and the row would jump to its place before fading in. */
-          <g
-            key={keyFor(row)}
-            className={tape ? `${s.tapeRow} ${s.tapeEnter}` : s.roll}
-            style={{ transform: `translateY(${wellY + headH + i * rowH}px)` }}
+        {/* The row count, top right — a table showing six of forty is a different
+            reading from a table showing all six it has. */}
+        {capPx != null && !fault && rows.length > 0 && (
+          <text
+            className={s.labelDim}
+            x={wellX + wellW}
+            y={wellY - 5}
+            textAnchor="end"
+            style={{ fontSize: `${capPx}px` }}
           >
-            {i > 0 && (
-              <line
-                className={s.tableRule}
-                x1={wellX + cellPad}
-                y1={0}
-                x2={wellX + wellW - cellPad}
-                y2={0}
-              />
-            )}
-            {geometry.map(({ spec, x, w: cw }) => {
-              const raw = row[spec.col]
-              // A stamp is a label, not a quantity — it stays left however the
-              // auto rule would read the string it happens to be stored as.
-              const right = spec.align === 'right'
-                || (spec.align !== 'left' && !spec.format && typeof raw === 'number')
-              return (
-                <text
-                  key={spec.col}
-                  className={s.tableCell}
-                  x={right ? x + cw - cellPad : x}
-                  y={rowH / 2 + fontPx * 0.36}
-                  textAnchor={right ? 'end' : 'start'}
-                  style={{ fontSize: `${fontPx}px` }}
-                >
-                  {fit(cellText(raw, spec, drawn[i - 1]?.[spec.col]), cw - cellPad, fontPx)}
-                </text>
-              )
-            })}
-          </g>
+            {hidden > 0 ? `${visible} of ${rows.length}` : `${rows.length} rows`}
+          </text>
+        )}
+
+        {/* Headers. Set apart by a rule rather than a fill, so the well stays one
+            continuous recess the way the counter's does. */}
+        {geometry.map(({ spec, x, w: cw }) => (
+          <text
+            key={spec.col}
+            className={s.tableHead}
+            x={spec.align === 'right' ? x + cw - cellPad : x}
+            y={wellY + headH - headH * 0.3}
+            textAnchor={spec.align === 'right' ? 'end' : 'start'}
+            style={{ fontSize: `${headPx}px` }}
+          >
+            {fit((spec.title || spec.col).toUpperCase(), cw - cellPad, headPx)}
+          </text>
         ))}
+        <line
+          className={s.hair}
+          x1={wellX + cellPad}
+          y1={wellY + headH}
+          x2={wellX + wellW - cellPad}
+          y2={wellY + headH}
+        />
+
+        <clipPath id={clipId}>
+          <rect
+            x={wellX}
+            y={wellY + headH}
+            width={wellW}
+            height={Math.max(0, wellH - headH)}
+          />
+        </clipPath>
+
+        <g clipPath={`url(#${clipId})`}>
+          {drawn.map((row, i) => (
+            /* Position is a CSS transform, not the SVG attribute, so it is a
+               property that can be transitioned. The enter animation touches only
+               opacity for the same reason — the two would fight over `transform`
+               and the row would jump to its place before fading in. */
+            <g
+              key={keyFor(row)}
+              className={tape ? `${s.tapeRow} ${s.tapeEnter}` : s.roll}
+              style={{ transform: `translateY(${wellY + headH + i * rowH}px)` }}
+            >
+              {i > 0 && (
+                <line
+                  className={s.tableRule}
+                  x1={wellX + cellPad}
+                  y1={0}
+                  x2={wellX + wellW - cellPad}
+                  y2={0}
+                />
+              )}
+              {geometry.map(({ spec, x, w: cw }) => {
+                const raw = row[spec.col]
+                // A stamp is a label, not a quantity — it stays left however the
+                // auto rule would read the string it happens to be stored as.
+                const right = spec.align === 'right'
+                  || (spec.align !== 'left' && !spec.format && typeof raw === 'number')
+                return (
+                  <text
+                    key={spec.col}
+                    className={s.tableCell}
+                    x={right ? x + cw - cellPad : x}
+                    y={rowH / 2 + fontPx * 0.36}
+                    textAnchor={right ? 'end' : 'start'}
+                    style={{ fontSize: `${fontPx}px` }}
+                  >
+                    {fit(cellText(raw, spec, drawn[i - 1]?.[spec.col]), cw - cellPad, fontPx)}
+                  </text>
+                )
+              })}
+            </g>
+          ))}
+        </g>
+
+        {/* The three states that are not rows, each said plainly rather than
+            drawn as an empty grid the operator has to interpret. */}
+        {(fault || columns.length === 0 || (!rows.length && data)) && (
+          <text
+            className={`${s.tableCell} ${fault ? s.counterFault : ''}`}
+            x={wellX + wellW / 2}
+            y={wellY + headH + bodyH / 2}
+            textAnchor="middle"
+            style={{ fontSize: `${Math.min(13, wellH * 0.16)}px` }}
+          >
+            {fault ? 'ERR' : columns.length === 0 ? 'no columns chosen' : 'no rows'}
+          </text>
+        )}
+        {!data && !fault && columns.length > 0 && (
+          <text
+            className={s.tableCell}
+            x={wellX + wellW / 2}
+            y={wellY + headH + bodyH / 2}
+            textAnchor="middle"
+            style={{ fontSize: `${Math.min(13, wellH * 0.16)}px` }}
+          >
+            ––
+          </text>
+        )}
       </g>
-
-      {/* The three states that are not rows, each said plainly rather than
-          drawn as an empty grid the operator has to interpret. */}
-      {(fault || columns.length === 0 || (!rows.length && data)) && (
-        <text
-          className={`${s.tableCell} ${fault ? s.counterFault : ''}`}
-          x={wellX + wellW / 2}
-          y={wellY + headH + bodyH / 2}
-          textAnchor="middle"
-          style={{ fontSize: `${Math.min(13, wellH * 0.16)}px` }}
-        >
-          {fault ? 'ERR' : columns.length === 0 ? 'no columns chosen' : 'no rows'}
+      {title && (
+        <text className={s.label} {...title}>
+          {node.label}
         </text>
       )}
-      {!data && !fault && columns.length > 0 && (
-        <text
-          className={s.tableCell}
-          x={wellX + wellW / 2}
-          y={wellY + headH + bodyH / 2}
-          textAnchor="middle"
-          style={{ fontSize: `${Math.min(13, wellH * 0.16)}px` }}
-        >
-          ––
-        </text>
-      )}
-
-      <text
-        className={s.label}
-        x={w / 2}
-        y={h + 18}
-        textAnchor="middle"
-        style={{ fontSize: node.options?.labelSize }}
-        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
-      >
-        {node.label}
-      </text>
-    </g>
+    </>
   )
 }

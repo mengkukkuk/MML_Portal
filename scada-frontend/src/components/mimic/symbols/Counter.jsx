@@ -1,6 +1,7 @@
 import { groupDigits, isNumeric } from '../tagStatus'
 import useValueTransition from '../useValueTransition'
 import s from './symbols.module.css'
+import { captionFont, clamp, labelProps, uprightFrame } from '../labelPlacement'
 
 /* Digits are laid out by hand rather than measured, because SVG text has no
  * intrinsic box and a mid-poll reflow would make the number jitter. Mono
@@ -27,7 +28,8 @@ const CHAR_W = 0.62
  * drawing is where the admin is standing when they find out.
  */
 export default function Counter({ node, tag }) {
-  const { w, h } = node
+  // Face drawn upright whatever the quarter turn; see uprightFrame.
+  const { w, h, transform: upright } = uprightFrame(node)
   const { pulse, dir } = useValueTransition(tag)
 
   const decimals = tag?.decimals ?? 0
@@ -42,8 +44,13 @@ export default function Counter({ node, tag }) {
 
   const pad = Math.min(10, w * 0.07)
   const wellX = pad
-  const wellY = h * 0.22
   const wellW = w - pad * 2
+  // The caption band is sized from the caption, not the other way round, so a
+  // tall counter spends its height on digits and a hidden caption gives its
+  // band back to the well.
+  const caption = tag?.id ?? node.tagId ?? 'total'
+  const capPx = captionFont(node, { auto: clamp(h * 0.13, 7, 13), width: wellW - 4, text: caption })
+  const wellY = capPx == null ? pad : capPx + 8
   const wellH = h - wellY - pad
 
   // The unit sits inside the well, after the digits, so the two never drift
@@ -57,59 +64,59 @@ export default function Counter({ node, tag }) {
   const statusClass = fault || tag?.status === 'crit' ? s.statusCrit
     : tag?.status === 'warn' ? s.statusWarn : ''
 
+  const title = labelProps(node)
+
   return (
-    <g className={statusClass}>
-      <rect className={s.body} x={0} y={0} width={w} height={h} rx={3} />
-      <rect className={s.well} x={wellX} y={wellY} width={wellW} height={wellH} rx={2} />
+    <>
+      <g transform={upright} className={statusClass}>
+        <rect className={s.body} x={0} y={0} width={w} height={h} rx={3} />
+        <rect className={s.well} x={wellX} y={wellY} width={wellW} height={wellH} rx={2} />
 
-      <text className={s.labelDim} x={wellX + 2} y={wellY - 5}>
-        {tag?.id ?? node.tagId ?? 'total'}
-      </text>
+        {capPx != null && (
+          <text className={s.labelDim} x={wellX + 2} y={wellY - 5} style={{ fontSize: `${capPx}px` }}>
+            {caption}
+          </text>
+        )}
 
-      {/* key={pulse} is what makes the roll fire once per *displayed* change —
-          an unchanged tick re-mounts nothing and so animates nothing. */}
-      <text
-        key={pulse}
-        className={`${s.counterValue} ${s.roll} ${fault ? s.counterFault : ''}`}
-        x={wellX + wellW - 6}
-        y={baseline}
-        textAnchor="end"
-        style={{ fontSize: `${size}px` }}
-      >
-        {text}
-        {unit && <tspan className={s.counterUnit} dx={size * 0.22}>{unit}</tspan>}
-      </text>
+        {/* key={pulse} is what makes the roll fire once per *displayed* change —
+            an unchanged tick re-mounts nothing and so animates nothing. */}
+        <text
+          key={pulse}
+          className={`${s.counterValue} ${s.roll} ${fault ? s.counterFault : ''}`}
+          x={wellX + wellW - 6}
+          y={baseline}
+          textAnchor="end"
+          style={{ fontSize: `${size}px` }}
+        >
+          {text}
+          {unit && <tspan className={s.counterUnit} dx={size * 0.22}>{unit}</tspan>}
+        </text>
 
-      {/* Which way it went, for the moment after it went. A totaliser that only
-          ever counts up says nothing by rising; one that can fall says a great
-          deal, and either way the caret is the only part of the symbol that
-          reports the *change* rather than the state. */}
-      {numeric && dir !== 0 && (
-        <path
-          key={`d${pulse}`}
-          className={`${s.delta} ${dir > 0 ? s.deltaUp : s.deltaDown}`}
-          d={dir > 0
-            ? `M ${wellX + 5} ${baseline - 4} l 5 -8 l 5 8 Z`
-            : `M ${wellX + 5} ${baseline - 12} l 5 8 l 5 -8 Z`}
-        />
-      )}
+        {/* Which way it went, for the moment after it went. A totaliser that only
+            ever counts up says nothing by rising; one that can fall says a great
+            deal, and either way the caret is the only part of the symbol that
+            reports the *change* rather than the state. */}
+        {numeric && dir !== 0 && (
+          <path
+            key={`d${pulse}`}
+            className={`${s.delta} ${dir > 0 ? s.deltaUp : s.deltaDown}`}
+            d={dir > 0
+              ? `M ${wellX + 5} ${baseline - 4} l 5 -8 l 5 8 Z`
+              : `M ${wellX + 5} ${baseline - 12} l 5 8 l 5 -8 Z`}
+          />
+        )}
 
-      {fault && (
-        <text className={s.labelDim} x={w / 2} y={h - 4} textAnchor="middle">
-          not a number
+        {fault && (
+          <text className={s.labelDim} x={w / 2} y={h - 4} textAnchor="middle">
+            not a number
+          </text>
+        )}
+      </g>
+      {title && (
+        <text className={s.label} {...title}>
+          {node.label}
         </text>
       )}
-
-      <text
-        className={s.label}
-        x={w / 2}
-        y={h + 18}
-        textAnchor="middle"
-        style={{ fontSize: node.options?.labelSize }}
-        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
-      >
-        {node.label}
-      </text>
-    </g>
+    </>
   )
 }

@@ -5,6 +5,7 @@ import RestartAltOutlined from '@mui/icons-material/RestartAltOutlined'
 import Rotate90DegreesCwOutlined from '@mui/icons-material/Rotate90DegreesCwOutlined'
 import { symbolDef, bubbleSpec, bubbleMoved } from '@/components/mimic/symbols'
 import { BUBBLE_SHAPES, bubbleHidden, bubbleShape } from '@/components/mimic/bubbleShape'
+import { LABEL_PLACES, labelPlace } from '@/components/mimic/labelPlacement'
 import SymbolOptions, { SymbolColour } from './SymbolOptions'
 import styles from './NodeInspector.module.css'
 
@@ -30,10 +31,18 @@ export default function NodeInspector({
   // stepper's readout and its disabled-reset state agree on what "default"
   // means, the same way `resized`/`rot` above resolve their own defaults.
   const labelSize = node.options?.labelSize ?? 12
+  const place = labelPlace(node.options)
+  const titleOff = def?.labelPlacement && place === 'hidden'
   const bubbleSize = node.options?.bubbleSize ?? 34
   const balloonOff = bubbleHidden(node)
   const shape = bubbleShape(node.options)
   const setLabelSize = (v) => onOptions(node.id, { labelSize: Math.max(8, Math.min(32, v)) })
+  const captionOff = !!node.options?.captionHidden
+  const captionSize = node.options?.captionSize
+  // Stepping off "Auto" starts from 10px, the size every caption used to be.
+  const stepCaption = (d) => onOptions(node.id, {
+    captionSize: Math.max(6, Math.min(32, (captionSize ?? 10) + d)),
+  })
   const setBubbleSize = (v) => onOptions(node.id, { bubbleSize: Math.max(16, Math.min(80, v)) })
   const connection = b?.datasource_id == null
     ? 'Follow header selection'
@@ -110,12 +119,30 @@ export default function NodeInspector({
       <div className={styles.section}>
         <div className={styles.sectionTitle}>Title</div>
         <p className={styles.hint}>
-          Font size of the name printed under the symbol.
+          {def?.labelPlacement
+            ? 'Where the name sits around the symbol, and its font size. The position follows the box edge, so it holds when the symbol is resized or rotated.'
+            : 'Font size of the name printed under the symbol.'}
         </p>
+        {def?.labelPlacement && (
+          <div className={styles.rotRow} role="group" aria-label="Title position">
+            {LABEL_PLACES.map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                className={`${styles.rotBtn} ${place === id ? styles.rotOn : ''}`}
+                aria-pressed={place === id}
+                onClick={() => onOptions(node.id, { labelPlace: id === 'below' ? undefined : id })}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         <div className={styles.rotRow} role="group" aria-label="Title font size">
           <button
             type="button"
             className={styles.rotBtn}
+            disabled={titleOff}
             onClick={() => setLabelSize(labelSize - 2)}
           >
             −
@@ -124,6 +151,7 @@ export default function NodeInspector({
           <button
             type="button"
             className={styles.rotBtn}
+            disabled={titleOff}
             onClick={() => setLabelSize(labelSize + 2)}
           >
             +
@@ -133,12 +161,64 @@ export default function NodeInspector({
           fullWidth
           color="inherit"
           startIcon={<RestartAltOutlined />}
-          disabled={node.options?.labelSize == null}
-          onClick={() => onOptions(node.id, { labelSize: undefined })}
+          disabled={node.options?.labelSize == null && node.options?.labelPlace == null}
+          onClick={() => onOptions(node.id, { labelSize: undefined, labelPlace: undefined })}
         >
           Reset to default
         </Button>
       </div>
+
+      {def?.caption && (
+        <div className={styles.section}>
+          <div className={styles.sectionTitle}>Caption</div>
+          <p className={styles.hint}>
+            The small legend inside the face (tag id or table name). On Auto it
+            scales with the box and shrinks to fit its width; hiding it gives the
+            space back to the reading.
+          </p>
+          <div className={styles.rotRow} role="group" aria-label="Caption visibility">
+            {[[false, 'Shown'], [true, 'Hidden']].map(([off, text]) => (
+              <button
+                key={text}
+                type="button"
+                className={`${styles.rotBtn} ${captionOff === off ? styles.rotOn : ''}`}
+                aria-pressed={captionOff === off}
+                onClick={() => onOptions(node.id, { captionHidden: off ? true : undefined })}
+              >
+                {text}
+              </button>
+            ))}
+          </div>
+          <div className={styles.rotRow} role="group" aria-label="Caption font size">
+            <button
+              type="button"
+              className={styles.rotBtn}
+              disabled={captionOff}
+              onClick={() => stepCaption(-1)}
+            >
+              −
+            </button>
+            <span className={styles.rotValue}>{captionSize == null ? 'Auto' : `${captionSize}px`}</span>
+            <button
+              type="button"
+              className={styles.rotBtn}
+              disabled={captionOff}
+              onClick={() => stepCaption(1)}
+            >
+              +
+            </button>
+          </div>
+          <Button
+            fullWidth
+            color="inherit"
+            startIcon={<RestartAltOutlined />}
+            disabled={captionSize == null && !captionOff}
+            onClick={() => onOptions(node.id, { captionSize: undefined, captionHidden: undefined })}
+          >
+            Reset to auto
+          </Button>
+        </div>
+      )}
 
       {bubble && (
         <div className={styles.section}>

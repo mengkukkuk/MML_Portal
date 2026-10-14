@@ -1,6 +1,7 @@
 import { formatValue, isNumeric, stateColor, statusColor } from '../tagStatus'
 import useValueTransition from '../useValueTransition'
 import s from './symbols.module.css'
+import { captionFont, clamp, labelProps, uprightFrame } from '../labelPlacement'
 
 const CHAR_W = 0.6
 
@@ -50,7 +51,8 @@ export const MARQUEE_SPEEDS = { slow: 16, medium: 38, fast: 76 }
  * teaches operators to stop looking at movement that does.
  */
 export default function DisplayBox({ node, tag }) {
-  const { w, h } = node
+  // Face drawn upright whatever the quarter turn; see uprightFrame.
+  const { w, h, transform: upright } = uprightFrame(node)
   const { pulse } = useValueTransition(tag)
 
   const status = tag?.status ?? 'stale'
@@ -79,68 +81,85 @@ export default function DisplayBox({ node, tag }) {
   const period = chars * size * CHAR_W + Math.max(w * 0.6, size * 3)
 
   const pipR = Math.min(5, h * 0.09)
+
+  // Centred in the cap band beside the pip; hiding it leaves the band, since
+  // the pip still lives there.
+  const caption = tag?.id ?? node.tagId ?? node.label
+  const capPx = captionFont(node, {
+    auto: clamp(capY * 0.45, 7, 14), width: w - pad * 2 - pipR * 2 - 6, text: caption,
+  })
   const pipColor = stateColor(tag?.state) ?? statusColor(status)
 
   const statusClass = status === 'crit' ? s.statusCrit : status === 'warn' ? s.statusWarn : ''
 
+  const title = labelProps(node)
+
   return (
-    <g className={statusClass}>
-      <rect className={s.body} x={0} y={0} width={w} height={h} rx={3} />
-      <line className={s.hair} x1={0} y1={capY} x2={w} y2={capY} />
+    <>
+      <g transform={upright} className={statusClass}>
+        <rect className={s.body} x={0} y={0} width={w} height={h} rx={3} />
+        <line className={s.hair} x1={0} y1={capY} x2={w} y2={capY} />
 
-      <text className={s.labelDim} x={pad} y={capY - 7}>
-        {tag?.id ?? node.tagId ?? node.label}
-      </text>
+        {capPx != null && (
+          <text
+            className={s.labelDim}
+            x={pad}
+            y={capY / 2 - 1 + capPx * 0.36}
+            style={{ fontSize: `${capPx}px` }}
+          >
+            {caption}
+          </text>
+        )}
 
-      {/* The notifier. Hollow while stale, so a silent source never reads as a
-          healthy green one. */}
-      <circle
-        className={s.pip}
-        cx={w - pad - pipR}
-        cy={capY / 2 - 1}
-        r={pipR}
-        fill={stale ? 'none' : pipColor}
-        stroke={stale ? 'var(--fg-dim)' : pipColor}
-      />
+        {/* The notifier. Hollow while stale, so a silent source never reads as a
+            healthy green one. */}
+        <circle
+          className={s.pip}
+          cx={w - pad - pipR}
+          cy={capY / 2 - 1}
+          r={pipR}
+          fill={stale ? 'none' : pipColor}
+          stroke={stale ? 'var(--fg-dim)' : pipColor}
+        />
 
-      {speed ? (
-        <>
-          {/* The clip is what makes this a window rather than text that runs
-              across the neighbouring symbols. Keyed by node id, since two boxes
-              on one sheet would otherwise share a clip path. */}
-          <clipPath id={`mq-${node.id}`}>
-            <rect x={pad} y={capY} width={w - pad * 2} height={bodyH} />
-          </clipPath>
-          {/* No key={pulse} and no .roll here, unlike the still box below: a
-              re-mount on every poll would restart the scroll from zero, and at a
-              1s cadence the message would never get past its first word. */}
-          <g clipPath={`url(#mq-${node.id})`}>
-            <g
-              className={s.marquee}
-              style={{
-                '--mimic-marquee-period': period,
-                animationDuration: `${period / speed}s`,
-              }}
-            >
-              {/* Two copies, one period apart: the second is already entering as
-                  the first leaves, so the loop has no blank pass. */}
-              {[0, period].map((offset) => (
-                <text
-                  key={offset}
-                  className={s.boxValue}
-                  x={pad + offset}
-                  y={baseline}
-                  textAnchor="start"
-                  style={{ fontSize: `${size}px`, fill: mapped ? pipColor : undefined }}
-                  aria-hidden={offset ? 'true' : undefined}
-                >
-                  {text}
-                  {unit && <tspan className={s.counterUnit} dx={size * 0.24}>{unit}</tspan>}
-                </text>
-              ))}
+        {speed ? (
+          <>
+            {/* The clip is what makes this a window rather than text that runs
+                across the neighbouring symbols. Keyed by node id, since two boxes
+                on one sheet would otherwise share a clip path. */}
+            <clipPath id={`mq-${node.id}`}>
+              <rect x={pad} y={capY} width={w - pad * 2} height={bodyH} />
+            </clipPath>
+            {/* No key={pulse} and no .roll here, unlike the still box below: a
+                re-mount on every poll would restart the scroll from zero, and at a
+                1s cadence the message would never get past its first word. */}
+            <g clipPath={`url(#mq-${node.id})`}>
+              <g
+                className={s.marquee}
+                style={{
+                  '--mimic-marquee-period': period,
+                  animationDuration: `${period / speed}s`,
+                }}
+              >
+                {/* Two copies, one period apart: the second is already entering as
+                    the first leaves, so the loop has no blank pass. */}
+                {[0, period].map((offset) => (
+                  <text
+                    key={offset}
+                    className={s.boxValue}
+                    x={pad + offset}
+                    y={baseline}
+                    textAnchor="start"
+                    style={{ fontSize: `${size}px`, fill: mapped ? pipColor : undefined }}
+                    aria-hidden={offset ? 'true' : undefined}
+                  >
+                    {text}
+                    {unit && <tspan className={s.counterUnit} dx={size * 0.24}>{unit}</tspan>}
+                  </text>
+                ))}
+              </g>
             </g>
-          </g>
-        </>
+    </>
       ) : (
         <text
           key={pulse}
@@ -155,16 +174,12 @@ export default function DisplayBox({ node, tag }) {
         </text>
       )}
 
-      <text
-        className={s.label}
-        x={w / 2}
-        y={h + 18}
-        textAnchor="middle"
-        style={{ fontSize: node.options?.labelSize }}
-        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
-      >
+    </g>
+    {title && (
+      <text className={s.label} {...title}>
         {node.label}
       </text>
-    </g>
+    )}
+    </>
   )
 }

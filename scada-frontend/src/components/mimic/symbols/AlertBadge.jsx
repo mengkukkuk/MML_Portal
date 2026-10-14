@@ -1,6 +1,7 @@
 import { stateColor } from '../tagStatus'
 import { useConditionMet } from '../conditions'
 import s from './symbols.module.css'
+import { uprightFrame } from '../labelPlacement'
 
 const CHAR_W = 0.58
 const MAX_LINES = 3
@@ -61,7 +62,8 @@ function wrap(text, chars) {
  * mimic, and the Alarms page owns that action.
  */
 export default function AlertBadge({ node, tag }) {
-  const { w, h } = node
+  // Face drawn upright whatever the quarter turn; see uprightFrame.
+  const { w, h, transform: upright } = uprightFrame(node)
 
   const status = tag?.status ?? 'stale'
   const stale = !tag || status === 'stale'
@@ -92,7 +94,7 @@ export default function AlertBadge({ node, tag }) {
   const top = h / 2 - ((lines.length - 1) * size * 1.25) / 2 + size * 0.34
 
   return (
-    <g>
+    <g transform={upright}>
       {/* Housing, then the window. Two rects because a real tile is a lens set
           into a frame, and the frame is what stays visible when the lens is
           dark. */}

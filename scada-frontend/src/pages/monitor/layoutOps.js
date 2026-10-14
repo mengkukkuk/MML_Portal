@@ -9,6 +9,7 @@
  */
 import { clamp, moveGroup } from './editorSelection.js'
 import { sheetOf } from './sheet.js'
+import { positionBounds } from './nodeResize.js'
 
 export const PASTE_OFFSET = 24
 const SNAP_UNIT = 8
@@ -41,11 +42,15 @@ export function moveNodesTo(doc, updates) {
 
 export function nudgeNode(doc, id, dx, dy) {
   const sheet = sheetOf(doc)
-  return mapNode(doc, id, (n) => ({
-    ...n,
-    x: clamp(n.x + dx, 0, sheet.w - n.w),
-    y: clamp(n.y + dy, 0, sheet.h - n.h),
-  }))
+  return mapNode(doc, id, (n) => {
+    // A turned symbol's footprint, not its stored box, is what must stay on.
+    const lim = positionBounds(n, sheet)
+    return {
+      ...n,
+      x: clamp(n.x + dx, lim.minX, lim.maxX),
+      y: clamp(n.y + dy, lim.minY, lim.maxY),
+    }
+  })
 }
 
 /** One delta for the whole group, limited by the members nearest each edge. */

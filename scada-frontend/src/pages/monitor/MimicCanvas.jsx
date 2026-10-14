@@ -16,6 +16,7 @@ import { fitToContents, gridStepForZoom, zoomAtPoint } from './editorViewport'
 import styles from './MimicCanvas.module.css'
 import { moveGroup, nodesInRect } from './editorSelection'
 import { VIEW_W, VIEW_H, sheetOf } from './sheet'
+import { gripCursor, positionBounds, resizeBox, rotatedHalf } from './nodeResize'
 
 
 /** A resolved { color, opacity } paint as the symbol group's CSS variables. */
@@ -67,12 +68,10 @@ export const GRID = 8
 const PORT_SNAP = 26
 /** InstrumentBubble's circle radius — kept in step so the handle covers it. */
 const BUBBLE_R = 34
-/** Below this a symbol stops being a drawing and becomes a smudge. */
-const MIN_NODE = 24
-
 /**
  * The eight resize grips, as fractions of the node box, with the edges each
- * one moves. Corners move two edges, so they also carry the aspect lock.
+ * one moves. Corners move two edges, so they also carry the aspect lock. The
+ * cursor here is the upright one; a turned symbol gets `gripCursor`'s.
  */
 const HANDLES = [
   { id: 'nw', fx: 0, fy: 0, ex: 'l', ey: 't', cursor: 'nwse-resize' },
@@ -118,48 +117,6 @@ function routeEdge(fromNode, fromPort, toNode, toPort) {
   }
   if (a0 === 'h') return `M ${p0.x} ${p0.y} H ${p1.x} V ${p1.y}`
   return `M ${p0.x} ${p0.y} V ${p1.y} H ${p1.x}`
-}
-
-/**
- * The box a resize drag has arrived at.
- *
- * `drag` holds the box as it was when the grip was grabbed; deltas are
- * measured from there rather than accumulated, so a drag that wanders out to
- * the clamp and back comes home to the size it started from.
- *
- * The grip that moves snaps to the grid; the opposite edge does not move at
- * all. Resizing from the left is therefore "drag this edge to a grid line",
- * not "drag this edge and watch the other one drift".
- */
-function resizeBox(drag, dx, dy, lockAspect, snapEnabled, sheet = { w: VIEW_W, h: VIEW_H }) {
-  const {
-    x0, y0, w0, h0, handle,
-  } = drag
-  let { x, y, w, h } = { x: x0, y: y0, w: w0, h: h0 }
-
-  if (handle.ex === 'l') {
-    x = clamp(snap(x0 + dx, snapEnabled), 0, x0 + w0 - MIN_NODE)
-    w = x0 + w0 - x
-  } else if (handle.ex === 'r') {
-    w = clamp(snap(w0 + dx, snapEnabled), MIN_NODE, sheet.w - x0)
-  }
-
-  if (handle.ey === 't') {
-    y = clamp(snap(y0 + dy, snapEnabled), 0, y0 + h0 - MIN_NODE)
-    h = y0 + h0 - y
-  } else if (handle.ey === 'b') {
-    h = clamp(snap(h0 + dy, snapEnabled), MIN_NODE, sheet.h - y0)
-  }
-
-  // Shift on a corner keeps the symbol's proportions. Width leads, because the
-  // pointer has travelled further horizontally on almost every corner drag.
-  if (lockAspect && handle.ex && handle.ey && w0 > 0) {
-    h = clamp(Math.round((w * h0) / w0), MIN_NODE, sheet.h)
-    if (handle.ey === 't') y = clamp(y0 + h0 - h, 0, sheet.h - h)
-    else h = Math.min(h, sheet.h - y0)
-  }
-
-  return { x, y, w, h }
 }
 
 /**
@@ -600,16 +557,12 @@ const MimicCanvas = forwardRef(function MimicCanvas({
     }
 
     if (drag.kind === 'resize') {
-      // The grips ride inside the node's own rotate transform, so the pointer
-      // delta has to come back out of it before it can be read as "the left
-      // edge moved this far". At rot 0 — which is every symbol until someone
-      // turns one — this is the identity.
-      const th = (-drag.rot * Math.PI) / 180
-      const dxg = p.x - drag.px
-      const dyg = p.y - drag.py
-      const dx = dxg * Math.cos(th) - dyg * Math.sin(th)
-      const dy = dxg * Math.sin(th) + dyg * Math.cos(th)
-      onResizeNode(drag.id, resizeBox(drag, dx, dy, evt.shiftKey, snapEnabled, baseView))
+      // Sheet-space travel; resizeBox reads it along the symbol's own axes and
+      // keeps the opposite grip pinned, so a turned symbol resizes the way it
+      // looks rather than the way it is stored.
+      onResizeNode(drag.id, resizeBox(
+        drag, p.x - drag.px, p.y - drag.py, evt.shiftKey, snapEnabled, baseView, GRID,
+      ))
       return
     }
 
@@ -625,9 +578,12 @@ const MimicCanvas = forwardRef(function MimicCanvas({
 
     const node = nodeById(drag.id)
     if (!node) return
+    // Bounded by what the symbol covers on screen, so a turned one can still
+    // reach every sheet edge without spilling over it.
+    const lim = positionBounds(node, baseView)
     onMoveNode(drag.id, {
-      x: clamp(snap(p.x - drag.ox, snapEnabled), 0, baseView.w - node.w),
-      y: clamp(snap(p.y - drag.oy, snapEnabled), 0, baseView.h - node.h),
+      x: clamp(snap(p.x - drag.ox, snapEnabled), lim.minX, lim.maxX),
+      y: clamp(snap(p.y - drag.oy, snapEnabled), lim.minY, lim.maxY),
     })
   }, [baseView, findPort, nodeById, onMoveBubble, onMoveNode, onMoveNodes, onResizeNode,
     snapEnabled, toLogical, updateView])
@@ -1033,7 +989,7 @@ const MimicCanvas = forwardRef(function MimicCanvas({
                 <rect
                   key={h.id}
                   className={styles.grip}
-                  style={{ cursor: h.cursor }}
+                  style={{ cursor: node.rot ? gripCursor(h, node.rot) : h.cursor }}
                   x={h.fx * node.w - 5}
                   y={h.fy * node.h - 5}
                   width={10}
@@ -1044,7 +1000,13 @@ const MimicCanvas = forwardRef(function MimicCanvas({
               ))}
 
               {resizingId === node.id && (
-                <text className={styles.dimension} x={node.w / 2} y={-18}>
+                // Above the symbol as it appears, and upright, at any angle.
+                <text
+                  className={styles.dimension}
+                  x={node.w / 2}
+                  y={node.h / 2 - rotatedHalf(node.w, node.h, node.rot).hh - 18}
+                  transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
+                >
                   {Math.round(node.w)} × {Math.round(node.h)}
                 </text>
               )}

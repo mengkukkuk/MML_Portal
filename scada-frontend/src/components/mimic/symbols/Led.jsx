@@ -1,6 +1,7 @@
 import { stateColor, statusColor } from '../tagStatus'
 import { useMatchedCase } from '../conditions'
 import s from './symbols.module.css'
+import { labelProps, uprightFrame } from '../labelPlacement'
 
 // Lives in ../palette so the symbol colour picker and node tests share it;
 // re-exported so `import { LED_PALETTE } from './Led'` keeps working.
@@ -42,7 +43,8 @@ export { LED_PALETTE } from '../palette'
  * blink teaches operators that blinking is background.
  */
 export default function Led({ node, tag }) {
-  const { w, h } = node
+  // Face drawn upright whatever the quarter turn; see uprightFrame.
+  const { w, h, transform: upright } = uprightFrame(node)
 
   const status = tag?.status ?? 'stale'
   const stale = !tag || status === 'stale'
@@ -66,49 +68,47 @@ export default function Led({ node, tag }) {
   const cy = h / 2
   const r = Math.min(w, h) * 0.36
 
+  const title = labelProps(node)
+
   return (
-    <g>
-      {/* Bezel. Always drawn at full weight so an unlit lamp is still visibly a
-          lamp — a dark circle alone reads as a hole in the drawing. */}
-      <circle className={s.bodyElev} cx={cx} cy={cy} r={r * 1.28} />
+    <>
+      <g transform={upright}>
+        {/* Bezel. Always drawn at full weight so an unlit lamp is still visibly a
+            lamp — a dark circle alone reads as a hole in the drawing. */}
+        <circle className={s.bodyElev} cx={cx} cy={cy} r={r * 1.28} />
 
-      <circle
-        className={s.lampFace}
-        cx={cx}
-        cy={cy}
-        r={r}
-        fill={lit ? color : 'var(--bg-panel)'}
-        stroke={lit ? color : 'var(--fg-dim)'}
-        opacity={lit ? 1 : 0.55}
-      />
-      {blink && <circle className={s.beacon} cx={cx} cy={cy} r={r} fill={color} />}
+        <circle
+          className={s.lampFace}
+          cx={cx}
+          cy={cy}
+          r={r}
+          fill={lit ? color : 'var(--bg-panel)'}
+          stroke={lit ? color : 'var(--fg-dim)'}
+          opacity={lit ? 1 : 0.55}
+        />
+        {blink && <circle className={s.beacon} cx={cx} cy={cy} r={r} fill={color} />}
 
-      {/* The lens highlight — the one thing that makes a filled circle read as
-          glass with something behind it rather than as a flat dot. */}
-      {lit && (
-        <circle className={s.lampGlint} cx={cx - r * 0.32} cy={cy - r * 0.34} r={r * 0.24} />
+        {/* The lens highlight — the one thing that makes a filled circle read as
+            glass with something behind it rather than as a flat dot. */}
+        {lit && (
+          <circle className={s.lampGlint} cx={cx - r * 0.32} cy={cy - r * 0.34} r={r * 0.24} />
+        )}
+
+        {/* A lamp whose source has gone quiet must not sit there looking green.
+            The cross-hatch is the drawing convention for "no signal", and it is
+            drawn over the lens so it cannot be mistaken for a lit colour. */}
+        {stale && (
+          <g className={s.hair}>
+            <line x1={cx - r * 0.6} y1={cy - r * 0.6} x2={cx + r * 0.6} y2={cy + r * 0.6} />
+            <line x1={cx + r * 0.6} y1={cy - r * 0.6} x2={cx - r * 0.6} y2={cy + r * 0.6} />
+          </g>
+        )}
+      </g>
+      {title && (
+        <text className={s.label} {...title}>
+          {node.label}
+        </text>
       )}
-
-      {/* A lamp whose source has gone quiet must not sit there looking green.
-          The cross-hatch is the drawing convention for "no signal", and it is
-          drawn over the lens so it cannot be mistaken for a lit colour. */}
-      {stale && (
-        <g className={s.hair}>
-          <line x1={cx - r * 0.6} y1={cy - r * 0.6} x2={cx + r * 0.6} y2={cy + r * 0.6} />
-          <line x1={cx + r * 0.6} y1={cy - r * 0.6} x2={cx - r * 0.6} y2={cy + r * 0.6} />
-        </g>
-      )}
-
-      <text
-        className={s.label}
-        x={cx}
-        y={h + 18}
-        textAnchor="middle"
-        style={{ fontSize: node.options?.labelSize }}
-        transform={node.rot ? `rotate(${-node.rot} ${node.w / 2} ${node.h / 2})` : undefined}
-      >
-        {node.label}
-      </text>
-    </g>
+    </>
   )
 }
