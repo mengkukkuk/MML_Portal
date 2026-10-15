@@ -6,6 +6,7 @@ import { setCustomDefs } from '@/components/mimic/symbols'
 import { fetchDatasources } from '@/api/datasources'
 import { fetchMimicSymbols } from '@/api/mimicAssets'
 import { kpiPollNodes } from '../kpiBoxes'
+import { noticePollNodes } from '../noticeBox'
 import {
   connectionCounts, overviewSubtitle, plantStatusOf, rankAttention,
 } from '../monitorStatus'
@@ -15,7 +16,7 @@ import {
  * tag snapshot, connection health, the datasource list and the custom symbol
  * library — plus the figures derived from them for the page chrome.
  */
-export default function useMimicData({ nodes, kpis }) {
+export default function useMimicData({ nodes, kpis, notices }) {
   const [liveMs, setLiveMs] = useState(5000)
   // The cover over the sub-second rates. Closed on every page load: an elevated
   // rate is something you choose for a job in hand, not something you inherit.
@@ -23,7 +24,7 @@ export default function useMimicData({ nodes, kpis }) {
 
   /**
    * What the plant poller is asked for: the drawing's bindings plus the
-   * strip's, in one list.
+   * strip's and the attention message boxes', in one list.
    *
    * The strip could have run its own query. It must not: a second clock would
    * ignore the cadence control, and the figure above the sheet would drift a
@@ -31,8 +32,8 @@ export default function useMimicData({ nodes, kpis }) {
    * support call about numbers that disagree.
    */
   const pollNodes = useMemo(
-    () => [...nodes, ...kpiPollNodes(kpis)],
-    [nodes, kpis],
+    () => [...nodes, ...kpiPollNodes(kpis), ...noticePollNodes(notices)],
+    [nodes, kpis, notices],
   )
 
   const {

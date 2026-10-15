@@ -6,6 +6,7 @@ import { fetchMimicLayout, saveMimicLayout } from '@/api/mimic'
 import { apiErrorMessage } from '@/api/client'
 import useMimicEditorSession from '../useMimicEditorSession'
 import { readKpis } from '../kpiBoxes'
+import { readNotices } from '../noticeBox'
 import {
   FALLBACK_NAME, FALLBACK_SLUG, clearLegacyLayout, editLock, emptyLayout, migrateLayout,
   readLegacyLayout, seedLayout,
@@ -89,6 +90,9 @@ export default function useMimicDocument({
   // history each time an admin nudged an unrelated symbol.
   const kpis = useMemo(() => readKpis(layout?.kpis), [layout])
 
+  // The attention strip's message boxes — a pure read, same rule as the KPIs.
+  const notices = useMemo(() => readNotices(layout?.notices), [layout])
+
   /**
    * Why this drawing cannot be edited here, or null.
    *
@@ -156,6 +160,7 @@ export default function useMimicDocument({
     layout,
     nodes,
     kpis,
+    notices,
     lock,
     dirty,
     saving,

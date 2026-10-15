@@ -1,19 +1,21 @@
 import { useCallback } from 'react'
 import { blankKpi, withKpiWidth } from '../kpiBoxes'
+import { blankNotice, NOTICE_LIMIT } from '../noticeBox'
 
 /**
- * What the binding, headline-number and production-log dialogs do to the draft
- * when they are saved.
+ * What the binding, headline-number, message-box and production-log dialogs do
+ * to the draft when they are saved.
  *
  * Every one of these goes through `commitLayout`, so the strip and the log
  * settings join the same draft, undo stack and unsaved-changes guard as the
  * drawing itself. Nothing here is written straight to the server.
  */
 export default function useDialogActions({
-  layout, commitLayout, kpis, ui, notify,
+  layout, commitLayout, kpis, notices, ui, notify,
 }) {
   const {
-    bindingNode, setBindingNode, editingKpi, setEditingKpi, setProductionSettingsOpen,
+    bindingNode, setBindingNode, editingKpi, setEditingKpi, editingNotice, setEditingNotice,
+    setProductionSettingsOpen,
   } = ui
 
   // --- binding dialog ------------------------------------------------------
@@ -73,7 +75,41 @@ export default function useDialogActions({
     notify('Headline number removed from the draft.')
   }, [commitKpis, editingKpi, kpis, notify, setEditingKpi])
 
+  // --- message boxes (attention strip) --------------------------------------
+  const commitNotices = useCallback((next) => {
+    commitLayout((previous) => ({ ...previous, notices: next }))
+  }, [commitLayout])
+
+  const addNotice = useCallback(() => {
+    if (notices.length >= NOTICE_LIMIT) return
+    const notice = blankNotice()
+    commitNotices([...notices, notice])
+    // Opened straight away, like a new KPI box: adding one is only ever the
+    // first half of what an admin came to do.
+    setEditingNotice(notice)
+  }, [commitNotices, notices, setEditingNotice])
+
+  const applyNotice = useCallback((next) => {
+    commitNotices(notices.map((n) => (n.id === next.id ? next : n)))
+    setEditingNotice(null)
+    notify('Message box updated in the draft.')
+  }, [commitNotices, notices, notify, setEditingNotice])
+
+  // The inline title edit. A direct manipulation like a KPI resize: undoable,
+  // saved with the document, no toast — the title changing is the confirmation.
+  const renameNotice = useCallback((id, patch) => {
+    commitNotices(notices.map((n) => (n.id === id ? { ...n, ...patch } : n)))
+  }, [commitNotices, notices])
+
+  const removeNotice = useCallback(() => {
+    if (!editingNotice) return
+    commitNotices(notices.filter((n) => n.id !== editingNotice.id))
+    setEditingNotice(null)
+    notify('Message box removed from the draft.')
+  }, [commitNotices, editingNotice, notices, notify, setEditingNotice])
+
   return {
     openBinding, applyBinding, applyProductionLog, commitKpis, addKpi, applyKpi, resizeKpi, removeKpi,
+    addNotice, applyNotice, renameNotice, removeNotice,
   }
 }

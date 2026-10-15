@@ -18,6 +18,8 @@ export default function useMonitorUi() {
   const [conflictOpen, setConflictOpen] = useState(false)
   const [bindingNode, setBindingNode] = useState(null)
   const [editingKpi, setEditingKpi] = useState(null)
+  // The attention strip's message source being commissioned, or null.
+  const [editingNotice, setEditingNotice] = useState(null)
   // The upload/author flow. Not per-node: a library symbol is authored once
   // and then placed, so this is a property of the session, not of a selection.
   const [authoring, setAuthoring] = useState(false)
@@ -37,6 +39,7 @@ export default function useMonitorUi() {
     conflictOpen, setConflictOpen,
     bindingNode, setBindingNode,
     editingKpi, setEditingKpi,
+    editingNotice, setEditingNotice,
     authoring, setAuthoring,
     viewPan, setViewPan,
     railCollapsed, setRailCollapsed,

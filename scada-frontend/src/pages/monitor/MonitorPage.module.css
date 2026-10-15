@@ -840,6 +840,196 @@
   color: var(--fg-dim);
 }
 
+/* Notification | Things to handle — a segmented pair in the head's lettering.
+ * The badge rides on Things to handle while the notification is showing, so
+ * the message view never hides a standing alarm. */
+.modeToggle {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+}
+
+.modeBtn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 1px);
+  background: transparent;
+  padding: 3px 10px;
+  cursor: pointer;
+  font-family: var(--font-thai);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.modeBtn:hover { color: var(--fg); }
+
+.modeBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.modeBtnOn {
+  background: var(--accent-soft);
+  color: var(--sym-ink);
+}
+
+.modeBadge {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  color: var(--bg-panel);
+}
+
+.modeBadgeCrit { background: var(--crit); }
+.modeBadgeWarn { background: var(--warn); }
+
+/* The message boxes: one row each, title then message. A grid of rows rather
+ * than a flex line so every title lines up and every message starts at the
+ * same x — a column of sentences reads down, not across. */
+.notice {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-1);
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+}
+
+.noticeGrid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-3);
+  row-gap: 4px;
+  min-width: 0;
+}
+
+.noticeGridEdit {
+  grid-template-columns: minmax(120px, max-content) minmax(0, 1fr) auto;
+}
+
+/* The row is only a grouping for the reader; its cells sit in the grid. */
+.noticeRow {
+  display: contents;
+}
+
+.noticeTitle {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  font-family: var(--font-thai);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
+.noticeTitleInput {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 2px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  font-family: var(--font-thai);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.noticeTitleInput:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  border-color: transparent;
+}
+
+.noticeText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-thai);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--sym-ink);
+}
+
+.noticeTextEmpty {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--fg-dim);
+}
+
+.noticeAdd {
+  appearance: none;
+  align-self: flex-start;
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 3px 10px;
+  cursor: pointer;
+  font-family: var(--font-thai);
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.noticeAdd:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.noticeAdd:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.noticeEmpty {
+  flex: 1 1 auto;
+  font-family: var(--font-thai);
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+
+.noticeEdit {
+  appearance: none;
+  flex: 0 0 auto;
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-family: var(--font-thai);
+  font-size: 12px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.noticeEdit:hover { background: var(--accent-soft); }
+
+.noticeEdit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* --- symbol palette (replaces the rail in edit mode) -------------------- */
 
 /* No box of its own: the rail around it already is one, and two nested panels

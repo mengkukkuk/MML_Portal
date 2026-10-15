@@ -138,7 +138,9 @@
   font-size: 10px;
   letter-spacing: 0.06em;
   padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--border);
+  /* Twice the weight of a row rule, so the header reads as a heading and not
+     as the first row. */
+  border-bottom: 2px solid var(--border);
   white-space: nowrap;
 }
 
@@ -146,6 +148,14 @@
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border-soft);
   white-space: nowrap;
+}
+
+/* Column rules, between columns only — the block's own edge closes the
+   outside. Soft, so they guide the eye down a column without boxing every
+   figure in. */
+.table th + th,
+.table td + td {
+  border-left: 1px solid var(--border-soft);
 }
 
 .table tbody tr:hover td {
@@ -156,6 +166,14 @@
   text-align: right;
   font-variant-numeric: tabular-nums;
   font-family: var(--font-mono);
+}
+
+/* `.table th` above is more specific than `.table__num` alone, which left
+   every numeric heading flush left over right-aligned figures. Headings keep
+   the label face: only the figures are set in mono. */
+.table th.table__num {
+  text-align: right;
+  font-family: inherit;
 }
 
 .table__wrap {

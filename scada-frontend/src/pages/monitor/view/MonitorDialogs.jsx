@@ -42,6 +42,16 @@ export default function MonitorDialogs({
         onRemove={actions.removeKpi}
       />
 
+      <KpiBindingDialog
+        variant="notice"
+        open={!!ui.editingNotice}
+        kpi={ui.editingNotice}
+        container={overlayHost}
+        onClose={() => ui.setEditingNotice(null)}
+        onSave={actions.applyNotice}
+        onRemove={actions.removeNotice}
+      />
+
       <ProductionLogDialog
         open={ui.productionSettingsOpen}
         binding={layout?.productionLog ?? null}

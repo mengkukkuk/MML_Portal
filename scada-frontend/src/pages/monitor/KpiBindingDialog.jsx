@@ -17,6 +17,7 @@ import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { buildDefectLabelsByCode, resolveTagLabel } from '@/utils/defectLabels'
 import { compileExpr, applyExpr } from '@/utils/mathExpr'
 import { UNIT_GROUPS } from '@/utils/units'
+import { fmtStamp } from '@/utils/datetime'
 import styles from './KpiBindingDialog.module.css'
 
 /**
@@ -40,6 +41,13 @@ import styles from './KpiBindingDialog.module.css'
  * shows the *formatted* figure — unit, decimals and expression applied — rather
  * than the raw reading: the question being answered is "is this the number I
  * want up there", not "did the query return".
+ *
+ * ## The notice variant
+ *
+ * `variant="notice"` commissions one of the attention strip's message boxes
+ * (noticeBox.js) through the same Signal column. A message is a sentence with a
+ * time, so text columns are offered first, the timestamp column is required,
+ * and the number-only presentation (unit, decimals, expression) is hidden.
  */
 
 /** Six is where a float's honest precision runs out for plant instrumentation. */
@@ -51,6 +59,9 @@ const DECIMAL_CHOICES = [0, 1, 2, 3, 4, 5, 6]
  * across a room has nothing useful to do with 'RUN'.
  */
 const VALUE_KINDS = ['value_columns']
+
+/** A notification is usually words; a numeric code is allowed after them. */
+const NOTICE_KINDS = ['text_columns', 'value_columns']
 
 /**
  * The unit catalogue flattened for a datalist, one entry per distinct suffix.
@@ -89,7 +100,11 @@ function fromKpi(kpi) {
   }
 }
 
-export default function KpiBindingDialog({ open, kpi, container, onClose, onSave, onRemove }) {
+export default function KpiBindingDialog({
+  open, kpi, container, onClose, onSave, onRemove, variant = 'kpi',
+}) {
+  const isNotice = variant === 'notice'
+  const valueKinds = isNotice ? NOTICE_KINDS : VALUE_KINDS
   const [form, setForm] = useState(() => fromKpi(kpi))
   const set = (patch) => setForm((current) => ({ ...current, ...patch }))
 
@@ -143,7 +158,7 @@ export default function KpiBindingDialog({ open, kpi, container, onClose, onSave
 
   const cols = columnsQuery.data
   const tables = tablesQuery.data || []
-  const valueGroups = useMemo(() => groupColumns(cols, VALUE_KINDS), [cols])
+  const valueGroups = useMemo(() => groupColumns(cols, valueKinds), [cols, valueKinds])
   const timestampColumns = cols?.datetime_columns ?? cols?.ts_columns ?? []
 
   // Clamp the stored selection against what this table actually offers. Asked
@@ -153,7 +168,7 @@ export default function KpiBindingDialog({ open, kpi, container, onClose, onSave
     if (!cols) return
     setForm((f) => {
       const next = { ...f }
-      if (next.valueCol && !pickableColumns(cols, VALUE_KINDS).includes(next.valueCol)) next.valueCol = ''
+      if (next.valueCol && !pickableColumns(cols, valueKinds).includes(next.valueCol)) next.valueCol = ''
       const stamps = cols.datetime_columns ?? cols.ts_columns ?? []
       if (next.tsCol && !stamps.includes(next.tsCol)) next.tsCol = ''
       if (next.filterCol && !cols.filter_columns.includes(next.filterCol)) {
@@ -162,7 +177,7 @@ export default function KpiBindingDialog({ open, kpi, container, onClose, onSave
       }
       return next
     })
-  }, [cols])
+  }, [cols, valueKinds])
 
   const exprError = useMemo(() => {
     const r = compileExpr(form.expr)
@@ -175,7 +190,11 @@ export default function KpiBindingDialog({ open, kpi, container, onClose, onSave
   const needsFilter = !!form.table && !form.tsCol
   const filterMissing = needsFilter && (!form.filterCol || form.filterVal === '')
 
-  const valid = !!form.table && !!form.valueCol && !exprError && !filterMissing
+  // A notification without a time is a sentence nobody can place, so the
+  // notice variant insists on a timestamp column.
+  const tsMissing = isNotice && !!form.table && !form.tsCol
+
+  const valid = !!form.table && !!form.valueCol && !exprError && !filterMissing && !tsMissing
 
   // --- live preview --------------------------------------------------------
   // Passes the picked connection through rather than the header's primary: the
@@ -191,7 +210,7 @@ export default function KpiBindingDialog({ open, kpi, container, onClose, onSave
   } : null
 
   const previewQuery = useQuery({
-    queryKey: ['kpi-binding-preview', selectionKey, previewArgs],
+    queryKey: ['kpi-binding-preview', variant, selectionKey, previewArgs],
     queryFn: async () => {
       const res = await fetchSchemaLatest(previewArgs)
       return fromPrimarySource(res.readings, res.sources)
@@ -206,13 +225,31 @@ export default function KpiBindingDialog({ open, kpi, container, onClose, onSave
   const previewText = useMemo(() => {
     const raw = previewQuery.data?.value
     if (raw == null) return null
+    if (isNotice) return typeof raw === 'string' ? raw : String(raw)
     const compiled = compileExpr(form.expr)
     const value = compiled.ok ? applyExpr(compiled.fn, raw) : raw
     if (typeof value !== 'number' || !Number.isFinite(value)) return String(value)
     return value.toFixed(Number(form.decimals) || 0)
-  }, [previewQuery.data, form.expr, form.decimals])
+  }, [previewQuery.data, form.expr, form.decimals, isNotice])
 
   function submit() {
+    if (isNotice) {
+      onSave({
+        ...kpi,
+        label: form.label.trim(),
+        labelEn: form.labelEn.trim(),
+        binding: {
+          datasource_id: dsId ?? null,
+          table: form.table,
+          value_col: form.valueCol,
+          ts_col: form.tsCol || null,
+          filter_col: form.filterCol || null,
+          filter_val: form.filterCol ? form.filterVal : null,
+          decimals: 0,
+        },
+      })
+      return
+    }
     onSave({
       ...kpi,
       label: form.label.trim(),
@@ -236,8 +273,10 @@ export default function KpiBindingDialog({ open, kpi, container, onClose, onSave
   return (
     <Dialog open={open} container={container} onClose={onClose} fullWidth maxWidth="md">
       <DialogTitle className={styles.title}>
-        <span className={styles.titleMain}>Headline number</span>
-        <span className={styles.titleSub}>ตัวเลขหัวจอ · {kpi.id}</span>
+        <span className={styles.titleMain}>{isNotice ? 'Message box' : 'Headline number'}</span>
+        <span className={styles.titleSub}>
+          {isNotice ? 'กล่องข้อความแจ้งเตือน' : `ตัวเลขหัวจอ · ${kpi.id}`}
+        </span>
       </DialogTitle>
 
       <DialogContent dividers className={styles.content}>
@@ -283,7 +322,7 @@ export default function KpiBindingDialog({ open, kpi, container, onClose, onSave
             </label>
 
             <label className={styles.field}>
-              <span>Value column</span>
+              <span>{isNotice ? 'Message column' : 'Value column'}</span>
               {/* Badged with the real Postgres type: `enabled` and
                   `enabled_count` are indistinguishable by name, and picking the
                   wrong one only shows up once the strip is live in front of a
@@ -308,7 +347,7 @@ export default function KpiBindingDialog({ open, kpi, container, onClose, onSave
                 disabled={!cols}
                 onChange={(e) => set({ tsCol: e.target.value })}
               >
-                <option value="">None — current-state table</option>
+                <option value="">{isNotice ? 'Select a timestamp…' : 'None — current-state table'}</option>
                 {timestampColumns.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </label>
@@ -339,7 +378,14 @@ export default function KpiBindingDialog({ open, kpi, container, onClose, onSave
               </label>
             )}
 
-            {filterMissing && (
+            {tsMissing && (
+              <p className={styles.error}>
+                A notification is shown with the time it was written. Pick the
+                column that holds that time.
+              </p>
+            )}
+
+            {filterMissing && !tsMissing && (
               <p className={styles.error}>
                 This table has no timestamp column, so there is no newest row to
                 read. Pick a filter that narrows it to the one row this box means.
@@ -352,66 +398,70 @@ export default function KpiBindingDialog({ open, kpi, container, onClose, onSave
             <h4 className={styles.colTitle}>Presentation</h4>
 
             <label className={styles.field}>
-              <span>Label (ไทย)</span>
+              <span>{isNotice ? 'Title (ไทย)' : 'Label (ไทย)'}</span>
               <input
                 value={form.label}
                 onChange={(e) => set({ label: e.target.value })}
-                placeholder="ผลิตได้วันนี้"
+                placeholder={isNotice ? 'แจ้งเตือนไลน์ 1' : 'ผลิตได้วันนี้'}
               />
             </label>
 
             <label className={styles.field}>
-              <span>Label (English)</span>
+              <span>{isNotice ? 'Title (English)' : 'Label (English)'}</span>
               <input
                 value={form.labelEn}
                 onChange={(e) => set({ labelEn: e.target.value })}
-                placeholder="Produced today"
+                placeholder={isNotice ? 'Line 1 alarms' : 'Produced today'}
               />
             </label>
 
-            <label className={styles.field}>
-              <span>Unit</span>
-              <input
-                list="kpi-units"
-                value={form.unit}
-                onChange={(e) => set({ unit: e.target.value })}
-                placeholder="ชิ้น / pcs"
-              />
-              {/* A datalist rather than a select: the catalogue covers physical
-                  units, and a production strip counts things it has no SI name
-                  for — pieces, pallets, cartons, ชิ้น. */}
-              <datalist id="kpi-units">
-                {UNIT_OPTIONS.map((u) => (
-                  <option key={u.value} value={u.value}>{u.label}</option>
-                ))}
-              </datalist>
-            </label>
+            {!isNotice && (
+              <>
+                <label className={styles.field}>
+                  <span>Unit</span>
+                  <input
+                    list="kpi-units"
+                    value={form.unit}
+                    onChange={(e) => set({ unit: e.target.value })}
+                    placeholder="ชิ้น / pcs"
+                  />
+                  {/* A datalist rather than a select: the catalogue covers physical
+                      units, and a production strip counts things it has no SI name
+                      for — pieces, pallets, cartons, ชิ้น. */}
+                  <datalist id="kpi-units">
+                    {UNIT_OPTIONS.map((u) => (
+                      <option key={u.value} value={u.value}>{u.label}</option>
+                    ))}
+                  </datalist>
+                </label>
 
-            <label className={styles.field}>
-              <span>Decimals</span>
-              <select
-                className={styles.mono}
-                value={form.decimals}
-                onChange={(e) => set({ decimals: e.target.value })}
-              >
-                {DECIMAL_CHOICES.map((d) => (
-                  <option key={d} value={d}>{d} · {(1234.56789).toFixed(d)}</option>
-                ))}
-              </select>
-            </label>
+                <label className={styles.field}>
+                  <span>Decimals</span>
+                  <select
+                    className={styles.mono}
+                    value={form.decimals}
+                    onChange={(e) => set({ decimals: e.target.value })}
+                  >
+                    {DECIMAL_CHOICES.map((d) => (
+                      <option key={d} value={d}>{d} · {(1234.56789).toFixed(d)}</option>
+                    ))}
+                  </select>
+                </label>
 
-            <label className={styles.field}>
-              <span>Expression</span>
-              <input
-                className={styles.mono}
-                value={form.expr}
-                onChange={(e) => set({ expr: e.target.value })}
-                placeholder="a / 10"
-              />
-            </label>
-            {exprError
-              ? <p className={styles.error}>{exprError}</p>
-              : <p className={styles.note}>`a` is the raw reading. Leave empty to print it as stored.</p>}
+                <label className={styles.field}>
+                  <span>Expression</span>
+                  <input
+                    className={styles.mono}
+                    value={form.expr}
+                    onChange={(e) => set({ expr: e.target.value })}
+                    placeholder="a / 10"
+                  />
+                </label>
+                {exprError
+                  ? <p className={styles.error}>{exprError}</p>
+                  : <p className={styles.note}>`a` is the raw reading. Leave empty to print it as stored.</p>}
+              </>
+            )}
 
             <div className={styles.preview}>
               <span className={styles.previewLabel}>
@@ -421,16 +471,22 @@ export default function KpiBindingDialog({ open, kpi, container, onClose, onSave
                 {previewQuery.isError ? '—'
                   : previewQuery.isPending && previewArgs ? '…'
                     : previewText ?? '—'}
-                {form.unit && previewText != null && <i>{form.unit}</i>}
+                {!isNotice && form.unit && previewText != null && <i>{form.unit}</i>}
               </span>
+              {isNotice && previewText != null && (
+                <span className={styles.previewNote}>{fmtStamp(previewQuery.data?.ts)}</span>
+              )}
               <span className={styles.previewNote}>
-                {!previewArgs ? 'Pick a table and a value column to read one.'
+                {!previewArgs ? (isNotice
+                  ? 'Pick a table, a message column and its timestamp to read one.'
+                  : 'Pick a table and a value column to read one.')
                   : previewQuery.isError
                     // Never the raw `detail`: a fan-out failure answers with an
                     // object ({error, sources}), and rendering that as a React
                     // child takes the whole page down.
                     ? apiErrorMessage(previewQuery.error, 'That binding returned no reading.')
-                    : 'Latest reading, as this box will print it.'}
+                    : isNotice ? 'Newest message, as the box will show it.'
+                      : 'Latest reading, as this box will print it.'}
               </span>
             </div>
           </section>
@@ -441,7 +497,9 @@ export default function KpiBindingDialog({ open, kpi, container, onClose, onSave
         <Button color="error" onClick={onRemove}>Remove box</Button>
         <span className={styles.spacer} />
         <Button color="inherit" onClick={onClose}>Cancel</Button>
-        <Button variant="contained" disabled={!valid} onClick={submit}>Use this reading</Button>
+        <Button variant="contained" disabled={!valid} onClick={submit}>
+          {isNotice ? 'Use this message' : 'Use this reading'}
+        </Button>
       </DialogActions>
     </Dialog>
   )

@@ -17,6 +17,7 @@ import useEditLifecycle from './hooks/useEditLifecycle'
 import useMimicFiles from './hooks/useMimicFiles'
 import useFullscreen from './hooks/useFullscreen'
 import useEditorShortcuts from './hooks/useEditorShortcuts'
+import useNoticeLogs from './hooks/useNoticeLogs'
 import OverviewPanel from './view/OverviewPanel'
 import ViewToolbar from './view/ViewToolbar'
 import FullscreenHead from './view/FullscreenHead'
@@ -67,11 +68,12 @@ export default function MonitorPage() {
     activeSlug, layouts, notify, onConflict,
   })
   const {
-    layout, nodes, kpis, lock, activeName,
+    layout, nodes, kpis, notices, lock, activeName,
   } = doc
 
-  const data = useMimicData({ nodes, kpis })
+  const data = useMimicData({ nodes, kpis, notices })
   const { tags } = data
+  const noticeLogs = useNoticeLogs(notices, tags)
 
   const chrome = useEditorChrome()
   const selection = useMimicSelection({
@@ -91,7 +93,7 @@ export default function MonitorPage() {
     setWirePen: chrome.setWirePen,
   })
   const actions = useDialogActions({
-    layout, commitLayout: doc.commitLayout, kpis, ui, notify,
+    layout, commitLayout: doc.commitLayout, kpis, notices, ui, notify,
   })
   const lifecycle = useEditLifecycle({
     canEdit, activeSlug, doc, selection, ui,
@@ -138,7 +140,9 @@ export default function MonitorPage() {
   // Declared after useMimicDocument's seed effect on purpose — see there.
   const { seededSlugRef, loadLayout } = doc
   const { setSelectedId, setSelectedEdgeId, resetClipboard } = selection
-  const { setBindingNode, setProductionLogOpen, setProductionSettingsOpen } = ui
+  const {
+    setBindingNode, setEditingNotice, setProductionLogOpen, setProductionSettingsOpen,
+  } = ui
   useEffect(() => {
     if (seededSlugRef.current === null || seededSlugRef.current === activeSlug) return
     seededSlugRef.current = null
@@ -147,6 +151,7 @@ export default function MonitorPage() {
     setSelectedEdgeId(null)
     resetClipboard()
     setBindingNode(null)
+    setEditingNotice(null)
     setProductionLogOpen(false)
     setProductionSettingsOpen(false)
   }, [activeSlug, loadLayout]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -280,11 +285,20 @@ export default function MonitorPage() {
         />
       )}
 
-      {nodes.length > 0 && (
+      {/* Shown with message boxes even on an empty sheet, and always while
+        * editing: the boxes are added and commissioned from inside the strip. */}
+      {layout && (nodes.length > 0 || notices.length > 0 || editing) && (
         <AttentionStrip
           attention={data.attention}
           selectedId={selection.selectedId}
           onSelect={selection.selectNode}
+          notices={notices}
+          tags={tags}
+          noticeLogs={noticeLogs}
+          editing={editing}
+          onAddNotice={actions.addNotice}
+          onEditNotice={setEditingNotice}
+          onRenameNotice={actions.renameNotice}
         />
       )}
 

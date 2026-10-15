@@ -1,6 +1,7 @@
 import { SYMBOLS } from '@/components/mimic/symbols'
 import { cloneDefaultLayout, LAYOUT_VERSION } from './defaultLayout'
 import { normalizeKpis } from './kpiBoxes'
+import { normalizeNotices } from './noticeBox'
 
 /**
  * layoutDoc — validation, migration and the one-time localStorage handover.
@@ -155,6 +156,13 @@ export function migrateLayout(doc) {
   // would cost.
   out = { ...out, kpis: normalizeKpis(out.kpis) }
 
+  // The attention strip's message boxes. Optional and unversioned: a drawing
+  // from before they existed simply has none. Repaired here for the same reason
+  // as the KPI strip — this mints ids — and the single `notice` an earlier
+  // build of the feature wrote is folded into the list and dropped.
+  const { notice: legacyNotice, ...rest } = out
+  out = { ...rest, notices: normalizeNotices(out.notices, legacyNotice) }
+
   return isRenderable(out) ? out : null
 }
 
@@ -204,6 +212,7 @@ export function emptyLayout(name) {
     edges: [],
     productionLog: null,
     kpis: [],
+    notices: [],
     // A new sheet starts colour-coded by category; older drawings keep their
     // look until someone turns this on (see components/mimic/symbolColors.js).
     theme: { byCategory: true },
