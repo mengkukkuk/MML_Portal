@@ -167,14 +167,15 @@ def read_alert_messages(
     datasource_id: int,
     start: datetime,
     end: datetime,
-    match_value: str | None,
+    match_values: list[str] | None,
     limit: int,
 ) -> list[dict[str, Any]]:
     """Messages in [start, end], newest first, at most `limit` rows.
 
-    `source` is a row from `get_alert_source`. `match_value` filters on the
-    source's match column when both are set; with none, every message in the
-    window is returned. Raises ValueError when the table or a column is not
+    `source` is a row from `get_alert_source`. `match_values` filters on the
+    source's match column when both are set — the report filter is a multi-pick,
+    so a message matches any of them; with none, every message in the window is
+    returned. Raises ValueError when the table or a column is not
     there (`_safe_identifiers`), and lets the connection's own errors propagate.
 
     Message and severity are read as text whatever their column type: a message
@@ -221,8 +222,13 @@ def read_alert_messages(
             bound=bound,
         )
         params: list[Any] = [start, end]
-        if match_col and match_value is not None:
-            clause, param = _tables._filter_clause(columns, match_col, match_value)
+        if match_col and match_values:
+            if len(match_values) == 1:
+                # One value keeps _filter_clause's index-friendly integer compare.
+                clause, param = _tables._filter_clause(columns, match_col, match_values[0])
+            else:
+                clause = sql.SQL("{}::text = ANY(%s)").format(sql.Identifier(match_col))
+                param = list(match_values)
             query += sql.SQL(" AND ") + clause
             params.append(param)
         query += sql.SQL(" ORDER BY {} DESC LIMIT %s").format(clock)

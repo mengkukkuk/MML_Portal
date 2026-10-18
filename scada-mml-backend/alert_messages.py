@@ -46,6 +46,8 @@ router = APIRouter(
 MAX_MESSAGES = 2000
 # Same ceiling as /schema/series, so any window the trend can show can be asked.
 MAX_WINDOW_DAYS = 366
+# The report filter's multi-pick, bounded so a hand-made URL stays a short query.
+MAX_MATCH_VALUES = 50
 
 # Postgres identifiers: at most 63 bytes. Anything else is still checked against
 # the plant's catalogue on every read — this only turns an obvious typo into a
@@ -205,16 +207,17 @@ def get_alert_messages(
     datasource_id: int = Query(..., ge=1),
     start: datetime = Query(...),
     end: datetime = Query(...),
-    location: str | None = Query(None, max_length=200),
-    camera: str | None = Query(None, max_length=200),
+    location: list[str] = Query([]),
+    camera: list[str] = Query([]),
     limit: int = Query(MAX_MESSAGES, ge=1, le=MAX_MESSAGES),
     _user: dict = Depends(get_current_user),
 ):
     """The alert messages in [start, end] for one datasource, newest first.
 
-    `location` / `camera` are the report filter bar's values; the one the source
-    follows (its `match_filter`) narrows the messages, the other is ignored. With
-    neither, every message in the window is returned — the same as the trend,
+    `location` / `camera` are the report filter bar's values, repeated for a
+    multi-pick; the one the source follows (its `match_filter`) narrows the
+    messages to any of its values, the other is ignored. With none, every message
+    in the window is returned — the same as the trend,
     which shows whatever the filter bar does not narrow.
     """
     if start.utcoffset() is None or end.utcoffset() is None:
@@ -230,14 +233,16 @@ def get_alert_messages(
                 "reason": "not_configured"}
 
     match_filter = source.get("match_filter")
-    wanted = {"location": location, "camera": camera}.get(match_filter) if match_filter else None
-    match_value = wanted.strip() if wanted and wanted.strip() else None
+    wanted = {"location": location, "camera": camera}.get(match_filter, []) if match_filter else []
+    match_values = list(dict.fromkeys(v.strip() for v in wanted if v and v.strip()))
+    if len(match_values) > MAX_MATCH_VALUES or any(len(v) > 200 for v in match_values):
+        raise HTTPException(422, f"At most {MAX_MATCH_VALUES} filter values of 200 characters")
 
     base = {"datasource_id": datasource_id, "configured": True, "match_filter": match_filter}
     try:
         # One row past the cap, then trimmed: exactly `limit` back cannot tell a
         # window that holds `limit` messages from one that holds more.
-        rows = db.read_alert_messages(source, datasource_id, start, end, match_value, limit + 1)
+        rows = db.read_alert_messages(source, datasource_id, start, end, match_values, limit + 1)
     except (ValueError, psycopg.Error, PoolTimeout) as e:
         reason, detail = _failure(e)
         if reason == "error":

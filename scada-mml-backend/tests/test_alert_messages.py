@@ -160,9 +160,24 @@ def test_query_is_windowed_newest_first_and_capped(monkeypatch):
 def test_match_value_filters_on_the_match_column(monkeypatch):
     conn = _Conn()
     _stub_plant(monkeypatch, conn)
-    db.read_alert_messages(SOURCE, 7, START, END, "L13", 10)
+    db.read_alert_messages(SOURCE, 7, START, END, ["L13"], 10)
     assert '"line_name"::text = %s' in _text(conn)
     assert conn.params == [START, END, "L13", 10]
+
+
+def test_several_match_values_match_any(monkeypatch):
+    conn = _Conn()
+    _stub_plant(monkeypatch, conn)
+    db.read_alert_messages(SOURCE, 7, START, END, ["L13", "L2"], 10)
+    assert '"line_name"::text = ANY(%s)' in _text(conn)
+    assert conn.params == [START, END, ["L13", "L2"], 10]
+
+
+def test_no_match_values_is_no_filter(monkeypatch):
+    conn = _Conn()
+    _stub_plant(monkeypatch, conn)
+    db.read_alert_messages(SOURCE, 7, START, END, [], 10)
+    assert '"line_name"' not in _text(conn)
 
 
 def test_without_a_severity_column_every_row_has_none(monkeypatch):
@@ -191,8 +206,8 @@ def test_a_missing_column_is_a_value_error(monkeypatch):
 
 
 def _messages(**kw):
-    args = {"datasource_id": 7, "start": START, "end": END, "location": None,
-            "camera": None, "limit": alert_messages.MAX_MESSAGES, "_user": USER}
+    args = {"datasource_id": 7, "start": START, "end": END, "location": [],
+            "camera": [], "limit": alert_messages.MAX_MESSAGES, "_user": USER}
     return alert_messages.get_alert_messages(**{**args, **kw})
 
 
@@ -201,8 +216,8 @@ def configured(monkeypatch):
     monkeypatch.setattr(db, "get_alert_source", lambda ds: dict(SOURCE))
     calls = []
 
-    def read(source, ds, start, end, match_value, limit):
-        calls.append({"match_value": match_value, "limit": limit})
+    def read(source, ds, start, end, match_values, limit):
+        calls.append({"match_values": match_values, "limit": limit})
         return [
             {"ts": END - timedelta(minutes=i), "message": f"m{i}", "severity": s}
             for i, s in enumerate(["crit", "1", None])
@@ -246,12 +261,18 @@ def test_cap_is_read_one_past_and_reported(configured):
 
 
 def test_only_the_followed_filter_narrows(configured):
-    _messages(location=" L13 ", camera="CAM001")
-    assert configured[-1]["match_value"] == "L13"
-    _messages(camera="CAM001")
-    assert configured[-1]["match_value"] is None
-    _messages(location="   ")
-    assert configured[-1]["match_value"] is None
+    _messages(location=[" L13 ", "L2", "L13"], camera=["CAM001"])
+    assert configured[-1]["match_values"] == ["L13", "L2"]
+    _messages(camera=["CAM001"])
+    assert configured[-1]["match_values"] == []
+    _messages(location=["   "])
+    assert configured[-1]["match_values"] == []
+
+
+def test_too_many_filter_values_is_422(configured):
+    with pytest.raises(HTTPException) as exc:
+        _messages(location=[f"L{i}" for i in range(alert_messages.MAX_MATCH_VALUES + 1)])
+    assert exc.value.status_code == 422
 
 
 @pytest.mark.parametrize("error, reason", [
