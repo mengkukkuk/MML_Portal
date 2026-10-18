@@ -30,7 +30,7 @@ test('flags far apart stay separate, at their place across the plot', () => {
 
 test('flags closer than the gap merge, take the worst severity and list newest first', () => {
   // 1 min = 10 px on a 1000 px plot of 100 min.
-  const flags = clusterMessages([msg(10, 'info'), msg(11, 'crit'), msg(12, 'warn'), msg(40)], view, 1000, 14)
+  const flags = clusterMessages([msg(10, 'info'), msg(11, 'crit'), msg(12, 'warn'), msg(40)], view, 1000, 25)
   assert.equal(flags.length, 2)
   assert.equal(flags[0].count, 3)
   assert.equal(flags[0].severity, 'crit')
@@ -67,4 +67,13 @@ test('a pinned box holds its messages by time, whatever the zoom', () => {
 test('plant text is escaped before it reaches tooltip markup', () => {
   assert.equal(escapeHtml('<img src=x onerror="alert(1)">&\''), '&lt;img src=x onerror=&quot;alert(1)&quot;&gt;&amp;&#39;')
   assert.equal(escapeHtml(null), '')
+})
+
+test('a steady stream does not chain into one flag: a cluster is at most the gap wide', () => {
+  // A message every minute = every 10 px; with a 25 px gap each flag holds 3.
+  const stream = Array.from({ length: 30 }, (_, i) => msg(i))
+  const flags = clusterMessages(stream, view, 1000, 25)
+  assert.equal(flags.length, 10)
+  assert.ok(flags.every((f) => f.count === 3))
+  assert.equal(flags.reduce((n, f) => n + f.count, 0), 30)
 })

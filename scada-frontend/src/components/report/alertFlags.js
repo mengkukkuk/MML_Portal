@@ -48,7 +48,11 @@ export function clusterMessages(messages, view, plotPx, gapPx = CLUSTER_GAP_PX) 
   for (const m of messages) {
     if (m.t < view.from || m.t > view.to) continue
     const px = ((m.t - view.from) / span) * plotPx
-    if (cur && px - cur.lastPx < gapPx) {
+    // Measured from the cluster's *first* flag, not its last: a steady stream
+    // (a check every 10 s is a few px apart) would otherwise chain into one
+    // flag spanning the whole plot. Capped, a dense stretch reads as a row of
+    // counted flags, each no wider than a fingertip.
+    if (cur && px - cur.firstPx < gapPx) {
       cur.lastPx = px
       cur.to = m.t
       cur.severity = worst(cur.severity, m.severity)
