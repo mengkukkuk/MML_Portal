@@ -30,6 +30,7 @@ import { apiErrorMessage } from '@/api/client'
 import styles from './SettingsPage.module.css'
 import LanguageSelect from '@/components/LanguageSelect/LanguageSelect.jsx'
 import AlertSourceSettings from './AlertSourceSettings'
+import ResponseRoleSettings from './ResponseRoleSettings'
 
 /**
  * SettingsPage — the control-console for portal-wide parameters (route: /settings).
@@ -107,7 +108,7 @@ export default function SettingsPage() {
   const isAdmin = role === 'admin'
 
   const [collapsed, setCollapsed] = useState({
-    appearance: true, acquisition: true, datasources: true, cameraSource: true, alertSource: true,
+    appearance: true, acquisition: true, datasources: true, cameraSource: true, alertSource: true, responseRoles: true,
   })
   function toggle(key) {
     setCollapsed((c) => ({ ...c, [key]: !c[key] }))
@@ -457,6 +458,22 @@ export default function SettingsPage() {
         {!collapsed.alertSource && (
             <div className={styles.modBody}>
               <AlertSourceSettings datasources={datasources} isAdmin={isAdmin} notify={notify} />
+            </div>
+        )}
+      </section>
+
+      {/* ── Module 2c · Response roles ─────────────────────────────────── */}
+      <section className={`${styles.mod} ${collapsed.responseRoles ? styles.modCollapsed : ''}`}>
+        <header className={styles.modHead} onClick={() => toggle('responseRoles')}>
+          <span className={styles.modTag}>{tr("Response roles")}</span>
+          <span className={styles.modSub}>{tr("Who has to act on an alert")}</span>
+          <ChevronRightRounded
+              className={`${styles.modChevron} ${!collapsed.responseRoles ? styles.modChevronOpen : ''}`}
+          />
+        </header>
+        {!collapsed.responseRoles && (
+            <div className={styles.modBody}>
+              <ResponseRoleSettings isAdmin={isAdmin} notify={notify} />
             </div>
         )}
       </section>

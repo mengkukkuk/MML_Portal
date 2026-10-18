@@ -312,6 +312,51 @@
   margin-top: var(--space-4);
 }
 
+/* ── Response roles ─────────────────────────────────────────────────── */
+/* An editable rule table: wide, so it scrolls inside its own box rather than
+   pushing the page sideways on a narrow screen. */
+.roleWrap {
+  margin-top: var(--space-4);
+  overflow-x: auto;
+}
+.roleTable {
+  width: 100%;
+  min-width: 920px;
+  border-collapse: collapse;
+}
+.roleTable th {
+  padding: 0 6px 6px;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.roleTable td {
+  padding: 4px 6px;
+  vertical-align: middle;
+}
+.roleTable :global(.MuiTextField-root),
+.roleTable :global(.MuiInputBase-root) {
+  width: 100%;
+}
+.rolePriority {
+  width: 84px;
+}
+/* Pinned to the right edge: on a narrow card the rule table scrolls inside its
+   box, and the row's Save must not be the part that scrolls out of reach. */
+.roleActions {
+  position: sticky;
+  right: 0;
+  white-space: nowrap;
+  text-align: right;
+  background: var(--bg-panel);
+  box-shadow: -8px 0 8px -8px rgba(0, 0, 0, 0.35);
+}
+
 /* ── Data sources ───────────────────────────────────────────────────── */
 .dsReadonly,
 .dsEmpty {

@@ -33,9 +33,11 @@ Usage (datasource 569 "Mengkukkuk" is the local mmldata, schema vision_data):
     python simulate_alert_showcase.py --datasource 569 --seed 24 --live --tick-alerts
     python simulate_alert_showcase.py --datasource 569 --purge            # remove it all
 
-Then Settings -> Alert messages, for that connection: table alert_messages,
-time created_at, message message, severity severity, follows Location on
-location. Reports: table sensor_log1, reading CAM001-13-count_1, time recorded_at.
+Then Settings -> Alert messages (one source for every trend): connection =
+the one written to here, table alert_messages, time created_at, message
+message, severity severity, follows Location on location. Reports: table
+sensor_log1, reading CAM001-13-count_1, time recorded_at. Pointing the source
+here moves it off any real alert table — set it back afterwards.
 """
 import argparse
 import random

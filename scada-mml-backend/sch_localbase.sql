@@ -134,13 +134,15 @@ create table if not exists localbase.camera_link_settings
 alter table localbase.camera_link_settings
     owner to postgres;
 
--- Where each datasource keeps its alert messages (table + columns in that
--- plant's schema), for the report trend's message markers. The named table may
--- not exist yet; reads report it as unavailable rather than failing.
-create table if not exists localbase.alert_message_sources
+-- The one alert message source (singleton): which connection, table and
+-- columns hold the alerts the report trend marks — for every trend, whichever
+-- connection its readings come from. No row means no source. The named table
+-- may not exist yet; reads report it as unavailable rather than failing.
+create table if not exists localbase.alert_source_settings
 (
+    id            integer default 1                      not null
+        primary key,
     datasource_id integer                                not null
-        primary key
         references localbase.datasources
             on delete cascade,
     table_name    text                                   not null,
@@ -149,14 +151,39 @@ create table if not exists localbase.alert_message_sources
     severity_col  text,
     match_col     text,
     match_filter  text,
+    role_col      text,
     updated_at    timestamp with time zone default now() not null,
-    constraint alert_message_sources_match
+    constraint alert_source_settings_singleton
+        check (id = 1),
+    constraint alert_source_settings_match
         check ((match_col is null) = (match_filter is null)),
-    constraint alert_message_sources_filter
+    constraint alert_source_settings_filter
         check (match_filter is null or match_filter in ('location', 'camera'))
 );
 
-alter table localbase.alert_message_sources
+alter table localbase.alert_source_settings
+    owner to postgres;
+
+-- Who has to act on an alert: one rule per row (role code + Thai/English names,
+-- optional severity / location / message keyword), tried by priority, first
+-- match wins; no conditions = catch-all. An alert row's own role column, when
+-- the source names one, overrides the rules. Edited in Settings.
+create table if not exists localbase.response_role
+(
+    id         serial                                 primary key,
+    code       text                                   not null,
+    name_th    text                                   not null,
+    name_en    text                                   not null,
+    severity   text,
+    location   text,
+    keyword    text,
+    priority   integer                  default 100   not null,
+    updated_at timestamp with time zone default now() not null,
+    constraint response_role_severity
+        check (severity is null or severity in ('crit', 'warn', 'info'))
+);
+
+alter table localbase.response_role
     owner to postgres;
 
 create table if not exists localbase.mimic_assets

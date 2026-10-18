@@ -61,12 +61,12 @@ def test_severity_is_read_leniently(raw, expected):
 
 def test_source_needs_table_time_and_message():
     with pytest.raises(ValidationError):
-        alert_messages.AlertSourceIn(table_name=" ", ts_col="t", message_col="m")
+        alert_messages.AlertSourceIn(datasource_id=7, table_name=" ", ts_col="t", message_col="m")
 
 
 def test_source_trims_names_and_blanks_optional_ones():
     body = alert_messages.AlertSourceIn(
-        table_name=" alert_log ", ts_col="created_at", message_col="message", severity_col="  ",
+        datasource_id=7, table_name=" alert_log ", ts_col="created_at", message_col="message", severity_col="  ",
     )
     assert body.table_name == "alert_log"
     assert body.severity_col is None
@@ -78,19 +78,20 @@ def test_source_trims_names_and_blanks_optional_ones():
 ])
 def test_match_column_and_filter_come_together(match):
     with pytest.raises(ValidationError):
-        alert_messages.AlertSourceIn(table_name="a", ts_col="t", message_col="m", **match)
+        alert_messages.AlertSourceIn(datasource_id=7, table_name="a", ts_col="t", message_col="m", **match)
 
 
 def test_match_filter_is_a_report_filter():
     with pytest.raises(ValidationError):
         alert_messages.AlertSourceIn(
-            table_name="a", ts_col="t", message_col="m", match_col="x", match_filter="device")
+            datasource_id=7, table_name="a", ts_col="t", message_col="m", match_col="x",
+            match_filter="device")
 
 
 @pytest.mark.parametrize("name", ["x" * 64, "bad\x00name", "tab\tname"])
 def test_impossible_identifiers_are_refused_at_save(name):
     with pytest.raises(ValidationError):
-        alert_messages.AlertSourceIn(table_name=name, ts_col="t", message_col="m")
+        alert_messages.AlertSourceIn(datasource_id=7, table_name=name, ts_col="t", message_col="m")
 
 
 # --- the plant read -------------------------------------------------------------
@@ -139,16 +140,16 @@ def _text(conn):
 def test_every_named_column_passes_the_allowlist_gate(monkeypatch):
     conn = _Conn()
     seen = _stub_plant(monkeypatch, conn)
-    db.read_alert_messages(SOURCE, 7, START, END, None, 10)
+    db.read_alert_messages(SOURCE, START, END, None, 10)
     assert seen["datasource_id"] == 7
     assert seen["identifiers"] == (
-        "vision_data", "alert_log", ("created_at", "message", "level", "line_name"))
+        "vision_data", "alert_log", ("created_at", "message", "level", "line_name", None))
 
 
 def test_query_is_windowed_newest_first_and_capped(monkeypatch):
     conn = _Conn()
     _stub_plant(monkeypatch, conn)
-    db.read_alert_messages(SOURCE, 7, START, END, None, 10)
+    db.read_alert_messages(SOURCE, START, END, None, 10)
     text = _text(conn)
     assert '"vision_data"."alert_log"' in text
     assert '"created_at" >= %s AND "created_at" <= %s' in text
@@ -160,7 +161,7 @@ def test_query_is_windowed_newest_first_and_capped(monkeypatch):
 def test_match_value_filters_on_the_match_column(monkeypatch):
     conn = _Conn()
     _stub_plant(monkeypatch, conn)
-    db.read_alert_messages(SOURCE, 7, START, END, ["L13"], 10)
+    db.read_alert_messages(SOURCE, START, END, ["L13"], 10)
     assert '"line_name"::text = %s' in _text(conn)
     assert conn.params == [START, END, "L13", 10]
 
@@ -168,7 +169,7 @@ def test_match_value_filters_on_the_match_column(monkeypatch):
 def test_several_match_values_match_any(monkeypatch):
     conn = _Conn()
     _stub_plant(monkeypatch, conn)
-    db.read_alert_messages(SOURCE, 7, START, END, ["L13", "L2"], 10)
+    db.read_alert_messages(SOURCE, START, END, ["L13", "L2"], 10)
     assert '"line_name"::text = ANY(%s)' in _text(conn)
     assert conn.params == [START, END, ["L13", "L2"], 10]
 
@@ -176,21 +177,22 @@ def test_several_match_values_match_any(monkeypatch):
 def test_no_match_values_is_no_filter(monkeypatch):
     conn = _Conn()
     _stub_plant(monkeypatch, conn)
-    db.read_alert_messages(SOURCE, 7, START, END, [], 10)
-    assert '"line_name"' not in _text(conn)
+    db.read_alert_messages(SOURCE, START, END, [], 10)
+    where = _text(conn).split(" WHERE ", 1)[1]
+    assert '"line_name"' not in where
 
 
 def test_without_a_severity_column_every_row_has_none(monkeypatch):
     conn = _Conn()
     _stub_plant(monkeypatch, conn)
-    db.read_alert_messages({**SOURCE, "severity_col": None}, 7, START, END, None, 10)
+    db.read_alert_messages({**SOURCE, "severity_col": None}, START, END, None, 10)
     assert "NULL::text AS severity" in _text(conn)
 
 
 def test_naive_time_column_converts_the_bounds_not_the_column(monkeypatch):
     conn = _Conn()
     _stub_plant(monkeypatch, conn, {**COLUMNS, "created_at": "timestamp without time zone"})
-    db.read_alert_messages(SOURCE, 7, START, END, None, 10)
+    db.read_alert_messages(SOURCE, START, END, None, 10)
     text = _text(conn)
     assert "\"created_at\" >= (%s::timestamptz AT TIME ZONE current_setting('TimeZone'))" in text
     assert text.startswith("SELECT (\"created_at\" AT TIME ZONE current_setting('TimeZone')) AS ts")
@@ -199,24 +201,104 @@ def test_naive_time_column_converts_the_bounds_not_the_column(monkeypatch):
 def test_a_missing_column_is_a_value_error(monkeypatch):
     _stub_plant(monkeypatch, _Conn())
     with pytest.raises(ValueError):
-        db.read_alert_messages({**SOURCE, "message_col": "nope"}, 7, START, END, None, 10)
+        db.read_alert_messages({**SOURCE, "message_col": "nope"}, START, END, None, 10)
+
+
+def test_location_and_role_values_are_read_for_the_role_rules(monkeypatch):
+    conn = _Conn()
+    _stub_plant(monkeypatch, conn, {**COLUMNS, "who": "text"})
+    db.read_alert_messages({**SOURCE, "role_col": "who"}, START, END, None, 10)
+    text = _text(conn)
+    assert '"line_name"::text AS match_value' in text
+    assert '"who"::text AS role_value' in text
+
+
+def test_without_a_role_column_the_role_value_is_null(monkeypatch):
+    conn = _Conn()
+    _stub_plant(monkeypatch, conn)
+    db.read_alert_messages(SOURCE, START, END, None, 10)
+    assert "NULL::text AS role_value" in _text(conn)
+
+
+# --- response roles -----------------------------------------------------------------
+
+RULES = [
+    {"code": "it", "name_th": "ทีมระบบอัตโนมัติ", "name_en": "Automation team",
+     "severity": None, "location": None, "keyword": "disconnected", "priority": 10},
+    {"code": "l13-sup", "name_th": "หัวหน้าไลน์ 13", "name_en": "Line 13 supervisor",
+     "severity": "warn", "location": "Line 13", "keyword": None, "priority": 20},
+    {"code": "maint", "name_th": "ช่างซ่อมบำรุง", "name_en": "Maintenance",
+     "severity": "crit", "location": None, "keyword": None, "priority": 30},
+    {"code": "op", "name_th": "พนักงานคุมเครื่อง", "name_en": "Operator",
+     "severity": None, "location": None, "keyword": None, "priority": 999},
+]
+
+
+def role(**kw):
+    kw.setdefault("location", None)
+    kw.setdefault("message", "")
+    r = db.match_response_role(RULES, **kw)
+    return r and r["code"]
+
+
+def test_the_first_matching_rule_wins():
+    # The keyword rule sits above the severity rule, so a critical disconnect is IT's.
+    assert role(severity="crit", message="The Tag is DISCONNECTED at 13:41") == "it"
+    assert role(severity="crit", message="Motor overload") == "maint"
+
+
+def test_location_ignores_case_and_spaces():
+    for spelt in ("Line 13", "Line13", " line 13 ", "LINE13"):
+        assert role(severity="warn", location=spelt) == "l13-sup"
+    assert role(severity="warn", location="Line 1") == "op"
+
+
+def test_a_rule_with_no_conditions_is_the_catch_all():
+    assert role(severity="info", message="Start of shift") == "op"
+    assert db.match_response_role(RULES[:3], severity="info", location=None, message="x") is None
+
+
+def test_the_row_own_role_wins_and_is_named_by_its_code():
+    got = db.match_response_role(RULES, severity="crit", location=None, message="Motor overload",
+                                 explicit=" MAINT ")
+    assert got == {"code": "maint", "name_th": "ช่างซ่อมบำรุง", "name_en": "Maintenance"}
+    unknown = db.match_response_role(RULES, severity="info", location=None, message="x",
+                                     explicit="QC lead")
+    assert unknown == {"code": "QC lead", "name_th": "QC lead", "name_en": "QC lead"}
+    assert role(severity="crit", message="Motor overload", explicit="  ") == "maint"
+
+
+def test_role_input_trims_and_treats_blank_conditions_as_any():
+    body = alert_messages.ResponseRoleIn(code=" maint ", name_th="ช่าง", name_en="Maintenance",
+                                         location="  ", keyword=" overload ")
+    assert body.code == "maint" and body.location is None and body.keyword == "overload"
+    with pytest.raises(ValidationError):
+        alert_messages.ResponseRoleIn(code=" ", name_th="x", name_en="x")
+    with pytest.raises(ValidationError):
+        alert_messages.ResponseRoleIn(code="x", name_th="x", name_en="x", severity="loud")
 
 
 # --- /messages -------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _rules(monkeypatch):
+    """Role rules come from the app database; these tests run without one."""
+    monkeypatch.setattr(db, "list_response_roles", lambda: list(RULES))
+
+
 def _messages(**kw):
-    args = {"datasource_id": 7, "start": START, "end": END, "location": [],
+    args = {"start": START, "end": END, "location": [],
             "camera": [], "limit": alert_messages.MAX_MESSAGES, "_user": USER}
     return alert_messages.get_alert_messages(**{**args, **kw})
 
 
 @pytest.fixture
 def configured(monkeypatch):
-    monkeypatch.setattr(db, "get_alert_source", lambda ds: dict(SOURCE))
+    monkeypatch.setattr(db, "get_alert_source", lambda: dict(SOURCE))
     calls = []
 
-    def read(source, ds, start, end, match_values, limit):
+    def read(source, start, end, match_values, limit):
         calls.append({"match_values": match_values, "limit": limit})
         return [
             {"ts": END - timedelta(minutes=i), "message": f"m{i}", "severity": s}
@@ -228,20 +310,36 @@ def configured(monkeypatch):
 
 
 def test_no_source_is_an_answer_not_an_error(monkeypatch):
-    monkeypatch.setattr(db, "get_alert_source", lambda ds: None)
-    monkeypatch.setattr(db, "get_datasource", lambda ds: {"id": ds})
+    monkeypatch.setattr(db, "get_alert_source", lambda: None)
     body = _messages()
-    assert body == {"datasource_id": 7, "configured": False, "available": False,
-                    "reason": "not_configured"}
+    assert body == {"configured": False, "available": False, "reason": "not_configured"}
     alert_messages.AlertMessagesOut(**body)
 
 
-def test_unknown_datasource_is_404(monkeypatch):
-    monkeypatch.setattr(db, "get_alert_source", lambda ds: None)
-    monkeypatch.setattr(db, "get_datasource", lambda ds: None)
-    with pytest.raises(HTTPException) as exc:
-        _messages()
-    assert exc.value.status_code == 404
+def test_each_message_carries_its_role(monkeypatch):
+    monkeypatch.setattr(db, "get_alert_source", lambda: dict(SOURCE))
+    monkeypatch.setattr(db, "read_alert_messages", lambda *a, **k: [
+        {"ts": END, "message": "Motor overload", "severity": "critical", "match_value": "Line1", "role_value": None},
+        {"ts": END, "message": "Speed low", "severity": "warning", "match_value": "Line13", "role_value": None},
+        {"ts": END, "message": "Anything", "severity": "info", "match_value": None, "role_value": "maint"},
+    ])
+    body = alert_messages.AlertMessagesOut(**_messages())
+    assert [m.role.code for m in body.messages] == ["maint", "l13-sup", "maint"]
+
+
+def test_role_rules_failing_costs_the_roles_not_the_messages(monkeypatch, configured):
+    def down():
+        raise psycopg.OperationalError("app db down")
+    monkeypatch.setattr(db, "list_response_roles", down)
+    body = alert_messages.AlertMessagesOut(**_messages())
+    assert len(body.messages) == 3 and all(m.role is None for m in body.messages)
+
+
+def test_messages_come_from_the_source_connection(configured):
+    # One source for every trend: the answer names the connection it was read
+    # from, whichever connection the asking trend plots.
+    body = _messages()
+    assert body["datasource_id"] == SOURCE["datasource_id"]
 
 
 def test_messages_carry_normalised_severity(configured):
@@ -254,7 +352,7 @@ def test_messages_carry_normalised_severity(configured):
 
 
 def test_blank_messages_are_not_drawn(monkeypatch):
-    monkeypatch.setattr(db, "get_alert_source", lambda ds: dict(SOURCE))
+    monkeypatch.setattr(db, "get_alert_source", lambda: dict(SOURCE))
     monkeypatch.setattr(db, "read_alert_messages", lambda *a, **k: [
         {"ts": END, "message": "   ", "severity": "crit"},
         {"ts": END, "message": "real", "severity": None},
@@ -294,7 +392,7 @@ def test_too_many_filter_values_is_422(configured):
     (psycopg.errors.InsufficientPrivilege("permission denied"), "error"),
 ])
 def test_a_failed_read_says_why_and_keeps_200(monkeypatch, error, reason):
-    monkeypatch.setattr(db, "get_alert_source", lambda ds: dict(SOURCE))
+    monkeypatch.setattr(db, "get_alert_source", lambda: dict(SOURCE))
 
     def fail(*a, **k):
         raise error
@@ -314,13 +412,13 @@ def test_a_failed_read_says_why_and_keeps_200(monkeypatch, error, reason):
     {"end": START + timedelta(days=367)},
 ])
 def test_bad_windows_are_refused_before_any_read(monkeypatch, bounds):
-    monkeypatch.setattr(db, "get_alert_source", lambda ds: pytest.fail("read a source"))
+    monkeypatch.setattr(db, "get_alert_source", lambda: pytest.fail("read a source"))
     with pytest.raises(HTTPException) as exc:
         _messages(**bounds)
     assert exc.value.status_code == 422
 
 
-# --- /sources ---------------------------------------------------------------------
+# --- /source ----------------------------------------------------------------------
 
 
 def test_saving_a_source_for_a_table_that_does_not_exist_yet(monkeypatch):
@@ -328,8 +426,8 @@ def test_saving_a_source_for_a_table_that_does_not_exist_yet(monkeypatch):
     saved = {}
 
     def store(ds, **fields):
-        saved.update(fields)
-        return {"datasource_id": ds, "updated_at": START, **fields}
+        saved.update(fields, datasource_id=ds)
+        return {"datasource_id": ds, "datasource_name": "MML cam", "updated_at": START, **fields}
 
     monkeypatch.setattr(db, "set_alert_source", store)
 
@@ -338,15 +436,20 @@ def test_saving_a_source_for_a_table_that_does_not_exist_yet(monkeypatch):
 
     monkeypatch.setattr(db, "read_alert_messages", missing)
     body = alert_messages.put_alert_source(
-        7,
-        alert_messages.AlertSourceIn(table_name="alert_log", ts_col="created_at",
-                                     message_col="message"),
+        alert_messages.AlertSourceIn(datasource_id=294, table_name="alert_log",
+                                     ts_col="created_at", message_col="message"),
         _admin=USER,
     )
     out = alert_messages.AlertSourceOut(**body)
-    assert saved["table_name"] == "alert_log" and saved["match_filter"] is None
-    assert out.configured is True
+    assert saved["datasource_id"] == 294 and saved["table_name"] == "alert_log"
+    assert saved["match_filter"] is None
+    assert out.configured is True and out.datasource_name == "MML cam"
     assert out.available is False and out.reason == "missing"
+
+
+def test_a_source_names_its_connection():
+    with pytest.raises(ValidationError):
+        alert_messages.AlertSourceIn(table_name="a", ts_col="t", message_col="m")
 
 
 def test_saving_for_an_unknown_datasource_is_404(monkeypatch):
@@ -354,36 +457,37 @@ def test_saving_for_an_unknown_datasource_is_404(monkeypatch):
     monkeypatch.setattr(db, "set_alert_source", lambda *a, **k: pytest.fail("saved"))
     with pytest.raises(HTTPException) as exc:
         alert_messages.put_alert_source(
-            7, alert_messages.AlertSourceIn(table_name="a", ts_col="t", message_col="m"),
+            alert_messages.AlertSourceIn(datasource_id=7, table_name="a", ts_col="t", message_col="m"),
             _admin=USER)
     assert exc.value.status_code == 404
 
 
-def test_a_datasource_without_a_source_reads_as_unconfigured(monkeypatch):
-    monkeypatch.setattr(db, "get_datasource", lambda ds: {"id": ds})
-    monkeypatch.setattr(db, "get_alert_source", lambda ds: None)
-    out = alert_messages.AlertSourceOut(**alert_messages.get_alert_source(7, _user=USER))
+def test_no_source_reads_as_unconfigured(monkeypatch):
+    monkeypatch.setattr(db, "get_alert_source", lambda: None)
+    out = alert_messages.AlertSourceOut(**alert_messages.get_alert_source(_user=USER))
     assert out.configured is False and out.available is None
 
 
 def test_a_readable_source_reads_as_available(monkeypatch):
-    monkeypatch.setattr(db, "get_datasource", lambda ds: {"id": ds})
-    monkeypatch.setattr(db, "get_alert_source", lambda ds: dict(SOURCE))
+    monkeypatch.setattr(db, "get_alert_source", lambda: dict(SOURCE))
     monkeypatch.setattr(db, "read_alert_messages", lambda *a, **k: [])
-    out = alert_messages.AlertSourceOut(**alert_messages.get_alert_source(7, _user=USER))
+    out = alert_messages.AlertSourceOut(**alert_messages.get_alert_source(_user=USER))
     assert out.available is True and out.reason is None
 
 
 def test_deleting_nothing_is_404(monkeypatch):
-    monkeypatch.setattr(db, "delete_alert_source", lambda ds: False)
+    monkeypatch.setattr(db, "delete_alert_source", lambda: False)
     with pytest.raises(HTTPException) as exc:
-        alert_messages.delete_alert_source(7, _admin=USER)
+        alert_messages.delete_alert_source(_admin=USER)
     assert exc.value.status_code == 404
 
 
 def test_writes_are_admin_only():
     routes = {(r.path, tuple(sorted(r.methods))): r for r in alert_messages.router.routes}
-    for path, methods in [("/api/alerts/sources/{datasource_id}", ("PUT",)),
-                          ("/api/alerts/sources/{datasource_id}", ("DELETE",))]:
+    for path, methods in [("/api/alerts/source", ("PUT",)),
+                          ("/api/alerts/source", ("DELETE",)),
+                          ("/api/alerts/roles", ("POST",)),
+                          ("/api/alerts/roles/{role_id}", ("PUT",)),
+                          ("/api/alerts/roles/{role_id}", ("DELETE",))]:
         deps = [d.call for d in routes[(path, methods)].dependant.dependencies]
         assert alert_messages.require_admin in deps

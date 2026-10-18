@@ -77,3 +77,8 @@ test('a steady stream does not chain into one flag: a cluster is at most the gap
   assert.ok(flags.every((f) => f.count === 3))
   assert.equal(flags.reduce((n, f) => n + f.count, 0), 30)
 })
+
+test('bare carriage returns become line breaks the page can show', () => {
+  const [m] = normalizeMessages([{ ts: '2026-09-11T16:51:26+07:00', message: 'Too low\r\rThe alarm was raised\r\n', severity: 'info' }])
+  assert.equal(m.message, 'Too low\n\nThe alarm was raised')
+})

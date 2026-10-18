@@ -22,9 +22,12 @@ export function normalizeMessages(rows) {
   return (rows ?? [])
     .map((m) => ({
       t: Date.parse(m.ts),
-      message: m.message,
+      // Plant text is often multi-line, and SCADA writers use a bare CR (alarm_logs
+      // joins its lines with two) - which a browser renders as a space.
+      message: String(m.message ?? '').replace(/\r\n?/g, '\n').trim(),
       severity: SEVERITY_RANK[m.severity] != null ? m.severity : 'info',
       severityRaw: m.severity_raw ?? null,
+      role: m.role ?? null,
     }))
     .filter((m) => Number.isFinite(m.t))
     .sort((a, b) => a.t - b.t)

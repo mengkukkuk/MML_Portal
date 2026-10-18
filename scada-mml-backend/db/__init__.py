@@ -10,7 +10,8 @@ doing ``import db`` and calling ``db.<name>`` exactly as before. Modules:
     dashboards   Live dashboards          panels   Live panels
     tags         ``variables_tag`` columns and the in-memory tag buffer
     alarms       recent events / alarms / acknowledge
-    alert_messages  per-datasource alert message sources, and reading them
+    alert_messages  the alert message source, and reading it
+    response_roles  who acts on an alert: role rules, and matching them
     tables       plant-table access: introspection, per-source connection, latest
     series       windowed series queries, production-log aggregation
     datasources  saved datasources and their credential encryption
@@ -41,7 +42,7 @@ import types
 
 from . import (
     alarms, alert_messages, cameras, dashboards, datasources, fanout, license, mimic, panels,
-    pool, readings, reports, selection, series, tables, tags, users,
+    pool, readings, reports, response_roles, selection, series, tables, tags, users,
 )
 from .alarms import *  # noqa: F401,F403
 from .alert_messages import *  # noqa: F401,F403
@@ -55,6 +56,7 @@ from .panels import *  # noqa: F401,F403
 from .pool import *  # noqa: F401,F403
 from .readings import *  # noqa: F401,F403
 from .reports import *  # noqa: F401,F403
+from .response_roles import *  # noqa: F401,F403
 from .selection import *  # noqa: F401,F403
 from .series import *  # noqa: F401,F403
 from .tables import *  # noqa: F401,F403
@@ -63,7 +65,7 @@ from .users import *  # noqa: F401,F403
 
 _MODULES = (
     pool, fanout, users, readings, dashboards, panels, tags, alarms, tables, series,
-    datasources, selection, mimic, cameras, reports, license, alert_messages,
+    datasources, selection, mimic, cameras, reports, license, alert_messages, response_roles,
 )
 
 #: exported name -> the module that defines it

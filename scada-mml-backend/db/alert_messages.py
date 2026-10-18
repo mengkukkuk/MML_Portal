@@ -1,18 +1,21 @@
-"""Alert message sources: where each plant keeps its alert text, and reading it.
+"""The alert message source — where the plant's alert text is kept — and reading it.
 
 The report trend marks the moments a plant wrote an alert ("QC hold on lot
-4471", "เปลี่ยนแม่พิมพ์ไลน์ 2") along its time axis. Which table holds those
-messages is a fact about the plant, not about one viewer's chart, so it is set
-once per datasource by an admin and stored here in the app database — the same
-arrangement as `camera_link_settings`, one row per datasource instead of a
-singleton.
+4471", "เปลี่ยนแม่พิมพ์ไลน์ 2") along its time axis. Those messages live in one
+table on one connection, set once by an admin and stored here in the app
+database as a singleton — the same arrangement as `camera_link_settings`.
 
-The table it names usually lives in the plant database and **may not exist
-yet**: a source can be configured ahead of the table it points at. So nothing
-is validated against the plant when a source is saved. Every read goes through
-`_safe_identifiers`, the allowlist gate every other plant read uses, and a
-table or column that is not there (yet) is reported as "not available" rather
-than raised — the chart simply has no markers until it is.
+One source for every trend, on purpose: the alert table usually sits on a
+different connection from the readings it annotates (alerts in the vision
+database, sensor_log1 in MMLData), so it cannot be found by following the
+trend's own connection. Which messages a trend shows is narrowed by the report
+filter's location/camera picks instead (see `read_alert_messages`).
+
+The table it names may not exist yet: a source can be configured ahead of the
+table. So nothing is validated against the plant when it is saved. Every read
+goes through `_safe_identifiers`, the allowlist gate every other plant read
+uses, and a table or column that is not there (yet) is reported as "not
+available" rather than raised — the chart simply has no markers until it is.
 """
 
 from datetime import datetime
@@ -41,23 +44,25 @@ __all__ = [
 # whichever one its filter holds, under the same name.
 ALERT_MATCH_FILTERS = ("location", "camera")
 
-_CONFIG_COLS = (
-    "datasource_id, table_name, ts_col, message_col, severity_col, match_col, "
-    "match_filter, updated_at"
-)
+_FIELDS = "table_name, ts_col, message_col, severity_col, match_col, match_filter, role_col"
 
 
 def init_alert_sources_table() -> None:
-    """Create the per-datasource alert source table. Idempotent.
+    """Create the alert source singleton. Idempotent.
 
-    Cascades with its datasource: a source describes one connection's tables, and
-    it means nothing once that connection is gone. Must run after
-    init_datasources_table (FK).
+    No row means no source. The row goes with its connection (CASCADE): a source
+    names one connection's table and means nothing once that connection is gone.
+    Must run after init_datasources_table (FK).
+
+    An earlier build kept one source per connection (`alert_message_sources`).
+    Its most recently saved row becomes the singleton, and the old table is
+    dropped — it held configuration only, and nothing reads it any more.
     """
     with _pool.get_connection() as conn:
         conn.execute(
-            """CREATE TABLE IF NOT EXISTS alert_message_sources (
-                datasource_id INTEGER PRIMARY KEY
+            f"""CREATE TABLE IF NOT EXISTS alert_source_settings (
+                id            INTEGER PRIMARY KEY DEFAULT 1,
+                datasource_id INTEGER NOT NULL
                     REFERENCES datasources(id) ON DELETE CASCADE,
                 table_name    TEXT NOT NULL,
                 ts_col        TEXT NOT NULL,
@@ -65,22 +70,44 @@ def init_alert_sources_table() -> None:
                 severity_col  TEXT,
                 match_col     TEXT,
                 match_filter  TEXT,
+                role_col      TEXT,
                 updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-                CONSTRAINT alert_message_sources_match
+                CONSTRAINT alert_source_settings_singleton CHECK (id = 1),
+                CONSTRAINT alert_source_settings_match
                     CHECK ((match_col IS NULL) = (match_filter IS NULL)),
-                CONSTRAINT alert_message_sources_filter
+                CONSTRAINT alert_source_settings_filter
                     CHECK (match_filter IS NULL OR match_filter IN ('location', 'camera'))
             )"""
         )
+        # Added after the singleton first shipped — the column that names the
+        # alert's own response role (see db/response_roles.py).
+        conn.execute("ALTER TABLE alert_source_settings ADD COLUMN IF NOT EXISTS role_col TEXT")
+        legacy = conn.execute("SELECT to_regclass('alert_message_sources') AS t").fetchone()["t"]
+        if legacy:
+            moved = "table_name, ts_col, message_col, severity_col, match_col, match_filter"
+            conn.execute(
+                f"""INSERT INTO alert_source_settings (id, datasource_id, {moved}, updated_at)
+                    SELECT 1, datasource_id, {moved}, updated_at
+                    FROM alert_message_sources
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    ON CONFLICT (id) DO NOTHING"""
+            )
+            conn.execute("DROP TABLE alert_message_sources")
+            logger.info("Alert sources: per-connection table migrated to the singleton")
         conn.commit()
 
 
-def get_alert_source(datasource_id: int) -> dict[str, Any] | None:
-    """The saved source for one datasource, or None when it has none."""
+def get_alert_source() -> dict[str, Any] | None:
+    """The saved source with its connection's name, or None when there is none."""
     with _pool.get_connection() as conn:
         return conn.execute(
-            f"SELECT {_CONFIG_COLS} FROM alert_message_sources WHERE datasource_id = %s",
-            (datasource_id,),
+            """SELECT s.datasource_id, d.name AS datasource_name, s.table_name, s.ts_col,
+                      s.message_col, s.severity_col, s.match_col, s.match_filter, s.role_col,
+                      s.updated_at
+               FROM alert_source_settings s
+               JOIN datasources d ON d.id = s.datasource_id
+               WHERE s.id = 1"""
         ).fetchone()
 
 
@@ -93,35 +120,33 @@ def set_alert_source(
     severity_col: str | None = None,
     match_col: str | None = None,
     match_filter: str | None = None,
-) -> dict[str, Any]:
-    """Create or replace the source for one datasource."""
+    role_col: str | None = None,
+) -> dict[str, Any] | None:
+    """Create or replace the source."""
     with _pool.get_connection() as conn:
-        row = conn.execute(
-            f"""INSERT INTO alert_message_sources
-                (datasource_id, table_name, ts_col, message_col, severity_col,
-                 match_col, match_filter)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (datasource_id) DO UPDATE SET
+        conn.execute(
+            f"""INSERT INTO alert_source_settings (id, datasource_id, {_FIELDS})
+            VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                datasource_id = EXCLUDED.datasource_id,
                 table_name = EXCLUDED.table_name,
                 ts_col = EXCLUDED.ts_col,
                 message_col = EXCLUDED.message_col,
                 severity_col = EXCLUDED.severity_col,
                 match_col = EXCLUDED.match_col,
                 match_filter = EXCLUDED.match_filter,
-                updated_at = now()
-            RETURNING {_CONFIG_COLS}""",
+                role_col = EXCLUDED.role_col,
+                updated_at = now()""",
             (datasource_id, table_name, ts_col, message_col, severity_col,
-             match_col, match_filter),
-        ).fetchone()
-        conn.commit()
-    return row
-
-
-def delete_alert_source(datasource_id: int) -> bool:
-    with _pool.get_connection() as conn:
-        cur = conn.execute(
-            "DELETE FROM alert_message_sources WHERE datasource_id = %s", (datasource_id,)
+             match_col, match_filter, role_col),
         )
+        conn.commit()
+    return get_alert_source()
+
+
+def delete_alert_source() -> bool:
+    with _pool.get_connection() as conn:
+        cur = conn.execute("DELETE FROM alert_source_settings WHERE id = 1")
         conn.commit()
     return cur.rowcount > 0
 
@@ -164,7 +189,6 @@ def severity_of(raw: Any) -> str:
 # --- Reading ------------------------------------------------------------------
 def read_alert_messages(
     source: dict[str, Any],
-    datasource_id: int,
     start: datetime,
     end: datetime,
     match_values: list[str] | None,
@@ -172,7 +196,9 @@ def read_alert_messages(
 ) -> list[dict[str, Any]]:
     """Messages in [start, end], newest first, at most `limit` rows.
 
-    `source` is a row from `get_alert_source`. `match_values` filters on the
+    `source` is the row from `get_alert_source`; the messages are read from its
+    connection, whichever connection the trend asking for them reads from.
+    `match_values` filters on the
     source's match column when both are set — the report filter is a multi-pick,
     so a message matches any of them; with none, every message in the window is
     returned. Raises ValueError when the table or a column is not
@@ -187,10 +213,11 @@ def read_alert_messages(
     message_col = source["message_col"]
     severity_col = source.get("severity_col")
     match_col = source.get("match_col")
+    role_col = source.get("role_col")
 
-    with _tables._table_source_conn(datasource_id) as (conn, schema):
+    with _tables._table_source_conn(source["datasource_id"]) as (conn, schema):
         columns = _tables._safe_identifiers(
-            conn, schema, table, ts_col, message_col, severity_col, match_col
+            conn, schema, table, ts_col, message_col, severity_col, match_col, role_col
         )
         naive = columns[ts_col] == "timestamp without time zone"
         clock = sql.Identifier(ts_col)
@@ -209,14 +236,21 @@ def read_alert_messages(
             sql.SQL("{}::text").format(sql.Identifier(severity_col))
             if severity_col else sql.SQL("NULL::text")
         )
+        # The match column's value (the alert's location, when the source follows
+        # Location) and the row's own role, for the response-role rules.
+        text_or_null = lambda col: (  # noqa: E731
+            sql.SQL("{}::text").format(sql.Identifier(col)) if col else sql.SQL("NULL::text"))
         query = sql.SQL(
-            "SELECT {ts} AS ts, {msg}::text AS message, {sev} AS severity "
+            "SELECT {ts} AS ts, {msg}::text AS message, {sev} AS severity, "
+            "{match} AS match_value, {role} AS role_value "
             "FROM {tbl} WHERE {clock} >= {bound} AND {clock} <= {bound} "
             "AND {msg} IS NOT NULL"
         ).format(
             ts=ts_out,
             msg=sql.Identifier(message_col),
             sev=severity,
+            match=text_or_null(match_col),
+            role=text_or_null(role_col),
             tbl=sql.Identifier(schema, table),
             clock=clock,
             bound=bound,

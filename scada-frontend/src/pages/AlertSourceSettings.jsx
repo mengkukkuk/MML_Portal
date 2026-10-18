@@ -13,16 +13,19 @@ import { apiErrorMessage } from '@/api/client'
 import styles from './SettingsPage.module.css'
 
 const EMPTY = {
-  table_name: '', ts_col: '', message_col: '', severity_col: '', match_col: '', match_filter: '',
+  datasource_id: '', table_name: '', ts_col: '', message_col: '', severity_col: '', match_col: '', match_filter: '',
+  role_col: '',
 }
 
 const fromSource = (s) => (s?.configured ? {
+  datasource_id: s.datasource_id ?? '',
   table_name: s.table_name ?? '',
   ts_col: s.ts_col ?? '',
   message_col: s.message_col ?? '',
   severity_col: s.severity_col ?? '',
   match_col: s.match_col ?? '',
   match_filter: s.match_filter ?? '',
+  role_col: s.role_col ?? '',
 } : EMPTY)
 
 const blankToNull = (v) => (v.trim() ? v.trim() : null)
@@ -34,8 +37,13 @@ function statusLed(source) {
 }
 
 /**
- * Settings → Alert messages: where each connection keeps the alert text the
- * report trend marks along its time axis.
+ * Settings → Alert messages: the one place the alert text the report trend
+ * marks along its time axis is read from.
+ *
+ * One source for every trend, including the connection it lives on, which is
+ * usually not the connection the readings come from (alerts in the vision
+ * database, sensor_log1 in MMLData). The connection is part of what is saved,
+ * so the form always opens on the saved source.
  *
  * Names are typed, not only picked. The table usually belongs to a line that
  * has not started writing it yet, so the form offers what the connection has
@@ -51,22 +59,13 @@ function statusLed(source) {
 export default function AlertSourceSettings({ datasources, isAdmin, notify }) {
   const tr = useTranslation()
   const queryClient = useQueryClient()
-  const [dsId, setDsId] = useState('')
-  useEffect(() => {
-    if (dsId === '' && datasources.length) setDsId(datasources[0].id)
-    if (dsId !== '' && datasources.length && !datasources.some((d) => d.id === dsId)) setDsId(datasources[0].id)
-  }, [datasources, dsId])
-
-  const sourceQuery = useQuery({
-    queryKey: ['alert-source', dsId],
-    queryFn: () => fetchAlertSource(dsId),
-    enabled: dsId !== '',
-  })
+  const sourceQuery = useQuery({ queryKey: ['alert-source'], queryFn: fetchAlertSource })
   const source = sourceQuery.data
 
   const [form, setForm] = useState(EMPTY)
   useEffect(() => setForm(fromSource(source)), [source])
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }))
+  const dsId = form.datasource_id
 
   // Suggestions only — admins see the connection's catalogue, and a name that
   // is not in it is still accepted.
@@ -95,17 +94,19 @@ export default function AlertSourceSettings({ datasources, isAdmin, notify }) {
   }, [columns])
 
   const afterWrite = (data) => {
-    queryClient.setQueryData(['alert-source', dsId], data)
+    queryClient.setQueryData(['alert-source'], data)
     queryClient.invalidateQueries({ queryKey: ['alert-messages'] })
   }
   const save = useMutation({
-    mutationFn: () => saveAlertSource(dsId, {
+    mutationFn: () => saveAlertSource({
+      datasource_id: dsId,
       table_name: form.table_name.trim(),
       ts_col: form.ts_col.trim(),
       message_col: form.message_col.trim(),
       severity_col: blankToNull(form.severity_col),
       match_col: form.match_filter ? blankToNull(form.match_col) : null,
       match_filter: form.match_filter || null,
+      role_col: blankToNull(form.role_col),
     }),
     onSuccess: (data) => {
       afterWrite(data)
@@ -114,23 +115,24 @@ export default function AlertSourceSettings({ datasources, isAdmin, notify }) {
     onError: (e) => notify(apiErrorMessage(e, 'Failed to save alert source.'), 'error'),
   })
   const remove = useMutation({
-    mutationFn: () => deleteAlertSource(dsId),
+    mutationFn: () => deleteAlertSource(),
     onSuccess: () => {
-      afterWrite({ datasource_id: dsId, configured: false })
+      afterWrite({ configured: false })
       notify('Alert source removed.')
     },
     onError: (e) => notify(apiErrorMessage(e, 'Failed to remove alert source.'), 'error'),
   })
 
-  const required = form.table_name.trim() && form.ts_col.trim() && form.message_col.trim()
+  const required = dsId !== '' && form.table_name.trim() && form.ts_col.trim() && form.message_col.trim()
   const matchOk = !form.match_filter || form.match_col.trim()
   const dirty = JSON.stringify(form) !== JSON.stringify(fromSource(source))
   const busy = save.isPending || remove.isPending
   const readOnly = !isAdmin || busy
 
   const status = !source ? null
-    : !source.configured ? tr('No alert source — the trend shows no message markers for this connection.')
-      : source.available ? tr('Reading messages from {table}.', { table: source.table_name })
+    : !source.configured ? tr('No alert source — the trend shows no message markers.')
+      : source.available
+        ? tr('Reading messages from {table} on {connection}.', { table: source.table_name, connection: source.datasource_name })
         : source.reason === 'missing'
           ? tr('Saved. {table} or one of its columns is not there yet — markers appear once it exists.', { table: source.table_name })
           : source.reason === 'unreachable' ? tr('Connection unreachable.') : tr('Cannot read the alert source.')
@@ -153,7 +155,7 @@ export default function AlertSourceSettings({ datasources, isAdmin, notify }) {
 
   return (
     <>
-      <p className={styles.fldHint}>{tr('The report trend marks the moments a plant wrote an alert. Name the table and columns that hold them, per connection. The table may be created later — save it now and markers appear once it exists.')}</p>
+      <p className={styles.fldHint}>{tr('The report trend marks the moments a plant wrote an alert. Name the connection, table and columns that hold them — one source for every trend, whichever connection its readings come from. The table may be created later — save it now and markers appear once it exists.')}</p>
       {!isAdmin && (
         <p className={styles.dsReadonly}>
           <span className={styles.led} /> {tr('Only administrators can change this.')}</p>
@@ -161,11 +163,12 @@ export default function AlertSourceSettings({ datasources, isAdmin, notify }) {
 
       <div className={styles.acqRow}>
         <div className={styles.acqLabel}>
-          <p className={styles.fldLabel}>{tr('Connection')}</p>
+          <p className={styles.fldLabel}>{tr('Alert table connection')}</p>
         </div>
         <div className={styles.acqCtl}>
           <FormControl size="small" sx={{ minWidth: 260 }}>
-            <Select value={dsId} onChange={(e) => setDsId(e.target.value)} disabled={busy}>
+            <Select value={dsId} onChange={set('datasource_id')} disabled={readOnly} displayEmpty>
+              <MenuItem value="" disabled>{tr('Select a connection')}</MenuItem>
               {datasources.map((ds) => <MenuItem key={ds.id} value={ds.id}>{ds.name}</MenuItem>)}
             </Select>
           </FormControl>
@@ -187,6 +190,8 @@ export default function AlertSourceSettings({ datasources, isAdmin, notify }) {
         {field('message_col', 'Message column', suggest.message)}
         {field('severity_col', 'Severity column (optional)', suggest.severity,
           'crit / critical / alarm / high / 2 → critical · warn / warning / medium / 1 → warning · else info')}
+        {field('role_col', 'Role column (optional)', suggest.severity,
+          'A row that names its role here skips the response role rules')}
         <FormControl size="small">
           <InputLabel id="alert-match-filter">{tr('Follows report filter')}</InputLabel>
           <Select
@@ -210,7 +215,7 @@ export default function AlertSourceSettings({ datasources, isAdmin, notify }) {
       {/* One datalist per field; the inputs above point at them by id. */}
       {[['table_name', tables.map((t) => t.table)], ['ts_col', suggest.time],
         ['message_col', suggest.message], ['severity_col', suggest.severity],
-        ['match_col', suggest.match]].map(([key, list]) => (
+        ['match_col', suggest.match], ['role_col', suggest.severity]].map(([key, list]) => (
         <datalist key={key} id={`alert-${key}`}>
           {list.map((v) => <option key={v} value={v} />)}
         </datalist>

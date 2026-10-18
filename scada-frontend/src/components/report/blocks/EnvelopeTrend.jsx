@@ -7,7 +7,7 @@ import { fetchSchemaSeries } from '@/api/schema'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { useSettingsStore } from '@/stores/settings'
 import { colorAt } from '@/utils/seriesPalette'
-import { useTranslation } from '@/i18n'
+import { useLanguageStore, useTranslation } from '@/i18n'
 import { ROLES, VALUE_INDEX, isMultiReading, isPlottable, trendSourceId } from '../trendParams'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
@@ -343,9 +343,10 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex, locations =
 
   // --- alert messages ---------------------------------------------------------
   // The plant's alert text for this window, drawn as flags (AlertMarkers) and
-  // listed in the tooltip. Where it comes from is set per connection in
-  // Settings; which messages follows the report filter's location or camera
-  // picks, whichever that source matches on. On by default, and switched off
+  // listed in the tooltip. It comes from the one alert source set in Settings —
+  // not from this trend's connection, which usually holds only the readings —
+  // and which messages follows the report filter's location or camera picks,
+  // whichever that source matches on. On by default, and switched off
   // per link (`msg=0`) — a chart shared without its markers is a choice.
   const [searchParams, setSearchParams] = useSearchParams()
   const messagesShown = searchParams.get('msg') !== '0'
@@ -358,14 +359,14 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex, locations =
   const locKey = locations.join('\u0000')
   const camKey = cameras.join('\u0000')
   const alerts = useQuery({
-    queryKey: ['alert-messages', primary?.id, range.start, range.end, locKey, camKey],
+    queryKey: ['alert-messages', range.start, range.end, locKey, camKey],
     queryFn: ({ signal }) => {
       const window = relative ? resolveTrendWindow(trend, Date.now(), 1000) : range
       return fetchAlertMessages({
-        datasourceId: primary.id, start: window.start, end: window.end, locations, cameras, signal,
+        start: window.start, end: window.end, locations, cameras, signal,
       })
     },
-    enabled: ready && primary?.id != null,
+    enabled: ready,
     refetchInterval: following && ready ? refreshMs : false,
     // A refresh or a new filter keeps the flags drawn until the answer lands.
     placeholderData: keepPreviousData,
@@ -701,7 +702,7 @@ function messageTooltip(getMarkers, tr) {
     const shown = near.slice(0, TOOLTIP_MESSAGES).map((m) => (
       '<div style="display:flex;gap:6px;align-items:baseline;margin-top:4px">'
       + `<span style="flex:none;width:8px;height:8px;border-radius:50%;background:${SEVERITY_INK[m.severity]}"></span>`
-      + `<span>${escapeHtml(m.message)}</span></div>`
+      + `<span>${escapeHtml(m.message).replace(/\n+/g, '<br>')}${m.role ? ` <span style="color:${RULE}">→ ${escapeHtml(useLanguageStore.getState().language === 'th' ? m.role.name_th : m.role.name_en)}</span>` : ''}</span></div>`
     )).join('')
     const more = near.length > TOOLTIP_MESSAGES
       ? `<div style="margin-top:4px;color:${RULE}">${escapeHtml(tr('+{count} more — open the flag', { count: near.length - TOOLTIP_MESSAGES }))}</div>`

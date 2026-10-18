@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import CloseOutlined from '@mui/icons-material/CloseOutlined'
-import { useTranslation } from '@/i18n'
+import { useLanguageStore, useTranslation } from '@/i18n'
 import { clusterMessages, messagesBetween } from './alertFlags'
 import styles from './AlertMarkers.module.css'
 
@@ -34,6 +34,7 @@ const moment = (t) => new Date(t).toLocaleString('en-GB', {
  */
 export default function AlertMarkers({ messages, view, plotPx, bottom }) {
   const tr = useTranslation()
+  const language = useLanguageStore((s) => s.language)
   const flags = useMemo(() => clusterMessages(messages, view, plotPx), [messages, view, plotPx])
   const [pinned, setPinned] = useState(null)
 
@@ -105,6 +106,9 @@ export default function AlertMarkers({ messages, view, plotPx, bottom }) {
                 <time className={styles.time} dateTime={new Date(m.t).toISOString()}>{moment(m.t)}</time>
                 <span className={styles.sev}>{m.severityRaw ?? tr(SEVERITY_LABEL[m.severity])}</span>
                 <p className={styles.text}>{m.message}</p>
+                {m.role && (
+                  <p className={styles.role}>{tr('Action by')}: {language === 'th' ? m.role.name_th : m.role.name_en}</p>
+                )}
               </li>
             ))}
           </ol>
