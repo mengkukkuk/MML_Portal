@@ -608,3 +608,32 @@ DO $$
             END LOOP;
     END;
 $$;
+
+-- Alert messages: one row per alert an analysis job, an operator or the PLC
+-- wants marked on the Reports signal trend. Read through Settings -> Alert
+-- messages (table alert_messages, time created_at, message message, severity
+-- severity, follows Location on location); see scada-mml-backend/alert_messages.py.
+--   created_at  the moment the alert is about (places the flag), not when the job ran
+--   message     one readable sentence, Thai or English; NULL rows are skipped
+--   severity    'crit' | 'warn' | 'info' (also critical/alarm/high/2, warning/medium/1)
+--   location    exactly the values of the report Location filter (vision_data.cameras.location)
+--   code, batch_id, source  not read by the trend yet: camera, batch and writer, for tracing
+CREATE TABLE IF NOT EXISTS vision_data.alert_messages
+(
+    id          bigserial PRIMARY KEY,
+    created_at  timestamptz DEFAULT now() NOT NULL,
+    message     text        NOT NULL,
+    severity    text        DEFAULT 'info' NOT NULL,
+    location    text,
+    code        text,
+    batch_id    integer     DEFAULT 0 NOT NULL,
+    source      text        DEFAULT 'analysis' NOT NULL
+);
+
+ALTER TABLE vision_data.alert_messages OWNER TO postgres;
+
+-- The trend reads a time window, all lines or the filtered ones.
+CREATE INDEX IF NOT EXISTS idx_alert_messages_created_at
+    ON vision_data.alert_messages (created_at);
+CREATE INDEX IF NOT EXISTS idx_alert_messages_location_created_at
+    ON vision_data.alert_messages (location, created_at);
