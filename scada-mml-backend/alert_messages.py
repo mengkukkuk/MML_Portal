@@ -253,6 +253,8 @@ def get_alert_messages(
         {"ts": r["ts"], "message": r["message"], "severity": db.severity_of(r["severity"]),
          "severity_raw": r["severity"]}
         for r in rows[:limit]
-        if r["ts"] is not None
+        # A blank message would be a flag that says nothing. Our own table
+        # refuses one (sch_vision_data.sql's guard), but a source may name any.
+        if r["ts"] is not None and (r["message"] or "").strip()
     ]
     return {**base, "available": True, "messages": messages, "truncated": len(rows) > limit}

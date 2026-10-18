@@ -637,3 +637,39 @@ CREATE INDEX IF NOT EXISTS idx_alert_messages_created_at
     ON vision_data.alert_messages (created_at);
 CREATE INDEX IF NOT EXISTS idx_alert_messages_location_created_at
     ON vision_data.alert_messages (location, created_at);
+
+-- Insert guard. Writers are outside this app (the analysis team, an operator
+-- tool, the PLC), and the three mistakes that make a flag silently vanish are
+-- caught here instead of on the chart:
+--   * a local time sent without its zone from a UTC session (Docker, utcnow())
+--     lands hours in the future -> rejected, with the fix in the error
+--   * ' L13 ' never matches the Location filter 'L13' -> location/code trimmed
+--   * a blank message draws an empty flag -> rejected
+-- Ten minutes of slack allows for a writer's clock running ahead.
+-- Send times with an offset ('2026-10-18 14:00:00+07'), as timestamptz, or
+-- SET TIME ZONE 'Asia/Bangkok' first; then a naive local time is read correctly.
+CREATE OR REPLACE FUNCTION vision_data.fn_alert_messages_guard()
+    RETURNS trigger AS $$
+BEGIN
+    NEW.message  := btrim(NEW.message);
+    IF NEW.message = '' THEN
+        RAISE EXCEPTION 'alert_messages.message is empty';
+    END IF;
+    NEW.severity := btrim(NEW.severity);
+    NEW.location := nullif(btrim(NEW.location), '');
+    NEW.code     := nullif(btrim(NEW.code), '');
+    IF NEW.created_at > now() + interval '10 minutes' THEN
+        RAISE EXCEPTION 'alert_messages.created_at % is in the future', NEW.created_at
+            USING HINT = 'Was a local time sent without its time zone? Send an offset '
+                         '(e.g. 2026-10-18 14:00:00+07) or SET TIME ZONE ''Asia/Bangkok'' first.';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_alert_messages_guard ON vision_data.alert_messages;
+CREATE TRIGGER trg_alert_messages_guard
+    BEFORE INSERT OR UPDATE ON vision_data.alert_messages
+    FOR EACH ROW
+EXECUTE FUNCTION vision_data.fn_alert_messages_guard();
+

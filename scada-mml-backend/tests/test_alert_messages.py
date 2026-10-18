@@ -253,6 +253,16 @@ def test_messages_carry_normalised_severity(configured):
     assert body.match_filter == "location"
 
 
+def test_blank_messages_are_not_drawn(monkeypatch):
+    monkeypatch.setattr(db, "get_alert_source", lambda ds: dict(SOURCE))
+    monkeypatch.setattr(db, "read_alert_messages", lambda *a, **k: [
+        {"ts": END, "message": "   ", "severity": "crit"},
+        {"ts": END, "message": "real", "severity": None},
+    ])
+    body = _messages()
+    assert [m["message"] for m in body["messages"]] == ["real"]
+
+
 def test_cap_is_read_one_past_and_reported(configured):
     body = _messages(limit=2)
     assert configured[-1]["limit"] == 3

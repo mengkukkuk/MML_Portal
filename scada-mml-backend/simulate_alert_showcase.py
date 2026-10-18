@@ -19,9 +19,18 @@ or drop, a ``sensor_log1`` that does not carry it — the real one lives in the
 plant database under the same name. Alerts are written with
 ``source = 'showcase'`` so ``--purge`` removes only this script's rows.
 
+``--tick-alerts`` adds a condition check on *every* row as well — one message
+every 10 s, rotating through speed band, defect limit, setpoint deviation and
+defect trend, each with the severity the reading earns — so a live showcase
+never goes quiet between incidents. With ``--seed`` the checks also cover the
+last hour of the backfill (not all of it: 24 h of them is 8,640 rows). The
+trend reads at most 2,000 messages per window, so after ~5 h of ticks a 24 h
+window shows the newest 2,000 and says so.
+
 Usage (datasource 569 "Mengkukkuk" is the local mmldata, schema vision_data):
     python simulate_alert_showcase.py --datasource 569 --seed 24          # 24 h, exit
     python simulate_alert_showcase.py --datasource 569 --seed 24 --live   # then keep going
+    python simulate_alert_showcase.py --datasource 569 --seed 24 --live --tick-alerts
     python simulate_alert_showcase.py --datasource 569 --purge            # remove it all
 
 Then Settings -> Alert messages, for that connection: table alert_messages,
@@ -31,14 +40,19 @@ location. Reports: table sensor_log1, reading CAM001-13-count_1, time recorded_a
 import argparse
 import random
 import time
+from collections import deque
+from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
+import psycopg
 from psycopg import sql
 
 import plant_cli
 
 MARKER = "showcase mock (simulate_alert_showcase.py)"
+SCHEMA_FILE = Path(__file__).with_name("sch_vision_data.sql")
+SCHEMA_SECTION = "-- Alert messages: one row per alert"
 SOURCE = "showcase"
 STEP = timedelta(seconds=10)
 
@@ -70,6 +84,13 @@ EPISODES = [
     ("defects", 1.5, (3, 12)),
 ]
 SHIFTS = {6: "A", 14: "B", 22: "C"}
+
+# --tick-alerts: "near" a limit is within this share of the band's width of it,
+# and the defect trend compares the newest reading with the one a minute back.
+NEAR_SHARE = 0.1
+TREND_ROWS = 6
+TREND_RISE = 0.5  # percentage points per minute
+TICK_HISTORY = timedelta(hours=1)
 
 
 # --- the line -------------------------------------------------------------------
@@ -189,6 +210,67 @@ class Analyzer:
         }[key]
 
 
+@dataclass
+class Ticker:
+    """--tick-alerts: one condition check per row, every 10 s.
+
+    Four checks in rotation, so the feed reads as an analysis working through
+    its list rather than one sentence repeated. Each message's severity is what
+    the reading actually earns — critical out of band, warning near a limit or
+    drifting, info when fine — so the flags show all three colours.
+    """
+    n: int = 0
+    defects: deque = field(default_factory=lambda: deque(maxlen=TREND_ROWS + 1))
+
+    def feed(self, ts: datetime, speed: list[float], defect: list[float]) -> list[tuple]:
+        self.defects.append(defect[0])
+        check = (self._speed_band, self._defect_limit, self._setpoint, self._defect_trend)[self.n % 4]
+        self.n += 1
+        message, severity = check(speed, defect)
+        return [(ts, message, severity)]
+
+    @staticmethod
+    def _speed_band(speed, defect):
+        v, _, hi, lo = speed
+        near = (hi - lo) * NEAR_SHARE
+        if v < lo * STOP_SHARE:
+            return "Check speed: line stopped", "crit"
+        if v < lo or v > hi:
+            return f"Check speed: {v:,.0f} pcs/min — outside {lo:,.0f}–{hi:,.0f}", "crit"
+        if v > hi - near:
+            return f"Check speed: {v:,.0f} pcs/min — near high limit {hi:,.0f}", "warn"
+        if v < lo + near:
+            return f"Check speed: {v:,.0f} pcs/min — near low limit {lo:,.0f}", "warn"
+        return f"Check speed: {v:,.0f} pcs/min — in band", "info"
+
+    @staticmethod
+    def _defect_limit(speed, defect):
+        d, _, hi, _ = defect
+        if d > hi:
+            return f"Check defect rate: {d:.2f}% — over limit {hi:.1f}%", "crit"
+        if d > hi * 0.75:
+            return f"Check defect rate: {d:.2f}% — approaching limit {hi:.1f}%", "warn"
+        return f"Check defect rate: {d:.2f}% — OK (limit {hi:.1f}%)", "info"
+
+    @staticmethod
+    def _setpoint(speed, defect):
+        v, sp, _, lo = speed
+        if v < lo * STOP_SHARE:
+            return f"Check setpoint: line stopped, {sp:,.0f} pcs/min not held", "crit"
+        off = v - sp
+        share = abs(off) / sp
+        severity = "warn" if share > 0.05 else "info"
+        return f"Check setpoint: {off:+,.0f} pcs/min from {sp:,.0f} ({share:.1%})", severity
+
+    def _defect_trend(self, speed, defect):
+        if len(self.defects) <= TREND_ROWS:
+            return "Check defect trend: collecting the first minute", "info"
+        then, now = self.defects[0], self.defects[-1]
+        if now - then > TREND_RISE:
+            return f"Check defect trend: rising {then:.2f}% → {now:.2f}% in 1 min", "warn"
+        return f"Check defect trend: steady over 1 min ({then:.2f}% → {now:.2f}%)", "info"
+
+
 def shift_notes(start: datetime, end: datetime) -> list[tuple]:
     """Operator-style notes at each shift change — the info flags between alarms."""
     notes = []
@@ -216,23 +298,14 @@ def ensure_tables(conn, schema: str) -> None:
         ).format(t=sensor, s=sql.Identifier(SPEED), d=sql.Identifier(DEFECT)))
         conn.execute(sql.SQL("CREATE INDEX ON {t} (recorded_at)").format(t=sensor))
         conn.execute(sql.SQL("COMMENT ON TABLE {t} IS {c}").format(t=sensor, c=sql.Literal(MARKER)))
-    # Same shape as sch_vision_data.sql; created here only if the schema file
-    # has not been applied to this database yet.
-    conn.execute(sql.SQL("""CREATE TABLE IF NOT EXISTS {t} (
-            id          bigserial PRIMARY KEY,
-            created_at  timestamptz DEFAULT now() NOT NULL,
-            message     text        NOT NULL,
-            severity    text        DEFAULT 'info' NOT NULL,
-            location    text,
-            code        text,
-            batch_id    integer     DEFAULT 0 NOT NULL,
-            source      text        DEFAULT 'analysis' NOT NULL
-        )""").format(t=sql.Identifier(schema, "alert_messages")))
-    conn.execute(sql.SQL("CREATE INDEX IF NOT EXISTS idx_alert_messages_created_at ON {t} (created_at)")
-                 .format(t=sql.Identifier(schema, "alert_messages")))
-    conn.execute(sql.SQL(
-        "CREATE INDEX IF NOT EXISTS idx_alert_messages_location_created_at ON {t} (location, created_at)"
-    ).format(t=sql.Identifier(schema, "alert_messages")))
+    # alert_messages exactly as sch_vision_data.sql defines it — table, indexes
+    # and the insert guard — so the showcase writes through the same rules the
+    # analysis team's inserts will meet. The section is idempotent.
+    section = SCHEMA_FILE.read_text(encoding="utf-8")
+    section = section[section.index(SCHEMA_SECTION):]
+    if schema != "vision_data":
+        section = section.replace("vision_data.", f"{schema}.")
+    conn.execute(section)
     conn.commit()
 
 
@@ -275,8 +348,12 @@ def last_row_time(conn, schema: str) -> datetime | None:
         t=sql.Identifier(schema, "sensor_log1"))).fetchone()["t"]
 
 
-def seed(conn, schema: str, hours: int, line: Line, analyzer: Analyzer) -> datetime:
-    """Backfill `hours` up to now; returns the time of the last row written."""
+def seed(conn, schema: str, hours: int, line: Line, analyzer: Analyzer,
+         ticker: Ticker | None = None) -> datetime:
+    """Backfill `hours` up to now; returns the time of the last row written.
+
+    With a `ticker`, the last TICK_HISTORY of it gets the per-row checks too.
+    """
     end = datetime.now(timezone.utc).replace(microsecond=0)
     start = end - timedelta(hours=hours)
     last = last_row_time(conn, schema)
@@ -288,6 +365,8 @@ def seed(conn, schema: str, hours: int, line: Line, analyzer: Analyzer) -> datet
         speed, defect = line.sample(t)
         rows.append((t, speed, defect))
         alerts += analyzer.feed(t, speed, defect)
+        if ticker is not None and end - t <= TICK_HISTORY:
+            alerts += ticker.feed(t, speed, defect)
         t += STEP
     alerts += shift_notes(start, end)
     write_rows(conn, schema, rows)
@@ -297,7 +376,8 @@ def seed(conn, schema: str, hours: int, line: Line, analyzer: Analyzer) -> datet
     return t - STEP
 
 
-def run_live(conn, schema: str, line: Line, analyzer: Analyzer, after: datetime | None) -> None:
+def run_live(conn, schema: str, line: Line, analyzer: Analyzer, after: datetime | None,
+             ticker: Ticker | None = None) -> None:
     """One row every 10 s, analysed as it is written — the two tables in step."""
     t = (after or datetime.now(timezone.utc).replace(microsecond=0)) + STEP
     print("live: one row every 10 s (Ctrl+C to stop)", flush=True)
@@ -307,12 +387,18 @@ def run_live(conn, schema: str, line: Line, analyzer: Analyzer, after: datetime 
             time.sleep(wait)
         speed, defect = line.sample(t)
         alerts = analyzer.feed(t, speed, defect)
+        if ticker is not None:
+            alerts += ticker.feed(t, speed, defect)
         local = t.astimezone()
         if local.minute == 0 and local.second < STEP.total_seconds() and local.hour in SHIFTS:
             alerts += shift_notes(t, t)
-        write_rows(conn, schema, [(t, speed, defect)])
-        write_alerts(conn, schema, alerts)
-        conn.commit()
+        try:
+            write_rows(conn, schema, [(t, speed, defect)])
+            write_alerts(conn, schema, alerts)
+            conn.commit()
+        except psycopg.errors.UndefinedTable:
+            # Purged (or dropped) while running: nothing left to keep in step.
+            raise SystemExit("showcase tables are gone (purged?) — live feed stopped")
         for ts, msg, sev in alerts:
             print(f"{ts.astimezone():%H:%M:%S} [{sev}] {msg}", flush=True)
         t += STEP
@@ -326,6 +412,8 @@ def main() -> None:
     parser.add_argument("--schema", default="vision_data",
                         help="Plant schema the app reads (the datasource's schema; default vision_data)")
     parser.add_argument("--random-seed", type=int, default=13, help="Make the scripted line repeatable")
+    parser.add_argument("--tick-alerts", action="store_true",
+                        help="Also write one condition-check message per row (every 10 s)")
     plant_cli.add_target_args(parser)
     args = parser.parse_args()
     if not (args.seed or args.live or args.purge):
@@ -338,10 +426,12 @@ def main() -> None:
                 return
         ensure_tables(conn, args.schema)
         line, analyzer = Line(random.Random(args.random_seed)), Analyzer()
-        after = seed(conn, args.schema, args.seed, line, analyzer) if args.seed else last_row_time(conn, args.schema)
+        ticker = Ticker() if args.tick_alerts else None
+        after = (seed(conn, args.schema, args.seed, line, analyzer, ticker) if args.seed
+                 else last_row_time(conn, args.schema))
         if args.live:
             try:
-                run_live(conn, args.schema, line, analyzer, after)
+                run_live(conn, args.schema, line, analyzer, after, ticker)
             except KeyboardInterrupt:
                 print("stopped")
 
