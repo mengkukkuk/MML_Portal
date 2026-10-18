@@ -1,0 +1,358 @@
+"""Alert message sources and /api/alerts/messages.
+
+Run without a database, like test_schema_arrays: the query composition and the
+router's handling of "nothing to show" are the logic here, and they are where
+the mistakes would be. The plant read is exercised end to end against a live
+database separately (see the step-2 verification in the commit message).
+"""
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+
+import psycopg
+import pytest
+from fastapi import HTTPException
+from pydantic import ValidationError
+
+import alert_messages
+import db
+
+
+USER = {"id": 2, "username": "operator", "role": "operator"}
+TZ = timezone(timedelta(hours=7))
+START = datetime(2026, 10, 18, 8, tzinfo=TZ)
+END = START + timedelta(hours=8)
+
+SOURCE = {
+    "datasource_id": 7,
+    "table_name": "alert_log",
+    "ts_col": "created_at",
+    "message_col": "message",
+    "severity_col": "level",
+    "match_col": "line_name",
+    "match_filter": "location",
+    "updated_at": START,
+}
+
+COLUMNS = {
+    "id": "integer",
+    "created_at": "timestamp with time zone",
+    "message": "text",
+    "level": "text",
+    "line_name": "character varying",
+}
+
+
+# --- severity -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("crit", "crit"), ("CRITICAL", "crit"), (" Alarm ", "crit"), ("high", "crit"),
+    (2, "crit"), (2.0, "crit"), ("2", "crit"), ("2.0", "crit"),
+    ("warn", "warn"), ("Warning", "warn"), ("medium", "warn"), (1, "warn"), ("1", "warn"),
+    ("info", "info"), ("note", "info"), ("", "info"), (None, "info"), (0, "info"),
+    (3, "info"), (1.5, "info"), (True, "info"),
+])
+def test_severity_is_read_leniently(raw, expected):
+    assert db.severity_of(raw) == expected
+
+
+# --- source validation ----------------------------------------------------------
+
+
+def test_source_needs_table_time_and_message():
+    with pytest.raises(ValidationError):
+        alert_messages.AlertSourceIn(table_name=" ", ts_col="t", message_col="m")
+
+
+def test_source_trims_names_and_blanks_optional_ones():
+    body = alert_messages.AlertSourceIn(
+        table_name=" alert_log ", ts_col="created_at", message_col="message", severity_col="  ",
+    )
+    assert body.table_name == "alert_log"
+    assert body.severity_col is None
+
+
+@pytest.mark.parametrize("match", [
+    {"match_col": "line_name"},
+    {"match_filter": "location"},
+])
+def test_match_column_and_filter_come_together(match):
+    with pytest.raises(ValidationError):
+        alert_messages.AlertSourceIn(table_name="a", ts_col="t", message_col="m", **match)
+
+
+def test_match_filter_is_a_report_filter():
+    with pytest.raises(ValidationError):
+        alert_messages.AlertSourceIn(
+            table_name="a", ts_col="t", message_col="m", match_col="x", match_filter="device")
+
+
+@pytest.mark.parametrize("name", ["x" * 64, "bad\x00name", "tab\tname"])
+def test_impossible_identifiers_are_refused_at_save(name):
+    with pytest.raises(ValidationError):
+        alert_messages.AlertSourceIn(table_name=name, ts_col="t", message_col="m")
+
+
+# --- the plant read -------------------------------------------------------------
+
+
+class _Conn:
+    """psycopg stand-in: records the composed query, answers with `rows`."""
+
+    def __init__(self, rows=()):
+        self.rows = list(rows)
+        self.query = None
+        self.params = None
+
+    def execute(self, query, params=None):
+        self.query, self.params = query, params
+        return self
+
+    def fetchall(self):
+        return self.rows
+
+
+def _stub_plant(monkeypatch, conn, columns=COLUMNS):
+    seen = {}
+
+    @contextmanager
+    def fake_conn(datasource_id):
+        seen["datasource_id"] = datasource_id
+        yield conn, "vision_data"
+
+    def fake_safe(c, schema, table, *cols):
+        seen["identifiers"] = (schema, table, cols)
+        missing = [col for col in cols if col is not None and col not in columns]
+        if missing:
+            raise ValueError(f"Column not in {table!r}: {missing[0]!r}")
+        return dict(columns)
+
+    monkeypatch.setattr(db, "_table_source_conn", fake_conn)
+    monkeypatch.setattr(db, "_safe_identifiers", fake_safe)
+    return seen
+
+
+def _text(conn):
+    return conn.query.as_string(None)
+
+
+def test_every_named_column_passes_the_allowlist_gate(monkeypatch):
+    conn = _Conn()
+    seen = _stub_plant(monkeypatch, conn)
+    db.read_alert_messages(SOURCE, 7, START, END, None, 10)
+    assert seen["datasource_id"] == 7
+    assert seen["identifiers"] == (
+        "vision_data", "alert_log", ("created_at", "message", "level", "line_name"))
+
+
+def test_query_is_windowed_newest_first_and_capped(monkeypatch):
+    conn = _Conn()
+    _stub_plant(monkeypatch, conn)
+    db.read_alert_messages(SOURCE, 7, START, END, None, 10)
+    text = _text(conn)
+    assert '"vision_data"."alert_log"' in text
+    assert '"created_at" >= %s AND "created_at" <= %s' in text
+    assert '"message" IS NOT NULL' in text
+    assert text.endswith('ORDER BY "created_at" DESC LIMIT %s')
+    assert conn.params == [START, END, 10]
+
+
+def test_match_value_filters_on_the_match_column(monkeypatch):
+    conn = _Conn()
+    _stub_plant(monkeypatch, conn)
+    db.read_alert_messages(SOURCE, 7, START, END, "L13", 10)
+    assert '"line_name"::text = %s' in _text(conn)
+    assert conn.params == [START, END, "L13", 10]
+
+
+def test_without_a_severity_column_every_row_has_none(monkeypatch):
+    conn = _Conn()
+    _stub_plant(monkeypatch, conn)
+    db.read_alert_messages({**SOURCE, "severity_col": None}, 7, START, END, None, 10)
+    assert "NULL::text AS severity" in _text(conn)
+
+
+def test_naive_time_column_converts_the_bounds_not_the_column(monkeypatch):
+    conn = _Conn()
+    _stub_plant(monkeypatch, conn, {**COLUMNS, "created_at": "timestamp without time zone"})
+    db.read_alert_messages(SOURCE, 7, START, END, None, 10)
+    text = _text(conn)
+    assert "\"created_at\" >= (%s::timestamptz AT TIME ZONE current_setting('TimeZone'))" in text
+    assert text.startswith("SELECT (\"created_at\" AT TIME ZONE current_setting('TimeZone')) AS ts")
+
+
+def test_a_missing_column_is_a_value_error(monkeypatch):
+    _stub_plant(monkeypatch, _Conn())
+    with pytest.raises(ValueError):
+        db.read_alert_messages({**SOURCE, "message_col": "nope"}, 7, START, END, None, 10)
+
+
+# --- /messages -------------------------------------------------------------------
+
+
+def _messages(**kw):
+    args = {"datasource_id": 7, "start": START, "end": END, "location": None,
+            "camera": None, "limit": alert_messages.MAX_MESSAGES, "_user": USER}
+    return alert_messages.get_alert_messages(**{**args, **kw})
+
+
+@pytest.fixture
+def configured(monkeypatch):
+    monkeypatch.setattr(db, "get_alert_source", lambda ds: dict(SOURCE))
+    calls = []
+
+    def read(source, ds, start, end, match_value, limit):
+        calls.append({"match_value": match_value, "limit": limit})
+        return [
+            {"ts": END - timedelta(minutes=i), "message": f"m{i}", "severity": s}
+            for i, s in enumerate(["crit", "1", None])
+        ]
+
+    monkeypatch.setattr(db, "read_alert_messages", read)
+    return calls
+
+
+def test_no_source_is_an_answer_not_an_error(monkeypatch):
+    monkeypatch.setattr(db, "get_alert_source", lambda ds: None)
+    monkeypatch.setattr(db, "get_datasource", lambda ds: {"id": ds})
+    body = _messages()
+    assert body == {"datasource_id": 7, "configured": False, "available": False,
+                    "reason": "not_configured"}
+    alert_messages.AlertMessagesOut(**body)
+
+
+def test_unknown_datasource_is_404(monkeypatch):
+    monkeypatch.setattr(db, "get_alert_source", lambda ds: None)
+    monkeypatch.setattr(db, "get_datasource", lambda ds: None)
+    with pytest.raises(HTTPException) as exc:
+        _messages()
+    assert exc.value.status_code == 404
+
+
+def test_messages_carry_normalised_severity(configured):
+    body = alert_messages.AlertMessagesOut(**_messages())
+    assert body.available and body.configured
+    assert [m.severity for m in body.messages] == ["crit", "warn", "info"]
+    assert [m.severity_raw for m in body.messages] == ["crit", "1", None]
+    assert body.truncated is False
+    assert body.match_filter == "location"
+
+
+def test_cap_is_read_one_past_and_reported(configured):
+    body = _messages(limit=2)
+    assert configured[-1]["limit"] == 3
+    assert len(body["messages"]) == 2
+    assert body["truncated"] is True
+
+
+def test_only_the_followed_filter_narrows(configured):
+    _messages(location=" L13 ", camera="CAM001")
+    assert configured[-1]["match_value"] == "L13"
+    _messages(camera="CAM001")
+    assert configured[-1]["match_value"] is None
+    _messages(location="   ")
+    assert configured[-1]["match_value"] is None
+
+
+@pytest.mark.parametrize("error, reason", [
+    (ValueError("Table not allowed: 'alert_log'"), "missing"),
+    # The allowlist gate caches; a table dropped since is Postgres' error to raise.
+    (psycopg.errors.UndefinedTable('relation "vision_data.alert_log" does not exist'), "missing"),
+    (psycopg.errors.UndefinedColumn('column "level" does not exist'), "missing"),
+    (psycopg.OperationalError("connection timeout expired\nmore"), "unreachable"),
+    (psycopg.errors.InsufficientPrivilege("permission denied"), "error"),
+])
+def test_a_failed_read_says_why_and_keeps_200(monkeypatch, error, reason):
+    monkeypatch.setattr(db, "get_alert_source", lambda ds: dict(SOURCE))
+
+    def fail(*a, **k):
+        raise error
+
+    monkeypatch.setattr(db, "read_alert_messages", fail)
+    body = alert_messages.AlertMessagesOut(**_messages())
+    assert body.configured is True and body.available is False
+    assert body.reason == reason
+    assert "\n" not in body.detail
+    assert body.messages == []
+
+
+@pytest.mark.parametrize("bounds", [
+    {"start": START.replace(tzinfo=None)},
+    {"end": START},
+    {"start": END, "end": START},
+    {"end": START + timedelta(days=367)},
+])
+def test_bad_windows_are_refused_before_any_read(monkeypatch, bounds):
+    monkeypatch.setattr(db, "get_alert_source", lambda ds: pytest.fail("read a source"))
+    with pytest.raises(HTTPException) as exc:
+        _messages(**bounds)
+    assert exc.value.status_code == 422
+
+
+# --- /sources ---------------------------------------------------------------------
+
+
+def test_saving_a_source_for_a_table_that_does_not_exist_yet(monkeypatch):
+    monkeypatch.setattr(db, "get_datasource", lambda ds: {"id": ds})
+    saved = {}
+
+    def store(ds, **fields):
+        saved.update(fields)
+        return {"datasource_id": ds, "updated_at": START, **fields}
+
+    monkeypatch.setattr(db, "set_alert_source", store)
+
+    def missing(*a, **k):
+        raise ValueError("Table not allowed: 'alert_log'")
+
+    monkeypatch.setattr(db, "read_alert_messages", missing)
+    body = alert_messages.put_alert_source(
+        7,
+        alert_messages.AlertSourceIn(table_name="alert_log", ts_col="created_at",
+                                     message_col="message"),
+        _admin=USER,
+    )
+    out = alert_messages.AlertSourceOut(**body)
+    assert saved["table_name"] == "alert_log" and saved["match_filter"] is None
+    assert out.configured is True
+    assert out.available is False and out.reason == "missing"
+
+
+def test_saving_for_an_unknown_datasource_is_404(monkeypatch):
+    monkeypatch.setattr(db, "get_datasource", lambda ds: None)
+    monkeypatch.setattr(db, "set_alert_source", lambda *a, **k: pytest.fail("saved"))
+    with pytest.raises(HTTPException) as exc:
+        alert_messages.put_alert_source(
+            7, alert_messages.AlertSourceIn(table_name="a", ts_col="t", message_col="m"),
+            _admin=USER)
+    assert exc.value.status_code == 404
+
+
+def test_a_datasource_without_a_source_reads_as_unconfigured(monkeypatch):
+    monkeypatch.setattr(db, "get_datasource", lambda ds: {"id": ds})
+    monkeypatch.setattr(db, "get_alert_source", lambda ds: None)
+    out = alert_messages.AlertSourceOut(**alert_messages.get_alert_source(7, _user=USER))
+    assert out.configured is False and out.available is None
+
+
+def test_a_readable_source_reads_as_available(monkeypatch):
+    monkeypatch.setattr(db, "get_datasource", lambda ds: {"id": ds})
+    monkeypatch.setattr(db, "get_alert_source", lambda ds: dict(SOURCE))
+    monkeypatch.setattr(db, "read_alert_messages", lambda *a, **k: [])
+    out = alert_messages.AlertSourceOut(**alert_messages.get_alert_source(7, _user=USER))
+    assert out.available is True and out.reason is None
+
+
+def test_deleting_nothing_is_404(monkeypatch):
+    monkeypatch.setattr(db, "delete_alert_source", lambda ds: False)
+    with pytest.raises(HTTPException) as exc:
+        alert_messages.delete_alert_source(7, _admin=USER)
+    assert exc.value.status_code == 404
+
+
+def test_writes_are_admin_only():
+    routes = {(r.path, tuple(sorted(r.methods))): r for r in alert_messages.router.routes}
+    for path, methods in [("/api/alerts/sources/{datasource_id}", ("PUT",)),
+                          ("/api/alerts/sources/{datasource_id}", ("DELETE",))]:
+        deps = [d.call for d in routes[(path, methods)].dependant.dependencies]
+        assert alert_messages.require_admin in deps

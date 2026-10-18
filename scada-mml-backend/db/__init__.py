@@ -10,6 +10,7 @@ doing ``import db`` and calling ``db.<name>`` exactly as before. Modules:
     dashboards   Live dashboards          panels   Live panels
     tags         ``variables_tag`` columns and the in-memory tag buffer
     alarms       recent events / alarms / acknowledge
+    alert_messages  per-datasource alert message sources, and reading them
     tables       plant-table access: introspection, per-source connection, latest
     series       windowed series queries, production-log aggregation
     datasources  saved datasources and their credential encryption
@@ -39,10 +40,11 @@ import sys
 import types
 
 from . import (
-    alarms, cameras, dashboards, datasources, fanout, license, mimic, panels, pool, readings,
-    reports, selection, series, tables, tags, users,
+    alarms, alert_messages, cameras, dashboards, datasources, fanout, license, mimic, panels,
+    pool, readings, reports, selection, series, tables, tags, users,
 )
 from .alarms import *  # noqa: F401,F403
+from .alert_messages import *  # noqa: F401,F403
 from .cameras import *  # noqa: F401,F403
 from .dashboards import *  # noqa: F401,F403
 from .datasources import *  # noqa: F401,F403
@@ -61,7 +63,7 @@ from .users import *  # noqa: F401,F403
 
 _MODULES = (
     pool, fanout, users, readings, dashboards, panels, tags, alarms, tables, series,
-    datasources, selection, mimic, cameras, reports, license,
+    datasources, selection, mimic, cameras, reports, license, alert_messages,
 )
 
 #: exported name -> the module that defines it

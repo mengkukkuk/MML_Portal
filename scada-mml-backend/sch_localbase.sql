@@ -134,6 +134,31 @@ create table if not exists localbase.camera_link_settings
 alter table localbase.camera_link_settings
     owner to postgres;
 
+-- Where each datasource keeps its alert messages (table + columns in that
+-- plant's schema), for the report trend's message markers. The named table may
+-- not exist yet; reads report it as unavailable rather than failing.
+create table if not exists localbase.alert_message_sources
+(
+    datasource_id integer                                not null
+        primary key
+        references localbase.datasources
+            on delete cascade,
+    table_name    text                                   not null,
+    ts_col        text                                   not null,
+    message_col   text                                   not null,
+    severity_col  text,
+    match_col     text,
+    match_filter  text,
+    updated_at    timestamp with time zone default now() not null,
+    constraint alert_message_sources_match
+        check ((match_col is null) = (match_filter is null)),
+    constraint alert_message_sources_filter
+        check (match_filter is null or match_filter in ('location', 'camera'))
+);
+
+alter table localbase.alert_message_sources
+    owner to postgres;
+
 create table if not exists localbase.mimic_assets
 (
     id          serial
