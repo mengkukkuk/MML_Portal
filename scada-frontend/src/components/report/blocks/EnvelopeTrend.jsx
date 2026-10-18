@@ -9,8 +9,12 @@ import { useSettingsStore } from '@/stores/settings'
 import { colorAt } from '@/utils/seriesPalette'
 import { useTranslation } from '@/i18n'
 import { ROLES, VALUE_INDEX, isMultiReading, isPlottable, trendSourceId } from '../trendParams'
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import { fetchDatasources } from '@/api/datasources'
+import { fetchAlertMessages } from '@/api/alerts'
+import AlertMarkers from '../AlertMarkers'
+import { HOVER_PX, escapeHtml, messagesNear, normalizeMessages } from '../alertFlags'
 import { windowError, trendTimeAxis, resolveTrendWindow } from '../trendWindow'
 import { useTrendColumns } from '../useTrendColumns'
 import useTrendViewport from '../useTrendViewport'
@@ -137,7 +141,7 @@ function fmtStep(seconds) {
   return `${Math.round(seconds / 60)} min`
 }
 
-export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
+export default function EnvelopeTrend({ trend, range, onToggleIndex, locations = [], cameras = [] }) {
   const tr = useTranslation()
   const selected = useDatasourceSelectionStore((s) => s.selected)
   // The rail's datasource pick, else the header's first source — see trendSourceId.
@@ -337,6 +341,39 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
     if (c && cadence == null) setCadence(c)
   }, [rawTile, cadence])
 
+  // --- alert messages ---------------------------------------------------------
+  // The plant's alert text for this window, drawn as flags (AlertMarkers) and
+  // listed in the tooltip. Where it comes from is set per connection in
+  // Settings; which messages follows the report filter's location or camera
+  // picks, whichever that source matches on. On by default, and switched off
+  // per link (`msg=0`) — a chart shared without its markers is a choice.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const messagesShown = searchParams.get('msg') !== '0'
+  const setMessagesShown = (on) => setSearchParams((curr) => {
+    const next = new URLSearchParams(curr)
+    if (on) next.delete('msg')
+    else next.set('msg', '0')
+    return next
+  }, { replace: true })
+  const locKey = locations.join('\u0000')
+  const camKey = cameras.join('\u0000')
+  const alerts = useQuery({
+    queryKey: ['alert-messages', primary?.id, range.start, range.end, locKey, camKey],
+    queryFn: ({ signal }) => {
+      const window = relative ? resolveTrendWindow(trend, Date.now(), 1000) : range
+      return fetchAlertMessages({
+        datasourceId: primary.id, start: window.start, end: window.end, locations, cameras, signal,
+      })
+    },
+    enabled: ready && primary?.id != null,
+    refetchInterval: following && ready ? refreshMs : false,
+    // A refresh or a new filter keeps the flags drawn until the answer lands.
+    placeholderData: keepPreviousData,
+  })
+  const alertState = alerts.data
+  const messages = useMemo(() => normalizeMessages(alertState?.messages), [alertState])
+  const messagesOn = messagesShown && !!alertState?.available
+
   const series = query.series[0]
 
   // Empty in a comparison, rather than quietly holding the *first* column's
@@ -392,15 +429,20 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
   // listed as a dependency: it changes on every gesture and the option must not
   // be rebuilt (and re-applied mid-drag) for it — see useTrendViewport.
   const hand = viewport.hand
+  // What the tooltip formatter reads when it is shown — current, without the
+  // option depending on it.
+  const markersRef = useRef(null)
+  markersRef.current = { messages: messagesOn ? messages : [], view: view ?? full, plotPx }
   const option = useMemo(() => {
     const dataZoom = buildDataZoom({
       long: isLongWindow(chartRange), view: viewport.currentView(), hand,
     })
+    const formatter = messagesOn ? messageTooltip(() => markersRef.current, tr) : undefined
     return multi
-      ? buildMultiOption(visible, chartRange, dataZoom)
-      : buildOption(points, shown, chartRange, tr, dataZoom)
+      ? buildMultiOption(visible, chartRange, dataZoom, formatter)
+      : buildOption(points, shown, chartRange, tr, dataZoom, formatter)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [multi, visible, points, shown, chartRange, tr, hand])
+  }, [multi, visible, points, shown, chartRange, tr, hand, messagesOn])
 
   // Counted over everything loaded, not just what is drawn — otherwise hiding
   // every line would read as "this window has no data", which is a different
@@ -429,6 +471,26 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
       : readingTitle(groups, cols[0])
 
   const hasChart = !rangeError && total > 0 && (multi ? visible.length : shown.length) > 0
+
+  // Shown only once a source is configured: a toggle for something that cannot
+  // exist yet would be a control that does nothing. Unavailable is said, quietly.
+  const messagePill = alertState?.configured ? (
+    <button
+      type="button"
+      className={`${chart.toggle} ${chart.messageToggle}`}
+      aria-pressed={messagesOn}
+      disabled={!alertState.available}
+      title={alertState.available
+        ? (alertState.truncated ? tr('Showing the newest {count} messages', { count: groupDigits(messages.length) }) : undefined)
+        : `${tr('Message source unavailable')}${alertState.detail ? ` — ${alertState.detail}` : ''}`}
+      onClick={() => setMessagesShown(!messagesShown)}
+    >
+      <span className={chart.flagSwatch} aria-hidden="true" />
+      {alertState.available
+        ? `${tr('Messages')} · ${groupDigits(messages.length)}${alertState.truncated ? '+' : ''}`
+        : tr('Message source unavailable')}
+    </button>
+  ) : null
 
   const legend = (
     <>
@@ -478,7 +540,7 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
   return (
     <ReportBlock title={title} note={note || undefined}>
       <div className={chart.bar} ref={plotRef}>
-        <div className={chart.barLegend}>{legend}</div>
+        <div className={`${chart.barLegend} ${chart.legendRow}`}>{legend}{messagePill}</div>
         {hasChart && (
           <TrendToolbar
             viewport={viewport}
@@ -524,6 +586,7 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
         </p>
       ) : (
         <>
+          <div className={chart.plotWrap}>
           <div className={chart.stage} {...viewport.stageProps}>
             {/* A finger on the chart holds the option back until it lifts, so a
                 refresh landing mid-pan or mid-scrub does not tear it down. */}
@@ -537,6 +600,17 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
             {viewport.box && (
               <div className={chart.marquee} style={viewport.box} aria-hidden="true" />
             )}
+          </div>
+          {/* Beside the stage, not in it: the stage takes every touch for the
+              pan and pinch, and a tap on a flag has to reach the flag. */}
+          {messagesOn && (
+            <AlertMarkers
+              messages={messages}
+              view={view ?? full}
+              plotPx={plotPx}
+              bottom={trendGrid(chartRange).bottom}
+            />
+          )}
           </div>
           {/* Value, setpoint, deviation — all three are about one reading
               against one band, and there is no such band in a comparison. */}
@@ -595,6 +669,64 @@ function Readout({ latest, shown }) {
   )
 }
 
+// Tooltip severity inks — literal for the same reason as the chart inks above.
+const SEVERITY_INK = { crit: EXCURSION, warn: '#f59e0b', info: RULE }
+// How many messages a tooltip lists before "+N more"; the pinned box has them all.
+const TOOLTIP_MESSAGES = 3
+
+/**
+ * The axis tooltip with the alert messages at the hovered moment beneath the
+ * readings. Reads `getMarkers()` when it is shown rather than closing over the
+ * messages, so the option does not have to be rebuilt for each refresh — or
+ * mid-gesture, for every pan (see useTrendViewport).
+ *
+ * The readings are laid out as ECharts lays them out by default; supplying a
+ * formatter at all means drawing those too. Everything the plant wrote is
+ * escaped: ECharts renders this string as markup.
+ */
+function messageTooltip(getMarkers, tr) {
+  return (params) => {
+    const list = Array.isArray(params) ? params : [params]
+    const head = list[0]?.axisValueLabel ?? ''
+    const rows = list.map((p) => {
+      const v = Array.isArray(p.value) ? p.value[1] : p.value
+      return '<div style="display:flex;justify-content:space-between;gap:16px">'
+        + `<span>${p.marker}${escapeHtml(p.seriesName)}</span>`
+        + `<b>${v == null ? '–' : escapeHtml(groupDigits(Math.round(Number(v) * 1000) / 1000))}</b></div>`
+    }).join('')
+    const { messages, view, plotPx } = getMarkers()
+    const tolerance = plotPx > 0 ? ((view.to - view.from) / plotPx) * HOVER_PX : 0
+    const near = messagesNear(messages, Number(list[0]?.axisValue), tolerance)
+    if (!near.length) return `<div>${escapeHtml(head)}</div>${rows}`
+    const shown = near.slice(0, TOOLTIP_MESSAGES).map((m) => (
+      '<div style="display:flex;gap:6px;align-items:baseline;margin-top:4px">'
+      + `<span style="flex:none;width:8px;height:8px;border-radius:50%;background:${SEVERITY_INK[m.severity]}"></span>`
+      + `<span>${escapeHtml(m.message)}</span></div>`
+    )).join('')
+    const more = near.length > TOOLTIP_MESSAGES
+      ? `<div style="margin-top:4px;color:${RULE}">${escapeHtml(tr('+{count} more — open the flag', { count: near.length - TOOLTIP_MESSAGES }))}</div>`
+      : ''
+    return `<div>${escapeHtml(head)}</div>${rows}`
+      + `<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.12)">${shown}${more}</div>`
+  }
+}
+
+// Shared by both charts: the house tooltip, with the messages formatter when
+// the trend has messages to show.
+function trendTooltip(formatter) {
+  return {
+    trigger: 'axis',
+    // Kept inside the chart: the stage clips its contents (for the touch
+    // rubber band, EnvelopeTrend.module.css), and a tooltip near the top edge
+    // would otherwise lose its first rows.
+    confine: true,
+    backgroundColor: '#172238',
+    borderColor: 'rgba(255,255,255,0.12)',
+    textStyle: { color: '#e6edf7', fontSize: 12 },
+    ...(formatter ? { formatter, extraCssText: 'max-width:320px;white-space:normal;' } : {}),
+  }
+}
+
 /**
  * The comparison: one line per reading, all on the measured slot.
  *
@@ -602,18 +734,13 @@ function Readout({ latest, shown }) {
  * deliberate cost of keeping the envelope chart untouched — a shared frame is
  * one edit away from changing a chart this feature was asked not to change.
  */
-function buildMultiOption(readings, range, dataZoom) {
+function buildMultiOption(readings, range, dataZoom, formatter) {
   return {
     animation: false,
     grid: trendGrid(range),
     // Still no built-in legend: the key above the chart names the lines, in
     // the same pills the envelope's toggles use.
-    tooltip: {
-      trigger: 'axis',
-      backgroundColor: '#172238',
-      borderColor: 'rgba(255,255,255,0.12)',
-      textStyle: { color: '#e6edf7', fontSize: 12 },
-    },
+    tooltip: trendTooltip(formatter),
     xAxis: {
       ...trendTimeAxis(range),
       axisLabel: { color: AXIS, fontSize: 10 },
@@ -644,7 +771,7 @@ function buildMultiOption(readings, range, dataZoom) {
   }
 }
 
-function buildOption(points, shown, range, tr = (text) => text, dataZoom = []) {
+function buildOption(points, shown, range, tr = (text) => text, dataZoom = [], formatter = undefined) {
   const has = (key) => shown.some((r) => r.key === key)
   const at = (p, i) => (p.v[i] == null ? null : Number(p.v[i]))
   const series = []
@@ -774,12 +901,7 @@ function buildOption(points, shown, range, tr = (text) => text, dataZoom = []) {
     grid: trendGrid(range),
     // No built-in legend: the toggles above the chart are the legend, and a
     // second one would be two controls doing one job.
-    tooltip: {
-      trigger: 'axis',
-      backgroundColor: '#172238',
-      borderColor: 'rgba(255,255,255,0.12)',
-      textStyle: { color: '#e6edf7', fontSize: 12 },
-    },
+    tooltip: trendTooltip(formatter),
     xAxis: {
       ...trendTimeAxis(range),
       axisLabel: { color: AXIS, fontSize: 10 },

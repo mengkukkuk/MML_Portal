@@ -1,0 +1,203 @@
+/* The flag row: exactly the plot's width (the trend grid's 56px left and 20px
+   right margins), so a flag's `left` percentage is its place in time. The row
+   itself takes no pointer — only the flags do — so the chart under it still
+   gets every hover and drag. */
+.flags {
+  position: absolute;
+  left: 56px;
+  right: 20px;
+  height: 24px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.flag {
+  --flag: var(--fg-muted);
+  appearance: none;
+  position: absolute;
+  bottom: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0 0 2px;
+  margin: 0;
+  color: var(--flag);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  /* The pole, not the button, marks the moment: it sits 7.5px in (the 12px
+     flag centred in 24px, pole at x 1.5). */
+  transform: translateX(-7.5px);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.flag[data-severity='warn'] {
+  --flag: var(--warn);
+}
+
+.flag[data-severity='crit'] {
+  --flag: var(--crit);
+}
+
+.flag:hover,
+.flag[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--flag) 16%, transparent);
+}
+
+.flag:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* A halo in the panel colour, so a flag stays legible where the trace runs
+   through the bottom of the plot — the troughs are exactly where flags land. */
+.flag svg {
+  overflow: visible;
+  filter: drop-shadow(0 0 1px var(--bg-panel)) drop-shadow(0 0 1px var(--bg-panel));
+}
+
+.pole {
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+
+.pennant {
+  fill: currentColor;
+}
+
+.count {
+  position: absolute;
+  top: -6px;
+  left: 14px;
+  min-width: 14px;
+  padding: 0 3px;
+  font: 600 9px/14px var(--font-mono);
+  color: var(--bg-panel);
+  background: var(--flag);
+  border-radius: 7px;
+  text-align: center;
+}
+
+/* --- the pinned box -------------------------------------------------------- */
+.box {
+  --half: min(160px, 46%);
+  position: absolute;
+  /* Over its messages, but never past either edge of the card: the centre is
+     held at least half the box's own width (plus a margin) in from each side. */
+  left: clamp(var(--half) + 4px, calc(56px + (100% - 76px) * var(--frac)), 100% - var(--half) - 4px);
+  z-index: 3;
+  width: calc(var(--half) * 2);
+  max-height: 200px;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-50%);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+}
+
+.boxHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 4px 4px 10px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.close {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+  color: var(--fg-dim);
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.close:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.list {
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.item {
+  --sev: var(--fg-muted);
+  display: grid;
+  grid-template-columns: 8px auto 1fr;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding: 5px 10px;
+}
+
+.item + .item {
+  border-top: 1px solid var(--border-soft);
+}
+
+.item[data-severity='warn'] {
+  --sev: var(--warn);
+}
+
+.item[data-severity='crit'] {
+  --sev: var(--crit);
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sev);
+  align-self: center;
+}
+
+.time {
+  font: 11px var(--font-mono);
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.sev {
+  justify-self: end;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sev);
+}
+
+.text {
+  grid-column: 2 / -1;
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+/* A fingertip: bigger flags on a touch screen. */
+@media (hover: none) and (pointer: coarse) {
+  .flags {
+    height: 32px;
+  }
+
+  .flag {
+    width: 32px;
+    height: 32px;
+    transform: translateX(-11.5px);
+  }
+}

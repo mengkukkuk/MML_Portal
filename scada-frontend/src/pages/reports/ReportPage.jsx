@@ -462,8 +462,16 @@ export default function ReportPage() {
         {tab === 'summary' && (
           <section className={styles.trend} aria-label={tr('Signal trend')}>
             <TrendRail trend={trend} range={trendRange} onApplyWindow={applyWindow} onChange={updateTrend} />
+            {/* The report filter's picks narrow the trend's alert messages to
+                the lines or cameras being read about (see AlertSourceSettings). */}
             {isPlottable(trend) ? (
-              <EnvelopeTrend trend={trend} range={trendRange} onToggleIndex={toggleIndex} />
+              <EnvelopeTrend
+                trend={trend}
+                range={trendRange}
+                onToggleIndex={toggleIndex}
+                locations={filters.locations}
+                cameras={filters.cameraCodes}
+              />
             ) : (
               <p className={styles.empty}>
                 {tr('Pick a table, a reading and a timestamp above to plot a signal.')}

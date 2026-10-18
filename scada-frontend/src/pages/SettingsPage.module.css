@@ -280,6 +280,38 @@
   background: var(--accent-soft);
 }
 
+/* ── Alert messages ─────────────────────────────────────────────────── */
+/* The status line is the form's answer: saved and reading, saved and waiting
+   for the table, or not set up. The detail is the server's own words, quieter. */
+.alertStatus {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: var(--space-4) 0 0;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+.alertDetail {
+  flex-basis: 100%;
+  padding-left: 16px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+.alertGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+.alertActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
 /* ── Data sources ───────────────────────────────────────────────────── */
 .dsReadonly,
 .dsEmpty {

@@ -29,6 +29,7 @@ import { fetchCameraLinkSource, updateCameraLinkSource } from '@/api/cameras'
 import { apiErrorMessage } from '@/api/client'
 import styles from './SettingsPage.module.css'
 import LanguageSelect from '@/components/LanguageSelect/LanguageSelect.jsx'
+import AlertSourceSettings from './AlertSourceSettings'
 
 /**
  * SettingsPage — the control-console for portal-wide parameters (route: /settings).
@@ -106,7 +107,7 @@ export default function SettingsPage() {
   const isAdmin = role === 'admin'
 
   const [collapsed, setCollapsed] = useState({
-    appearance: true, acquisition: true, datasources: true, cameraSource: true,
+    appearance: true, acquisition: true, datasources: true, cameraSource: true, alertSource: true,
   })
   function toggle(key) {
     setCollapsed((c) => ({ ...c, [key]: !c[key] }))
@@ -440,6 +441,22 @@ export default function SettingsPage() {
                   </FormControl>
                 </div>
               </div>
+            </div>
+        )}
+      </section>
+
+      {/* ── Module 2b · Alert messages ─────────────────────────────────── */}
+      <section className={`${styles.mod} ${collapsed.alertSource ? styles.modCollapsed : ''}`}>
+        <header className={styles.modHead} onClick={() => toggle('alertSource')}>
+          <span className={styles.modTag}>{tr("Alert messages")}</span>
+          <span className={styles.modSub}>{tr("Where the report trend reads alert text from")}</span>
+          <ChevronRightRounded
+              className={`${styles.modChevron} ${!collapsed.alertSource ? styles.modChevronOpen : ''}`}
+          />
+        </header>
+        {!collapsed.alertSource && (
+            <div className={styles.modBody}>
+              <AlertSourceSettings datasources={datasources} isAdmin={isAdmin} notify={notify} />
             </div>
         )}
       </section>
