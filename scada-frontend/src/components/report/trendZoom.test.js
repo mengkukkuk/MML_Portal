@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  ZOOM_STEP, buildDataZoom, canZoomIn, canZoomOut, minSpan, resolveView, selectionToView,
+  ZOOM_STEP, buildDataZoom, canZoomIn, canZoomOut, frameAt, minSpan, pinchGeometry, resolveView, selectionToView,
   viewFromRange, zoomBy, zoomPercent,
 } from './trendZoom.js'
 
@@ -107,4 +107,40 @@ test('the zoom buttons step through fixed levels', async () => {
   // Out past the widest level below the window is the whole window.
   assert.equal(zoomLevel({ from: 0, to: 3 * 24 * HOUR, follow: false }, week, -1), null)
   assert.ok(ZOOM_LEVELS.every((l, i) => i === 0 || l > ZOOM_LEVELS[i - 1]))
+})
+
+test('a pan keeps the time under the finger where the finger is', () => {
+  const span = 2 * HOUR
+  // Finger went down at 4 h, a quarter in; it is now at the middle.
+  const { view, overshoot } = frameAt(full, 4 * HOUR, 0.5, span)
+  assert.deepEqual(view, { from: 3 * HOUR, to: 5 * HOUR, follow: false })
+  assert.equal(overshoot, 0)
+})
+
+test('a pan past the edge stops at it and reports how far it was pushed', () => {
+  const { view, overshoot } = frameAt(full, HOUR, 1, 2 * HOUR)
+  assert.equal(view.from, 0)
+  assert.equal(overshoot, -HOUR)
+  const end = frameAt(full, 7 * HOUR, 0, 2 * HOUR)
+  assert.equal(end.view.to, 8 * HOUR)
+  assert.equal(end.view.follow, true)
+  assert.equal(end.overshoot, HOUR)
+})
+
+test('at the whole window a pan has nowhere to go, only an overshoot', () => {
+  const { view, overshoot } = frameAt(full, 4 * HOUR, 0.6, 8 * HOUR)
+  assert.equal(view, null)
+  assert.ok(overshoot < 0)
+})
+
+test('a pinch rescales around the anchor and never past the floors', () => {
+  const { view } = frameAt(full, 4 * HOUR, 0.5, HOUR)
+  assert.deepEqual(view, { from: 3.5 * HOUR, to: 4.5 * HOUR, follow: false })
+  const tiny = frameAt(full, 4 * HOUR, 0.5, 1).view
+  assert.equal(tiny.to - tiny.from, minSpan(full))
+  assert.equal(frameAt(full, 4 * HOUR, 0.5, 100 * HOUR).view, null)
+})
+
+test('pinch geometry is the distance and the midpoint', () => {
+  assert.deepEqual(pinchGeometry({ x: 0, y: 0 }, { x: 30, y: 40 }), { dist: 50, mid: { x: 15, y: 20 } })
 })

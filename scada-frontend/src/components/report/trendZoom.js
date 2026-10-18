@@ -126,6 +126,32 @@ export function selectionToView(t0, t1, full) {
   return viewFromRange({ from, to }, full)
 }
 
+/**
+ * The view that puts time `anchor` at fraction `frac` (0 = left edge, 1 = right)
+ * of the plot, `span` wide — the one rule behind a finger pan and a pinch.
+ *
+ * A pan keeps the span and moves the anchor (the time under the finger when it
+ * went down) to where the finger is now; a pinch also rescales the span. Both
+ * are worked out from the gesture's *start*, never step by step, so rounding
+ * cannot creep in over a long drag and the time under the fingers stays put.
+ *
+ * Returns `{ view, overshoot }`: the view clamped inside the window, and how far
+ * (ms, signed) the gesture asked to go past its edge — what the stage turns into
+ * a rubber-band nudge, including at the whole window where nothing can pan.
+ */
+export function frameAt(full, anchor, frac, span) {
+  const fullSpan = spanOf(full)
+  const width = Math.min(fullSpan, Math.max(minSpan(full), span))
+  const wanted = anchor - width * frac
+  const from = Math.max(full.from, Math.min(wanted, full.to - width))
+  return { view: viewFromRange({ from, to: from + width }, full), overshoot: wanted - from }
+}
+
+/** Distance and midpoint of two touch points, in the stage's pixels. */
+export function pinchGeometry(a, b) {
+  return { dist: Math.hypot(b.x - a.x, b.y - a.y), mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } }
+}
+
 /** 100 when the whole window is showing, 400 when a quarter of it is. */
 export function zoomPercent(view, full) {
   const shown = resolveView(view, full)

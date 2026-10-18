@@ -108,7 +108,12 @@ export default function DefectTrend({ block, result }) {
           axisLabel: { color: '#8a99b3', fontSize: 10 },
           splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } },
         },
-        dataZoom: periods.length > 40 ? [{ type: 'inside' }, { type: 'slider', height: 16, bottom: 0 }] : [],
+        // `preventDefaultMouseMove: false` lets a finger dragging up or down
+        // scroll the report instead of being swallowed by the chart; sideways
+        // still pans it (the wrapper below is `touch-action: pan-y`).
+        dataZoom: periods.length > 40
+          ? [{ type: 'inside', preventDefaultMouseMove: false }, { type: 'slider', height: 16, bottom: 0 }]
+          : [],
         series,
       },
     }
@@ -122,7 +127,7 @@ export default function DefectTrend({ block, result }) {
       note={rows.length ? `${bucketLabel} · ${tr('{count} periods', { count: periodCount })}` : undefined}
     >
       {rows.length ? (
-        <EChart option={option} height="320px" />
+        <EChart option={option} height="320px" style={{ touchAction: 'pan-y' }} />
       ) : (
         <p className={styles['block__empty']}>{tr('No defects recorded in this window.')}</p>
       )}

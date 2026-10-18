@@ -2,6 +2,7 @@ import { useCallback, useReducer, useRef, useState } from 'react'
 import {
   canZoomIn, canZoomOut, resolveView, selectionToView, viewFromRange, zoomLevel, zoomPercent,
 } from './trendZoom'
+import useTouchGestures from './useTouchGestures'
 
 /** A pointer drag shorter than this is a click, not a zoom box. */
 const MIN_BOX_PX = 6
@@ -22,6 +23,11 @@ const MIN_BOX_PX = 6
  * what the option builder reads (`currentView`), a counter re-renders only the
  * controls that show it (the zoom readout), and the chart itself is moved with
  * `dispatchAction` so ECharts keeps the gesture.
+ *
+ * Fingers are handled apart, by useTouchGestures: the box and the hand tool are
+ * mouse and pen gestures, and a finger always pans (pinches, scrubs) instead.
+ * While one is on the chart `holding` is true, and the caller holds the chart's
+ * option back until it lifts (EChart's `hold`) — see EnvelopeTrend.
  *
  * `full` is the window the data was read for and slides on a live refresh. The
  * view is absolute time (see trendZoom.js), so a refresh keeps what you zoomed
@@ -46,6 +52,7 @@ export default function useTrendViewport({ full, resetKey }) {
   const [, repaint] = useReducer((n) => n + 1, 0)
   const [hand, setHand] = useState(false)
   const [box, setBox] = useState(null)
+  const [holding, setHolding] = useState(false)
   const dragRef = useRef(null)
 
   const currentView = useCallback(() => resolveView(viewRef.current, fullRef.current), [])
@@ -92,7 +99,9 @@ export default function useTrendViewport({ full, resetKey }) {
 
   const onPointerDown = useCallback((event) => {
     const chart = chartRef.current
-    if (hand || event.button !== 0 || !chart || chart.isDisposed()) return
+    // Touch never reaches here (useTouchGestures stops it at the stage); the
+    // check is what keeps it that way if that ever changes.
+    if (hand || event.pointerType === 'touch' || event.button !== 0 || !chart || chart.isDisposed()) return
     const bounds = event.currentTarget.getBoundingClientRect()
     const x = event.clientX - bounds.left
     const y = event.clientY - bounds.top
@@ -134,7 +143,22 @@ export default function useTrendViewport({ full, resetKey }) {
     if (next) show(next)
   }, [show])
 
+  const touchRef = useTouchGestures({
+    chart: () => chartRef.current,
+    plotRect: () => (chartRef.current ? plotRect(chartRef.current) : null),
+    full: () => fullRef.current,
+    view: currentView,
+    onView: show,
+    onReset: reset,
+    onHold: setHolding,
+  })
+
+  // A held option carries the view from when it was built, which a finger has
+  // since moved on from: put the view back where the gesture left it.
+  const onHeldApply = useCallback(() => show(currentView()), [show, currentView])
+
   const stageProps = {
+    ref: touchRef,
     'data-tool': hand ? 'hand' : 'zoom',
     onPointerDown,
     onPointerMove,
@@ -146,6 +170,8 @@ export default function useTrendViewport({ full, resetKey }) {
 
   return {
     onReady,
+    holding,
+    onHeldApply,
     hand,
     setHand,
     box,

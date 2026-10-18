@@ -48,6 +48,14 @@ function appFontFamily() {
  *               initialised, and null when it is disposed. For callers that have
  *               to drive the chart (dispatchAction, convertFromPixel); held in a
  *               ref, so passing a new function never re-initialises the chart.
+ *   hold      — while true, new options are kept back instead of applied, so a
+ *               gesture in progress (a finger panning, scrubbing the tooltip) is
+ *               not torn down by a live refresh. The newest one is applied once
+ *               it goes false; an option that did not change is not re-applied,
+ *               so a tap's tooltip survives the release.
+ *   onHeldApply — optional (chart) callback, run right after an option that was
+ *               held back has been applied — for a caller whose option carries
+ *               state the gesture has since moved past (the zoom).
  *
  * Kept intentionally generic/reusable — Phase 5's LivePanel (12 viz types)
  * will be the heaviest consumer of this component.
@@ -62,11 +70,18 @@ export default function EChart({
   theme,
   onEvents,
   onReady,
+  hold = false,
+  onHeldApply,
 }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const onReadyRef = useRef(onReady)
   onReadyRef.current = onReady
+  const onHeldApplyRef = useRef(onHeldApply)
+  onHeldApplyRef.current = onHeldApply
+  // The option last given to this instance, and whether one was kept back.
+  const appliedRef = useRef(null)
+  const heldRef = useRef(false)
 
   // Mount/dispose the chart instance itself. Deliberately does not depend
   // on `option` — only re-inits if the theme changes.
@@ -76,6 +91,8 @@ export default function EChart({
 
     const chart = echarts.getInstanceByDom(el) ?? echarts.init(el, theme)
     chartRef.current = chart
+    // A new instance has been given nothing yet.
+    appliedRef.current = null
     onReadyRef.current?.(chart)
 
     return () => {
@@ -90,9 +107,18 @@ export default function EChart({
   useEffect(() => {
     const chart = chartRef.current
     if (!chart || chart.isDisposed()) return
+    if (hold) {
+      if (appliedRef.current !== option) heldRef.current = true
+      return
+    }
+    if (appliedRef.current === option) return
+    const wasHeld = heldRef.current
+    heldRef.current = false
     // An option that brings its own textStyle wins outright; the rest inherit the app face.
     chart.setOption({ textStyle: { fontFamily: appFontFamily() }, ...option }, { notMerge, lazyUpdate: true })
-  }, [option, notMerge])
+    appliedRef.current = option
+    if (wasHeld) onHeldApplyRef.current?.(chart)
+  }, [option, notMerge, hold])
 
   // Bind/rebind user event handlers.
   useEffect(() => {

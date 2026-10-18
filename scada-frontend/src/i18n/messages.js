@@ -368,6 +368,8 @@ export const messages = {
   'Zoom out': 'ซูมออก',
   'Zoom in': 'ซูมเข้า',
   'Show the whole window': 'แสดงทั้งช่วงเวลา',
+  'Hold to read · pinch to zoom': 'กดค้างเพื่ออ่านค่า · ใช้สองนิ้วเพื่อซูม',
+  'Dismiss': 'ปิด',
   'A fixed window does not change. Choose a relative window to follow live data.': 'ช่วงเวลาแบบกำหนดเองไม่เปลี่ยนแปลง เลือกช่วงเวลาแบบย้อนหลังเพื่อดูข้อมูลสด',
   'Refreshing every {interval} — the global interval from Settings. Click to pause.': 'รีเฟรชทุก {interval} ตามช่วงเวลาหลักในหน้าตั้งค่า คลิกเพื่อหยุดชั่วคราว',
   'Paused. Click to refresh every {interval}.': 'หยุดชั่วคราว คลิกเพื่อรีเฟรชทุก {interval}',

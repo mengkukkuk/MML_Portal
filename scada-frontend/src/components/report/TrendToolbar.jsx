@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react'
+import CloseOutlined from '@mui/icons-material/CloseOutlined'
 import PanToolOutlined from '@mui/icons-material/PanToolOutlined'
 import ZoomInOutlined from '@mui/icons-material/ZoomInOutlined'
 import ZoomOutOutlined from '@mui/icons-material/ZoomOutOutlined'
@@ -37,9 +39,11 @@ export default function TrendToolbar({ viewport, live }) {
 
   return (
     <div className={`${styles.bar} report-controls`} role="group" aria-label={tr('Chart view')}>
+      {/* Mouse and pen only — a finger always pans — so a touch screen hides it
+          (TrendToolbar.module.css). */}
       <button
         type="button"
-        className={`${styles.tool} ${hand ? styles.toolOn : ''}`}
+        className={`${styles.tool} ${styles.handTool} ${hand ? styles.toolOn : ''}`}
         aria-pressed={hand}
         title={tr('Hand tool: drag the chart to move along time. Off: drag a box to zoom into it.')}
         onClick={() => viewport.setHand(!hand)}
@@ -48,7 +52,7 @@ export default function TrendToolbar({ viewport, live }) {
         <span className={styles.toolLabel}>{tr('Hand')}</span>
       </button>
 
-      <span className={styles.divider} aria-hidden="true" />
+      <span className={`${styles.divider} ${styles.handTool}`} aria-hidden="true" />
 
       <button
         type="button"
@@ -115,5 +119,58 @@ export default function TrendToolbar({ viewport, live }) {
         </time>
       )}
     </div>
+  )
+}
+
+// A phone or tablet: no hover, and a finger for a pointer. A touch laptop has a
+// trackpad too and keeps the mouse toolbar — the gestures work there per event.
+const TOUCH_QUERY = '(hover: none) and (pointer: coarse)'
+const HINT_KEY = 'trend.touchHint.dismissed'
+
+function readDismissed() {
+  try {
+    return window.localStorage.getItem(HINT_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function useTouchScreen() {
+  const [touch, setTouch] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(TOUCH_QUERY).matches)
+  useEffect(() => {
+    const mq = window.matchMedia?.(TOUCH_QUERY)
+    if (!mq) return undefined
+    const onChange = () => setTouch(mq.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  return touch
+}
+
+/**
+ * The gestures, said once. Pinch and hold are invisible until someone tells you,
+ * so a touch screen gets one line under the toolbar until it is dismissed —
+ * remembered per device, and harmless if the browser will not remember it.
+ */
+export function TrendTouchHint() {
+  const tr = useTranslation()
+  const touch = useTouchScreen()
+  const [dismissed, setDismissed] = useState(readDismissed)
+  if (!touch || dismissed) return null
+
+  const dismiss = () => {
+    setDismissed(true)
+    try {
+      window.localStorage.setItem(HINT_KEY, '1')
+    } catch { /* shown again next visit, nothing worse */ }
+  }
+
+  return (
+    <p className={styles.hint}>
+      <span>{tr('Hold to read · pinch to zoom')}</span>
+      <button type="button" className={styles.hintClose} aria-label={tr('Dismiss')} onClick={dismiss}>
+        <CloseOutlined fontSize="inherit" />
+      </button>
+    </p>
   )
 }

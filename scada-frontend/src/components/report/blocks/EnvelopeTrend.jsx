@@ -14,7 +14,7 @@ import { fetchDatasources } from '@/api/datasources'
 import { windowError, trendTimeAxis, resolveTrendWindow } from '../trendWindow'
 import { useTrendColumns } from '../useTrendColumns'
 import useTrendViewport from '../useTrendViewport'
-import TrendToolbar from '../TrendToolbar'
+import TrendToolbar, { TrendTouchHint } from '../TrendToolbar'
 import { buildDataZoom } from '../trendZoom'
 import { formatEvery, trendRefreshMs, windowSpanMs } from '../trendRefresh'
 import { readingTitle } from '../readingGroups'
@@ -492,6 +492,7 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
           />
         )}
       </div>
+      {hasChart && <TrendTouchHint />}
 
       {query.error && (
         <p className={styles.warning}>
@@ -524,7 +525,15 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex }) {
       ) : (
         <>
           <div className={chart.stage} {...viewport.stageProps}>
-            <EChart option={option} height="320px" onReady={viewport.onReady} />
+            {/* A finger on the chart holds the option back until it lifts, so a
+                refresh landing mid-pan or mid-scrub does not tear it down. */}
+            <EChart
+              option={option}
+              height="320px"
+              onReady={viewport.onReady}
+              hold={viewport.holding}
+              onHeldApply={viewport.onHeldApply}
+            />
             {viewport.box && (
               <div className={chart.marquee} style={viewport.box} aria-hidden="true" />
             )}
