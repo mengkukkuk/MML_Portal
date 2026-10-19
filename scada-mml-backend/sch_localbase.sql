@@ -169,7 +169,8 @@ create table if not exists localbase.response_role
     location   text,
     keyword    text,
     priority   integer                  default 100   not null,
-    updated_at timestamp with time zone default now() not null
+    updated_at timestamp with time zone default now() not null,
+    role_id    serial unique
 );
 
 alter table localbase.response_role

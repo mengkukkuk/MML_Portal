@@ -36,6 +36,7 @@ __all__ = [
     "snapshot_variables_tag",
     "tag_buffer_stale_after",
     "tag_fields",
+    "tag_locations",
 ]
 
 # --- Status tags (real SCADA data — public.variables_tag) ----------------------
@@ -126,6 +127,34 @@ def list_tags(datasource_id: int | None = None) -> list[dict[str, Any]]:
             ).format(sql.Identifier(schema, "variables_tag"))
         ).fetchall()
     return rows
+
+
+def tag_locations(datasource_id: int | None = None) -> list[dict[str, Any]]:
+    """Each tag's location from variables_tag, as `{tag_name, location}` rows.
+
+    The Reports trend uses this to group a wide table's columns — one column per
+    tag (`CAM001-13-count_1`) — by the line they sit on. A plant whose
+    variables_tag has no `location` column, or no variables_tag at all, answers
+    `[]`: the trend then offers every column, exactly as before.
+    """
+    with _tables._table_source_conn(datasource_id) as (conn, schema):
+        present = conn.execute(
+            """SELECT 1 FROM information_schema.columns
+               WHERE table_schema = %s AND table_name = 'variables_tag'
+                 AND column_name = 'location'""",
+            (schema,),
+        ).fetchone()
+        if not present:
+            return []
+        # Trimmed here so ' Line 13' and 'Line 13' are one location, and so the
+        # value the trend sends on matches the alert rows' trimmed location.
+        return conn.execute(
+            sql.SQL(
+                "SELECT DISTINCT tag_name, btrim(location::text) AS location FROM {} "
+                "WHERE tag_name IS NOT NULL AND btrim(location::text) <> '' "
+                "ORDER BY tag_name"
+            ).format(sql.Identifier(schema, "variables_tag"))
+        ).fetchall()
 
 
 def latest_tag(tag_name: str, datasource_id: int | None = None) -> dict[str, Any] | None:

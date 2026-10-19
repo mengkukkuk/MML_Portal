@@ -35,3 +35,15 @@ export async function fetchTagLatest(tagName, datasourceId) {
   })
   return { tags: data.tags ?? [], sources: data.sources ?? [] }
 }
+
+/**
+ * Each tag's location (variables_tag.location) on one source, which the Reports
+ * trend uses to group a wide table's per-tag columns by line. A source without
+ * the column, or one that cannot answer, gives an empty list — never an error.
+ */
+export async function fetchTagLocations(datasourceId) {
+  const { data } = await apiClient.get('/tags/locations', {
+    params: { datasource_id: datasourceId ?? undefined },
+  })
+  return data.tags ?? [] // [{ tag_name, location }]
+}

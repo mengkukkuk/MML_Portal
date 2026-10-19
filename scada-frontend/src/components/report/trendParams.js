@@ -39,12 +39,14 @@ export const DEFAULT_MINUTES = 480
 // 'fcol'/'fval' are listed but no longer read or written: the device filter has
 // no control any more, and leaving them in `owns` is what purges the pair from
 // an older link rather than leaving a filter nothing on screen can undo.
-export const TREND_KEYS = ['ds', 'tbl', 'vcol', 'tscol', 'fcol', 'fval', 'win', 'idx', 'tstart', 'tend']
+export const TREND_KEYS = ['ds', 'tbl', 'loc', 'vcol', 'tscol', 'fcol', 'fval', 'win', 'idx', 'tstart', 'tend']
 export const FILTER_KEYS = ['preset', 'start', 'end', 'location', 'camera']
 
 export const EMPTY_TREND = {
   datasourceId: null,
   table: '',
+  // The line the readings are narrowed to (variables_tag.location); '' is all.
+  location: '',
   valueCols: [],
   tsCol: '',
   minutes: DEFAULT_MINUTES,
@@ -98,6 +100,7 @@ export function trendFromParams(params) {
   return {
     datasourceId: Number.isInteger(ds) && ds > 0 ? ds : null,
     table: params.get('tbl') ?? '',
+    location: params.get('loc') ?? '',
     // Repeated rather than comma-joined, the way `location` and `tag` already
     // are: a column name is a plant's identifier and nothing here gets to
     // reserve a character in it. `getAll` reads a single-`vcol` link — every
@@ -117,6 +120,7 @@ export function paramsFromTrend(trend) {
   if (!trend) return out
   if (trend.datasourceId != null) out.set('ds', String(trend.datasourceId))
   if (trend.table) out.set('tbl', trend.table)
+  if (trend.location) out.set('loc', trend.location)
   ;(trend.valueCols ?? []).forEach((col) => { if (col) out.append('vcol', col) })
   if (trend.tsCol) out.set('tscol', trend.tsCol)
   if (trend.minutes !== DEFAULT_MINUTES) out.set('win', String(trend.minutes))

@@ -60,7 +60,7 @@ EXPECTED_NAMES = (
     "reconcile_datasource_credentials", "report_catalog", "sampled_datasource_ids",
     "series_step", "set_camera_link_source", "set_password", "set_user_selection",
     "snapshot_variables_tag", "table_latest", "table_rows", "table_series",
-    "tag_buffer_stale_after", "tag_fields", "update_dashboard", "update_datasource",
+    "tag_buffer_stale_after", "tag_fields", "tag_locations", "update_dashboard", "update_datasource",
     "update_mimic_symbol", "update_panel", "update_panel_poll_interval",
     "update_report_settings", "update_report_template", "update_user", "upsert_mimic_layout",
     "vision_report_catalog"

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { groupReadings, readingTitle } from './readingGroups.js'
+import { columnsAt, groupReadings, locationsFor, readingTitle } from './readingGroups.js'
 
 test('groups the pictured camera columns without losing or duplicating readings', () => {
   const names = ['CAM001-13', 'CAM002-13', 'Pressure1', 'Tanklevel',
@@ -40,4 +40,19 @@ test('prefers the closest existing base for nested names', () => {
   const groups = groupReadings(['Pump', 'Pump-A', 'Pump-A-count_1'])
   assert.equal(readingTitle(groups, 'Pump-A-count_1'), 'Pump-A · count_1')
   assert.equal(groups.find((g) => g.key === 'Pump-A').options[0].value, 'Pump-A')
+})
+
+test('narrows a wide table to the columns whose tag sits at a location', () => {
+  const columns = ['CAM001-13-count_1', 'CAM001-13-defect_1', 'CAM101-14-count_1', 'Pressure1']
+  const rows = [
+    { tag_name: 'CAM001-13-count_1', location: 'Line 13' },
+    { tag_name: 'CAM001-13-defect_1', location: 'Line 13' },
+    { tag_name: 'CAM101-14-count_1', location: 'Line 14' },
+    { tag_name: 'Not-in-table', location: 'Line 9' },
+  ]
+  assert.deepEqual(locationsFor(columns, rows), ['Line 13', 'Line 14'])
+  assert.deepEqual(columnsAt(columns, rows, 'Line 13'), ['CAM001-13-count_1', 'CAM001-13-defect_1'])
+  assert.deepEqual(columnsAt(columns, rows, ''), columns)
+  assert.deepEqual(columnsAt(columns, rows, 'Line 9'), [])
+  assert.deepEqual(locationsFor(columns, []), [])
 })

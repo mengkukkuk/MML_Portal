@@ -149,7 +149,7 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex, locations =
   const { data: datasources } = useQuery({ queryKey: ['datasources'], queryFn: fetchDatasources, staleTime: 60_000 })
   const primary = sourceId == null ? null
     : { id: sourceId, name: datasources?.find((d) => d.id === sourceId)?.name ?? selected?.find((d) => d.id === sourceId)?.name }
-  const { groups } = useTrendColumns(trend.table, primary?.id)
+  const { groups } = useTrendColumns(trend.table, primary?.id, trend.location)
   const rangeError = windowError(range.start, range.end)
   const ready = isPlottable(trend) && !rangeError
   const multi = isMultiReading(trend)

@@ -9,7 +9,9 @@ is not globally unique — two plants routinely both have "Pump 1" — so every 
 carries its source.
 """
 from datetime import datetime
+import logging
 
+import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 
@@ -17,6 +19,8 @@ import db
 from auth import active_datasources, get_current_user
 from licensing import require_valid_license
 from sources import SourceReport
+
+logger = logging.getLogger("mml-api.tags")
 
 router = APIRouter(
     prefix="/api/tags",
@@ -55,6 +59,15 @@ class TagsOut(BaseModel):
 class TagLatestListOut(BaseModel):
     tags: list[TagLatestOut]
     sources: list[SourceReport]
+
+
+class TagLocationOut(BaseModel):
+    tag_name: str
+    location: str
+
+
+class TagLocationsOut(BaseModel):
+    tags: list[TagLocationOut]
 
 
 class FieldOut(BaseModel):
@@ -112,6 +125,28 @@ def list_fields(
         {"field": f, "label": _FIELD_LABEL_OVERRIDES.get(f, _humanise(f))}
         for f in seen
     ]
+
+
+@router.get("/locations", response_model=TagLocationsOut)
+def list_tag_locations(
+    datasource_id: int | None = Query(None),
+    _user: dict = Depends(get_current_user),
+    datasource_ids: list[int | None] = Depends(active_datasources),
+):
+    """Each tag's location on one source — groups a trend table's columns by line.
+
+    One source, not a fan-out: the Reports trend reads one table from one
+    connection, so the explicit `datasource_id` wins and the first selected
+    source stands in otherwise (schema.py's `_catalogue_source`). A source that
+    cannot answer gives an empty list rather than an error — without a location
+    map the trend simply offers every column, which is what it did before.
+    """
+    target = datasource_id if datasource_id is not None else datasource_ids[0]
+    try:
+        return {"tags": db.tag_locations(datasource_id=target)}
+    except (ValueError, psycopg.Error) as e:
+        logger.warning("Tag locations unavailable on source %s: %s", target, e)
+        return {"tags": []}
 
 
 @router.get("/latest", response_model=TagLatestListOut)

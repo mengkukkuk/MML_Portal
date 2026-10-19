@@ -50,6 +50,12 @@ import styles from './TrendRail.module.css'
  * offer a table only the first plant has and then draw one envelope per plant
  * on top of each other — three tolerance bands for one device.
  *
+ * A wide table keeps one column per tag (`CAM001-13-count_1`), and
+ * variables_tag says which line each tag is on. When the source keeps those
+ * locations, a Location control narrows the groups and readings to one line,
+ * and the trend's alert flags follow it (ReportPage). A source without them
+ * shows no such control and offers every column, as before.
+ *
  * Once a signal is plotted the rail can fold to a single line that states the
  * binding (source › table › reading · window), handing its height to the chart.
  * It never folds while the binding is incomplete: a folded rail with nothing to
@@ -107,7 +113,9 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
     staleTime: 5 * 60_000,
   })
 
-  const { query: columnsQuery, groups } = useTrendColumns(trend.table, primaryId)
+  const {
+    query: columnsQuery, groups, locations, columns: locatedCols, locationsReady,
+  } = useTrendColumns(trend.table, primaryId, trend.location)
 
   const tables = tablesQuery.data ?? []
   const cols = columnsQuery.data
@@ -142,7 +150,7 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
     if (!tablesQuery.data || !trend.table) return
     if (!tables.some((t) => t.table === trend.table)) {
       clampedFor.current = null
-      set({ table: '', valueCols: [], tsCol: '' })
+      set({ table: '', location: '', valueCols: [], tsCol: '' })
     }
   }, [tablesQuery.data, tables, trend.table, set])
 
@@ -150,24 +158,38 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
   // arrive. Guarded by a ref so it runs on each new *answer* rather than on
   // every render — `set` closes over `trend`, so an unguarded effect that
   // writes would re-run itself.
+  //
+  // It waits for the tag locations too: a link's readings are checked against
+  // the columns its location offers, and checking them against the whole table
+  // first would let a reading from another line through.
   useEffect(() => {
-    if (!cols || !trend.table) return
-    const stamp = `${primaryId ?? 'app'}::${trend.table}`
+    if (!cols || !trend.table || !locationsReady) return
+    const stamp = `${primaryId ?? 'app'}::${trend.table}::${trend.location ?? ''}`
     if (clampedFor.current === stamp) return
     clampedFor.current = stamp
 
     // Each named reading is kept or dropped on its own — a link naming four
     // columns of which one has since been dropped is three quarters good, and
     // discarding the lot would be the harsher reading of the same URL.
-    const kept = valueCols.filter((col) => arrayCols.includes(col))
-    const nextCols = kept.length ? kept : (arrayCols[0] ? [arrayCols[0]] : [])
+    const kept = valueCols.filter((col) => locatedCols.includes(col))
+    const nextCols = kept.length ? kept : (locatedCols[0] ? [locatedCols[0]] : [])
     const tsCol = tsCols.includes(trend.tsCol) ? trend.tsCol : (tsCols[0] ?? '')
     // Compared by content: `valueCols` is a fresh array on every parse of the
     // query string, so identity would report a change that never happened.
     if (nextCols.join(' ') !== valueCols.join(' ') || tsCol !== trend.tsCol) {
       set({ valueCols: nextCols, tsCol })
     }
-  }, [cols, arrayCols, tsCols, valueCols, trend, primaryId, set])
+  }, [cols, locatedCols, locationsReady, tsCols, valueCols, trend, primaryId, set])
+
+  // A location this table no longer offers — a stale link, or the tag moved to
+  // another line — goes back to "All locations" rather than an empty list.
+  useEffect(() => {
+    if (!cols || !locationsReady || !trend.location) return
+    if (!locations.includes(trend.location)) {
+      clampedFor.current = null
+      set({ location: '' })
+    }
+  }, [cols, locationsReady, locations, trend.location, set])
 
   // A link naming a datasource that has since been deleted falls back to the
   // header's source rather than failing every read below.
@@ -175,7 +197,7 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
     if (!datasourcesQuery.data || trend.datasourceId == null) return
     if (!datasources.some((d) => d.id === trend.datasourceId)) {
       clampedFor.current = null
-      set({ datasourceId: null, table: '', valueCols: [], tsCol: '' })
+      set({ datasourceId: null, table: '', location: '', valueCols: [], tsCol: '' })
     }
   }, [datasourcesQuery.data, datasources, trend.datasourceId, set])
 
@@ -190,7 +212,7 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
       return
     }
     clampedFor.current = null
-    set({ datasourceId: next, table: '', valueCols: [], tsCol: '' })
+    set({ datasourceId: next, table: '', location: '', valueCols: [], tsCol: '' })
   }
   const sourceName = (id) => datasources.find((d) => d.id === id)?.name
     ?? selected?.find((d) => d.id === id)?.name
@@ -198,7 +220,15 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
   function pickTable(table) {
     // Everything downstream describes the old table's columns.
     clampedFor.current = null
-    set({ table, valueCols: [], tsCol: '' })
+    set({ table, location: '', valueCols: [], tsCol: '' })
+  }
+
+  // The readings are re-clamped to the new line: those already on it are kept
+  // (so going back to "All locations" loses nothing), and with none left the
+  // line's first reading stands in, as for a freshly picked table.
+  function pickLocation(location) {
+    clampedFor.current = null
+    set({ location })
   }
 
   // Switching group replaces the selection rather than adding to it. A reading
@@ -238,6 +268,12 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
           <span className={styles.crumbSep}>›</span>
           <span className={styles.crumb}>{trend.table}</span>
           <span className={styles.crumbSep}>›</span>
+          {trend.location && (
+            <>
+              <span className={styles.crumb}>{trend.location}</span>
+              <span className={styles.crumbSep}>›</span>
+            </>
+          )}
           <span className={styles.crumbStrong}>
             {shownValueCols.length <= 2
               ? shownValueCols.map(labelFor).join(', ')
@@ -304,6 +340,23 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
           ))}
         </Select>
       </Field>
+
+      {locations.length > 0 && (
+        <Field label={tr('Location')}>
+          <Select
+            value={locations.includes(trend.location) ? trend.location : ''}
+            displayEmpty
+            inputProps={{ 'aria-label': tr('Location') }}
+            onChange={(e) => pickLocation(e.target.value)}
+            renderValue={(v) => v || tr('All locations')}
+          >
+            <MenuItem value="">{tr('All locations')}</MenuItem>
+            {locations.map((loc) => (
+              <MenuItem key={loc} value={loc}>{loc}</MenuItem>
+            ))}
+          </Select>
+        </Field>
+      )}
 
       {hasGroups && (
         <Field label={tr('Group')}>

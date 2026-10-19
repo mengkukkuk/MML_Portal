@@ -29,3 +29,23 @@ export function readingTitle(groups, value) {
   const option = group?.options.find((item) => item.value === value)
   return group?.key && value !== group.key ? `${group.label} · ${option.label}` : value
 }
+
+/** The locations that own at least one of `columns`, sorted. A column is a
+ * tag's name, and `rows` is variables_tag's `{ tag_name, location }` list;
+ * a location with no column in this table is not offered — picking it would
+ * empty the reading list.
+ */
+export function locationsFor(columns = [], rows = []) {
+  const present = new Set(columns)
+  const found = new Set(rows.filter((r) => present.has(r.tag_name)).map((r) => r.location))
+  return [...found].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+}
+
+/** `columns` narrowed to the tags at `location`, in their original order.
+ * `''` is every location, including columns no tag row describes.
+ */
+export function columnsAt(columns = [], rows = [], location = '') {
+  if (!location) return columns
+  const here = new Set(rows.filter((r) => r.location === location).map((r) => r.tag_name))
+  return columns.filter((col) => here.has(col))
+}

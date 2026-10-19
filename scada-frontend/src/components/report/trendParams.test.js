@@ -94,3 +94,11 @@ test('a picked datasource round-trips, and no pick means "follow the header"', (
     assert.equal(trendFromParams(new URLSearchParams(bad)).datasourceId, null, bad)
   }
 })
+
+test('the trend location round-trips, and is absent from the link when unset', () => {
+  const trend = parse('tbl=sensor_log1&loc=Line+13&vcol=a&tscol=ts')
+  assert.equal(trend.location, 'Line 13')
+  assert.equal(paramsFromTrend(trend).get('loc'), 'Line 13')
+  assert.equal(parse('tbl=t').location, '')
+  assert.equal(paramsFromTrend(parse('tbl=t')).has('loc'), false)
+})
