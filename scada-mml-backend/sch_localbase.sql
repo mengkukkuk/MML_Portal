@@ -1,36 +1,28 @@
-create table if not exists localbase.devices
+create table localbase.alert_source_settings
 (
-    id         serial
-        primary key,
-    name       text                                            not null
-        unique,
-    type       text                                            not null,
-    location   text                     default ''::text       not null,
-    status     text                     default 'online'::text not null,
-    created_at timestamp with time zone default now()          not null
-);
-
-alter table localbase.devices
-    owner to postgres;
-
-create table if not exists localbase.alarms
-(
-    id              bigserial
-        primary key,
-    device_id       integer                                          not null
-        references localbase.devices
+    id            integer                  default 1     not null
+        primary key
+        constraint alert_source_settings_singleton
+            check (id = 1),
+    datasource_id integer                                not null
+        references localbase.datasources
             on delete cascade,
-    severity        text                     default 'warning'::text not null,
-    message         text                                             not null,
-    ts              timestamp with time zone default now()           not null,
-    acknowledged_at timestamp with time zone
+    table_name    text                                   not null,
+    ts_col        text                                   not null,
+    message_col   text                                   not null,
+    severity_col  text,
+    match_col     text,
+    match_filter  text
+        constraint alert_source_settings_filter
+            check ((match_filter IS NULL) OR (match_filter = ANY (ARRAY ['location'::text, 'camera'::text]))),
+    updated_at    timestamp with time zone default now() not null,
+    role_col      text,
+    constraint alert_source_settings_match
+        check ((match_col IS NULL) = (match_filter IS NULL))
 );
 
-alter table localbase.alarms
+alter table localbase.alert_source_settings
     owner to postgres;
-
-create index idx_alarms_ts
-    on localbase.alarms (ts desc);
 
 create table if not exists localbase.users
 (
@@ -165,22 +157,19 @@ alter table localbase.alert_source_settings
     owner to postgres;
 
 -- Who has to act on an alert: one rule per row (role code + Thai/English names,
--- optional severity / location / message keyword), tried by priority, first
--- match wins; no conditions = catch-all. An alert row's own role column, when
--- the source names one, overrides the rules. Edited in Settings.
+-- optional location / message keyword), tried by priority, first match wins;
+-- no conditions = catch-all. An alert row tagged with a role id (the source's
+-- role column, e.g. alert_messages.role_id) skips the rules. Edited in Settings.
 create table if not exists localbase.response_role
 (
     id         serial                                 primary key,
     code       text                                   not null,
     name_th    text                                   not null,
     name_en    text                                   not null,
-    severity   text,
     location   text,
     keyword    text,
     priority   integer                  default 100   not null,
-    updated_at timestamp with time zone default now() not null,
-    constraint response_role_severity
-        check (severity is null or severity in ('crit', 'warn', 'info'))
+    updated_at timestamp with time zone default now() not null
 );
 
 alter table localbase.response_role
@@ -305,5 +294,21 @@ create table if not exists localbase.license_events
 );
 
 alter table localbase.license_events
+    owner to postgres;
+
+create table localbase.response_role
+(
+    id         serial
+        primary key,
+    code       text                                   not null,
+    name_th    text                                   not null,
+    name_en    text                                   not null,
+    location   text,
+    keyword    text,
+    priority   integer                  default 100   not null,
+    updated_at timestamp with time zone default now() not null
+);
+
+alter table localbase.response_role
     owner to postgres;
 

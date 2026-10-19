@@ -346,6 +346,35 @@
 .rolePriority {
   width: 84px;
 }
+/* The ID is what an alert writer tags a row with, so it reads as data (mono,
+   unboxed) rather than as one more field to edit. */
+.roleId {
+  width: 44px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-muted);
+  text-align: right;
+}
+/* Narrows the list only; sits directly above the table it filters. */
+.roleFilter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-top: var(--space-4);
+}
+.roleFilterLocation {
+  min-width: 200px;
+}
+.roleFilterCode {
+  width: 240px;
+  max-width: 100%;
+}
+.roleFilterCount {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-muted);
+}
 /* Pinned to the right edge: on a narrow card the rule table scrolls inside its
    box, and the row's Save must not be the part that scrolls out of reach. */
 .roleActions {

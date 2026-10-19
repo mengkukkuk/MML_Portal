@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import TextField from '@mui/material/TextField'
+import Autocomplete from '@mui/material/Autocomplete'
 import Select from '@mui/material/Select'
 import MenuItem from '@mui/material/MenuItem'
 import FormControl from '@mui/material/FormControl'
@@ -30,6 +31,21 @@ const fromSource = (s) => (s?.configured ? {
 
 const blankToNull = (v) => (v.trim() ? v.trim() : null)
 
+// Every name read from the source table. They describe one table on one
+// connection, so a new connection or a new table leaves them meaningless.
+const COLUMN_KEYS = ['ts_col', 'message_col', 'severity_col', 'match_col', 'role_col']
+const clearColumns = Object.fromEntries(COLUMN_KEYS.map((k) => [k, '']))
+
+// A field holding a name already in the list is a field being re-chosen, not
+// narrowed: show the whole list, with the current pick in it. Anything else is
+// typed text, and filters — a browser <datalist> filtered in both cases, so
+// once a table was picked the list only ever offered that same table.
+function suggestionsFor(options, { inputValue }) {
+  const typed = inputValue.trim().toLowerCase()
+  if (!typed || options.some((o) => o.toLowerCase() === typed)) return options
+  return options.filter((o) => o.toLowerCase().includes(typed))
+}
+
 function statusLed(source) {
   if (!source?.configured) return styles.led
   if (source.available) return `${styles.led} ${styles.ledOk}`
@@ -47,7 +63,7 @@ function statusLed(source) {
  *
  * Names are typed, not only picked. The table usually belongs to a line that
  * has not started writing it yet, so the form offers what the connection has
- * today as suggestions (a <datalist>) and accepts a name it does not have —
+ * today as suggestions (a free-text Autocomplete) and accepts a name it does not have —
  * the server saves it either way and says, in the status line, whether it can
  * be read now. That status is the point of the form: "saved, waiting for the
  * table" and "saved and reading" have to look different.
@@ -65,6 +81,15 @@ export default function AlertSourceSettings({ datasources, isAdmin, notify }) {
   const [form, setForm] = useState(EMPTY)
   useEffect(() => setForm(fromSource(source)), [source])
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }))
+  const setText = (key, value) => setForm((f) => ({ ...f, [key]: value }))
+  // A different connection has different tables: its table and every column
+  // start blank rather than carrying names it may not have.
+  const pickConnection = (e) => setForm((f) => (e.target.value === f.datasource_id ? f
+    : { ...f, datasource_id: e.target.value, table_name: '', ...clearColumns }))
+  // Choosing another table from the list does the same for the columns. Typing
+  // does not: half a table name is not a decision to throw the columns away.
+  const pickTable = (value) => setForm((f) => (value === f.table_name ? f
+    : { ...f, table_name: value, ...clearColumns }))
   const dsId = form.datasource_id
 
   // Suggestions only — admins see the connection's catalogue, and a name that
@@ -90,6 +115,7 @@ export default function AlertSourceSettings({ datasources, isAdmin, notify }) {
       message: uniq(c.text_columns ?? []),
       severity: uniq(c.text_columns ?? [], c.value_columns ?? []),
       match: uniq(c.filter_columns ?? [], c.text_columns ?? []),
+      role: uniq(c.filter_columns ?? [], c.value_columns ?? [], c.text_columns ?? []),
     }
   }, [columns])
 
@@ -137,15 +163,30 @@ export default function AlertSourceSettings({ datasources, isAdmin, notify }) {
           ? tr('Saved. {table} or one of its columns is not there yet — markers appear once it exists.', { table: source.table_name })
           : source.reason === 'unreachable' ? tr('Connection unreachable.') : tr('Cannot read the alert source.')
 
-  const field = (key, label, list, hint) => (
-    <TextField
+  // Free text with suggestions: the connection's names today are offered, a
+  // name it does not have yet is still accepted (see the note above).
+  const field = (key, label, list, hint, onPick) => (
+    <Autocomplete
+      freeSolo
       size="small"
-      label={tr(label)}
+      options={list}
+      filterOptions={suggestionsFor}
       value={form[key]}
-      onChange={set(key)}
+      inputValue={form[key]}
+      onInputChange={(_e, value, reason) => {
+        if ((reason === 'selectOption' || reason === 'clear') && onPick) onPick(value)
+        else if (reason !== 'reset') setText(key, value)
+      }}
+      onChange={(_e, value) => (onPick ?? ((v) => setText(key, v)))(value ?? '')}
       disabled={readOnly}
-      helperText={hint ? tr(hint) : undefined}
-      slotProps={{ htmlInput: { list: list?.length ? `alert-${key}` : undefined, spellCheck: false } }}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label={tr(label)}
+          helperText={hint ? tr(hint) : undefined}
+          slotProps={{ htmlInput: { ...params.inputProps, spellCheck: false } }}
+        />
+      )}
     />
   )
 
@@ -167,7 +208,7 @@ export default function AlertSourceSettings({ datasources, isAdmin, notify }) {
         </div>
         <div className={styles.acqCtl}>
           <FormControl size="small" sx={{ minWidth: 260 }}>
-            <Select value={dsId} onChange={set('datasource_id')} disabled={readOnly} displayEmpty>
+            <Select value={dsId} onChange={pickConnection} disabled={readOnly} displayEmpty>
               <MenuItem value="" disabled>{tr('Select a connection')}</MenuItem>
               {datasources.map((ds) => <MenuItem key={ds.id} value={ds.id}>{ds.name}</MenuItem>)}
             </Select>
@@ -185,13 +226,13 @@ export default function AlertSourceSettings({ datasources, isAdmin, notify }) {
       )}
 
       <div className={styles.alertGrid}>
-        {field('table_name', 'Table', tables.map((t) => t.table))}
+        {field('table_name', 'Table', tables.map((t) => t.table), undefined, pickTable)}
         {field('ts_col', 'Time column', suggest.time)}
         {field('message_col', 'Message column', suggest.message)}
         {field('severity_col', 'Severity column (optional)', suggest.severity,
           'crit / critical / alarm / high / 2 → critical · warn / warning / medium / 1 → warning · else info')}
-        {field('role_col', 'Role column (optional)', suggest.severity,
-          'A row that names its role here skips the response role rules')}
+        {field('role_col', 'Role ID column (optional)', suggest.role,
+          'Holds a response role ID (the ID column under Response roles) — a tagged row skips the rules')}
         <FormControl size="small">
           <InputLabel id="alert-match-filter">{tr('Follows report filter')}</InputLabel>
           <Select
@@ -211,15 +252,6 @@ export default function AlertSourceSettings({ datasources, isAdmin, notify }) {
             ? 'Holds the same values as the report Location filter'
             : 'Holds the same values as the report Camera filter')}
       </div>
-
-      {/* One datalist per field; the inputs above point at them by id. */}
-      {[['table_name', tables.map((t) => t.table)], ['ts_col', suggest.time],
-        ['message_col', suggest.message], ['severity_col', suggest.severity],
-        ['match_col', suggest.match], ['role_col', suggest.severity]].map(([key, list]) => (
-        <datalist key={key} id={`alert-${key}`}>
-          {list.map((v) => <option key={v} value={v} />)}
-        </datalist>
-      ))}
 
       {isAdmin && (
         <div className={styles.alertActions}>

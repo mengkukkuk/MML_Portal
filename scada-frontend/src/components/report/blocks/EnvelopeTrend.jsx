@@ -591,9 +591,11 @@ export default function EnvelopeTrend({ trend, range, onToggleIndex, locations =
           <div className={chart.stage} {...viewport.stageProps}>
             {/* A finger on the chart holds the option back until it lifts, so a
                 refresh landing mid-pan or mid-scrub does not tear it down. */}
+            {/* Grows into whatever the page header leaves free, never below the
+                old fixed 320px and never so tall the legend falls off screen. */}
             <EChart
               option={option}
-              height="320px"
+              height="clamp(320px, calc(100vh - 400px), 720px)"
               onReady={viewport.onReady}
               hold={viewport.holding}
               onHeldApply={viewport.onHeldApply}

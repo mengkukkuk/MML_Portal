@@ -11,8 +11,8 @@ Two halves, with different audiences:
   whether that table is there yet, because a source can be configured before
   the table exists.
 * **Response roles** (`/roles`) — who has to act on an alert: rules an admin
-  keeps (severity / location / keyword -> role), or the alert row's own role
-  column when the source has one. Every message comes back with its role.
+  keeps (location / keyword -> role), or the role id the alert row is tagged
+  with, when the source has a role column. Every message comes back with its role.
 * **Messages** (`/messages`) — what the trend draws as markers. Never an error
   for "nothing to show": no source, a source whose table is missing and a plant
   that cannot be reached all answer 200 with `available: false` and a reason, so
@@ -87,7 +87,8 @@ class AlertSourceIn(BaseModel):
     severity_col: str | None = Field(None, max_length=200)
     match_col: str | None = Field(None, max_length=200)
     match_filter: Literal["location", "camera"] | None = None
-    # A column on the alert row naming who acts (overrides the role rules).
+    # A column on the alert row holding a response role id (or code): the row is
+    # that role's, whatever the rules say.
     role_col: str | None = Field(None, max_length=200)
 
     @field_validator("table_name", "ts_col", "message_col")
@@ -129,6 +130,8 @@ class AlertSourceOut(BaseModel):
 
 
 class RoleRef(BaseModel):
+    # None when the alert row names a role this app has no rule for.
+    id: int | None = None
     code: str
     name_th: str
     name_en: str
@@ -140,7 +143,7 @@ class AlertMessageOut(BaseModel):
     severity: Literal["crit", "warn", "info"]
     # The cell as written, for a tooltip that wants the plant's own word.
     severity_raw: str | None = None
-    # Who has to act — the row's own role column, else the first matching rule.
+    # Who has to act — the row's own role tag, else the first matching rule.
     role: RoleRef | None = None
 
 
@@ -148,7 +151,6 @@ class ResponseRoleIn(BaseModel):
     code: str = Field(..., max_length=60)
     name_th: str = Field(..., max_length=120)
     name_en: str = Field(..., max_length=120)
-    severity: Literal["crit", "warn", "info"] | None = None
     location: str | None = Field(None, max_length=200)
     keyword: str | None = Field(None, max_length=200)
     priority: int = Field(100, ge=0, le=10_000)
@@ -325,7 +327,7 @@ def get_alert_messages(
             "ts": r["ts"], "message": r["message"], "severity": severity,
             "severity_raw": r["severity"],
             "role": db.match_response_role(
-                rules, severity=severity, message=r["message"],
+                rules, message=r["message"],
                 location=r.get("match_value") if located else None,
                 explicit=r.get("role_value"),
             ),

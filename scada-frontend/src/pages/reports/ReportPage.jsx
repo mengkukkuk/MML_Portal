@@ -383,6 +383,10 @@ export default function ReportPage() {
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
       <div className={`${styles.page} report-root`}>
+        {/* One row: what is being read, which view of it, and what can be done
+            with it. The tabs sit between title and actions instead of on a row
+            of their own, and the actions are icons with a caption, so the
+            chart below starts as high up the screen as it can. */}
         <header className={`${styles.head} report-controls`}>
           <div className={styles['head__left']}>
             <h2 className={styles.title}>{template?.name ?? tr('Report')}</h2>
@@ -404,55 +408,47 @@ export default function ReportPage() {
             )}
           </div>
 
+          <Tabs
+            value={tab}
+            onChange={(_e, next) => setTab(next)}
+            className={styles.tabs}
+            aria-label={tr('Report view')}
+          >
+            {TABS.map((t) => (
+              <Tab
+                key={t.key}
+                value={t.key}
+                label={(
+                  <span className={styles.tabLabel}>
+                    {tr(t.label)}
+                    <span className={styles.tabCount}>{tabCounts[t.key]}</span>
+                  </span>
+                )}
+              />
+            ))}
+          </Tabs>
+
           <div className={styles['head__right']}>
             {isAdmin && (
-              <Button size="small" startIcon={<AddOutlined />} onClick={() => navigate('/reports/new')}>
-                {tr('New')}
-              </Button>
+              <ActionButton icon={<AddOutlined />} label={tr('New')} onClick={() => navigate('/reports/new')} />
             )}
             {isAdmin && template && (
-              <Button
-                size="small"
-                startIcon={<EditOutlined />}
+              <ActionButton
+                icon={<EditOutlined />}
+                label={tr('Edit')}
                 onClick={() => navigate(`/reports/${template.id}/edit`)}
-              >
-                {tr('Edit')}
-              </Button>
+              />
             )}
-            <Button size="small" startIcon={<PrintOutlined />} onClick={() => window.print()}>
-              {tr('Print')}
-            </Button>
-            <Button
-              size="small"
-              startIcon={<DownloadOutlined />}
+            <ActionButton icon={<PrintOutlined />} label={tr('Print')} onClick={() => window.print()} />
+            <ActionButton
+              icon={<DownloadOutlined />}
+              label={tr('Export')}
               loading={exporting}
               disabled={!runQuery.data}
               onClick={handleExport}
-            >
-              {tr('Export')}
-            </Button>
+            />
           </div>
         </header>
-
-        <Tabs
-          value={tab}
-          onChange={(_e, next) => setTab(next)}
-          className={`${styles.tabs} report-controls`}
-          aria-label={tr('Report view')}
-        >
-          {TABS.map((t) => (
-            <Tab
-              key={t.key}
-              value={t.key}
-              label={(
-                <span className={styles.tabLabel}>
-                  {tr(t.label)}
-                  <span className={styles.tabCount}>{tabCounts[t.key]}</span>
-                </span>
-              )}
-            />
-          ))}
-        </Tabs>
 
         {/* The signal trend leads the summary and is bound separately: it reads
             a plant table directly, on its own window (up to a year), and
@@ -547,5 +543,17 @@ export default function ReportPage() {
         </div>
       </div>
     </LocalizationProvider>
+  )
+}
+
+// An icon with its name in small type underneath: the icon is what the eye
+// finds, the caption is what makes it unambiguous to someone new to the page.
+// Every action is the same width, so the row reads as one toolbar.
+function ActionButton({ icon, label, ...props }) {
+  return (
+    <Button size="small" className={styles.action} title={label} {...props}>
+      {icon}
+      <span className={styles.actionLabel}>{label}</span>
+    </Button>
   )
 }

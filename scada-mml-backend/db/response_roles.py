@@ -1,14 +1,18 @@
 """Response roles: who has to act on an alert.
 
 Each row is one rule — a role (its code and its Thai/English names) and the
-conditions under which an alert is that role's to handle: severity, location,
-a keyword in the message. Every condition is optional; a rule with none is the
+conditions under which an alert is that role's to handle: its location and a
+keyword in the message. Every condition is optional; a rule with none is the
 catch-all. Rules are tried by `priority` (lower first, then id) and the first
 that fits wins.
 
-A role can also be named on the alert row itself, when the alert source has a
-role column (alert_messages.response_role, say). That explicit value wins over
-every rule, and is looked up by `code` here only to show the role's names.
+Severity is deliberately not a condition. How loud an alert is says nothing
+about whose job it is, and a rule keyed on it sent every critical alert to one
+team whatever had happened. An alert that must reach a particular role is
+tagged with it instead: the alert source's role column (alert_messages.role_id)
+holds this table's `id`, and that tag wins over every rule. A code is accepted
+there too, for plant tables such as alarm_logs that carry a text role rather
+than our id.
 
 Rules live in the app database, edited by admins in Settings, because the
 alerts they classify do not have to come from a table anyone can change:
@@ -20,7 +24,6 @@ from typing import Any
 from . import pool as _pool
 
 __all__ = [
-    "RESPONSE_ROLE_SEVERITIES",
     "create_response_role",
     "delete_response_role",
     "init_response_roles_table",
@@ -29,10 +32,8 @@ __all__ = [
     "update_response_role",
 ]
 
-RESPONSE_ROLE_SEVERITIES = ("crit", "warn", "info")
-
-_COLS = "id, code, name_th, name_en, severity, location, keyword, priority, updated_at"
-_FIELDS = ("code", "name_th", "name_en", "severity", "location", "keyword", "priority")
+_COLS = "id, code, name_th, name_en, location, keyword, priority, updated_at"
+_FIELDS = ("code", "name_th", "name_en", "location", "keyword", "priority")
 
 
 def init_response_roles_table() -> None:
@@ -44,15 +45,15 @@ def init_response_roles_table() -> None:
                 code       TEXT NOT NULL,
                 name_th    TEXT NOT NULL,
                 name_en    TEXT NOT NULL,
-                severity   TEXT,
                 location   TEXT,
                 keyword    TEXT,
                 priority   INTEGER NOT NULL DEFAULT 100,
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                CONSTRAINT response_role_severity
-                    CHECK (severity IS NULL OR severity IN ('crit', 'warn', 'info'))
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )"""
         )
+        # The first build matched on severity too (the module docstring says why
+        # it no longer does). Its CHECK constraint goes with the column.
+        conn.execute("ALTER TABLE response_role DROP COLUMN IF EXISTS severity")
         conn.commit()
 
 
@@ -106,37 +107,52 @@ def _squash(text: str | None) -> str:
     return "".join((text or "").split()).casefold()
 
 
+def _ref(rule: dict[str, Any]) -> dict[str, Any]:
+    return {"id": rule.get("id"), "code": rule["code"],
+            "name_th": rule["name_th"], "name_en": rule["name_en"]}
+
+
+def _role_id(tag: str) -> int | None:
+    """'7', '7.0' and ' 7 ' are role 7 — the column may be text or numeric."""
+    try:
+        number = float(tag)
+    except ValueError:
+        return None
+    return int(number) if number.is_integer() else None
+
+
 def match_response_role(
     rules: list[dict[str, Any]],
     *,
-    severity: str,
     location: str | None,
     message: str,
     explicit: str | None = None,
 ) -> dict[str, Any] | None:
-    """The role that should act on one alert, as `{code, name_th, name_en}`, or None.
+    """The role that should act on one alert, as `{id, code, name_th, name_en}`, or None.
 
     `rules` come from `list_response_roles` (already in priority order).
-    `severity` is the normalised one ('crit'/'warn'/'info'). `explicit` is the
-    alert row's own role value, when its source has a role column: it wins, and
-    is named by the first rule with that code — or shown as written when no
-    rule has it, since the writer clearly meant someone.
+    `explicit` is the alert row's own role tag, when its source has a role
+    column, and it wins over every rule. It is read as a role `id` first, then
+    as a `code`; a tag that names no role is shown as written (with no id),
+    since the writer clearly meant someone.
     """
-    if explicit and explicit.strip():
-        code = explicit.strip()
-        named = next((r for r in rules if r["code"].casefold() == code.casefold()), None)
+    tag = str(explicit).strip() if explicit is not None else ""
+    if tag:
+        wanted = _role_id(tag)
+        named = (
+            next((r for r in rules if wanted is not None and r.get("id") == wanted), None)
+            or next((r for r in rules if r["code"].casefold() == tag.casefold()), None)
+        )
         if named:
-            return {"code": named["code"], "name_th": named["name_th"], "name_en": named["name_en"]}
-        return {"code": code, "name_th": code, "name_en": code}
+            return _ref(named)
+        return {"id": None, "code": tag, "name_th": tag, "name_en": tag}
 
     where = _squash(location)
     text = (message or "").casefold()
     for r in rules:
-        if r.get("severity") and r["severity"] != severity:
-            continue
         if r.get("location") and _squash(r["location"]) != where:
             continue
         if r.get("keyword") and r["keyword"].casefold() not in text:
             continue
-        return {"code": r["code"], "name_th": r["name_th"], "name_en": r["name_en"]}
+        return _ref(r)
     return None

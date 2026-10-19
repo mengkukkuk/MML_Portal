@@ -7,13 +7,18 @@ import { useQuery } from '@tanstack/react-query'
 import Checkbox from '@mui/material/Checkbox'
 import Divider from '@mui/material/Divider'
 import FormControl from '@mui/material/FormControl'
+import IconButton from '@mui/material/IconButton'
+import Tooltip from '@mui/material/Tooltip'
+import ExpandLessOutlined from '@mui/icons-material/ExpandLessOutlined'
+import ExpandMoreOutlined from '@mui/icons-material/ExpandMoreOutlined'
+import TuneRounded from '@mui/icons-material/TuneRounded'
 import MenuItem from '@mui/material/MenuItem'
 import Select from '@mui/material/Select'
 import { fetchSchemaTables } from '@/api/schema'
 import { fetchDatasources } from '@/api/datasources'
 import { apiErrorMessage } from '@/api/client'
 import { useTrendColumns } from './useTrendColumns'
-import { trendSourceId } from './trendParams'
+import { isPlottable, trendSourceId } from './trendParams'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { useTranslation } from '@/i18n'
 import styles from './TrendRail.module.css'
@@ -44,10 +49,30 @@ import styles from './TrendRail.module.css'
  * routes resolve to it anyway, so letting the data call fan out instead would
  * offer a table only the first plant has and then draw one envelope per plant
  * on top of each other — three tolerance bands for one device.
+ *
+ * Once a signal is plotted the rail can fold to a single line that states the
+ * binding (source › table › reading · window), handing its height to the chart.
+ * It never folds while the binding is incomplete: a folded rail with nothing to
+ * plot would hide the one thing the empty chart is asking for.
  */
+
+const OPEN_KEY = 'mml.report.trendRail.open'
+
+function readOpen() {
+  try {
+    return window.localStorage.getItem(OPEN_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
 
 export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
   const tr = useTranslation()
+  const [open, setOpen] = useState(readOpen)
+  const toggleOpen = (next) => {
+    setOpen(next)
+    try { window.localStorage.setItem(OPEN_KEY, next ? '1' : '0') } catch { /* private mode */ }
+  }
   const [draft, setDraft] = useState(() => ({ minutes: trend.minutes, start: dayjs(range.start), end: dayjs(range.end) }))
   useEffect(() => {
     setDraft({ minutes: trend.minutes, start: dayjs(range.start), end: dayjs(range.end) })
@@ -194,6 +219,42 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
 
   const noArrays = !!cols && arrayCols.length === 0
   const catalogError = tablesQuery.error || columnsQuery.error
+  const canFold = isPlottable(trend)
+
+  if (canFold && !open && !catalogError) {
+    const windowLabel = TREND_RANGES.find((r) => r.value === trend.minutes)?.label
+    const stamp = (v) => dayjs(v).format('DD/MM/YYYY HH:mm')
+    return (
+      <div className={`${styles.rail} ${styles.folded} report-trend-controls`}>
+        <button
+          type="button"
+          className={styles.summary}
+          onClick={() => toggleOpen(true)}
+          aria-expanded={false}
+          title={tr('Show signal settings')}
+        >
+          <TuneRounded fontSize="small" className={styles.summaryIcon} />
+          <span className={styles.crumb}>{sourceName(primaryId) ?? '—'}</span>
+          <span className={styles.crumbSep}>›</span>
+          <span className={styles.crumb}>{trend.table}</span>
+          <span className={styles.crumbSep}>›</span>
+          <span className={styles.crumbStrong}>
+            {shownValueCols.length <= 2
+              ? shownValueCols.map(labelFor).join(', ')
+              : tr('{count} readings', { count: shownValueCols.length })}
+          </span>
+          <span className={styles.crumbSep}>·</span>
+          {windowLabel && <span className={styles.crumb}>{tr(windowLabel)}</span>}
+          <span className={styles.crumbDim}>{stamp(range.start)} → {stamp(range.end)}</span>
+        </button>
+        <Tooltip title={tr('Show signal settings')}>
+          <IconButton size="small" onClick={() => toggleOpen(true)} aria-label={tr('Show signal settings')}>
+            <ExpandMoreOutlined fontSize="small" />
+          </IconButton>
+        </Tooltip>
+      </div>
+    )
+  }
 
   return (
     <div className={`${styles.rail} report-trend-controls`}>
@@ -317,6 +378,18 @@ export default function TrendRail({ trend, range, onApplyWindow, onChange }) {
           start: dateString(draft.start), end: dateString(draft.end) })}>
         {tr('Apply')}
       </Button>
+      {canFold && (
+        <Tooltip title={tr('Hide signal settings')}>
+          <IconButton
+            size="small"
+            className={styles.fold}
+            onClick={() => toggleOpen(false)}
+            aria-label={tr('Hide signal settings')}
+          >
+            <ExpandLessOutlined fontSize="small" />
+          </IconButton>
+        </Tooltip>
+      )}
       {rangeError && <p className={styles.error} role="alert">{tr(rangeError)}</p>}
 
       {noArrays && (
