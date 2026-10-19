@@ -48,7 +48,6 @@
 
   /* --- strip the app chrome -------------------------------------------- */
   .app-shell__aside,
-  .app-shell__header,
   .report-controls,
   .report-filters,
   .report-trend-controls {

@@ -20,6 +20,8 @@ import Snackbar from '@mui/material/Snackbar'
 import ChevronRightRounded from '@mui/icons-material/ChevronRightRounded'
 import VisibilityOutlined from '@mui/icons-material/VisibilityOutlined'
 import VisibilityOffOutlined from '@mui/icons-material/VisibilityOffOutlined'
+import VideocamOutlined from '@mui/icons-material/VideocamOutlined'
+import Tooltip from '@mui/material/Tooltip'
 import { useSettingsStore, THEMES } from '@/stores/settings'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -108,7 +110,7 @@ export default function SettingsPage() {
   const isAdmin = role === 'admin'
 
   const [collapsed, setCollapsed] = useState({
-    appearance: true, acquisition: true, datasources: true, cameraSource: true, alertSource: true, responseRoles: true,
+    appearance: true, acquisition: true, datasources: true, alertSource: true, responseRoles: true,
   })
   function toggle(key) {
     setCollapsed((c) => ({ ...c, [key]: !c[key] }))
@@ -299,9 +301,11 @@ export default function SettingsPage() {
   }
 
   // --- Camera link source ------------------------------------------------
-  // Which saved connection backs the Monitor "Linked to" camera picker.
-  // `datasource_id: null` means an admin still needs to configure the source;
-  // camera identity never falls back to the app/config database.
+  // Which saved connection backs the Monitor "Linked to" camera picker. Chosen
+  // on the connection's own row: exactly one connection is the camera source,
+  // so picking another row moves it there. `datasource_id: null` means an admin
+  // still needs to pick one; camera identity never falls back to the app/config
+  // database.
   const { data: cameraSource } = useQuery({
     queryKey: ['camera-link-source'],
     queryFn: fetchCameraLinkSource,
@@ -361,6 +365,14 @@ export default function SettingsPage() {
                   <Alert severity="error">{tr("Failed to load connections.")}</Alert>
               )}
 
+              {datasources.length > 0 && cameraSource && cameraSource.datasource_id == null && (
+                  <Alert severity="warning">
+                    {isAdmin
+                      ? tr("No camera source yet. Choose “Use for cameras” on the connection the Monitor cameras are read from.")
+                      : tr("No camera source yet. Ask an administrator to choose one.")}
+                  </Alert>
+              )}
+
               {datasources.length > 0 ? (
                   <div className={styles.conns}>
                     {datasources.map((ds) => (
@@ -382,6 +394,25 @@ export default function SettingsPage() {
                         </span>
                             )}
                           </div>
+                          <div className={styles.connCamera}>
+                            {cameraSource?.datasource_id === ds.id ? (
+                                <Tooltip title={tr("The Monitor camera picker, rail identity, and defect counts read from this connection. NG frame images remain in the configured image folder and are matched by camera code.")}>
+                                  <span className={styles.camSource} aria-label={tr("Camera source")}>
+                                    <VideocamOutlined fontSize="inherit" />
+                                    {tr("Camera source")}
+                                  </span>
+                                </Tooltip>
+                            ) : isAdmin ? (
+                                <Button
+                                    size="small"
+                                    variant="outlined"
+                                    className={styles.camPick}
+                                    startIcon={<VideocamOutlined fontSize="small" />}
+                                    disabled={cameraSourceMutation.isPending}
+                                    onClick={() => cameraSourceMutation.mutate(ds.id)}
+                                >{tr("Use for cameras")}</Button>
+                            ) : null}
+                          </div>
                           {isAdmin && (
                               <div className={styles.connActions}>
                                 <Button
@@ -402,46 +433,6 @@ export default function SettingsPage() {
                       </p>
                   )
               )}
-            </div>
-        )}
-      </section>
-
-      {/* ── Module 2 · Camera source ───────────────────────────────────── */}
-      <section className={`${styles.mod} ${collapsed.cameraSource ? styles.modCollapsed : ''}`}>
-        <header className={styles.modHead} onClick={() => toggle('cameraSource')}>
-          <span className={styles.modTag}>{tr("Camera source")}</span>
-          <span className={styles.modSub}>{tr("Where Monitor camera identity reads from")}</span>
-          <ChevronRightRounded
-              className={`${styles.modChevron} ${!collapsed.cameraSource ? styles.modChevronOpen : ''}`}
-          />
-        </header>
-        {!collapsed.cameraSource && (
-            <div className={styles.modBody}>
-              <p className={styles.fldHint}>{tr("The Monitor camera picker, rail identity, and defect counts read from one required saved connection. NG frame images remain in the configured image folder and are matched by camera code.")}</p>
-              {!isAdmin && (
-                  <p className={styles.dsReadonly}>
-                    <span className={styles.led} /> {tr("Only administrators can change this.")}</p>
-              )}
-              <div className={styles.acqRow}>
-                <div className={styles.acqLabel}>
-                  <p className={styles.fldLabel}>{tr("Camera list source")}</p>
-                </div>
-                <div className={styles.acqCtl}>
-                  <FormControl size="small" sx={{ minWidth: 260 }}>
-                    <Select
-                        value={cameraSource?.datasource_id ?? ''}
-                        disabled={!isAdmin || cameraSourceMutation.isPending}
-                        displayEmpty
-                        onChange={(e) => cameraSourceMutation.mutate(e.target.value)}
-                    >
-                      <MenuItem value="" disabled>{tr("Select camera source")}</MenuItem>
-                      {datasources.map((ds) => (
-                          <MenuItem key={ds.id} value={ds.id}>{ds.name}</MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </div>
-              </div>
             </div>
         )}
       </section>

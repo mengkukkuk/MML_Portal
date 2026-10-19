@@ -157,9 +157,10 @@ alter table localbase.alert_source_settings
     owner to postgres;
 
 -- Who has to act on an alert: one rule per row (role code + Thai/English names,
--- optional location / message keyword), tried by priority, first match wins;
--- no conditions = catch-all. An alert row tagged with a role id (the source's
--- role column, e.g. alert_messages.role_id) skips the rules. Edited in Settings.
+-- optional location), tried by priority, first match wins; no location =
+-- catch-all. An alert row tagged with a role's role_id (the source's role
+-- column, e.g. alert_messages.role_id) skips the rules. Edited in Settings.
+-- keyword is no longer read (replaced by role_id tagging).
 create table if not exists localbase.response_role
 (
     id         serial                                 primary key,

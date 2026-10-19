@@ -222,69 +222,88 @@ def test_without_a_role_column_the_role_value_is_null(monkeypatch):
 
 # --- response roles -----------------------------------------------------------------
 
+# `role_id` deliberately differs from `id`: a tag names the role_id, never the key.
 RULES = [
-    {"id": 1, "code": "it", "name_th": "ทีมระบบอัตโนมัติ", "name_en": "Automation team",
-     "location": None, "keyword": "disconnected", "priority": 10},
-    {"id": 2, "code": "l13-sup", "name_th": "หัวหน้าไลน์ 13", "name_en": "Line 13 supervisor",
-     "location": "Line 13", "keyword": None, "priority": 20},
-    {"id": 3, "code": "maint", "name_th": "ช่างซ่อมบำรุง", "name_en": "Maintenance",
-     "location": None, "keyword": "overload", "priority": 30},
-    {"id": 7, "code": "op", "name_th": "พนักงานคุมเครื่อง", "name_en": "Operator",
-     "location": None, "keyword": None, "priority": 999},
+    {"id": 1, "role_id": 11, "code": "it", "name_th": "ทีมระบบอัตโนมัติ",
+     "name_en": "Automation team", "location": "Line 1", "priority": 10},
+    {"id": 2, "role_id": 12, "code": "l13-sup", "name_th": "หัวหน้าไลน์ 13",
+     "name_en": "Line 13 supervisor", "location": "Line 13", "priority": 20},
+    {"id": 3, "role_id": 13, "code": "maint", "name_th": "ช่างซ่อมบำรุง",
+     "name_en": "Maintenance", "location": "Line 1", "priority": 30},
+    {"id": 4, "role_id": 7, "code": "op", "name_th": "พนักงานคุมเครื่อง",
+     "name_en": "Operator", "location": None, "priority": 999},
 ]
 
 
 def role(**kw):
     kw.setdefault("location", None)
-    kw.setdefault("message", "")
     r = db.match_response_role(RULES, **kw)
     return r and r["code"]
 
 
 def test_the_first_matching_rule_wins():
-    # Both keywords fit; the disconnect rule is tried first.
-    assert role(message="DISCONNECTED after motor overload") == "it"
-    assert role(message="Motor overload") == "maint"
+    # Two rules name Line 1; the lower priority number is tried first.
+    assert role(location="Line 1") == "it"
 
 
 def test_location_ignores_case_and_spaces():
     for spelt in ("Line 13", "Line13", " line 13 ", "LINE13"):
         assert role(location=spelt) == "l13-sup"
-    assert role(location="Line 1") == "op"
+    assert role(location="Line 2") == "op"
 
 
 def test_a_rule_with_no_conditions_is_the_catch_all():
-    assert role(message="Start of shift") == "op"
-    assert db.match_response_role(RULES[:3], location=None, message="x") is None
+    assert role() == "op"
+    assert db.match_response_role(RULES[:3], location=None) is None
 
 
 def test_the_row_role_id_wins_over_every_rule():
-    # Tagged with role 7 (the operator), though the keyword rule would say maintenance.
+    # Tagged with role_id 7 (the operator), though the Line 1 rule would say "it".
     for tag in ("7", " 7 ", "7.0", 7):
-        got = db.match_response_role(RULES, location=None, message="Motor overload", explicit=tag)
+        got = db.match_response_role(RULES, location="Line 1", explicit=tag)
         assert got == {"id": 7, "code": "op", "name_th": "พนักงานคุมเครื่อง", "name_en": "Operator"}
-    assert role(message="Motor overload", explicit="  ") == "maint"
-    assert role(message="Motor overload", explicit=None) == "maint"
+    assert role(location="Line 1", explicit="  ") == "it"
+    assert role(location="Line 1", explicit=None) == "it"
+
+
+def test_the_tag_is_the_role_id_not_the_primary_key():
+    # id 3 is maintenance, but nothing has role_id 3.
+    assert db.match_response_role(RULES, location=None, explicit="3")["id"] is None
+    assert role(explicit="13") == "maint"
 
 
 def test_a_role_code_is_accepted_as_the_tag_too():
     # alarm_logs carries a text role, not our id.
-    assert role(message="x", explicit=" MAINT ") == "maint"
+    assert role(explicit=" MAINT ") == "maint"
 
 
 def test_a_tag_naming_no_role_is_shown_as_written():
-    unknown = db.match_response_role(RULES, location=None, message="x", explicit="99")
+    unknown = db.match_response_role(RULES, location=None, explicit="99")
     assert unknown == {"id": None, "code": "99", "name_th": "99", "name_en": "99"}
-    assert role(message="x", explicit="QC lead") == "QC lead"
+    assert role(explicit="QC lead") == "QC lead"
 
 
 def test_role_input_trims_and_treats_blank_conditions_as_any():
     body = alert_messages.ResponseRoleIn(code=" maint ", name_th="ช่าง", name_en="Maintenance",
-                                         location="  ", keyword=" overload ")
-    assert body.code == "maint" and body.location is None and body.keyword == "overload"
-    assert "severity" not in body.model_dump()
+                                         location="  ", role_id=13)
+    assert body.code == "maint" and body.location is None and body.role_id == 13
+    dumped = body.model_dump()
+    assert "severity" not in dumped and "keyword" not in dumped
+    assert alert_messages.ResponseRoleIn(code="x", name_th="x", name_en="x").role_id is None
     with pytest.raises(ValidationError):
         alert_messages.ResponseRoleIn(code=" ", name_th="x", name_en="x")
+    with pytest.raises(ValidationError):
+        alert_messages.ResponseRoleIn(code="x", name_th="x", name_en="x", role_id=0)
+
+
+def test_a_taken_role_id_is_a_conflict(monkeypatch):
+    def taken(**fields):
+        raise psycopg.errors.UniqueViolation("duplicate key value")
+    monkeypatch.setattr(db, "create_response_role", taken)
+    body = alert_messages.ResponseRoleIn(code="x", name_th="x", name_en="x", role_id=7)
+    with pytest.raises(HTTPException) as err:
+        alert_messages.create_role(body, _admin={})
+    assert err.value.status_code == 409
 
 
 # --- /messages -------------------------------------------------------------------
@@ -330,11 +349,11 @@ def test_each_message_carries_its_role(monkeypatch):
     monkeypatch.setattr(db, "read_alert_messages", lambda *a, **k: [
         {"ts": END, "message": "Motor overload", "severity": "critical", "match_value": "Line1", "role_value": None},
         {"ts": END, "message": "Speed low", "severity": "warning", "match_value": "Line13", "role_value": None},
-        {"ts": END, "message": "Anything", "severity": "info", "match_value": None, "role_value": "3"},
+        {"ts": END, "message": "Anything", "severity": "info", "match_value": None, "role_value": "13"},
     ])
     body = alert_messages.AlertMessagesOut(**_messages())
-    assert [m.role.code for m in body.messages] == ["maint", "l13-sup", "maint"]
-    assert [m.role.id for m in body.messages] == [3, 2, 3]
+    assert [m.role.code for m in body.messages] == ["it", "l13-sup", "maint"]
+    assert [m.role.id for m in body.messages] == [11, 12, 13]
 
 
 def test_role_rules_failing_costs_the_roles_not_the_messages(monkeypatch, configured):

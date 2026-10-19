@@ -165,7 +165,7 @@ export default function AlertSourceSettings({ datasources, isAdmin, notify }) {
 
   // Free text with suggestions: the connection's names today are offered, a
   // name it does not have yet is still accepted (see the note above).
-  const field = (key, label, list, hint, onPick) => (
+  const field = (key, label, list, hint, onPick, disabled = false) => (
     <Autocomplete
       freeSolo
       size="small"
@@ -178,7 +178,7 @@ export default function AlertSourceSettings({ datasources, isAdmin, notify }) {
         else if (reason !== 'reset') setText(key, value)
       }}
       onChange={(_e, value) => (onPick ?? ((v) => setText(key, v)))(value ?? '')}
-      disabled={readOnly}
+      disabled={readOnly || disabled}
       renderInput={(params) => (
         <TextField
           {...params}
@@ -194,63 +194,85 @@ export default function AlertSourceSettings({ datasources, isAdmin, notify }) {
     return <p className={styles.dsEmpty}>{tr('Add a connection first.')}</p>
   }
 
+  // Three groups on one 3-column grid, so every box lines up with the boxes
+  // above and below it: where the alerts are (Source), what each row says
+  // (Columns), and whom a row is for (Routing). The match column keeps its slot
+  // while no filter is followed — disabled, not removed — so picking a filter
+  // does not reflow the row under the reader's pointer.
   return (
     <>
-      <p className={styles.fldHint}>{tr('The report trend marks the moments a plant wrote an alert. Name the connection, table and columns that hold them — one source for every trend, whichever connection its readings come from. The table may be created later — save it now and markers appear once it exists.')}</p>
+      <p className={styles.fldHint}>{tr('The report trend marks each alert a plant writes. One source serves every trend; the table may be created later — markers appear once it exists.')}</p>
       {!isAdmin && (
         <p className={styles.dsReadonly}>
           <span className={styles.led} /> {tr('Only administrators can change this.')}</p>
       )}
 
-      <div className={styles.acqRow}>
-        <div className={styles.acqLabel}>
-          <p className={styles.fldLabel}>{tr('Alert table connection')}</p>
-        </div>
-        <div className={styles.acqCtl}>
-          <FormControl size="small" sx={{ minWidth: 260 }}>
-            <Select value={dsId} onChange={pickConnection} disabled={readOnly} displayEmpty>
-              <MenuItem value="" disabled>{tr('Select a connection')}</MenuItem>
+      <div className={styles.alertGroup}>
+        <p className={styles.alertGroupLabel}>{tr('Source')}</p>
+        <div className={styles.alertGrid}>
+          <FormControl size="small">
+            <InputLabel id="alert-connection">{tr('Connection')}</InputLabel>
+            <Select
+              labelId="alert-connection"
+              label={tr('Connection')}
+              value={dsId}
+              onChange={pickConnection}
+              disabled={readOnly}
+            >
               {datasources.map((ds) => <MenuItem key={ds.id} value={ds.id}>{ds.name}</MenuItem>)}
             </Select>
           </FormControl>
+          {field('table_name', 'Table', tables.map((t) => t.table), undefined, pickTable)}
+          {status && (
+            <p className={styles.alertStatus} role="status">
+              <span className={statusLed(source)} />
+              <span className={styles.alertStatusText}>{status}</span>
+              {source?.configured && !source.available && source.detail && (
+                <span className={styles.alertDetail}>{source.detail}</span>
+              )}
+            </p>
+          )}
         </div>
       </div>
 
-      {status && (
-        <p className={styles.alertStatus} role="status">
-          <span className={statusLed(source)} /> {status}
-          {source?.configured && !source.available && source.detail && (
-            <span className={styles.alertDetail}>{source.detail}</span>
-          )}
-        </p>
-      )}
+      <div className={styles.alertGroup}>
+        <p className={styles.alertGroupLabel}>{tr('Columns')}</p>
+        <div className={styles.alertGrid}>
+          {field('ts_col', 'Time column', suggest.time)}
+          {field('message_col', 'Message column', suggest.message)}
+          {field('severity_col', 'Severity column (optional)', suggest.severity,
+            'crit / critical / alarm / high / 2 → critical · warn / warning / medium / 1 → warning · else info')}
+        </div>
+      </div>
 
-      <div className={styles.alertGrid}>
-        {field('table_name', 'Table', tables.map((t) => t.table), undefined, pickTable)}
-        {field('ts_col', 'Time column', suggest.time)}
-        {field('message_col', 'Message column', suggest.message)}
-        {field('severity_col', 'Severity column (optional)', suggest.severity,
-          'crit / critical / alarm / high / 2 → critical · warn / warning / medium / 1 → warning · else info')}
-        {field('role_col', 'Role ID column (optional)', suggest.role,
-          'Holds a response role ID (the ID column under Response roles) — a tagged row skips the rules')}
-        <FormControl size="small">
-          <InputLabel id="alert-match-filter">{tr('Follows report filter')}</InputLabel>
-          <Select
-            labelId="alert-match-filter"
-            label={tr('Follows report filter')}
-            value={form.match_filter}
-            onChange={set('match_filter')}
-            disabled={readOnly}
-          >
-            <MenuItem value="">{tr('None — every message')}</MenuItem>
-            <MenuItem value="location">{tr('Location')}</MenuItem>
-            <MenuItem value="camera">{tr('Camera')}</MenuItem>
-          </Select>
-        </FormControl>
-        {form.match_filter && field('match_col', 'Match column', suggest.match,
-          form.match_filter === 'location'
-            ? 'Holds the same values as the report Location filter'
-            : 'Holds the same values as the report Camera filter')}
+      <div className={styles.alertGroup}>
+        <p className={styles.alertGroupLabel}>{tr('Routing')}</p>
+        <div className={styles.alertGrid}>
+          <FormControl size="small">
+            <InputLabel id="alert-match-filter" shrink>{tr('Follows report filter')}</InputLabel>
+            <Select
+              labelId="alert-match-filter"
+              label={tr('Follows report filter')}
+              notched
+              displayEmpty
+              value={form.match_filter}
+              onChange={set('match_filter')}
+              disabled={readOnly}
+            >
+              <MenuItem value="">{tr('None — every message')}</MenuItem>
+              <MenuItem value="location">{tr('Location')}</MenuItem>
+              <MenuItem value="camera">{tr('Camera')}</MenuItem>
+            </Select>
+          </FormControl>
+          {field('match_col', 'Match column', suggest.match,
+            !form.match_filter ? 'Choose a report filter to follow first'
+              : form.match_filter === 'location'
+                ? 'Holds the same values as the report Location filter'
+                : 'Holds the same values as the report Camera filter',
+            undefined, !form.match_filter)}
+          {field('role_col', 'Role ID column (optional)', suggest.role,
+            'Holds a Role ID from Response roles — a tagged row skips the rules')}
+        </div>
       </div>
 
       {isAdmin && (

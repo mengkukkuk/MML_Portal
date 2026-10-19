@@ -396,53 +396,31 @@
 }
 
 /* --- view-mode canvas controls -----------------------------------------
- * The hand tool, zoom and fit, as an overlay on the sheet. Deliberately the
- * same order and the same icons as the drafting toolbar, so an admin who
- * learns them in edit mode already knows them here.
+ * The hand tool, zoom and fit, docked in the overview bar beside the poll-rate
+ * switch — framed the same way, so the two read as one row of controls — and
+ * never over the sheet. Deliberately the same order and the same icons as the
+ * drafting toolbar, so an admin who learns them in edit mode already knows
+ * them here.
  */
 .viewTools {
-  position: absolute;
-  top: var(--space-3);
-  right: var(--space-3);
-  z-index: 2;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
   gap: 2px;
-  /* It floats over the sheet, so it must never be what makes the sheet wider
-   * than the panel it sits in. */
-  max-width: calc(100% - var(--space-5));
-  padding: 3px;
-  border: 1px solid var(--border-soft);
+  padding: 1px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg-panel) 88%, transparent);
-  backdrop-filter: blur(6px);
-  box-shadow: var(--shadow-1);
 }
 
-/* In full screen the same cluster stops floating and joins the banner instead.
+/* In full screen the same cluster joins the banner beside the plant name.
+ * Shrinkable rather than rigid: .viewTools already wraps, so on a banner too
+ * narrow for one row the buttons take a second line instead of pushing the
+ * status pill off the edge. Unframed: the banner is its own ground.
  *
- * On a wall display the sheet is the entire reason the mode exists, so an
- * overlay is always covering something someone wanted to see — parked in the
- * bottom corner it sat on top of a station's own label. The banner has room
- * beside the plant name, and moving there costs the drawing nothing: that bar
- * is already in the layout.
- *
- * Must stay *after* .viewTools: both are single-class selectors, so this only
- * unsets `position` and the floating chrome by winning on source order. */
+ * Must stay *after* .viewTools: both are single-class selectors. */
 .viewToolsInBanner {
-  position: static;
-  /* Shrinkable rather than rigid: .viewTools already wraps, so on a banner too
-   * narrow for one row the buttons take a second line instead of pushing the
-   * status pill off the edge. */
   flex: 0 1 auto;
-  max-width: none;
-  /* Sits in a bar that already has its own ground, so the blur and the lifted
-   * panel fill would read as a card floating inside a card. */
-  background: transparent;
-  backdrop-filter: none;
-  box-shadow: none;
+  border-color: transparent;
 }
 
 .viewTool {
@@ -450,7 +428,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  min-height: 28px;
+  min-height: 26px;
   padding: 0 7px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -768,7 +746,7 @@
   white-space: nowrap;
 }
 
-/* Thai counts: no tracking, Thai face (see TitleBlock.module.css). */
+/* Thai counts: no tracking, Thai face. */
 :global(html[lang='th']) .stripCounts {
   font-family: var(--font-thai);
   font-weight: 500;

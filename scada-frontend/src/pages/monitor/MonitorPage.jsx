@@ -167,8 +167,9 @@ export default function MonitorPage() {
   // reading does not change meaning when an admin clicks Edit layout.
   const viewZoom = Math.round(((layout?.viewBox?.w || VIEW_W) / ui.viewport.w) * 100)
 
-  // One element, placed once: in the full-screen banner when full screen, over
-  // the sheet otherwise (MimicViewer decides). Never two copies in the tree.
+  // One element, placed once: in the full-screen banner when full screen, in
+  // the overview bar otherwise. Never two copies in the tree, and never over
+  // the sheet. Viewing only — the editor has its own command bar.
   const viewToolbar = (
     <ViewToolbar
       fullscreen={fullscreen}
@@ -206,6 +207,7 @@ export default function MonitorPage() {
         }}
         showEdit={canEdit && !!layout && !lock && !editMode}
         onEdit={lifecycle.startEditing}
+        tools={layout && !editing && !fullscreen ? viewToolbar : null}
         // Not in full screen: the banner carries its own copy, and two strips
         // in one tree would be two things to read before finding the drawing —
         // and two identically-labelled regions for a screen reader.
@@ -269,7 +271,6 @@ export default function MonitorPage() {
           tags={tags}
           history={data.history}
           events={data.events}
-          activeName={activeName}
           activeSlug={activeSlug}
           canEdit={canEdit}
           intervalMs={data.liveMs}
@@ -278,10 +279,8 @@ export default function MonitorPage() {
           ui={ui}
           stageRef={stageRef}
           canvasRef={canvasRef}
-          fullscreen={fullscreen}
           overlayHost={overlayHost}
           head={<FullscreenHead {...headProps} tools={viewToolbar} />}
-          toolbar={viewToolbar}
         />
       )}
 

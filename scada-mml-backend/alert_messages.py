@@ -11,7 +11,7 @@ Two halves, with different audiences:
   whether that table is there yet, because a source can be configured before
   the table exists.
 * **Response roles** (`/roles`) — who has to act on an alert: rules an admin
-  keeps (location / keyword -> role), or the role id the alert row is tagged
+  keeps (location -> role), or the role_id the alert row is tagged
   with, when the source has a role column. Every message comes back with its role.
 * **Messages** (`/messages`) — what the trend draws as markers. Never an error
   for "nothing to show": no source, a source whose table is missing and a plant
@@ -152,8 +152,10 @@ class ResponseRoleIn(BaseModel):
     name_th: str = Field(..., max_length=120)
     name_en: str = Field(..., max_length=120)
     location: str | None = Field(None, max_length=200)
-    keyword: str | None = Field(None, max_length=200)
     priority: int = Field(100, ge=0, le=10_000)
+    # The number an alert row's role column carries for this role. Left out on
+    # create, the next free number is given; left out on update, it is kept.
+    role_id: int | None = Field(None, ge=1, le=2_147_483_647)
 
     @field_validator("code", "name_th", "name_en")
     @classmethod
@@ -162,7 +164,7 @@ class ResponseRoleIn(BaseModel):
             raise ValueError("is required")
         return v.strip()
 
-    @field_validator("location", "keyword", mode="before")
+    @field_validator("location", mode="before")
     @classmethod
     def _blank_is_any(cls, v):
         # A blank condition is no condition — "any location", not "location ''".
@@ -171,7 +173,13 @@ class ResponseRoleIn(BaseModel):
 
 class ResponseRoleOut(ResponseRoleIn):
     id: int
+    role_id: int
     updated_at: datetime | None = None
+
+
+def _role_id_taken() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_409_CONFLICT,
+                         detail="That role ID is already used by another role")
 
 
 class AlertMessagesOut(BaseModel):
@@ -249,12 +257,18 @@ def list_roles(_user: dict = Depends(get_current_user)):
 
 @router.post("/roles", response_model=ResponseRoleOut, status_code=status.HTTP_201_CREATED)
 def create_role(body: ResponseRoleIn, _admin: dict = Depends(require_admin)):
-    return db.create_response_role(**body.model_dump())
+    try:
+        return db.create_response_role(**body.model_dump())
+    except psycopg.errors.UniqueViolation as e:
+        raise _role_id_taken() from e
 
 
 @router.put("/roles/{role_id}", response_model=ResponseRoleOut)
 def update_role(role_id: int, body: ResponseRoleIn, _admin: dict = Depends(require_admin)):
-    row = db.update_response_role(role_id, **body.model_dump())
+    try:
+        row = db.update_response_role(role_id, **body.model_dump())
+    except psycopg.errors.UniqueViolation as e:
+        raise _role_id_taken() from e
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Response role not found")
     return row
@@ -327,7 +341,7 @@ def get_alert_messages(
             "ts": r["ts"], "message": r["message"], "severity": severity,
             "severity_raw": r["severity"],
             "role": db.match_response_role(
-                rules, message=r["message"],
+                rules,
                 location=r.get("match_value") if located else None,
                 explicit=r.get("role_value"),
             ),

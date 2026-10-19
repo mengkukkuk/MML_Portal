@@ -3,24 +3,24 @@ import ChevronLeft from '@mui/icons-material/ChevronLeft'
 import ChevronRight from '@mui/icons-material/ChevronRight'
 import { isCameraNode } from '@/components/mimic/symbols'
 import MimicCanvas from '../MimicCanvas'
-import TitleBlock from '../TitleBlock'
 import DetailRail from '../DetailRail'
 import CameraRail from '../CameraRail'
 import ProductionLogDrawer from '../ProductionLogDrawer'
 import styles from '../MonitorPage.module.css'
 
 /**
- * View mode: the drawing with its floating controls, and the detail rail for
- * whatever symbol is selected. This sheet/rail grid (`.body`) is what goes full
- * screen (`stageRef`) while viewing.
+ * View mode: the drawing, and the detail rail for whatever symbol is selected.
+ * This sheet/rail grid (`.body`) is what goes full screen (`stageRef`) while
+ * viewing.
  *
- * `head` is the full-screen banner and `toolbar` the view-control cluster. The
- * toolbar is placed here only when windowed; in full screen the caller has put
- * it inside the banner instead, so it exists exactly once.
+ * Nothing sits over the sheet. `head` is the full-screen banner, and the view
+ * controls live in it (full screen) or in the overview bar above (windowed) —
+ * the caller places them. The drawing's name and the poll time are already in
+ * that bar, so the sheet carries no title block of its own.
  */
 export default function MimicViewer({
-  layout, tags, history, events, activeName, activeSlug, canEdit, intervalMs,
-  selection, edits, ui, stageRef, canvasRef, fullscreen, overlayHost, head, toolbar,
+  layout, tags, history, events, activeSlug, canEdit, intervalMs,
+  selection, edits, ui, stageRef, canvasRef, overlayHost, head,
 }) {
   const {
     selectedId, selectedEdgeId, selectedNode, selectedTag,
@@ -51,18 +51,6 @@ export default function MimicViewer({
           onDeleteEdge={edits.deleteEdge}
           onMoveBubble={edits.moveBubble}
         />
-
-        <TitleBlock
-          layout={layout}
-          name={activeName}
-          // Re-rendered on every poll, so this is the time of the figures
-          // on screen. Plant-local wall clock, like the rest of the page.
-          asOf={new Date().toLocaleTimeString('en-GB', { hour12: false })}
-        />
-
-        {/* Windowed only. In full screen the same cluster is rendered
-          * into the banner above instead, so it never covers the sheet. */}
-        {!fullscreen && toolbar}
 
         <ProductionLogDrawer
           open={productionLogOpen}

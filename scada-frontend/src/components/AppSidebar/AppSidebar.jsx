@@ -16,6 +16,8 @@ import AssessmentOutlined from '@mui/icons-material/AssessmentOutlined'
 import { useAuthStore } from '@/stores/auth'
 import { useLicenseStore } from '@/stores/license'
 import MmlLogo from '@/components/MmlLogo/MmlLogo.jsx'
+import SidebarHeading from './SidebarHeading.jsx'
+import SidebarAccount from './SidebarAccount.jsx'
 import styles from './AppSidebar.module.css'
 
 // Nav items ported 1:1 from AppSidebar.vue's `items` computed
@@ -31,12 +33,16 @@ const BASE_ITEMS = [
 ]
 
 /**
- * AppSidebar — collapsible left navigation menu rendered inside AppShell.
+ * AppSidebar — collapsible left navigation rendered inside AppShell, and the
+ * only app chrome: there is no header bar. Top to bottom it carries the page
+ * heading (collapse toggle, page title, clock), the navigation, the account
+ * button (data sources, language, refresh, password, sign out — see
+ * SidebarAccount) and the "Powered by" mark.
  * Navigation items are role-aware: the Accounts link is only shown to admin
- * users. Props: collapsed (Boolean) — when true, hides text labels and the
- * brand title.
+ * users. Props: collapsed (Boolean) — when true, hides text labels;
+ * onToggle() — requests collapse/expand from AppShell.
  */
-export default function AppSidebar({ collapsed }) {
+export default function AppSidebar({ collapsed, onToggle }) {
   const tr = useTranslation()
   const location = useLocation()
   const navigate = useNavigate()
@@ -56,12 +62,7 @@ export default function AppSidebar({ collapsed }) {
 
   return (
     <div className={styles.sidebar}>
-      <div className={styles.brand}>
-        <span className={styles.logo} aria-hidden="true">
-          ⚙
-        </span>
-        {!collapsed && <span className={styles.title}>MML Portal</span>}
-      </div>
+      <SidebarHeading collapsed={collapsed} onToggle={onToggle} />
       <List className={styles.menu} disablePadding>
         {items.map((item) => {
           const active = activeIndex === item.path
@@ -82,6 +83,9 @@ export default function AppSidebar({ collapsed }) {
           )
         })}
       </List>
+      <div className={styles.accountSlot}>
+        <SidebarAccount collapsed={collapsed} />
+      </div>
       <div
         className={`${styles.poweredBy} ${collapsed ? styles.poweredByCollapsed : ''}`}
         title={tr("Powered by Engineering Off-Site")}

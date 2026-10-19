@@ -11,11 +11,13 @@ import styles from '../MonitorPage.module.css'
 /**
  * The view-mode control cluster: log, hand, zoom, fit, full screen.
  *
- * Rendered in one of two places — floating over the sheet when windowed,
- * inside the banner when full screen. One component because two copies would
- * be two sets of controls to keep in step, and because only one may exist in
- * the tree at a time: they carry `aria-controls` and keyboard hints that must
- * not be duplicated. The caller decides where the one instance goes.
+ * Rendered in one of two places, never over the sheet: in the overview bar
+ * beside the poll-rate switch when windowed, inside the banner when full
+ * screen. A floating cluster always covered some part of the drawing, which is
+ * the one thing on this page nobody wants covered. One component because two
+ * copies would be two sets of controls to keep in step, and because only one
+ * may exist in the tree at a time: they carry `aria-controls` and keyboard
+ * hints that must not be duplicated. The caller decides where it goes.
  */
 export default function ViewToolbar({
   fullscreen, onToggleFullscreen,

@@ -14,7 +14,7 @@ import { apiErrorMessage } from '@/api/client'
 import styles from './SettingsPage.module.css'
 
 const BLANK = {
-  code: '', name_th: '', name_en: '', location: '', keyword: '', priority: 100,
+  code: '', name_th: '', name_en: '', location: '', role_id: '', priority: 100,
 }
 
 // Location filter value for rules with no location condition (every line).
@@ -29,16 +29,23 @@ const draftOf = (r) => ({
   name_th: r.name_th ?? '',
   name_en: r.name_en ?? '',
   location: r.location ?? '',
-  keyword: r.keyword ?? '',
+  role_id: r.role_id == null ? '' : String(r.role_id),
   priority: r.priority ?? 100,
 })
+
+// A whole number of 1 or more, or null: blank lets the server number a new role
+// (and keeps a saved one's), so a role never goes untaggable.
+const roleIdOf = (v) => {
+  const n = Number(String(v).trim())
+  return String(v).trim() && Number.isInteger(n) && n >= 1 ? n : null
+}
 
 const payloadOf = (d) => ({
   code: d.code.trim(),
   name_th: d.name_th.trim(),
   name_en: d.name_en.trim(),
   location: d.location.trim() || null,
-  keyword: d.keyword.trim() || null,
+  role_id: roleIdOf(d.role_id),
   priority: Number.isFinite(Number(d.priority)) ? Math.round(Number(d.priority)) : 100,
 })
 
@@ -52,9 +59,13 @@ let draftCounter = 0
  * One rule per row, tried top to bottom (lowest priority number first) — the
  * first whose conditions all fit names the role shown beside the alert on the
  * report trend. Every condition is optional: a row with none is the default
- * role, and belongs at the bottom. An alert row tagged with a role's ID (the
- * source's role column, alert_messages.role_id) skips the rules — which is why
- * the ID is shown: it is the number a writer puts on the row.
+ * role, and belongs at the bottom. An alert row tagged with a role's Role ID
+ * (the source's role column, alert_messages.role_id) skips the rules. The
+ * Role ID is editable so a role can carry the number the plant already uses;
+ * left blank, a new role is given the next free one.
+ *
+ * Kept compact on purpose: the filter and "Add rule" share one toolbar, and the
+ * how-it-works text lives in the column headers' tooltips, not above the table.
  *
  * Severity is not a condition: how loud an alert is does not say whose job it
  * is. A role that must get an alert is tagged on it instead.
@@ -123,7 +134,7 @@ export default function ResponseRoleSettings({ isAdmin, notify }) {
       if (d.id == null) return true
       if (locationFilter === ANY_LOCATION ? d.location.trim()
         : locationFilter && squash(d.location) !== squash(locationFilter)) return false
-      return !code || [d.code, String(d.id)].some((v) => v.toLowerCase().includes(code))
+      return !code || [d.code, d.role_id].some((v) => String(v).toLowerCase().includes(code))
     })
   }, [drafts, locationFilter, codeFilter])
   const shownSaved = shown.filter((d) => d.id != null).length
@@ -138,8 +149,6 @@ export default function ResponseRoleSettings({ isAdmin, notify }) {
 
   return (
     <>
-      <p className={styles.fldHint}>{tr('Rules are tried from the lowest priority number down; the first whose conditions all fit names who acts on the alert. Leave a condition blank to match anything — a rule with no conditions is the default and belongs last. Location ignores case and spaces, so "Line 13" also matches "Line13".')}</p>
-      <p className={styles.fldHint}>{tr('To send one alert to a particular role, write that role’s ID into the alert row’s role column (role_id). A tagged row skips the rules.')}</p>
       {!isAdmin && (
         <p className={styles.dsReadonly}>
           <span className={styles.led} /> {tr('Only administrators can change this.')}</p>
@@ -185,19 +194,30 @@ export default function ResponseRoleSettings({ isAdmin, notify }) {
             </Button>
           </>
         )}
+        {isAdmin && (
+          <Button size="small" variant="outlined" onClick={addRule} disabled={busy}
+            className={styles.roleAdd}>
+            {tr('+ Add rule')}
+          </Button>
+        )}
       </div>
 
       <div className={styles.roleWrap}>
         <table className={styles.roleTable}>
           <thead>
             <tr>
-              <th>{tr('ID')}</th>
-              <th>{tr('Priority')}</th>
+              <th title={tr('Rules are tried from the lowest priority number down; the first that fits names who acts on the alert.')}>
+                {tr('Priority')}
+              </th>
               <th>{tr('Role code')}</th>
               <th>{tr('Name (Thai)')}</th>
               <th>{tr('Name (English)')}</th>
-              <th>{tr('Location')}</th>
-              <th>{tr('Keyword in message')}</th>
+              <th title={tr('Blank matches every location. Case and spaces are ignored, so "Line 13" also matches "Line13".')}>
+                {tr('Location')}
+              </th>
+              <th title={tr('Write this number into the alert row’s role column (role_id) to send that alert to this role. A tagged row skips the rules. Blank gives a new role the next free number.')}>
+                {tr('Role ID')}
+              </th>
               {isAdmin && <th aria-label={tr('Actions')} />}
             </tr>
           </thead>
@@ -218,13 +238,14 @@ export default function ResponseRoleSettings({ isAdmin, notify }) {
               )
               return (
                 <tr key={key}>
-                  <td className={styles.roleId}>{d.id ?? tr('new')}</td>
                   <td className={styles.rolePriority}>{cell('priority', 'Priority', { inputMode: 'numeric' })}</td>
                   <td>{cell('code', 'Role code')}</td>
                   <td>{cell('name_th', 'Name (Thai)')}</td>
                   <td>{cell('name_en', 'Name (English)')}</td>
-                  <td>{cell('location', 'Location')}</td>
-                  <td>{cell('keyword', 'Keyword in message')}</td>
+                  <td>{cell('location', 'Location', { placeholder: tr('Any location') })}</td>
+                  <td className={styles.roleId}>
+                    {cell('role_id', 'Role ID', { inputMode: 'numeric', placeholder: d.id == null ? tr('auto') : '' })}
+                  </td>
                   {isAdmin && (
                     <td className={styles.roleActions}>
                       <Button
@@ -259,13 +280,6 @@ export default function ResponseRoleSettings({ isAdmin, notify }) {
       )}
       {drafts.length > 0 && shown.length === 0 && (
         <p className={styles.dsEmpty}>{tr('No rule fits this filter.')}</p>
-      )}
-      {isAdmin && (
-        <div className={styles.alertActions}>
-          <Button size="small" variant="outlined" onClick={addRule} disabled={busy}>
-            {tr('+ Add rule')}
-          </Button>
-        </div>
       )}
     </>
   )

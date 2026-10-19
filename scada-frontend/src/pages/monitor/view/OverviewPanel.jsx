@@ -49,12 +49,14 @@ function useOverviewOpen() {
  * stay: a control-room display that cannot say which plant it shows, or
  * that it is in alarm, is worse than one with no panel at all. Edit
  * layout stays because hiding the primary action behind a disclosure is
- * how an admin concludes the page is broken. The cadence, the connected
- * count and the KPI strip fold away — settings and detail, all of them
- * still one click from view.
+ * how an admin concludes the page is broken. So do the view controls
+ * (`tools` — zoom, hand, fit, full screen): they act on the drawing, not on
+ * this panel, and used to float over the drawing itself. The cadence, the
+ * connected count and the KPI strip fold away — settings and detail, all of
+ * them still one click from view.
  */
 export default function OverviewPanel({
-  drawings, status, subtitle, cadence, showEdit, onEdit, kpiStrip,
+  drawings, status, subtitle, cadence, showEdit, onEdit, kpiStrip, tools,
 }) {
   const [overviewOpen, toggleOverview] = useOverviewOpen()
   const {
@@ -87,6 +89,7 @@ export default function OverviewPanel({
         </span>
 
         <div className={styles.actions}>
+          {tools}
           {overviewOpen && <CadenceControl {...cadence} />}
 
           {showEdit && (

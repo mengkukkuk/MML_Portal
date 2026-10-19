@@ -44,13 +44,14 @@ export async function fetchAlertMessages({
 
 /**
  * Response roles — who has to act on an alert. Each row is one rule: a role
- * (code, Thai and English names) and optional conditions (severity
- * 'crit' | 'warn' | 'info', location, message keyword), tried by `priority`,
- * first match wins. Reading is open; writing is admin-only.
+ * (code, Thai and English names, and the `role_id` an alert row is tagged with)
+ * and an optional location condition, tried by `priority`, first match wins.
+ * Reading is open; writing is admin-only. Saving a `role_id` another role
+ * already has is a 409.
  */
 export async function fetchResponseRoles() {
   const { data } = await apiClient.get('/alerts/roles')
-  return data // [{ id, code, name_th, name_en, severity, location, keyword, priority, updated_at }]
+  return data // [{ id, role_id, code, name_th, name_en, location, priority, updated_at }]
 }
 
 export async function createResponseRole(role) {

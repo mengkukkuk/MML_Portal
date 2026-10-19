@@ -4,27 +4,68 @@
   height: 100%;
 }
 
-.brand {
+/* ── Heading: toggle, page title, clock (the old header bar's left half) ── */
+.heading {
   height: var(--header-h);
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  padding: 0 var(--space-5);
+  gap: var(--space-2);
+  padding: 0 var(--space-3) 0 var(--space-2);
   border-bottom: 1px solid var(--border-soft);
-  color: var(--fg);
-  font-weight: 600;
-  letter-spacing: 0.04em;
   flex-shrink: 0;
 }
 
-.logo {
-  font-size: 20px;
+.headingCollapsed {
+  justify-content: center;
+  padding: 0;
+}
+
+.toggle {
+  color: var(--fg-muted);
+  flex: none;
+}
+
+.toggle:hover {
+  color: var(--fg);
+}
+
+.headingText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pageTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clock {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.clockIcon {
+  font-size: 13px;
   color: var(--accent);
 }
 
-.title {
-  font-size: 14px;
-  white-space: nowrap;
+.clockTime {
+  color: var(--fg);
 }
 
 .menu {
@@ -61,14 +102,139 @@
   color: var(--accent);
 }
 
+/* ── Account button (the old header bar's right half) ─────────────────── */
+.accountSlot {
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-2) 0;
+}
+
+.account {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev, transparent);
+  color: var(--fg);
+  text-align: left;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.account:hover,
+.account[aria-expanded='true'] {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--border);
+}
+
+.accountCollapsed {
+  justify-content: center;
+  padding: 6px 0;
+}
+
+.avatar {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.accountText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.accountName {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountSource {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.accountSource > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* An implicit default is a fallback, not a choice the operator made. */
+.accountSource[data-implicit] {
+  opacity: 0.7;
+}
+
+.accountChevron {
+  flex: none;
+  color: var(--fg-muted);
+}
+
+.accountMenu {
+  min-width: 260px;
+  max-height: min(560px, calc(100vh - 32px));
+  margin-left: 8px;
+}
+
+.menuSubheader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 32px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: transparent;
+}
+
+.menuNote {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--fg-muted);
+}
+
+.menuCheck {
+  padding: 2px 8px 2px 0;
+}
+
+.langToggle {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: var(--space-3);
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.langToggle [data-on] {
+  color: var(--accent);
+  font-weight: 700;
+}
+
 .poweredBy {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--space-3);
   flex-shrink: 0;
-  margin: var(--space-4) var(--space-3) 0;
-  padding: var(--space-5) 0 var(--space-6);
+  margin: var(--space-3) var(--space-3) 0;
+  padding: var(--space-4) 0 var(--space-5);
   border-top: 1px solid var(--border-soft);
   text-align: center;
 }
