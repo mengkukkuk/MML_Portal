@@ -17,6 +17,7 @@ import dashboards
 import datasources
 import db
 import events
+import kpi
 import licensing
 import mimic
 import panels
@@ -55,6 +56,7 @@ app.include_router(readings.router)
 app.include_router(tags.router)
 app.include_router(schema.router)
 app.include_router(panels.router)
+app.include_router(kpi.router)
 app.include_router(dashboards.router)
 app.include_router(datasources.router)
 app.include_router(mimic.router)

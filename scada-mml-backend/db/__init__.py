@@ -13,6 +13,7 @@ doing ``import db`` and calling ``db.<name>`` exactly as before. Modules:
     alert_messages  the alert message source, and reading it
     response_roles  who acts on an alert: role rules, and matching them
     tables       plant-table access: introspection, per-source connection, latest
+    kpi          minute buckets for the Live management blocks
     series       windowed series queries, production-log aggregation
     datasources  saved datasources and their credential encryption
     selection    per-user datasource selection
@@ -41,7 +42,7 @@ import sys
 import types
 
 from . import (
-    alarms, alert_messages, cameras, dashboards, datasources, fanout, license, mimic, panels,
+    alarms, alert_messages, cameras, dashboards, datasources, fanout, kpi, license, mimic, panels,
     pool, readings, reports, response_roles, selection, series, tables, tags, users,
 )
 from .alarms import *  # noqa: F401,F403
@@ -50,6 +51,7 @@ from .cameras import *  # noqa: F401,F403
 from .dashboards import *  # noqa: F401,F403
 from .datasources import *  # noqa: F401,F403
 from .fanout import *  # noqa: F401,F403
+from .kpi import *  # noqa: F401,F403
 from .license import *  # noqa: F401,F403
 from .mimic import *  # noqa: F401,F403
 from .panels import *  # noqa: F401,F403
@@ -65,7 +67,7 @@ from .users import *  # noqa: F401,F403
 
 _MODULES = (
     pool, fanout, users, readings, dashboards, panels, tags, alarms, tables, series,
-    datasources, selection, mimic, cameras, reports, license, alert_messages, response_roles,
+    datasources, selection, mimic, cameras, reports, license, alert_messages, response_roles, kpi,
 )
 
 #: exported name -> the module that defines it

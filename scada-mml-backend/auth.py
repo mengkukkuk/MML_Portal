@@ -147,13 +147,23 @@ def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
     return current_user
 
 
+# Roles that may see money: the ฿ figures of the Live management blocks and the
+# price per piece behind them. Everyone else gets the same blocks in pieces.
+COST_ROLES = frozenset({"admin", "manager"})
+
+
+def can_see_cost(user: dict | None) -> bool:
+    """Whether `user` may see cost (฿) figures. Enforced server-side by stripping."""
+    return bool(user) and user.get("role") in COST_ROLES
+
+
 def require_operator_or_admin(current_user: dict = Depends(get_current_user)) -> dict:
-    """Allow operators and admins through. Use for writes an operator may make
-    without full admin (panel-editing) rights — e.g. changing a panel's poll
-    interval. Named explicitly (rather than reusing get_current_user) so the
-    intent reads at the call site even though every account today is one of
-    these two roles."""
-    if current_user["role"] not in ("admin", "operator"):
+    """Allow every non-admin read role and admins through. Use for writes an
+    operator may make without full admin (panel-editing) rights — e.g. changing
+    a panel's poll interval. A manager is an operator who may also see cost, so
+    it passes too. Named explicitly (rather than reusing get_current_user) so the
+    intent reads at the call site."""
+    if current_user["role"] not in ("admin", "manager", "operator"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Operator or admin access required",

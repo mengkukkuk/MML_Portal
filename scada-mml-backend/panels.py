@@ -7,6 +7,10 @@ narrow PATCH .../poll-interval endpoint (``require_operator_or_admin``).
 A panel binds to one of two data sources:
   - source='device': legacy device_id + metric (public.sensor_readings)
   - source='tag'   : tag_name + metric one-of TAG_FIELDS (public.variables_tag)
+  - source='table' : generic table_name + metric (+ filter/ts columns)
+  - source='kpi'   : a management block (Loss meter / Andon board / Loss
+                     waterfall) reading machine families detected in
+                     table_name; its settings live in options.kpi (kpi_options.py)
 """
 from datetime import datetime
 
@@ -15,7 +19,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 import db
-from auth import get_current_user, require_admin, require_operator_or_admin
+from auth import can_see_cost, get_current_user, require_admin, require_operator_or_admin
+from kpi_engine import strip_cost
+from kpi_options import (
+    KPI_CHART_TYPES, KPI_POLL_INTERVALS, KpiOptionsError, bind_families, normalize_kpi_options,
+)
 from licensing import require_valid_license
 
 router = APIRouter(
@@ -38,9 +46,10 @@ VALID_CHART_TYPES = {
     "scatter",
     "statetimeline",
     "candlestick",
+    *KPI_CHART_TYPES,
 }
 
-VALID_SOURCES = {"device", "tag", "table"}
+VALID_SOURCES = {"device", "tag", "table", "kpi"}
 
 # Poll-interval whitelist (seconds) — mirrors the frontend selector.
 VALID_POLL_INTERVALS = {5, 30, 60, 600, 1800, 3600}
@@ -117,6 +126,14 @@ def _validate(body: PanelIn) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"poll_interval_seconds must be one of: {sorted(VALID_POLL_INTERVALS)}",
         )
+    if (body.chart_type in KPI_CHART_TYPES) != (body.source == "kpi"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Management blocks (lossmeter, andon, waterfall) use source 'kpi', and only they do",
+        )
+    if body.source == "kpi":
+        _validate_kpi(body)
+        return
     if body.source == "device":
         if not body.device_id or not body.metric:
             raise HTTPException(
@@ -194,10 +211,74 @@ def _validate(body: PanelIn) -> None:
                     )
 
 
+def _validate_kpi(body: PanelIn) -> None:
+    """A management block: settings checked, and — once a table is chosen — its
+    machines detected so a block can never be saved reading nothing.
+
+    Normalizes `body.options["kpi"]` in place (defaults filled in) and sets
+    `metric` to the first machine's speed column, for code that expects every
+    table-ish panel to name one.
+    """
+    if body.poll_interval_seconds not in KPI_POLL_INTERVALS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Management blocks poll every {sorted(KPI_POLL_INTERVALS)} seconds",
+        )
+    options = body.options if isinstance(body.options, dict) else {}
+    try:
+        kpi = normalize_kpi_options(options.get("kpi"))
+    except KpiOptionsError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    body.options = {**options, "kpi": kpi}
+    if not body.table_name:
+        # Dropped from the palette before any table was known: saved unbound,
+        # and the inspector opens to bind it.
+        body.metric = None
+        return
+    try:
+        cols = db.describe_table(body.table_name, body.datasource_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Table not allowed: {body.table_name!r}",
+        )
+    except psycopg.Error as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Could not reach the selected connection: "
+                   f"{str(e).strip().splitlines()[0] if str(e).strip() else 'connection error'}",
+        )
+    try:
+        families = bind_families(kpi, cols, location_tags(kpi.get("location"), body.datasource_id))
+    except KpiOptionsError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    body.metric = families[0]["speed"]
+    body.ts_col = kpi["ts_col"]
+    body.filter_col = None
+
+
+def location_tags(location: str | None, datasource_id: int | None) -> set[str] | None:
+    """The tag names at `location` (variables_tag.location), or None for every column."""
+    if not location:
+        return None
+    try:
+        rows = db.tag_locations(datasource_id=datasource_id)
+    except (ValueError, psycopg.Error):
+        return None
+    return {r["tag_name"] for r in rows if r.get("location") == location}
+
+
+def for_viewer(panel: dict | None, user: dict) -> dict | None:
+    """`panel` as `user` may see it: a management block's price is cost data."""
+    if panel is None or can_see_cost(user) or panel.get("source") != "kpi":
+        return panel
+    return {**panel, "options": strip_cost(panel.get("options") or {})}
+
+
 # --- Endpoints -------------------------------------------------------------
 @router.get("", response_model=list[PanelOut])
-def list_panels(dashboard_id: int | None = None, _user: dict = Depends(get_current_user)):
-    return db.list_panels(dashboard_id)
+def list_panels(dashboard_id: int | None = None, user: dict = Depends(get_current_user)):
+    return [for_viewer(p, user) for p in db.list_panels(dashboard_id)]
 
 
 @router.post("", response_model=PanelOut, status_code=status.HTTP_201_CREATED)
@@ -250,7 +331,7 @@ def update_panel(panel_id: int, body: PanelIn, _admin: dict = Depends(require_ad
 
 @router.patch("/{panel_id}/poll-interval", response_model=PanelOut)
 def update_poll_interval(
-    panel_id: int, body: PollIntervalIn, _user: dict = Depends(require_operator_or_admin)
+    panel_id: int, body: PollIntervalIn, user: dict = Depends(require_operator_or_admin)
 ):
     """Operators (and admins) may change a panel's poll cadence without the
     full panel-edit rights update_panel() requires."""
@@ -259,10 +340,18 @@ def update_poll_interval(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"poll_interval_seconds must be one of: {sorted(VALID_POLL_INTERVALS)}",
         )
+    current = db.get_panel(panel_id)
+    if current is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Panel not found")
+    if current.get("source") == "kpi" and body.poll_interval_seconds not in KPI_POLL_INTERVALS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Management blocks poll every {sorted(KPI_POLL_INTERVALS)} seconds",
+        )
     panel = db.update_panel_poll_interval(panel_id, body.poll_interval_seconds)
     if panel is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Panel not found")
-    return panel
+    return for_viewer(panel, user)
 
 
 @router.delete("/{panel_id}", status_code=status.HTTP_204_NO_CONTENT)

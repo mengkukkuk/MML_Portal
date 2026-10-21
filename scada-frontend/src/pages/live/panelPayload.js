@@ -1,4 +1,5 @@
 import { compileExpr } from '@/utils/mathExpr'
+import { KPI_MIN_SIZE } from './kpiPayload'
 
 /**
  * panelPayload.js — pure, framework-agnostic logic ported verbatim from
@@ -204,6 +205,7 @@ export function panelMinSize(panel) {
   const half = Math.ceil(n / 2)
   const clampW = (w) => Math.max(2, Math.min(12, w))
   const clampH = (h) => Math.max(3, Math.min(30, h))
+  if (KPI_MIN_SIZE[panel?.chart_type]) return { ...KPI_MIN_SIZE[panel.chart_type] }
   switch (panel?.chart_type) {
     case 'stat':
       if (n === 1) return { w: clampW(2), h: clampH(4) }

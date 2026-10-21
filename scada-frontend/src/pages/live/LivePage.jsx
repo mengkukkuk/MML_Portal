@@ -16,6 +16,7 @@ import RefreshIcon from '@mui/icons-material/Refresh'
 import AddIcon from '@mui/icons-material/Add'
 import { useAuthStore } from '@/stores/auth'
 import LivePanel from '@/components/live/LivePanel'
+import KpiPanel from '@/components/live/KpiPanel'
 import { fetchDevices } from '@/api/readings'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import {
@@ -29,6 +30,12 @@ import {
   buildLayoutSavePayload, buildDuplicatePayload,
 } from './panelPayload'
 import PanelEditorDialog from './PanelEditorDialog'
+import BlockPalette from './BlockPalette'
+import KpiInspector from './KpiInspector'
+import {
+  KPI_CHART_TYPES, KPI_DROP_SIZE, isKpiPanel, inheritBinding, defaultKpiPanel,
+  buildKpiSavePayload, draftFromPanel,
+} from './kpiPayload'
 import DashboardSwitcher from './DashboardSwitcher'
 import styles from './LivePage.module.css'
 
@@ -63,6 +70,11 @@ const GRID_BREAKPOINTS = {
 const EDITABLE_BREAKPOINTS = Object.keys(GRID_COLS).filter((bp) => GRID_COLS[bp] === GRID_COLS.lg)
 const EDIT_MIN_WIDTH = Math.min(...EDITABLE_BREAKPOINTS.map((bp) => GRID_BREAKPOINTS[bp]))
 
+// react-grid-layout's placeholder for a palette card being dragged over the
+// grid. It rides in the layout until the drop lands, so it is filtered out of
+// local state on drop (and never saved: saveLayout skips ids with no panel).
+const DROP_ID = '__palette-drop__'
+
 /**
  * LivePage — admin-managed live dashboard (route: /live).
  *
@@ -81,7 +93,7 @@ export default function LivePage() {
   const canManage = role === 'admin'
   // Narrower than canManage: operators may change a panel's poll cadence
   // without full panel-edit rights (backed by PATCH .../poll-interval).
-  const canChangePollInterval = role === 'admin' || role === 'operator'
+  const canChangePollInterval = role === 'admin' || role === 'operator' || role === 'manager'
 
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -98,6 +110,7 @@ export default function LivePage() {
   // same id appears more than once. This lookup only supplies a display name
   // for legacy device-source panels, so first match is good enough.
   const selectionKey = useDatasourceSelectionStore((s) => s.selectionKey)
+  const primaryDatasourceId = useDatasourceSelectionStore((s) => s.selected[0]?.id ?? null)
   const devicesQuery = useQuery({
     queryKey: ['live-devices', selectionKey],
     queryFn: fetchDevices,
@@ -295,8 +308,90 @@ export default function LivePage() {
   // --- panel editor dialog ---------------------------------------------------
   const [editorOpen, setEditorOpen] = useState(false)
   const [editingPanel, setEditingPanel] = useState(null)
-  function openCreate() { setEditingPanel(null); setEditorOpen(true) }
-  function openEdit(panel) { setEditingPanel(panel); setEditorOpen(true) }
+  const [editorChartType, setEditorChartType] = useState(null)
+  function openCreate(chartType = null) {
+    setEditingPanel(null)
+    setEditorChartType(chartType)
+    setEditorOpen(true)
+  }
+  function openEdit(panel) {
+    if (isKpiPanel(panel)) { openInspector(panel); return }
+    setEditingPanel(panel)
+    setEditorOpen(true)
+  }
+
+  // --- block palette (edit mode): drop or click to add -----------------------
+  // The type being dragged sizes the grid's drop ghost; RGL reads droppingItem
+  // while the drag is over the grid, and dataTransfer can't be read until drop.
+  const [dragType, setDragType] = useState(null)
+  const droppingItem = useMemo(() => {
+    const size = KPI_DROP_SIZE[dragType] || { w: 6, h: 9 }
+    return { i: DROP_ID, ...size }
+  }, [dragType])
+
+  async function addBlock(type, slot = null) {
+    if (!KPI_CHART_TYPES.has(type)) { openCreate(type); return }
+    const size = KPI_DROP_SIZE[type]
+    const at = slot || { ...nextLayoutSlot(layout), ...size }
+    try {
+      const created = await createPanel(defaultKpiPanel(type, {
+        binding: inheritBinding(panels, primaryDatasourceId),
+        layout: { x: at.x, y: at.y, w: at.w, h: at.h },
+        dashboardId: activeDashboardId,
+        position: panels.length,
+      }))
+      patchPanels((old) => [...old, created])
+      setLayout((prev) => appendLayoutItem(prev.filter((it) => it.i !== DROP_ID), created))
+      notify('Block added.')
+      if (!created.table_name) openInspector(created)
+    } catch (e) {
+      setLayout((prev) => prev.filter((it) => it.i !== DROP_ID))
+      notify(apiErrorMessage(e, 'Failed to add block.'), 'error')
+    }
+  }
+
+  function handleDrop(_layout, item, e) {
+    const type = e?.dataTransfer?.getData('text/plain') || dragType
+    setDragType(null)
+    if (!type || !item) { setLayout((prev) => prev.filter((it) => it.i !== DROP_ID)); return }
+    if (!KPI_CHART_TYPES.has(type)) {
+      setLayout((prev) => prev.filter((it) => it.i !== DROP_ID))
+      openCreate(type)
+      return
+    }
+    addBlock(type, { x: item.x, y: item.y, w: item.w, h: item.h })
+  }
+
+  // --- management-block inspector (non-modal side panel) ---------------------
+  const [inspectorPanel, setInspectorPanel] = useState(null)
+  const [draft, setDraft] = useState(null)
+  const [inspectorSaving, setInspectorSaving] = useState(false)
+  const [inspectorError, setInspectorError] = useState('')
+  function openInspector(panel) {
+    setInspectorError('')
+    setInspectorPanel(panel)
+    setDraft(draftFromPanel(panel))
+  }
+  function closeInspector() {
+    setInspectorPanel(null)
+    setDraft(null)
+  }
+  async function saveInspector() {
+    if (!inspectorPanel || !draft) return
+    setInspectorSaving(true)
+    setInspectorError('')
+    try {
+      const current = panels.find((p) => p.id === inspectorPanel.id) || inspectorPanel
+      const updated = await updatePanel(current.id, buildKpiSavePayload(current, draft))
+      patchPanels((old) => old.map((p) => (p.id === updated.id ? updated : p)))
+      notify('Block updated.')
+      closeInspector()
+    } catch (e) {
+      setInspectorError(apiErrorMessage(e, 'Failed to save block.'))
+    } finally {
+      setInspectorSaving(false)
+    }
+  }
 
   function handlePanelSaved(panel, isNew) {
     patchPanels((old) => (isNew ? [...old, panel] : old.map((p) => (p.id === panel.id ? panel : p))))
@@ -399,7 +494,7 @@ export default function LivePage() {
           <Button startIcon={<RefreshIcon />} loading={refreshing} disabled={!panels.length} onClick={refreshAll}>
             Refresh
           </Button>
-          {canManage && panels.length > 0 && (
+          {canManage && activeDashboardId != null && (
             <Button
               variant={editMode ? 'contained' : 'outlined'}
               color={editMode ? 'success' : 'inherit'}
@@ -414,7 +509,7 @@ export default function LivePage() {
             </Button>
           )}
           {canManage && (
-            <Button variant="contained" startIcon={<AddIcon />} disabled={activeDashboardId == null} onClick={openCreate}>
+            <Button variant="contained" startIcon={<AddIcon />} disabled={activeDashboardId == null} onClick={() => openCreate()}>
               Add panel
             </Button>
           )}
@@ -429,13 +524,17 @@ export default function LivePage() {
 
       {!loadError && loading && <p className={styles.empty}>Loading panels…</p>}
 
-      {!loadError && !loading && !panels.length && (
+      {!loadError && !loading && editMode && canManage && (
+        <BlockPalette onAdd={(type) => addBlock(type)} onDragType={setDragType} />
+      )}
+
+      {!loadError && !loading && !panels.length && !editMode && (
         <p className={styles.empty}>
           No panels yet. {canManage ? 'Click "Add panel" to create one.' : "An admin hasn't configured any panels."}
         </p>
       )}
 
-      {!loadError && !loading && panels.length > 0 && (
+      {!loadError && !loading && (panels.length > 0 || editMode) && (
         <ResponsiveGridLayout
           className={`${styles.grid} ${editMode ? styles.gridEditing : ''}`}
           layouts={gridLayouts}
@@ -445,6 +544,9 @@ export default function LivePage() {
           margin={[10, 10]}
           isDraggable={editMode && canManage}
           isResizable={editMode && canManage}
+          isDroppable={editMode && canManage}
+          droppingItem={droppingItem}
+          onDrop={handleDrop}
           verticalCompact
           useCSSTransforms
           draggableHandle=".panel__drag"
@@ -455,6 +557,25 @@ export default function LivePage() {
           {layout.map((item) => {
             const panel = panels.find((p) => String(p.id) === item.i)
             if (!panel) return null
+            if (isKpiPanel(panel)) {
+              return (
+                <div key={item.i}>
+                  <KpiPanel
+                    panel={panel}
+                    draft={inspectorPanel?.id === panel.id ? draft : null}
+                    canManage={canManage}
+                    canChangePollInterval={canChangePollInterval}
+                    editMode={editMode}
+                    refreshSignal={refreshSignal}
+                    onEdit={openInspector}
+                    onDuplicate={openDuplicate}
+                    onDelete={openDelete}
+                    onPollIntervalChange={handlePollIntervalChange}
+                    onUpdated={handlePanelUpdated}
+                  />
+                </div>
+              )
+            }
             return (
               <div key={item.i}>
                 <LivePanel
@@ -483,8 +604,20 @@ export default function LivePage() {
         panelsLength={panels.length}
         nextLayout={nextLayoutSlot(layout)}
         datasources={datasources}
+        initialChartType={editorChartType}
         onClose={() => setEditorOpen(false)}
         onSaved={handlePanelSaved}
+      />
+
+      <KpiInspector
+        panel={inspectorPanel}
+        draft={draft}
+        onDraft={setDraft}
+        datasources={datasources}
+        saving={inspectorSaving}
+        error={inspectorError}
+        onSave={saveInspector}
+        onCancel={closeInspector}
       />
 
       {/* Duplicate panel: small centred form */}

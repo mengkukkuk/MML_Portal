@@ -70,6 +70,17 @@
   border-radius: var(--radius-sm);
 }
 
+/* While editing, the grid is also the palette's drop target, so it keeps a
+   drop area below the last tile — an empty board would otherwise be a
+   10px strip with nowhere to drop the first block. */
+.gridEditing {
+  min-height: max(60vh, 320px) !important;
+  border-radius: var(--radius-lg);
+  background: repeating-linear-gradient(
+    -45deg, transparent 0 14px, color-mix(in srgb, var(--fg) 3%, transparent) 14px 15px
+  );
+}
+
 .gridEditing :global(.react-grid-item) {
   outline: 1px dashed var(--border-soft);
   outline-offset: 2px;

@@ -18,6 +18,9 @@ export const useAuthStore = create((set, get) => ({
   // Derived getters — plain functions, called as e.g. useAuthStore.getState().isLoggedIn()
   isLoggedIn: () => get().hasToken,
   role: () => get().user?.role ?? null,
+  // Who may see cost (฿) figures on the Live management blocks. The server
+  // strips them for everyone else; this only decides what the UI offers.
+  canSeeCost: () => ['admin', 'manager'].includes(get().user?.role),
 
   // Called once on app start — silently restore session via refresh cookie
   async initialize() {

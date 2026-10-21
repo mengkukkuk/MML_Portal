@@ -207,7 +207,7 @@ export default function AccountsPage() {
                 <TableCell>
                   <Chip
                     label={row.role}
-                    color={row.role === 'admin' ? 'error' : 'default'}
+                    color={row.role === 'admin' ? 'error' : row.role === 'manager' ? 'warning' : 'default'}
                     size="small"
                   />
                 </TableCell>
@@ -271,6 +271,7 @@ export default function AccountsPage() {
                 render={({ field }) => (
                   <Select labelId="accounts-role-label" label="Role" {...field}>
                     <MenuItem value="operator">operator</MenuItem>
+                    <MenuItem value="manager">manager (sees ฿ cost)</MenuItem>
                     <MenuItem value="admin">admin</MenuItem>
                   </Select>
                 )}

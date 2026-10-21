@@ -1,0 +1,285 @@
+/* Live management blocks — Loss meter, Andon board, Loss waterfall.
+ * They render inside LivePanel's frosted tile (`container: panel / size`), so
+ * the @container rules below respond to the tile the admin dragged, not the
+ * window. Colours come only from theme tokens: --ok / --warn / --crit carry
+ * Run / Slow / Stop, --fg-dim is No data, in every theme. */
+
+.body {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.empty {
+  margin: auto;
+  color: var(--fg-muted);
+  font-size: 0.85rem;
+  text-align: center;
+  padding: var(--space-3);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.foot {
+  margin-top: auto;
+  color: var(--fg-dim);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+/* --- Loss meter ----------------------------------------------------------- */
+.meter {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-1);
+  overflow: hidden;
+}
+
+.meter__spark {
+  position: absolute;
+  inset: auto 0 0 0;
+  width: 100%;
+  height: 55%;
+  pointer-events: none;
+}
+
+.meter__spark polyline {
+  fill: none;
+  stroke: var(--crit);
+  stroke-opacity: 0.35;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.meter__big {
+  position: relative;
+  font-size: clamp(1.6rem, 14cqmin, 4rem);
+  font-weight: 600;
+  line-height: 1.05;
+  color: var(--crit);
+}
+
+.meter__big--neutral {
+  color: var(--fg);
+}
+
+.meter__unit {
+  font-size: 0.4em;
+  font-weight: 400;
+  color: var(--fg-muted);
+  margin-left: 0.25em;
+}
+
+.meter__sub {
+  position: relative;
+  color: var(--fg-muted);
+  font-size: 0.8rem;
+}
+
+.meter__row {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  font-size: 0.78rem;
+}
+
+.delta--bad { color: var(--crit); }
+.delta--good { color: var(--ok); }
+.delta--flat { color: var(--fg-muted); }
+
+.pending {
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-2);
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn);
+}
+
+/* --- Andon board ---------------------------------------------------------- */
+.andon {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  grid-auto-rows: 1fr;
+  gap: var(--space-2);
+}
+
+.tile {
+  --state: var(--fg-dim);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--state) 45%, transparent);
+  background: color-mix(in srgb, var(--state) 16%, transparent);
+  color: var(--fg);
+  overflow: hidden;
+}
+
+.tile--run { --state: var(--ok); }
+.tile--slow { --state: var(--warn); }
+.tile--stop { --state: var(--crit); animation: andon-pulse 2.4s ease-in-out infinite; }
+.tile--nodata { --state: var(--fg-dim); color: var(--fg-muted); }
+
+@keyframes andon-pulse {
+  50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--crit) 45%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile--stop { animation: none; }
+}
+
+.tile__name {
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tile__word {
+  font-size: clamp(0.95rem, 3.4cqw, 1.6rem);
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--state);
+}
+
+.tile--nodata .tile__word { color: var(--fg-muted); }
+
+.tile__detail,
+.tile__strip,
+.legend {
+  display: none;
+}
+
+.tile__detail {
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+}
+
+.tile__strip {
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+.seg { height: 100%; }
+.seg--run { background: var(--ok); }
+.seg--slow { background: var(--warn); }
+.seg--stop { background: var(--crit); }
+.seg--nodata { background: var(--fg-dim); }
+.seg--off { background: transparent; }
+
+.legend {
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+}
+
+.legend__dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+
+/* Detail grows with the tile: name + state word when small (wall screen),
+ * speed and run % from ~420px, the 24 h strip and legend from ~560px. */
+@container panel (min-width: 420px) {
+  .tile__detail { display: block; }
+  .tile__word { font-size: clamp(0.95rem, 2.2cqw, 1.4rem); }
+}
+
+@container panel (min-width: 560px) {
+  .tile__strip { display: flex; }
+  .legend { display: flex; }
+}
+
+/* --- Loss waterfall ------------------------------------------------------- */
+.wf {
+  flex: 1 1 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr) auto;
+  column-gap: var(--space-3);
+}
+
+.wf__col {
+  position: relative;
+  min-height: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.wf__bar {
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  border-radius: 3px 3px 0 0;
+  background: var(--fg-dim);
+}
+
+.wf__bar--loss { background: color-mix(in srgb, var(--crit) 55%, transparent); }
+.wf__bar--largest { background: var(--crit); }
+.wf__bar--good { background: var(--ok); }
+
+.wf__link {
+  position: absolute;
+  left: 88%;
+  width: calc(24% + var(--space-3));
+  border-top: 1px dashed var(--border);
+}
+
+.wf__val {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 0.78rem;
+  line-height: 1.25;
+  padding-bottom: 3px;
+}
+
+.wf__val--largest {
+  color: var(--crit);
+  font-weight: 600;
+}
+
+.wf__baht {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--fg-muted);
+  font-weight: 400;
+}
+
+.wf__label {
+  padding-top: 4px;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+}
+
+.wf__label--largest {
+  color: var(--crit);
+  font-weight: 600;
+}

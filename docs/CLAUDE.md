@@ -177,6 +177,15 @@ and each tile self-polls at one of the whitelisted intervals (5s, 30s, 1m, 10m,
   Multi-tag panels (`panel.options.tags`) overlay several tags as separate
   coloured series in one tile.
 
+- `source='kpi'` — a **management block** (`lossmeter` / `andon` / `waterfall`): reads
+  machine families detected from a wide table's column names (`name_families.py`, same
+  rule as the frontend `groupByFamily`), settings in `options.kpi` (`kpi_options.py`).
+  Figures come whole from `GET /api/kpi/summary?panel_id=` (`kpi.py` → `kpi_engine.py`,
+  minute buckets from `db/kpi.py`, cached incrementally in `kpi_cache.py`); ฿ figures are
+  stripped server-side unless the role is `admin` or `manager`. Polls ≥ 30 s. Added from the
+  Edit Layout palette (`BlockPalette`), configured in `KpiInspector`. Design and rules:
+  `docs/management-blocks-plan.md`; demo data: `simulate_kpi_showcase.py`.
+
 Panels also take `options.titleSize` / `options.textSize` (`S`/`M`/`L`/`XL` → 0.85/1/1.25/1.5×, applied by `scaleFonts` over the finished ECharts option and via CSS), and gauge panels can bind warn/critical **setpoint columns** (panel-wide or per series) that are read live from the same table/filter row and fall back to the typed numbers (`gaugeLimitColsFor`, `fetchGaugeLimits`).
 
 Per-panel `options.transform` accepts a tiny expression (`a`, `+ - * / ^`,

@@ -24,7 +24,9 @@ router = APIRouter(
     dependencies=[Depends(require_valid_license)],
 )
 
-VALID_ROLES = {"admin", "operator"}
+# `manager` reads like an operator but may also see cost (฿) figures — see
+# auth.can_see_cost.
+VALID_ROLES = {"admin", "manager", "operator"}
 
 
 # --- Schemas ---------------------------------------------------------------

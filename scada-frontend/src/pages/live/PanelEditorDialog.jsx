@@ -55,7 +55,7 @@ import styles from './PanelEditorDialog.module.css'
 // `icon` (a string key on VIZ_TYPE_META, panelPayload.js) -> the actual
 // @mui/icons-material component. Kept out of panelPayload.js so that pure
 // logic module stays JSX-free; per-path imports only (no barrel import).
-const VIZ_ICONS = {
+export const VIZ_ICONS = {
   timeseries: ShowChartOutlinedIcon,
   bar: BarChartOutlinedIcon,
   stat: SpeedOutlinedIcon,
@@ -138,6 +138,9 @@ export default function PanelEditorDialog({
   panelsLength,
   nextLayout,
   datasources,
+  // Chart type a new panel starts as — set when the type was picked in the
+  // Live page's block palette.
+  initialChartType = null,
   onClose,
   onSaved,
 }) {
@@ -356,7 +359,8 @@ export default function PanelEditorDialog({
           })
         await applyBinding(binding, tables)
       } else {
-        reset(blankValues())
+        const chart_type = initialChartType || 'timeseries'
+        reset({ ...blankValues(), chart_type, options: defaultOptions(chart_type) })
         const tables = await loadTablesFor(null)
         if (cancelled) return
         await applyBinding({
@@ -367,7 +371,7 @@ export default function PanelEditorDialog({
     })()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, editingPanel])
+  }, [open, editingPanel, initialChartType])
 
   async function onDatasourceChange(e) {
     const dsId = e.target.value === '' ? null : e.target.value

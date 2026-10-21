@@ -10,6 +10,7 @@ __all__ = [
     "_PANEL_COLS",
     "create_panel",
     "delete_panel",
+    "get_panel",
     "init_panels_table",
     "list_panels",
     "update_panel",
@@ -106,6 +107,14 @@ def list_panels(dashboard_id: int | None = None) -> list[dict[str, Any]]:
                 (dashboard_id,),
             ).fetchall()
     return rows
+
+
+def get_panel(panel_id: int) -> dict[str, Any] | None:
+    """One panel by id, or None."""
+    with _pool.get_connection() as conn:
+        return conn.execute(
+            f"SELECT {_PANEL_COLS} FROM dashboard_panels WHERE id = %s", (panel_id,)
+        ).fetchone()
 
 
 def create_panel(
