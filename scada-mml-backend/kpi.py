@@ -1,14 +1,24 @@
 """Management-block figures for the Live grid (`/api/kpi`).
 
-One summary feeds all three block types — Loss meter, Andon board and Loss
-waterfall — so they can never disagree: the same buckets, the same states, the
-same losses, read three ways.
+One summary feeds every management block — Loss meter, Andon board, Loss
+waterfall, KPI strip, hourly rate, plan pace, sensor strip, response board,
+7-day trend and defect Pareto — so they can never disagree: the same buckets,
+the same states, the same losses, read different ways. Sections only one block
+type uses (sensors, responses, the 7-day trend, the Pareto, the timelines) are
+computed for that block type only.
 
 * `GET /summary?panel_id=` — for a saved block. The binding and settings are
   read from the stored panel, never from the query, so a viewer cannot point
   the server at another table or try settings of their own.
 * `POST /preview` — admin only, for the inspector's unsaved settings. Validated
   exactly as a save would be (kpi_options.py).
+
+**Line or machines.** Line 13 is one line: the cameras along it inspect the
+same pieces. In `scope: "line"` (the default) output, run and stop come from
+one camera family's speed (`line_family`, else the first) and a reject caught
+by any camera is a reject of the line; the per-camera figures stay available
+for the Andon board. In `scope: "machines"` every family is its own machine and
+the totals add up.
 
 Cost is money the management board reads; `strip_cost` removes every ฿ figure
 and the price for roles that may not see it, here on the server rather than in
@@ -18,7 +28,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Callable
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -28,7 +38,9 @@ import db
 import kpi_engine as engine
 from auth import can_see_cost, get_current_user, require_admin
 from kpi_cache import CACHE, TARGET_WINDOW
-from kpi_options import KPI_CHART_TYPES, KpiOptionsError, bind_families, normalize_kpi_options
+from kpi_options import (
+    KPI_CHART_TYPES, KpiOptionsError, bind_families, bind_sensors, line_family, normalize_kpi_options,
+)
 from licensing import require_valid_license
 from panels import location_tags
 
@@ -41,6 +53,20 @@ router = APIRouter(
 )
 
 STRIP_WINDOW = timedelta(hours=24)
+TREND_DAYS = 7
+# How long after an incident began a parameter change still counts as its response.
+RESPONSE_WINDOW = timedelta(hours=4)
+# Timeline resolution per period: fine enough to see a stop, few enough points to draw.
+TIMELINE_MIN = {"today": 5, "week": 60, "month": 360}
+HOURLY_MIN = {"today": 60, "week": 1440, "month": 1440}
+
+WANTS = {
+    "timeline": {"pace", "hourly"},
+    "sensors": {"sensors", "response", "kpistrip", "kpitrend"},
+    "response": {"response", "kpistrip"},
+    "trend": {"kpitrend"},
+    "pareto": {"pareto"},
+}
 
 
 class KpiPreviewIn(BaseModel):
@@ -92,13 +118,97 @@ def _sum(rows: list[dict[str, float]]) -> dict[str, float]:
     return {k: sum(r[k] for r in rows) for k in keys}
 
 
+def _ratio(a: float | None, b: float | None) -> float | None:
+    return a / b if a is not None and b else None
+
+
+def _period_end(period: str, start: datetime) -> datetime:
+    """Where the calendar period ends — the plan line runs to here."""
+    if period == "today":
+        return start + timedelta(days=1)
+    if period == "week":
+        return start + timedelta(days=7)
+    nxt = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return nxt
+
+
+def _plan_clock(start: datetime, full_end: datetime, hours: dict[str, Any] | None) -> Callable[[datetime], int]:
+    """planned(t): minutes of [start, t) the plan runs over — working hours if set, else all.
+
+    Built once per summary as a prefix sum, so the plan line costs one pass over
+    the period however many timeline rows ask for it.
+    """
+    if not hours:
+        return lambda t: max(0, int((min(t, full_end) - start).total_seconds() // 60))
+    prefix, n, t = [0], 0, start
+    while t < full_end:
+        n += engine.in_working_hours(t, hours)
+        prefix.append(n)
+        t += timedelta(minutes=1)
+    return lambda t: prefix[max(0, min(len(prefix) - 1, int((t - start).total_seconds() // 60)))]
+
+
+def _combine(accs: list[dict[str, Any]]) -> dict[str, Any]:
+    """Several machines' accounts as one, for `scope: "machines"`.
+
+    Figures add up; a minute's state is the one most machines were in, ties to
+    the worse one — the timeline's grey "stopped" band means most of the plant
+    was stopped, not that one machine was.
+    """
+    figures = _sum([_figures(a) for a in accs])
+    n = len(accs[0]["grid"]) if accs else 0
+    grid, marks, loss = [], [], []
+    for i in range(n):
+        grid.append({
+            "minute": accs[0]["grid"][i]["minute"],
+            "pieces": sum(a["grid"][i].get("pieces") or 0 for a in accs),
+            "defects": sum(a["grid"][i].get("defects") or 0 for a in accs),
+        })
+        loss.append(sum(a["minute_loss"][i] for a in accs))
+        counts: dict[str, int] = {}
+        for a in accs:
+            counts[a["marks"][i]] = counts.get(a["marks"][i], 0) + 1
+        marks.append(max(counts, key=lambda st: (counts[st], -engine.STATE_RANK.get(st, 9))))
+    minutes = {k: sum(a["minutes"][k] for a in accs) for k in accs[0]["minutes"]} if accs else {}
+    scheduled = sum(minutes.get(k, 0) for k in (engine.RUN, engine.SLOW, engine.STOP))
+    run_pct = round(100 * (minutes.get(engine.RUN, 0) + minutes.get(engine.SLOW, 0)) / scheduled) \
+        if scheduled else None
+    return {**figures, "grid": grid, "marks": marks, "minute_loss": loss, "minutes": minutes,
+            "run_pct": run_pct}
+
+
+def _fetch_errors(fn: Callable[[], Any]) -> Any:
+    try:
+        return fn()
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except psycopg.errors.QueryCanceled:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="The plant database took too long to answer — try a shorter period")
+    except psycopg.Error as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail=f"Could not reach the selected connection: {_first_line(e)}")
+
+
+def _aware(t: Any, tz) -> datetime | None:
+    if not isinstance(t, datetime):
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=tz)
+
+
 def summarize(
     table: str | None,
     datasource_id: int | None,
     raw_options: Any,
     now: datetime | None = None,
+    chart_type: str | None = None,
 ) -> dict[str, Any]:
-    """The full (unstripped) summary for one block binding."""
+    """The full (unstripped) summary for one block binding.
+
+    `chart_type` picks the optional sections to compute; None gives the core
+    only (families, totals, comparison).
+    """
+    want = {k for k, types in WANTS.items() if chart_type in types}
     if not table:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="This block isn't bound to a table yet")
@@ -113,18 +223,25 @@ def summarize(
     except psycopg.Error as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                             detail=f"Could not reach the selected connection: {_first_line(e)}")
+    loc_tags = location_tags(kpi.get("location"), datasource_id)
     try:
-        families = bind_families(kpi, cols, location_tags(kpi.get("location"), datasource_id))
+        families = bind_families(kpi, cols, loc_tags)
+        line_fam = line_family(kpi, families) if kpi["scope"] == "line" else None
+        sensors = bind_sensors(kpi, cols, families, loc_tags) if "sensors" in want else []
     except KpiOptionsError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     now = now or _now()
+    tz = now.tzinfo
     start, prev_start, end = engine.period_bounds(kpi["period"], now)
     elapsed = end - start
     pad = engine.context_pad(kpi)
+    trend_start = end.replace(hour=0, minute=0) - timedelta(days=TREND_DAYS - 1)
     fetch_from = min(start, end - STRIP_WINDOW, end - TARGET_WINDOW) - pad
     if kpi["compare"]:
         fetch_from = min(fetch_from, prev_start - pad)
+    if "trend" in want:
+        fetch_from = min(fetch_from, trend_start - pad)
 
     ts_col = kpi["ts_col"]
     binding = (datasource_id, table, ts_col, kpi["stop_threshold"], kpi["valid_max"], kpi["sample_sec"])
@@ -135,20 +252,13 @@ def summarize(
             stop_threshold=kpi["stop_threshold"], valid_max=kpi["valid_max"], sample_sec=kpi["sample_sec"],
         )
 
-    try:
-        buckets = CACHE.buckets(binding, families, fetch_from, end, fetch)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except psycopg.errors.QueryCanceled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                            detail="The plant database took too long to answer — try a shorter period")
-    except psycopg.Error as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                            detail=f"Could not reach the selected connection: {_first_line(e)}")
+    buckets = _fetch_errors(lambda: CACHE.buckets(binding, families, fetch_from, end, fetch))
 
     settings = _engine_settings(kpi)
     price = kpi["cost_per_piece"]
-    rows, prev_rows, family_list, unscheduled = [], [], [], 0
+    targets: dict[str, float | None] = {}
+    accs: dict[str, dict[str, Any]] = {}
+    family_list, unscheduled = [], 0
     for fam in families:
         series = buckets.get(fam["key"], [])
         typed = kpi["targets"].get(fam["key"])
@@ -158,20 +268,23 @@ def summarize(
             history = [b for b in series if b["minute"] >= end - TARGET_WINDOW]
             target = CACHE.target((*binding, fam["key"], fam["speed"]), history)
             source = "auto" if target is not None else "none"
+        targets[fam["key"]] = target
 
         acc = engine.family_summary(series, target, settings, start, end, True, (start - pad, end))
+        accs[fam["key"]] = acc
         day_start = end - STRIP_WINDOW
         day = engine.family_summary(series, target, settings, day_start, end, True, (day_start - pad, end))
         state, since = engine.current_state(day["states"], day["grid"])
         last = day["grid"][-1] if day["grid"] else None
         figures = _figures(acc)
-        unscheduled += acc["minutes"][engine.OFF]
-        rows.append(figures)
+        if line_fam is None:
+            unscheduled += acc["minutes"][engine.OFF]
         family = {
             "key": fam["key"],
             "label": fam["key"],
             "speed_col": fam["speed"],
             "defect_cols": fam["defects"],
+            "is_line": line_fam is not None and fam["key"] == line_fam["key"],
             "state": state,
             "state_since": since,
             "speed": engine.mean_speed(last) if last and state in (engine.RUN, engine.SLOW) else 0,
@@ -184,35 +297,223 @@ def summarize(
         }
         if (b := _baht(figures, price)) is not None:
             family["baht"] = b
-        if kpi["compare"]:
-            prev_end = prev_start + elapsed
-            ctx_end = min(prev_end + pad, end)
-            prev = engine.family_summary(series, target, settings, prev_start, prev_end,
-                                         ctx_end == end, (prev_start - pad, ctx_end))
-            prev_rows.append(_figures(prev))
         if not series:
             logger.info("KPI family %s on %s.%s has no rows in range", fam["key"], datasource_id, table)
         family_list.append(family)
 
-    totals = _sum(rows)
+    # --- the reference: the line, or the machines added up ----------------------
+    line_series = None
+    if line_fam is not None:
+        line_series = engine.line_buckets(buckets.get(line_fam["key"], []),
+                                          [buckets.get(f["key"], []) for f in families])
+
+    def reference(lo: datetime, hi: datetime, live: bool, ctx: tuple[datetime, datetime]) -> dict[str, Any]:
+        if line_series is not None:
+            acc = engine.family_summary(line_series, targets[line_fam["key"]], settings, lo, hi, live, ctx)
+            return {**_figures(acc), "grid": acc["grid"], "marks": acc["marks"],
+                    "minute_loss": acc["minute_loss"], "minutes": acc["minutes"], "run_pct": acc["run_pct"]}
+        parts = [engine.family_summary(buckets.get(f["key"], []), targets[f["key"]], settings, lo, hi, live, ctx)
+                 for f in families]
+        return _combine(parts)
+
+    ref = reference(start, end, True, (start - pad, end)) if line_series is not None \
+        else _combine(list(accs.values()))
+    if line_series is not None:
+        unscheduled = ref["minutes"][engine.OFF]
+    totals = {k: ref[k] for k in ("pieces", "defects", "good", "stop_loss", "slow_loss", "pending",
+                                  "potential", "lost")}
+
+    # --- plan ----------------------------------------------------------------------
+    full_end = _period_end(kpi["period"], start)
+    hours = kpi["working_hours"]
+    plan, planned = None, None
+    if kpi["plan_pieces"] is not None:
+        planned = _plan_clock(start, full_end, hours)
+        planned_total = planned(full_end)
+        to_date = kpi["plan_pieces"] * planned(end) / planned_total if planned_total else 0.0
+        plan = {"total": kpi["plan_pieces"], "to_date": to_date}
+
     out: dict[str, Any] = {
         "generated_at": now,
-        "period": {"name": kpi["period"], "start": start, "end": end,
+        "period": {"name": kpi["period"], "start": start, "end": end, "full_end": full_end,
                    "elapsed_min": int(elapsed.total_seconds() // 60)},
+        "scope": kpi["scope"],
+        "line_family": line_fam["key"] if line_fam else None,
         "families": family_list,
         "totals": totals,
         "unscheduled_min": unscheduled,
         "cost_per_piece": price,
+        "plan": plan,
         "settings": {"max_loss_stop_min": kpi["max_loss_stop_min"], "run_ratio": kpi["run_ratio"],
-                     "working_hours": kpi["working_hours"], "mode": kpi["mode"]},
+                     "working_hours": hours, "mode": kpi["mode"], "metrics": kpi["metrics"],
+                     "flat_min": kpi["flat_min"]},
     }
     if (b := _baht(totals, price)) is not None:
         out["totals"]["baht"] = b
+
     if kpi["compare"]:
-        prev_totals = _sum(prev_rows) if prev_rows else None
+        prev_end = prev_start + elapsed
+        ctx_end = min(prev_end + pad, end)
+        prev = reference(prev_start, prev_end, ctx_end == end, (prev_start - pad, ctx_end))
+        prev_totals = {k: prev[k] for k in totals if k != "baht"}
         out["compare"] = prev_totals
-        if prev_totals is not None and (b := _baht(prev_totals, price)) is not None:
+        if (b := _baht(prev_totals, price)) is not None:
             out["compare"]["baht"] = b
+
+    # --- timelines: plan pace and hourly ---------------------------------------------
+    if "timeline" in want:
+        size = TIMELINE_MIN[kpi["period"]]
+        rows = engine.timeline(ref["grid"], ref["marks"], ref["minute_loss"], size)
+        good = potential = 0.0
+        for r in rows:
+            good += r["good"]
+            potential += r["potential"]
+            r["good_cum"], r["potential_cum"] = good, potential
+            r_end = r["start"] + timedelta(minutes=r["minutes"])
+            if plan:
+                total_min = planned(full_end)
+                r["plan_cum"] = plan["total"] * planned(r_end) / total_min if total_min else 0.0
+        out["timeline"] = {"size_min": size, "rows": rows}
+        hourly = engine.timeline(ref["grid"], ref["marks"], ref["minute_loss"], HOURLY_MIN[kpi["period"]])
+        out["hourly"] = {"size_min": HOURLY_MIN[kpi["period"]], "rows": [
+            {**h, "rate": _ratio(h["defects"], h["pieces"])} for h in hourly]}
+
+    # --- sensors, incidents, responses ----------------------------------------------
+    risk_pieces = blind_min = None
+    incident_list: list[dict[str, Any]] = []
+    sensor_minutes: dict[str, list[dict[str, Any]]] = {}
+    if sensors:
+        flat_pad = timedelta(minutes=kpi["flat_min"])
+        s_from = min(start, trend_start if "trend" in want else start) - flat_pad
+        s_binding = ("sensors", datasource_id, table, ts_col, kpi["sample_sec"])
+        pseudo = [{"key": c, "speed": c, "defects": []} for c in sensors]
+        sensor_minutes = _fetch_errors(lambda: CACHE.buckets(
+            s_binding, pseudo, s_from, end,
+            lambda fams, lo, hi: db.kpi_sensor_minutes(datasource_id, table, ts_col, [f["key"] for f in fams],
+                                                       lo, hi, sample_sec=kpi["sample_sec"])))
+
+    def sensor_window(lo: datetime, hi: datetime, ref_marks: list[str], ref_grid: list[dict[str, Any]],
+                      live: bool) -> tuple[list[dict[str, Any]], float, int, list[dict[str, Any]]]:
+        """Per-sensor states over [lo, hi), and what they mean for the line there."""
+        n = len(ref_grid)
+        risky, blind = [False] * n, [False] * n
+        rows, found = [], []
+        for col in sensors:
+            ctx = lo - timedelta(minutes=kpi["flat_min"])
+            grid = engine.minute_grid(sensor_minutes.get(col, []), ctx, hi)
+            states = engine.sensor_states(grid, kpi["flat_min"])
+            k = int((lo - ctx).total_seconds() // 60)
+            grid, states = grid[k:], states[k:]
+            for i, st in enumerate(states[:n]):
+                risky[i] |= st in (engine.OUT, engine.FLAT)
+                blind[i] |= st in (engine.FLAT, engine.MISSING)
+            last = next((g for g in reversed(grid) if g.get("last") is not None), None)
+            counts = {st: states.count(st) for st in (engine.OK, engine.OUT, engine.FLAT, engine.MISSING)}
+            rows.append({
+                "key": col,
+                "state": states[-1] if states else None,
+                "minutes": counts,
+                "strip": engine.strip(states, grid),
+                "last": {k2: last.get(k2) for k2 in ("last", "setpoint", "high", "low")} if last else None,
+            })
+            for inc in engine.incidents(states, grid, ref_grid, live=live):
+                found.append({"tag": col, **inc})
+        # blind time counts only while the line's own state is known: a table
+        # that logged nothing is already "No data" on the Andon board
+        scheduled = [m in (engine.RUN, engine.SLOW, engine.STOP) for m in ref_marks]
+        risk = sum((ref_grid[i].get("pieces") or 0) for i in range(n) if risky[i])
+        blind_n = sum(1 for i in range(n) if blind[i] and scheduled[i])
+        return rows, risk, blind_n, found
+
+    if sensors:
+        sensor_rows, risk_pieces, blind_min, incident_list = sensor_window(start, end, ref["marks"], ref["grid"], True)
+        out["sensors"] = sensor_rows
+
+    avg_response = None
+    if "response" in want:
+        events = []
+        if sensors:
+            events = _fetch_errors(lambda: db.kpi_event_rows(datasource_id, sensors, start - RESPONSE_WINDOW, end))
+        try:
+            rules = db.list_response_roles()
+        except psycopg.Error:
+            rules = []
+        changes = []
+        for e in events:
+            at = _aware(e.get("at_date_time"), tz)
+            changes.append({"tag": e.get("tag_name"), "at": at, "by": e.get("who"), "event": e.get("event"),
+                            "location": e.get("location")})
+        for inc in incident_list:
+            reply = next((c for c in changes
+                          if c["tag"] == inc["tag"] and c["at"] and inc["start"] <= c["at"] <= inc["start"] + RESPONSE_WINDOW),
+                         None)
+            inc["response_min"] = round((reply["at"] - inc["start"]).total_seconds() / 60) if reply else None
+            inc["by"] = reply["by"] if reply else None
+            inc["action"] = reply["event"] if reply else None
+            role = db.match_response_role(rules, location=kpi.get("location") or (reply or {}).get("location"))
+            inc["role"] = role
+        incident_list.sort(key=lambda x: x["start"])
+        answered = [x["response_min"] for x in incident_list if x.get("response_min") is not None]
+        avg_response = sum(answered) / len(answered) if answered else None
+        out["incidents"] = incident_list
+        out["changes"] = [c for c in changes if c["at"] and c["at"] >= start][-50:]
+
+    # --- headline metrics (the KPI strip) ----------------------------------------------
+    metrics: dict[str, Any] = {
+        "good": totals["good"], "pieces": totals["pieces"], "defects": totals["defects"],
+        "lost": totals["lost"],
+        "yield": _ratio(totals["good"], totals["pieces"]),
+        "defect_rate": _ratio(totals["defects"], totals["pieces"]),
+        "availability": ref["run_pct"] / 100 if ref["run_pct"] is not None else None,
+        "plan_pct": _ratio(totals["good"], plan["to_date"]) if plan else None,
+        "risk_pieces": risk_pieces, "blind_min": blind_min,
+        "incidents": len(incident_list) if sensors else None,
+        "avg_response_min": avg_response,
+        "stop_min": ref["minutes"].get(engine.STOP),
+    }
+    if price is not None:
+        metrics["baht"] = {"cost_total": (totals["defects"] + totals["lost"]) * price}
+    out["metrics"] = metrics
+
+    # --- 7-day trend ----------------------------------------------------------------------
+    if "trend" in want:
+        days = []
+        for d in range(TREND_DAYS):
+            lo = trend_start + timedelta(days=d)
+            hi = min(lo + timedelta(days=1), end)
+            if hi <= lo:
+                continue
+            live = hi == end
+            r = reference(lo, hi, live, (lo - pad, min(hi + pad, end)))
+            day = {"date": lo, "pieces": r["pieces"], "defects": r["defects"], "good": r["good"], "lost": r["lost"],
+                   "yield": _ratio(r["good"], r["pieces"]),
+                   "availability": r["run_pct"] / 100 if r["run_pct"] is not None else None}
+            if sensors:
+                _, _, day["blind_min"], _ = sensor_window(lo, hi, r["marks"], r["grid"], live)
+            if price is not None:
+                day["baht"] = {"lost": r["lost"] * price, "defects": r["defects"] * price}
+            days.append(day)
+        out["days"] = days
+
+    # --- defect Pareto ---------------------------------------------------------------------
+    if "pareto" in want:
+        items = []
+        for fam in families:
+            for j, col in enumerate(fam["defects"]):
+                n = sum((b.get("parts") or [0] * len(fam["defects"]))[j]
+                        for b in buckets.get(fam["key"], []) if start <= b["minute"] < end)
+                if n > 0:
+                    items.append({"item": f"{fam['key']} · {col[len(fam['key']) + 1:]}",
+                                  "family": fam["key"], "column": col, "defects": n})
+        items.sort(key=lambda x: -x["defects"])
+        total = sum(x["defects"] for x in items)
+        acc = 0.0
+        for x in items:
+            acc += x["defects"]
+            x["cum_share"] = acc / total if total else 0.0
+            if price is not None:
+                x["baht"] = {"defects": x["defects"] * price}
+        out["pareto"] = {"total": total, "items": items}
     return out
 
 
@@ -231,11 +532,13 @@ def get_summary(panel_id: int = Query(..., ge=1), user: dict = Depends(get_curre
     if panel.get("source") != "kpi":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Not a management block")
     options = panel.get("options") or {}
-    return for_user(summarize(panel.get("table_name"), panel.get("datasource_id"), options.get("kpi")), user)
+    return for_user(summarize(panel.get("table_name"), panel.get("datasource_id"), options.get("kpi"),
+                              chart_type=panel.get("chart_type")), user)
 
 
 @router.post("/preview")
 def preview(body: KpiPreviewIn, admin: dict = Depends(require_admin)) -> dict[str, Any]:
     if body.chart_type not in KPI_CHART_TYPES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Not a management block")
-    return for_user(summarize(body.table_name, body.datasource_id, (body.options or {}).get("kpi")), admin)
+    return for_user(summarize(body.table_name, body.datasource_id, (body.options or {}).get("kpi"),
+                              chart_type=body.chart_type), admin)

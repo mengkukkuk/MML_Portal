@@ -177,7 +177,9 @@ and each tile self-polls at one of the whitelisted intervals (5s, 30s, 1m, 10m,
   Multi-tag panels (`panel.options.tags`) overlay several tags as separate
   coloured series in one tile.
 
-- `source='kpi'` — a **management block** (`lossmeter` / `andon` / `waterfall`): reads
+- `source='kpi'` — a **management block** (`lossmeter` / `andon` / `waterfall` / `kpistrip` /
+  `pace` / `hourly` / `sensors` / `response` / `kpitrend` / `pareto`; `scope: "line"` treats the
+  camera families as stations on one line): reads
   machine families detected from a wide table's column names (`name_families.py`, same
   rule as the frontend `groupByFamily`), settings in `options.kpi` (`kpi_options.py`).
   Figures come whole from `GET /api/kpi/summary?panel_id=` (`kpi.py` → `kpi_engine.py`,

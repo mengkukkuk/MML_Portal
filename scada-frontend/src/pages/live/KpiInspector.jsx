@@ -15,8 +15,8 @@ import { apiErrorMessage } from '@/api/client'
 import { fetchSchemaTables, fetchSchemaColumns } from '@/api/schema'
 import { fetchTagLocations } from '@/api/tags'
 import { useKpiSummary } from '@/components/live/useKpiSummary'
-import { fmtPieces } from '@/components/live/kpiView'
-import { workingHoursFrom } from './kpiPayload'
+import { fmtPieces, METRIC_META } from '@/components/live/kpiView'
+import { workingHoursFrom, KPI_METRIC_KEYS, MAX_STRIP_METRICS } from './kpiPayload'
 import styles from './KpiInspector.module.css'
 
 const WEEKDAYS = [
@@ -150,6 +150,66 @@ export default function KpiInspector({
           </div>
         </section>
 
+        <section className={styles.section}>
+          <h3 className={styles.section__title}>{tr('Line')}</h3>
+          <div className={styles.row}>
+            <TextField select size="small" label={tr('Cameras are')} value={kpi.scope || 'line'}
+              onChange={(e) => setKpi({ scope: e.target.value })}>
+              <MenuItem value="line">{tr('One line')}</MenuItem>
+              <MenuItem value="machines">{tr('Separate machines')}</MenuItem>
+            </TextField>
+            {(kpi.scope || 'line') === 'line' && (
+              <TextField select size="small" label={tr('Output counted at')} value={kpi.line_family ?? ''}
+                onChange={(e) => setKpi({ line_family: e.target.value || null })}>
+                <MenuItem value="">{tr('First camera')}{summary?.line_family ? ` (${summary.line_family})` : ''}</MenuItem>
+                {families.map((f) => <MenuItem key={f.key} value={f.key}>{f.key}</MenuItem>)}
+              </TextField>
+            )}
+          </div>
+        </section>
+
+        {panel.chart_type === 'kpistrip' && (
+          <section className={styles.section}>
+            <h3 className={styles.section__title}>{tr('Tiles (up to {n})', { n: MAX_STRIP_METRICS })}</h3>
+            <div className={styles.days}>
+              {KPI_METRIC_KEYS.map((key) => {
+                const on = (kpi.metrics || []).includes(key)
+                const full = (kpi.metrics || []).length >= MAX_STRIP_METRICS
+                return (
+                  <FormControlLabel key={key} className={styles.metric}
+                    control={<Checkbox size="small" checked={on} disabled={!on && full} onChange={(e) => setKpi({
+                      metrics: e.target.checked ? [...(kpi.metrics || []), key] : (kpi.metrics || []).filter((m) => m !== key),
+                    })} />}
+                    label={tr(METRIC_META[key].label)} />
+                )
+              })}
+            </div>
+          </section>
+        )}
+
+        {['sensors', 'response', 'kpistrip', 'kpitrend'].includes(panel.chart_type) && (
+          <section className={styles.section}>
+            <h3 className={styles.section__title}>{tr('Sensors')}</h3>
+            {(summary?.sensors || []).length > 0 && (
+              <div className={styles.days}>
+                {[...new Set([...(summary.sensors || []).map((x) => x.key), ...(kpi.sensors || [])])].map((key) => {
+                  const chosen = kpi.sensors ?? (summary.sensors || []).map((x) => x.key)
+                  return (
+                    <FormControlLabel key={key} className={styles.metric}
+                      control={<Checkbox size="small" checked={chosen.includes(key)} onChange={(e) => {
+                        const next = e.target.checked ? [...chosen, key] : chosen.filter((c) => c !== key)
+                        setKpi({ sensors: next.length ? next : null })
+                      }} />}
+                      label={key} />
+                  )
+                })}
+              </div>
+            )}
+            <NumberField label={tr('Frozen after (min) unchanged')} value={kpi.flat_min}
+              onChange={(v) => setKpi({ flat_min: Math.round(v) })} />
+          </section>
+        )}
+
         {familyKeys.length > 0 && (
           <section className={styles.section}>
             <h3 className={styles.section__title}>{tr('Machines')}</h3>
@@ -210,6 +270,9 @@ export default function KpiInspector({
             control={<Switch size="small" checked={!!kpi.compare} onChange={(e) => setKpi({ compare: e.target.checked })} />}
             label={tr('Compare with the previous period')}
           />
+          <NumberField label={tr('Plan for the period (good pieces)')} value={kpi.plan_pieces} nullable
+            helperText={tr('Spread over working hours if set, else over the whole period.')}
+            onChange={(v) => setKpi({ plan_pieces: v })} inputProps={{ min: 0 }} />
           <NumberField label={tr('฿ per rejected piece')} value={kpi.cost_per_piece} nullable
             helperText={tr('Also values production lost. Only managers and admins see ฿.')}
             onChange={(v) => setKpi({ cost_per_piece: v })} inputProps={{ min: 0 }} />

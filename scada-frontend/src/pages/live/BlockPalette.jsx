@@ -1,6 +1,13 @@
 import PaidOutlinedIcon from '@mui/icons-material/PaidOutlined'
 import TrafficOutlinedIcon from '@mui/icons-material/TrafficOutlined'
 import WaterfallChartOutlinedIcon from '@mui/icons-material/WaterfallChartOutlined'
+import ViewWeekOutlinedIcon from '@mui/icons-material/ViewWeekOutlined'
+import TimelineOutlinedIcon from '@mui/icons-material/TimelineOutlined'
+import InsertChartOutlinedIcon from '@mui/icons-material/InsertChartOutlined'
+import ThermostatOutlinedIcon from '@mui/icons-material/ThermostatOutlined'
+import AssignmentIndOutlinedIcon from '@mui/icons-material/AssignmentIndOutlined'
+import DateRangeOutlinedIcon from '@mui/icons-material/DateRangeOutlined'
+import SortOutlinedIcon from '@mui/icons-material/SortOutlined'
 import { useTranslation } from '@/i18n'
 import { MANAGEMENT_BLOCKS } from './kpiPayload'
 import { VIZ_TYPE_META } from './panelPayload'
@@ -11,6 +18,13 @@ const BLOCK_ICONS = {
   lossmeter: PaidOutlinedIcon,
   andon: TrafficOutlinedIcon,
   waterfall: WaterfallChartOutlinedIcon,
+  kpistrip: ViewWeekOutlinedIcon,
+  pace: TimelineOutlinedIcon,
+  hourly: InsertChartOutlinedIcon,
+  sensors: ThermostatOutlinedIcon,
+  response: AssignmentIndOutlinedIcon,
+  kpitrend: DateRangeOutlinedIcon,
+  pareto: SortOutlinedIcon,
 }
 
 /**

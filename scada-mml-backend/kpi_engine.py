@@ -223,6 +223,7 @@ def account_losses(
     hours = s.get("working_hours")
     hi = len(states) if hi is None else hi
     marks = list(states)
+    minute_loss = [0.0] * len(states)
     stop_loss = slow_loss = pending = 0.0
     loss_min = pending_min = off_min = 0
 
@@ -235,7 +236,8 @@ def account_losses(
         for i in range(max(lo, span["lo"]), min(hi - 1, span["hi"]) + 1):
             b = buckets[i]
             if in_working_hours(b["minute"], hours) or span["minutes"] <= cutoff and not span["open"]:
-                stop_loss += shortfall(b)
+                minute_loss[i] = shortfall(b)
+                stop_loss += minute_loss[i]
                 loss_min += 1
             elif span["open"] and span["minutes"] <= cutoff:
                 pending += shortfall(b)
@@ -246,11 +248,13 @@ def account_losses(
 
     run_min = slow_min = nodata_min = 0
     pieces = defects = 0.0
-    for b, state in zip(buckets[lo:hi], states[lo:hi]):
+    for i in range(lo, hi):
+        b, state = buckets[i], states[i]
         pieces += _num(b.get("pieces"))
         defects += _num(b.get("defects"))
         if state == SLOW:
-            slow_loss += shortfall(b)
+            minute_loss[i] = shortfall(b)
+            slow_loss += minute_loss[i]
             slow_min += 1
         elif state == RUN:
             run_min += 1
@@ -272,6 +276,9 @@ def account_losses(
         },
         "run_pct": round(100 * (run_min + slow_min) / scheduled) if scheduled else None,
         "marks": marks[lo:hi],
+        # counted loss per minute (stops within the cutoff, slow shortfall) —
+        # what the plan-pace timeline adds to pieces to draw "could have made"
+        "minute_loss": minute_loss[lo:hi],
     }
 
 
@@ -401,3 +408,129 @@ def strip_cost(value: Any) -> Any:
     if isinstance(value, list):
         return [strip_cost(v) for v in value]
     return value
+
+
+# --- one line ------------------------------------------------------------------
+
+def line_buckets(line_series: list[dict[str, Any]], all_series: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """The line as one machine: the pace-setting family's speed, every camera's defects.
+
+    Line 13 makes its pieces through one line; the cameras along it inspect
+    them. So output, run and stop come from one family's speed (`line_series`)
+    while a reject caught by any camera is a reject of the line. A minute with
+    defects but no line sample is still a gap — its defects count, its state is
+    No data.
+    """
+    by_minute = {b["minute"]: {**b, "defects": 0.0} for b in line_series}
+    for series in all_series:
+        for b in series:
+            row = by_minute.get(b["minute"])
+            if row is None:
+                row = by_minute[b["minute"]] = {**empty_bucket(b["minute"]), "defects": 0.0}
+            row["defects"] += _num(b.get("defects"))
+    return [by_minute[m] for m in sorted(by_minute)]
+
+
+# --- timeline -------------------------------------------------------------------
+
+STATE_RANK = {STOP: 0, NODATA: 1, SLOW: 2, RUN: 3, OFF: 4}
+
+
+def timeline(grid: list[dict[str, Any]], marks: list[str], minute_loss: list[float], size: int) -> list[dict[str, Any]]:
+    """Per-`size`-minute rows for the plan-pace and hourly blocks.
+
+    Each row: start, pieces, defects, good, potential (pieces + counted loss —
+    the "could have made" curve) and the state that held for most of it, ties
+    going to the worse one so a short stop inside a bucket still shows.
+    """
+    out = []
+    for k in range(0, len(grid), size):
+        part = range(k, min(k + size, len(grid)))
+        pieces = sum(_num(grid[i].get("pieces")) for i in part)
+        defects = sum(_num(grid[i].get("defects")) for i in part)
+        counts: dict[str, int] = {}
+        for i in part:
+            counts[marks[i]] = counts.get(marks[i], 0) + 1
+        state = max(counts, key=lambda st: (counts[st], -STATE_RANK.get(st, 9)))
+        out.append({
+            "start": grid[k]["minute"],
+            "minutes": len(part),
+            "pieces": pieces,
+            "defects": defects,
+            # not clamped per row: a reject caught while the line stood still
+            # still comes off the day's good total, and the cumulative curve
+            # must land on that total
+            "good": pieces - defects,
+            "potential": pieces + sum(minute_loss[i] for i in part),
+            "state": state,
+        })
+    return out
+
+
+# --- sensors --------------------------------------------------------------------
+
+OK, OUT, FLAT, MISSING = "ok", "out", "flat", "missing"
+
+
+def sensor_states(grid: list[dict[str, Any]], flat_min: int) -> list[str]:
+    """ok / out / flat / missing per minute for one sensor.
+
+    * missing — under half the minute covered by a reading;
+    * out — half the minute or more outside its own low..high (slots 3..4);
+    * flat — part of a run of at least `flat_min` minutes in which the value
+      never moved. A sensor reading 0 against a setpoint of 500 is "in band"
+      when the band is wide; it is not telling the truth either way. A frozen
+      reading outranks out-of-band: an out-of-band value that never moves is
+      most likely a dead sensor, not a hot machine.
+    """
+    states = []
+    for b in grid:
+        if _num(b.get("valid_s")) < HALF_MINUTE:
+            states.append(MISSING)
+        elif _num(b.get("out_s")) >= HALF_MINUTE:
+            states.append(OUT)
+        else:
+            states.append(OK)
+    def steady(k: int) -> bool:
+        g = grid[k]
+        return states[k] != MISSING and g.get("vmin") is not None and g.get("vmin") == g.get("vmax")
+
+    i, n = 0, len(grid)
+    while i < n:
+        if not steady(i):
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and steady(j + 1) and grid[j + 1]["vmin"] == grid[i]["vmin"]:
+            j += 1
+        if j - i + 1 >= flat_min:
+            states[i:j + 1] = [FLAT] * (j - i + 1)
+        i = j + 1
+    return states
+
+
+def incidents(states: list[str], grid: list[dict[str, Any]], line_grid: list[dict[str, Any]],
+              merge_min: int = 3, live: bool = False) -> list[dict[str, Any]]:
+    """Out-of-band spans of one sensor, gaps of up to `merge_min` minutes joined.
+
+    `risk_pieces` is what the line made while it lasted — the pieces to hold for
+    inspection. A span reaching the last minute of a live window is still open.
+    """
+    runs: list[list[int]] = []
+    for i, st in enumerate(states):
+        if st != OUT:
+            continue
+        if runs and i - runs[-1][1] <= merge_min:
+            runs[-1][1] = i
+        else:
+            runs.append([i, i])
+    out = []
+    for lo, hi in runs:
+        out.append({
+            "start": grid[lo]["minute"],
+            "end": grid[hi]["minute"] + timedelta(minutes=1),
+            "minutes": hi - lo + 1,
+            "risk_pieces": sum(_num(line_grid[i].get("pieces")) for i in range(lo, hi + 1)),
+            "open": live and hi == len(states) - 1,
+        })
+    return out

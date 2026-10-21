@@ -15,6 +15,26 @@ import { useKpiSummary } from './useKpiSummary'
 import LossMeter from './blocks/LossMeter'
 import AndonBoard from './blocks/AndonBoard'
 import LossWaterfall from './blocks/LossWaterfall'
+import KpiStrip from './blocks/KpiStrip'
+import PlanPace from './blocks/PlanPace'
+import HourlyRate from './blocks/HourlyRate'
+import SensorStrip from './blocks/SensorStrip'
+import ResponseBoard from './blocks/ResponseBoard'
+import KpiTrend from './blocks/KpiTrend'
+import DefectPareto from './blocks/DefectPareto'
+
+const BLOCKS = {
+  lossmeter: LossMeter,
+  andon: AndonBoard,
+  waterfall: LossWaterfall,
+  kpistrip: KpiStrip,
+  pace: PlanPace,
+  hourly: HourlyRate,
+  sensors: SensorStrip,
+  response: ResponseBoard,
+  kpitrend: KpiTrend,
+  pareto: DefectPareto,
+}
 import styles from './LivePanel.module.css'
 import blockStyles from './blocks/Blocks.module.css'
 
@@ -63,6 +83,7 @@ export default function KpiPanel({
   const bound = draft ? !!draft.table_name : !!panel.table_name
   const kpi = (draft?.kpi || panel.options?.kpi) ?? {}
   const machines = summary?.families?.length
+  const Block = BLOCKS[panel.chart_type]
 
   return (
     <article className={styles.panel}>
@@ -150,7 +171,9 @@ export default function KpiPanel({
         <div className={styles.panel__meta}>
           <span className={blockStyles.foot} style={{ marginTop: 0 }}>
             {tr(PERIOD_LABELS[kpi.period] || 'Today')}
-            {machines ? ` · ${tr('{n} machines', { n: machines })}` : ''}
+            {summary?.scope === 'line' && summary.line_family
+              ? ` · ${tr('one line, paced by {f}', { f: summary.line_family })}`
+              : machines ? ` · ${tr('{n} machines', { n: machines })}` : ''}
           </span>
         </div>
       )}
@@ -165,9 +188,7 @@ export default function KpiPanel({
           <p className={styles.panel__error}>{apiErrorMessage(query.error, 'Failed to load figures.')}</p>
         )}
         {bound && query.isPending && !summary && <p className={blockStyles.empty}>{tr('Loading…')}</p>}
-        {bound && summary && panel.chart_type === 'lossmeter' && <LossMeter summary={summary} mode={kpi.mode} />}
-        {bound && summary && panel.chart_type === 'andon' && <AndonBoard summary={summary} />}
-        {bound && summary && panel.chart_type === 'waterfall' && <LossWaterfall summary={summary} />}
+        {bound && summary && Block && <Block summary={summary} mode={kpi.mode} />}
       </div>
     </article>
   )

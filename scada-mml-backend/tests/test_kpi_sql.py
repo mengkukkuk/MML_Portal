@@ -75,7 +75,8 @@ class _Conn:
 def test_buckets_unpack_per_family_and_clamp(monkeypatch):
     minute = datetime(2026, 10, 21, 8, 0, tzinfo=timezone.utc)
     conn = _Conn([{"minute": minute, "valid_0": 70.0, "stop_0": 80.0, "ssum_0": 600.0,
-                   "sn_0": 6, "pcs_0": 100.0, "def_0": 3.0}])
+                   "sn_0": 6, "pcs_0": 100.0, "def_0": 3.0,
+                   "part_0_0": 2.0, "part_0_1": 1.0}])
 
     @contextmanager
     def fake_conn(datasource_id):
@@ -88,6 +89,7 @@ def test_buckets_unpack_per_family_and_clamp(monkeypatch):
     (bucket,) = out["CAM001-13"]
     assert bucket["valid_s"] == 60.0 and bucket["stop_s"] == 60.0 and bucket["gap_s"] == 0.0
     assert bucket["pieces"] == 100.0 and bucket["defects"] == 3.0
+    assert bucket["parts"] == [2.0, 1.0]
     params = conn.calls[-1][1]
     assert params["cap_s"] == 30 and params["vmax"] == 50_000
     assert "statement_timeout" in text(conn.calls[0][0])

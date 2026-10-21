@@ -13,7 +13,21 @@ export const MANAGEMENT_BLOCKS = Object.freeze([
   { value: 'lossmeter', label: 'Loss meter', icon: 'lossmeter', hint: 'Cost of defects or production lost, in ฿' },
   { value: 'andon', label: 'Andon board', icon: 'andon', hint: 'Run / slow / stop per machine' },
   { value: 'waterfall', label: 'Loss waterfall', icon: 'waterfall', hint: 'Where the possible output went' },
+  { value: 'kpistrip', label: 'KPI strip', icon: 'kpistrip', hint: 'Up to six headline numbers in a row' },
+  { value: 'pace', label: 'Plan pace', icon: 'pace', hint: 'Good pieces against the plan, with stops' },
+  { value: 'hourly', label: 'Hourly defect rate', icon: 'hourly', hint: 'Which hours were worse than average' },
+  { value: 'sensors', label: 'Sensor strip', icon: 'sensors', hint: 'Out of band, frozen or missing, per sensor' },
+  { value: 'response', label: 'Response board', icon: 'response', hint: 'Incidents, who answered, how fast' },
+  { value: 'kpitrend', label: '7-day trend', icon: 'kpitrend', hint: 'Yield, running time and blind time by day' },
+  { value: 'pareto', label: 'Defect Pareto', icon: 'pareto', hint: 'Defects by camera and type, largest first' },
 ])
+
+/** What a KPI strip can show — mirrors KPI_METRICS in kpi_options.py. */
+export const KPI_METRIC_KEYS = [
+  'plan_pct', 'yield', 'availability', 'risk_pieces', 'blind_min', 'avg_response_min',
+  'good', 'pieces', 'defects', 'defect_rate', 'lost', 'cost_total', 'incidents',
+]
+export const MAX_STRIP_METRICS = 6
 
 export const KPI_CHART_TYPES = new Set(MANAGEMENT_BLOCKS.map((b) => b.value))
 
@@ -41,6 +55,12 @@ export const KPI_DEFAULTS = Object.freeze({
   max_loss_stop_min: 120,
   working_hours: null,
   sample_sec: 10,
+  scope: 'line',
+  line_family: null,
+  plan_pieces: null,
+  metrics: ['plan_pct', 'yield', 'availability', 'risk_pieces', 'blind_min', 'avg_response_min'],
+  sensors: null,
+  flat_min: 10,
 })
 
 /** Smallest grid size (cols × rows) each block stays readable at. */
@@ -48,6 +68,13 @@ export const KPI_MIN_SIZE = Object.freeze({
   lossmeter: { w: 3, h: 5 },
   andon: { w: 4, h: 6 },
   waterfall: { w: 4, h: 9 },
+  kpistrip: { w: 6, h: 4 },
+  pace: { w: 5, h: 8 },
+  hourly: { w: 4, h: 7 },
+  sensors: { w: 5, h: 6 },
+  response: { w: 5, h: 6 },
+  kpitrend: { w: 6, h: 6 },
+  pareto: { w: 4, h: 7 },
 })
 
 /** The size a block lands at when dropped or clicked in. */
@@ -55,12 +82,26 @@ export const KPI_DROP_SIZE = Object.freeze({
   lossmeter: { w: 4, h: 6 },
   andon: { w: 8, h: 9 },
   waterfall: { w: 6, h: 11 },
+  kpistrip: { w: 12, h: 5 },
+  pace: { w: 12, h: 10 },
+  hourly: { w: 6, h: 8 },
+  sensors: { w: 7, h: 8 },
+  response: { w: 7, h: 8 },
+  kpitrend: { w: 12, h: 7 },
+  pareto: { w: 5, h: 8 },
 })
 
 const DEFAULT_TITLES = {
   lossmeter: 'Defect cost',
   andon: 'Machine status',
   waterfall: 'Where output went',
+  kpistrip: 'Shift at a glance',
+  pace: 'Making the plan?',
+  hourly: 'Defect rate by hour',
+  sensors: 'Sensor status',
+  response: 'Incidents and response',
+  kpitrend: '7-day trend',
+  pareto: 'Where defects come from',
 }
 
 /** Settings a new block copies from the board's newest block, so blocks that
@@ -69,7 +110,7 @@ const DEFAULT_TITLES = {
 const INHERITED_KPI_KEYS = [
   'ts_col', 'location', 'slots', 'exclude_families', 'period', 'compare', 'cost_per_piece',
   'targets', 'run_ratio', 'stop_threshold', 'min_stop_sec', 'valid_max', 'max_loss_stop_min',
-  'working_hours', 'sample_sec',
+  'working_hours', 'sample_sec', 'scope', 'line_family', 'plan_pieces', 'sensors', 'flat_min',
 ]
 
 /**

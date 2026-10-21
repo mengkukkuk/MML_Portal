@@ -454,3 +454,35 @@ Built as planned. These are the places where it differs, and the rules the real 
 - Verified end to end against `vision_data.zz_kpi_demo`: per-family pieces and
   defects matched a raw-row recomputation to the piece, and the waterfall
   balances exactly. Operator responses carry no `baht` or `cost_per_piece`.
+
+---
+
+## Second set (2026-10-22): from the Line 13 monitoring dashboard
+
+Source: `docs/Line13_Monitoring_Dashboard.html`. Line 13 is confirmed as **one line**.
+
+- **`scope: "line"` (the default).** Output, run and stop come from one camera
+  family's speed (`line_family`, defaulting to the first). Defects add up across
+  every camera. Per-camera states stay available for the Andon board.
+  `scope: "machines"` keeps the earlier behaviour.
+- **New blocks.** `kpistrip`, `pace`, `hourly`, `sensors`, `response`,
+  `kpitrend`, `pareto`. All of them read the same `/api/kpi/summary`. Sections
+  only one block needs (timeline, sensors, incidents, trend, Pareto) are computed
+  only for that block's `chart_type`.
+- **Sensors read `[value, setpoint, high, low]`.** That's the plant's array
+  layout, confirmed by the HTML, which answers open question 2.
+  - A sensor minute is out of band, frozen (unchanged for `flat_min`, default 10),
+    missing, or OK. Frozen outranks out of band.
+  - Pieces at risk = line pieces made while any sensor was out or frozen.
+  - Blind time = minutes where a sensor was frozen or missing while the line's
+    own state was known.
+- **Responses.** Each out-of-band incident (gaps of 3 minutes or less are merged)
+  is paired with the first `event_logs` change on that tag within 4 hours. The
+  owner comes from the response-role rules.
+- **Plan.** `plan_pieces` covers the whole period. It's spread over working hours
+  if they're set, otherwise linearly. "Good vs plan" compares against the plan to
+  date.
+- **Live grid fixes found while testing.** Board resolution and layout locking
+  now wait for a *successful* load, and a react-grid-layout report that would
+  drop every tile of the board on screen is ignored. Before this, a reload
+  during the session refresh, or a late width update, could leave a board blank.

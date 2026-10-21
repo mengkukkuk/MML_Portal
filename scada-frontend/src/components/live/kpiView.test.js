@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   fmtPieces, fmtBaht, fmtDuration, lossMeterFigures, lossDelta, appendSpark,
-  waterfallBars, stripSegments, andonWord,
+  waterfallBars, stripSegments, andonWord, stripTiles, hourlyBars, paceGeometry, trendDelta,
 } from './kpiView.js'
 
 const tr = (s, p = {}) => s.replace(/\{(\w+)\}/g, (_, k) => p[k])
@@ -96,4 +96,47 @@ test('andon word carries the stop duration', () => {
   assert.equal(andonWord({ state: 'stop', state_since: '2026-10-21T07:18:00Z' }, tr, now), 'Stopped 12 min')
   assert.equal(andonWord({ state: 'run' }, tr, now), 'Running')
   assert.equal(andonWord(undefined, tr, now), 'No data')
+})
+
+test('KPI strip shows the chosen metrics and hides money without cost', () => {
+  const summary = {
+    settings: { metrics: ['yield', 'risk_pieces', 'cost_total'] },
+    metrics: { yield: 0.9856, defects: 214, risk_pieces: 1120, baht: { cost_total: 5000 } },
+  }
+  const tiles = stripTiles(summary)
+  assert.deepEqual(tiles.map((t) => t.value), ['98.6%', '1,120', '฿5,000'])
+  assert.equal(tiles[1].tone, 'bad')
+  assert.equal(stripTiles({ ...summary, metrics: { ...summary.metrics, baht: undefined } }).length, 2)
+})
+
+test('hourly bars flag hours above the period average', () => {
+  const { avg, bars } = hourlyBars([
+    { start: 'a', pieces: 100, defects: 1, rate: 0.01 },
+    { start: 'b', pieces: 100, defects: 3, rate: 0.03 },
+    { start: 'c', pieces: 0, defects: 0, rate: null },
+  ])
+  assert.equal(avg, 0.02)
+  assert.deepEqual(bars.map((b) => b.above), [false, true, false])
+  assert.equal(bars[1].share, 1)
+  assert.equal(bars[2].empty, true)
+})
+
+test('plan pace spans the whole period and marks stopped bands', () => {
+  const g = paceGeometry({
+    period: { start: '2026-10-21T00:00:00Z', end: '2026-10-21T12:00:00Z', full_end: '2026-10-22T00:00:00Z' },
+    plan: { total: 1000, to_date: 500 },
+    timeline: { size_min: 720, rows: [
+      { start: '2026-10-21T00:00:00Z', good_cum: 400, potential_cum: 450, plan_cum: 500, state: 'stop' },
+    ] },
+  })
+  assert.equal(g.top, 1000)
+  assert.deepEqual(g.good[0], [0.5, 0.4])
+  assert.equal(g.bands.length, 1)
+  assert.deepEqual(g.plan[1], [1, 1])
+})
+
+test('trend delta knows which way is good', () => {
+  const days = [{ y: 0.99, b: 5 }, { y: 0.98, b: 25 }]
+  assert.equal(trendDelta(days, 'y').worse, true)
+  assert.equal(trendDelta(days, 'b', false).worse, true)
 })

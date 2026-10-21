@@ -161,3 +161,144 @@ export function andonWord(family, tr, now = Date.now()) {
   const mins = minutesSince(family.state_since, now)
   return mins == null ? label : `${label} ${fmtDuration(mins, tr)}`
 }
+
+// --- second set: KPI strip, hourly rate, plan pace, sensors, trend, Pareto ---------
+
+const pct = (v, d = 1) => (Number.isFinite(v) ? `${(v * 100).toFixed(d)}%` : '—')
+
+/**
+ * The KPI strip's catalogue: label (i18n key), how to print the value, the
+ * sub-line, and the tone — `bad` when the number is a problem, so the board
+ * reads colour before digits. Keys match `metrics` in /kpi/summary. A sub-line
+ * is an i18n key, or [key, params] when it carries a number.
+ */
+export const METRIC_META = Object.freeze({
+  plan_pct: {
+    label: 'Good vs plan', fmt: (m) => pct(m.plan_pct),
+    sub: (m, s) => (s?.plan ? `${fmtPieces(m.good)} / ${fmtPieces(s.plan.to_date)}` : 'set a plan in block settings'),
+    tone: (m) => (m.plan_pct != null && m.plan_pct < 0.95 ? 'warn' : null),
+  },
+  yield: { label: 'Yield', fmt: (m) => pct(m.yield), sub: (m) => ['{n} defects', { n: fmtPieces(m.defects) }], tone: () => null },
+  availability: {
+    label: 'Running time', fmt: (m) => pct(m.availability, 0),
+    sub: (m) => (m.stop_min != null ? ['stopped {m} min', { m: m.stop_min }] : null),
+    tone: (m) => (m.availability != null && m.availability < 0.85 ? 'warn' : null),
+  },
+  risk_pieces: {
+    label: 'Pieces at risk', fmt: (m) => fmtPieces(m.risk_pieces),
+    sub: () => 'made while a sensor was out or frozen', tone: (m) => (m.risk_pieces > 0 ? 'bad' : null),
+  },
+  blind_min: {
+    label: 'Blind time', fmt: (m) => (m.blind_min == null ? '—' : `${m.blind_min}`),
+    sub: () => 'min, sensor frozen or missing', tone: (m) => (m.blind_min > 0 ? 'warn' : null),
+  },
+  avg_response_min: {
+    label: 'Response time', fmt: (m) => (m.avg_response_min == null ? '—' : `${Math.round(m.avg_response_min)}`),
+    sub: (m) => (m.incidents != null ? ['min · {n} incidents', { n: m.incidents }] : 'min'), tone: () => null,
+  },
+  good: { label: 'Good pieces', fmt: (m) => fmtPieces(m.good), sub: () => null, tone: () => null },
+  pieces: { label: 'Pieces made', fmt: (m) => fmtPieces(m.pieces), sub: () => null, tone: () => null },
+  defects: { label: 'Defects', fmt: (m) => fmtPieces(m.defects), sub: (m) => pct(m.defect_rate), tone: () => null },
+  defect_rate: { label: 'Defect rate', fmt: (m) => pct(m.defect_rate, 2), sub: (m) => ['{n} pcs', { n: fmtPieces(m.defects) }], tone: () => null },
+  lost: {
+    label: 'Production lost', fmt: (m) => fmtPieces(m.lost),
+    sub: () => 'pcs, stops and slow running', tone: (m) => (m.lost > 0 ? 'bad' : null),
+  },
+  cost_total: {
+    label: 'Total loss', fmt: (m) => (m.baht ? fmtBaht(m.baht.cost_total) : '—'),
+    sub: () => 'defects + production lost', tone: () => 'bad',
+  },
+  incidents: {
+    label: 'Out-of-band incidents', fmt: (m) => (m.incidents == null ? '—' : `${m.incidents}`),
+    sub: () => 'this period', tone: (m) => (m.incidents > 0 ? 'warn' : null),
+  },
+})
+
+/** The tiles a strip shows, dropping money tiles for viewers without cost. */
+export function stripTiles(summary) {
+  const m = summary?.metrics
+  if (!m) return []
+  const keys = summary.settings?.metrics || []
+  return keys
+    .filter((k) => METRIC_META[k] && (k !== 'cost_total' || m.baht))
+    .map((k) => {
+      const meta = METRIC_META[k]
+      return { key: k, label: meta.label, value: meta.fmt(m), sub: meta.sub(m, summary), tone: meta.tone(m) }
+    })
+}
+
+/**
+ * Hourly (or daily) defect-rate bars: height as a share of the tallest, and
+ * `above` for buckets worse than the period's own average — the dashboard's
+ * "red = above the shift average" rule.
+ */
+export function hourlyBars(rows) {
+  const used = (rows || []).filter((r) => r.pieces > 0)
+  const pieces = used.reduce((s, r) => s + r.pieces, 0)
+  const avg = pieces ? used.reduce((s, r) => s + r.defects, 0) / pieces : null
+  const max = Math.max(0, ...used.map((r) => r.rate || 0))
+  return {
+    avg,
+    max,
+    bars: (rows || []).map((r) => ({
+      start: r.start,
+      rate: r.rate,
+      pieces: r.pieces,
+      defects: r.defects,
+      share: max > 0 && r.rate != null ? r.rate / max : 0,
+      above: avg != null && r.rate != null && r.rate > avg,
+      empty: !(r.pieces > 0),
+    })),
+  }
+}
+
+/**
+ * Plan-pace geometry in a 0..1 box: cumulative good (the line), the plan (a
+ * dashed line, when there is one), "could have made" (cumulative potential),
+ * and the stopped / no-data bands behind them. x runs over the whole period
+ * so the rest of the day shows as space still to cover.
+ */
+export function paceGeometry(summary) {
+  const rows = summary?.timeline?.rows || []
+  const p = summary?.period
+  if (!rows.length || !p) return null
+  const t0 = Date.parse(p.start)
+  const t1 = Date.parse(p.full_end || p.end)
+  const span = t1 - t0 || 1
+  const size = (summary.timeline.size_min || 5) * 60000
+  const top = Math.max(1, ...rows.map((r) => Math.max(r.good_cum, r.potential_cum, r.plan_cum ?? 0)),
+    summary.plan?.total ?? 0)
+  const x = (t) => (t - t0) / span
+  const pt = (r, key) => [x(Date.parse(r.start) + size), (r[key] ?? 0) / top]
+  return {
+    top,
+    good: rows.map((r) => pt(r, 'good_cum')),
+    potential: rows.map((r) => pt(r, 'potential_cum')),
+    plan: summary.plan ? [[0, 0], [1, summary.plan.total / top]] : null,
+    bands: rows
+      .filter((r) => r.state === 'stop' || r.state === 'nodata')
+      .map((r) => ({ state: r.state, x: x(Date.parse(r.start)), w: size / span })),
+    last: rows[rows.length - 1],
+  }
+}
+
+/** Sensor states → colour for the strip (ok is quiet on purpose). */
+export const SENSOR_TOKENS = Object.freeze({
+  ok: 'color-mix(in srgb, var(--fg) 14%, transparent)',
+  out: 'var(--crit)',
+  flat: 'var(--warn)',
+  missing: 'transparent',
+})
+
+export const SENSOR_LABELS = Object.freeze({
+  ok: 'Normal', out: 'Out of low–high', flat: 'Frozen value', missing: 'No data',
+})
+
+/** Today vs yesterday for one trend metric: up is good unless `goodUp` is false. */
+export function trendDelta(days, key, goodUp = true) {
+  const vals = (days || []).map((d) => d[key])
+  const last = vals[vals.length - 1]
+  const prev = vals[vals.length - 2]
+  if (last == null || prev == null) return { last, prev, worse: false }
+  return { last, prev, worse: goodUp ? last < prev : last > prev }
+}

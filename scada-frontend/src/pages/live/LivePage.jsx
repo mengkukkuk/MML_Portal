@@ -126,7 +126,10 @@ export default function LivePage() {
   const initializedRef = useRef(false)
 
   useEffect(() => {
-    if (initializedRef.current || dashboardsQuery.isPending) return
+    // Wait for a successful list, not merely a finished request: on a reload the
+    // first fetch can fail (401) while the session refresh is still in flight,
+    // and resolving against that empty list would drop ?dashboard= for the first board.
+    if (initializedRef.current || !dashboardsQuery.isSuccess) return
     initializedRef.current = true
     const qid = Number(searchParams.get('dashboard'))
     const fromQuery = dashboards.find((d) => d.id === qid)
@@ -138,7 +141,7 @@ export default function LivePage() {
       setSearchParams(p, { replace: true })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dashboardsQuery.isPending, dashboards])
+  }, [dashboardsQuery.isSuccess, dashboards])
 
   // If the active board disappears (deleted elsewhere), fall back to the
   // first remaining one. Never runs before the initial resolution above.
@@ -184,12 +187,15 @@ export default function LivePage() {
 
   useEffect(() => {
     if (activeDashboardId == null) { setLayout([]); layoutDashboardRef.current = undefined; return }
-    if (panelsQuery.isPending) return
+    // Only a successful load may fix this board's layout: an errored fetch (the
+    // same reload race) has no panels, and locking the board to that empty
+    // layout left the grid blank once the real panels arrived.
+    if (!panelsQuery.isSuccess) return
     if (layoutDashboardRef.current === activeDashboardId) return
     layoutDashboardRef.current = activeDashboardId
     setLayout(layoutFromPanels(panels))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeDashboardId, panelsQuery.isPending, panels])
+  }, [activeDashboardId, panelsQuery.isSuccess, panels])
 
   // Per-item drag/resize floor, computed fresh each render from the current
   // panels list (min size depends on chart_type + series count).
@@ -232,9 +238,17 @@ export default function LivePage() {
   function handleLayoutChange(newLayout) {
     // Fires on every drag/resize tick — local React state only, never a
     // network write (that only ever happens inside saveLayout()).
-    setLayout(newLayout.map((it) => ({
-      i: it.i, x: it.x, y: it.y, w: it.w, h: it.h,
-    })))
+    //
+    // RGL also reports the layout it synchronised against the children it had,
+    // and during a board switch those are the previous board's: an empty
+    // layout. A width/breakpoint update can deliver that after the switch
+    // effect has laid out the new board, so a report that would drop every
+    // tile of the board on screen is ignored rather than allowed to blank it.
+    const next = newLayout.map((it) => ({ i: it.i, x: it.x, y: it.y, w: it.w, h: it.h }))
+    const onBoard = new Set(panels.map((p) => String(p.id)))
+    setLayout((prev) => (
+      !next.some((it) => onBoard.has(it.i)) && prev.some((it) => onBoard.has(it.i)) ? prev : next
+    ))
   }
 
   // --- edit mode / layout persistence ---------------------------------------

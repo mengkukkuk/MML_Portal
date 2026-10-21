@@ -13,7 +13,18 @@ from typing import Any
 from kpi_engine import PERIODS
 from name_families import group_by_family, resolve_slot
 
-KPI_CHART_TYPES = frozenset({"lossmeter", "andon", "waterfall"})
+KPI_CHART_TYPES = frozenset({
+    "lossmeter", "andon", "waterfall",
+    # second set, from the Line 13 monitoring dashboard (docs/Line13_Monitoring_Dashboard.html)
+    "kpistrip", "hourly", "pace", "sensors", "response", "kpitrend", "pareto",
+})
+
+# What a KPI strip may show — keys of the summary's `metrics` (kpi.py).
+KPI_METRICS = (
+    "plan_pct", "yield", "availability", "risk_pieces", "blind_min", "avg_response_min",
+    "good", "pieces", "defects", "defect_rate", "lost", "cost_total", "incidents",
+)
+MAX_STRIP_METRICS = 6
 
 # No 5 s here: a ฿ figure that jitters every five seconds tells the board
 # nothing, and each poll reads the plant database over the VPN.
@@ -38,6 +49,15 @@ KPI_DEFAULTS: dict[str, Any] = {
     "max_loss_stop_min": 120,
     "working_hours": None,
     "sample_sec": 10,
+    # "line": the families are cameras along one line — output, run and stop
+    # come from `line_family` (default: the first), defects from every camera.
+    # "machines": every family is its own machine and the totals add up.
+    "scope": "line",
+    "line_family": None,
+    "plan_pieces": None,
+    "metrics": ["plan_pct", "yield", "availability", "risk_pieces", "blind_min", "avg_response_min"],
+    "sensors": None,
+    "flat_min": 10,
 }
 
 _RULE = re.compile(r"^[A-Za-z0-9_*?\-]{1,64}$")
@@ -126,6 +146,20 @@ def normalize_kpi_options(raw: Any) -> dict[str, Any]:
     o["max_loss_stop_min"] = _number("max_loss_stop_min", o["max_loss_stop_min"], 1, 1440, integer=True)
     o["working_hours"] = _working_hours(o["working_hours"])
     o["sample_sec"] = _number("sample_sec", o["sample_sec"], 1, 600)
+    if o["scope"] not in ("line", "machines"):
+        raise KpiOptionsError("options.kpi.scope must be line or machines")
+    if o["line_family"] is not None and not isinstance(o["line_family"], str):
+        raise KpiOptionsError("options.kpi.line_family must be a family name or null")
+    o["plan_pieces"] = _number("plan_pieces", o["plan_pieces"], 0, 1e12, nullable=True)
+    metrics = o["metrics"]
+    if (not isinstance(metrics, list) or not metrics or len(metrics) > MAX_STRIP_METRICS
+            or any(m not in KPI_METRICS for m in metrics)):
+        raise KpiOptionsError(
+            f"options.kpi.metrics must list 1 to {MAX_STRIP_METRICS} of: {', '.join(KPI_METRICS)}")
+    if o["sensors"] is not None and (
+            not isinstance(o["sensors"], list) or any(not isinstance(c, str) for c in o["sensors"])):
+        raise KpiOptionsError("options.kpi.sensors must be a list of column names or null")
+    o["flat_min"] = _number("flat_min", o["flat_min"], 1, 240, integer=True)
     return o
 
 
@@ -167,3 +201,35 @@ def bind_families(
             f"No machine in this table has a column ending in -{options['slots']['speed']}"
         )
     return families
+
+
+def bind_sensors(options: dict[str, Any], describe: dict[str, Any], families: list[dict[str, Any]],
+                 location_tags: set[str] | None = None) -> list[str]:
+    """The sensor columns a block watches: chosen, or every numeric column no machine owns.
+
+    Line 13's temperatures (`Temparature1-4`) are the columns left over once the
+    camera families are taken out. A chosen column must be numeric.
+    """
+    numeric = list(dict.fromkeys(
+        [c for c in describe.get("column_types", {})
+         if c in set(describe.get("array_value_columns", [])) | set(describe.get("value_columns", []))]
+    ))
+    if location_tags is not None:
+        numeric = [c for c in numeric if c in location_tags]
+    if options.get("sensors") is not None:
+        bad = [c for c in options["sensors"] if c not in numeric]
+        if bad:
+            raise KpiOptionsError(f"options.kpi.sensors: not a numeric column: {', '.join(bad)}")
+        return list(options["sensors"])
+    owned = {f["key"] for f in families}
+    taken = {c for g in group_by_family(numeric) if g["key"] for c in g["names"]}
+    return [c for c in numeric if c not in taken and c not in owned]
+
+
+def line_family(options: dict[str, Any], families: list[dict[str, Any]]) -> dict[str, Any]:
+    """The family whose speed is the line's: the chosen one, else the first."""
+    wanted = options.get("line_family")
+    chosen = next((f for f in families if f["key"] == wanted), None) if wanted else None
+    if wanted and chosen is None:
+        raise KpiOptionsError(f"options.kpi.line_family {wanted!r} is not a machine of this table")
+    return chosen or families[0]
