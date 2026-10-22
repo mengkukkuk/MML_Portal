@@ -42,6 +42,11 @@ export const KPI_DEFAULTS = Object.freeze({
   ts_col: null,
   location: null,
   slots: { speed: 'count_1', defects: 'defect_*' },
+  // The Loss meter's picked columns; null leaves per-machine column detection in charge.
+  defect_cols: null,
+  array_mode: 'sum',
+  filter_col: null,
+  filter_val: null,
   exclude_families: [],
   period: 'today',
   compare: true,
@@ -62,6 +67,19 @@ export const KPI_DEFAULTS = Object.freeze({
   sensors: null,
   flat_min: 10,
 })
+
+/**
+ * `kpi` as it goes to the server. The Loss meter's column picks are sent only
+ * while they are in use, so a block that never picked a column posts exactly the
+ * settings it always did (and a server that predates the picks still accepts it).
+ */
+export function cleanKpi(kpi) {
+  const out = { ...kpi }
+  if (out.defect_cols == null) { delete out.defect_cols; delete out.array_mode }
+  else if (out.array_mode === 'sum') delete out.array_mode
+  if (out.filter_col == null) { delete out.filter_col; delete out.filter_val }
+  return out
+}
 
 /** Smallest grid size (cols × rows) each block stays readable at. */
 export const KPI_MIN_SIZE = Object.freeze({
@@ -108,7 +126,7 @@ const DEFAULT_TITLES = {
  * read the same line apply the same loss rules — a target typed on the Andon
  * board must not leave the waterfall judging "slow" against the auto target. */
 const INHERITED_KPI_KEYS = [
-  'ts_col', 'location', 'slots', 'exclude_families', 'period', 'compare', 'cost_per_piece',
+  'ts_col', 'location', 'slots', 'defect_cols', 'array_mode', 'filter_col', 'filter_val', 'exclude_families', 'period', 'compare', 'cost_per_piece',
   'targets', 'run_ratio', 'stop_threshold', 'min_stop_sec', 'valid_max', 'max_loss_stop_min',
   'working_hours', 'sample_sec', 'scope', 'line_family', 'plan_pieces', 'sensors', 'flat_min',
 ]
@@ -135,11 +153,11 @@ export function inheritBinding(panels, primaryDatasourceId = null) {
 
 /** A complete create payload for a block of `type` dropped at `layout`. */
 export function defaultKpiPanel(type, { binding, layout, dashboardId, position }) {
-  const kpi = {
+  const kpi = cleanKpi({
     ...KPI_DEFAULTS,
     ...(binding?.kpi || {}),
     ...(type === 'lossmeter' ? { mode: 'defects' } : {}),
-  }
+  })
   return {
     title: DEFAULT_TITLES[type] || 'Management block',
     source: 'kpi',
@@ -176,7 +194,7 @@ export function buildKpiSavePayload(panel, draft) {
     poll_interval_seconds: panel.poll_interval_seconds ?? 60,
     dashboard_id: panel.dashboard_id,
     position: panel.position ?? 0,
-    options: { ...(panel.options || {}), kpi: { ...draft.kpi } },
+    options: { ...(panel.options || {}), kpi: cleanKpi(draft.kpi) },
   }
 }
 

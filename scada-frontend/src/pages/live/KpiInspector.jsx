@@ -17,6 +17,7 @@ import { fetchTagLocations } from '@/api/tags'
 import { useKpiSummary } from '@/components/live/useKpiSummary'
 import { fmtPieces, METRIC_META } from '@/components/live/kpiView'
 import { workingHoursFrom, KPI_METRIC_KEYS, MAX_STRIP_METRICS } from './kpiPayload'
+import LossColumns from './LossColumns'
 import styles from './KpiInspector.module.css'
 
 const WEEKDAYS = [
@@ -50,9 +51,9 @@ function NumberField({ label, value, onChange, nullable = false, scale = 1, help
 /**
  * KpiInspector — the non-modal side panel that configures one management
  * block. Edits go into a draft the tile previews live (via /kpi/preview);
- * Save writes the panel, Cancel drops the draft. Machines are detected from
- * the table, so the binding here is only connection → table → clock column,
- * plus the suffix rules that pick each machine's speed and defect columns.
+ * Save writes the panel, Cancel drops the draft. The binding is connection →
+ * table → clock column; the Loss meter then picks the columns it counts, and
+ * every other block detects its machines from the table's column names.
  */
 export default function KpiInspector({
   panel, draft, onDraft, datasources, saving, error, onSave, onCancel,
@@ -60,6 +61,8 @@ export default function KpiInspector({
   const tr = useTranslation()
   const open = !!panel && !!draft
   const kpi = draft?.kpi || {}
+  // A new connection or table starts over: column picks belong to one table.
+  const COLUMN_PICKS = { defect_cols: null, array_mode: 'sum', filter_col: null, filter_val: null }
   const setKpi = (patch) => onDraft({ ...draft, kpi: { ...draft.kpi, ...patch } })
 
   const tablesQuery = useQuery({
@@ -96,6 +99,8 @@ export default function KpiInspector({
 
   if (!open) return null
 
+  // Counting picked columns leaves no machines, stops or plan to configure.
+  const tally = panel.chart_type === 'lossmeter' && kpi.defect_cols != null
   const families = summary?.families || []
   const familyKeys = [...new Set([...families.map((f) => f.key), ...(kpi.exclude_families || [])])].sort()
   const hours = kpi.working_hours
@@ -123,33 +128,31 @@ export default function KpiInspector({
         <section className={styles.section}>
           <h3 className={styles.section__title}>{tr('Data')}</h3>
           <TextField select size="small" label={tr('Connection')} value={draft.datasource_id ?? ''}
-            onChange={(e) => onDraft({ ...draft, datasource_id: e.target.value === '' ? null : Number(e.target.value), table_name: null, kpi: { ...kpi, ts_col: null, location: null } })}>
+            onChange={(e) => onDraft({ ...draft, datasource_id: e.target.value === '' ? null : Number(e.target.value), table_name: null, kpi: { ...kpi, ts_col: null, location: null, ...COLUMN_PICKS } })}>
             <MenuItem value="">{tr('App database')}</MenuItem>
             {(datasources || []).map((ds) => <MenuItem key={ds.id} value={ds.id}>{ds.name}</MenuItem>)}
           </TextField>
           <TextField select size="small" label={tr('Table')} value={draft.table_name ?? ''}
-            onChange={(e) => onDraft({ ...draft, table_name: e.target.value || null, kpi: { ...kpi, ts_col: null } })}>
+            onChange={(e) => onDraft({ ...draft, table_name: e.target.value || null, kpi: { ...kpi, ts_col: null, ...COLUMN_PICKS } })}>
             {(tablesQuery.data || []).map((t) => <MenuItem key={t.table} value={t.table}>{t.label || t.table}</MenuItem>)}
           </TextField>
           <TextField select size="small" label={tr('Time column')} value={kpi.ts_col ?? ''} disabled={!draft.table_name}
             onChange={(e) => setKpi({ ts_col: e.target.value || null })}>
             {tsColumns.map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
           </TextField>
-          {locations.length > 0 && (
+          {!tally && locations.length > 0 && (
             <TextField select size="small" label={tr('Location')} value={kpi.location ?? ''}
               onChange={(e) => setKpi({ location: e.target.value || null })}>
               <MenuItem value="">{tr('All locations')}</MenuItem>
               {locations.map((l) => <MenuItem key={l} value={l}>{l}</MenuItem>)}
             </TextField>
           )}
-          <div className={styles.row}>
-            <TextField size="small" label={tr('Speed column ends in')} value={kpi.slots?.speed ?? ''}
-              onChange={(e) => setKpi({ slots: { ...kpi.slots, speed: e.target.value } })} />
-            <TextField size="small" label={tr('Defect columns end in')} value={kpi.slots?.defects ?? ''}
-              onChange={(e) => setKpi({ slots: { ...kpi.slots, defects: e.target.value } })} />
-          </div>
+          {panel.chart_type === 'lossmeter' && (
+            <LossColumns draft={draft} columns={columnsQuery.data} summary={summary} setKpi={setKpi} />
+          )}
         </section>
 
+        {!tally && (
         <section className={styles.section}>
           <h3 className={styles.section__title}>{tr('Line')}</h3>
           <div className={styles.row}>
@@ -167,6 +170,7 @@ export default function KpiInspector({
             )}
           </div>
         </section>
+        )}
 
         {panel.chart_type === 'kpistrip' && (
           <section className={styles.section}>
@@ -210,7 +214,7 @@ export default function KpiInspector({
           </section>
         )}
 
-        {familyKeys.length > 0 && (
+        {!tally && familyKeys.length > 0 && (
           <section className={styles.section}>
             <h3 className={styles.section__title}>{tr('Machines')}</h3>
             {familyKeys.map((key) => {
@@ -261,8 +265,8 @@ export default function KpiInspector({
               <TextField select size="small" label={tr('Shows')} value={kpi.mode}
                 onChange={(e) => setKpi({ mode: e.target.value })}>
                 <MenuItem value="defects">{tr('Defect cost')}</MenuItem>
-                <MenuItem value="lost">{tr('Production lost')}</MenuItem>
-                <MenuItem value="total">{tr('Total loss')}</MenuItem>
+                <MenuItem value="lost" disabled={kpi.defect_cols != null}>{tr('Production lost')}</MenuItem>
+                <MenuItem value="total" disabled={kpi.defect_cols != null}>{tr('Total loss')}</MenuItem>
               </TextField>
             )}
           </div>
@@ -270,14 +274,15 @@ export default function KpiInspector({
             control={<Switch size="small" checked={!!kpi.compare} onChange={(e) => setKpi({ compare: e.target.checked })} />}
             label={tr('Compare with the previous period')}
           />
-          <NumberField label={tr('Plan for the period (good pieces)')} value={kpi.plan_pieces} nullable
+          {!tally && <NumberField label={tr('Plan for the period (good pieces)')} value={kpi.plan_pieces} nullable
             helperText={tr('Spread over working hours if set, else over the whole period.')}
-            onChange={(v) => setKpi({ plan_pieces: v })} inputProps={{ min: 0 }} />
+            onChange={(v) => setKpi({ plan_pieces: v })} inputProps={{ min: 0 }} />}
           <NumberField label={tr('฿ per rejected piece')} value={kpi.cost_per_piece} nullable
             helperText={tr('Also values production lost. Only managers and admins see ฿.')}
             onChange={(v) => setKpi({ cost_per_piece: v })} inputProps={{ min: 0 }} />
         </section>
 
+        {!tally && (
         <section className={styles.section}>
           <h3 className={styles.section__title}>{tr('Stops')}</h3>
           <div className={styles.row}>
@@ -314,14 +319,15 @@ export default function KpiInspector({
             </>
           )}
         </section>
+        )}
 
         <section className={styles.section}>
           <h3 className={styles.section__title}>{tr('Data quality')}</h3>
           <div className={styles.row}>
             <NumberField label={tr('Ignore values above')} value={kpi.valid_max}
               onChange={(v) => setKpi({ valid_max: v })} />
-            <NumberField label={tr('Sample every (s)')} value={kpi.sample_sec}
-              onChange={(v) => setKpi({ sample_sec: v })} />
+            {!tally && <NumberField label={tr('Sample every (s)')} value={kpi.sample_sec}
+              onChange={(v) => setKpi({ sample_sec: v })} />}
           </div>
         </section>
 

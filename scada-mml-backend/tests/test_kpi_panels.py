@@ -69,7 +69,7 @@ def test_unbound_block_saves_without_a_table():
     ({"options": {"kpi": {"ts_col": "recorded_at", "bogus": 1}}}, "unknown keys"),
     ({"options": {"kpi": {"ts_col": "nope"}}}, "ts_col"),
     ({"options": {"kpi": {"ts_col": "recorded_at", "slots": {"speed": "rpm", "defects": "defect_*"}}}},
-     "No machine"),
+     "per-machine"),
 ])
 def test_bad_blocks_are_refused(over, msg):
     with pytest.raises(HTTPException) as e:

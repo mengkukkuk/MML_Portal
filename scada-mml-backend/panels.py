@@ -22,7 +22,8 @@ import db
 from auth import can_see_cost, get_current_user, require_admin, require_operator_or_admin
 from kpi_engine import strip_cost
 from kpi_options import (
-    KPI_CHART_TYPES, KPI_POLL_INTERVALS, KpiOptionsError, bind_families, normalize_kpi_options,
+    KPI_CHART_TYPES, KPI_POLL_INTERVALS, KpiOptionsError, bind_families, bind_picked, counts_picked_columns,
+    normalize_kpi_options,
 )
 from licensing import require_valid_license
 
@@ -249,10 +250,13 @@ def _validate_kpi(body: PanelIn) -> None:
                    f"{str(e).strip().splitlines()[0] if str(e).strip() else 'connection error'}",
         )
     try:
-        families = bind_families(kpi, cols, location_tags(kpi.get("location"), body.datasource_id))
+        if counts_picked_columns(kpi, body.chart_type):
+            body.metric = bind_picked(kpi, cols)["defect_cols"][0]
+        else:
+            families = bind_families(kpi, cols, location_tags(kpi.get("location"), body.datasource_id))
+            body.metric = families[0]["speed"]
     except KpiOptionsError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    body.metric = families[0]["speed"]
     body.ts_col = kpi["ts_col"]
     body.filter_col = None
 

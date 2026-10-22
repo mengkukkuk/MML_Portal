@@ -20,7 +20,7 @@ from . import tables as _tables
 
 __all__ = [
     "KPI_STATEMENT_TIMEOUT_MS", "_kpi_value", "kpi_event_rows", "kpi_minute_buckets", "kpi_minute_query",
-    "kpi_sensor_minutes", "kpi_sensor_query",
+    "kpi_sensor_minutes", "kpi_sensor_query", "kpi_tally", "kpi_tally_query",
 ]
 
 # A cold month over the VPN must fail loudly rather than pin a worker.
@@ -154,6 +154,97 @@ def kpi_minute_buckets(
                 "parts": [float(row[f"part_{i}_{j}"]) for j in range(len(fam["defects"]))],
             })
     return out
+
+
+def _tally_term(columns: dict[str, str], col: str, array_mode: str) -> sql.Composable:
+    """One picked column's count for a row, as float8 and never negative or a glitch.
+
+    A numeric array adds all its elements ("sum") or reads element 1 ("first");
+    a flag counts as 0 or 1. Values outside [0, vmax] count as nothing, the same
+    rule the minute buckets apply to a ±2.78M sensor glitch.
+    """
+    ident = sql.Identifier(col)
+    kind = columns[col]
+    if kind.startswith("_"):
+        if array_mode == "first":
+            v = sql.SQL("({}[1])::float8").format(ident)
+            return sql.SQL("CASE WHEN {v} BETWEEN 0 AND %(vmax)s THEN {v} ELSE 0 END").format(v=v)
+        return sql.SQL(
+            "(SELECT coalesce(sum(CASE WHEN e::float8 BETWEEN 0 AND %(vmax)s THEN e::float8 ELSE 0 END), 0) "
+            "FROM unnest({}) AS e)"
+        ).format(ident)
+    if kind == "boolean":
+        return sql.SQL("(CASE WHEN {} THEN 1 ELSE 0 END)::float8").format(ident)
+    v = sql.SQL("({})::float8").format(ident)
+    return sql.SQL("CASE WHEN {v} BETWEEN 0 AND %(vmax)s THEN {v} ELSE 0 END").format(v=v)
+
+
+def kpi_tally_query(
+    columns: dict[str, str],
+    schema: str,
+    table: str,
+    ts_col: str,
+    cols: list[str],
+    array_mode: str,
+    filter_col: str | None,
+) -> sql.Composed:
+    """Sum of `cols` over rows stamped in the current and the previous range.
+
+    Parameters, by name: lo, hi, plo, phi (aware bounds), vmax, and fval when
+    `filter_col` is set. Every identifier is checked against `columns`.
+    """
+    for col in [ts_col, *cols, *([filter_col] if filter_col else [])]:
+        if col not in columns:
+            raise ValueError(f"Unknown column {col!r} in {table!r}")
+    if not cols:
+        raise ValueError("Nothing to count")
+    ts, clock, lo, hi = _clock_terms(columns, ts_col)
+    plo = sql.SQL("(%(plo)s::timestamptz AT TIME ZONE current_setting('TimeZone'))")         if columns[ts_col] == "timestamp without time zone" else sql.SQL("%(plo)s")
+    phi = sql.SQL("(%(phi)s::timestamptz AT TIME ZONE current_setting('TimeZone'))")         if columns[ts_col] == "timestamp without time zone" else sql.SQL("%(phi)s")
+    total = sql.SQL(" + ").join([_tally_term(columns, c, array_mode) for c in cols])
+    where = [sql.SQL("({c} >= {lo} AND {c} < {hi}) OR ({c} >= {plo} AND {c} < {phi})").format(
+        c=clock, lo=lo, hi=hi, plo=plo, phi=phi)]
+    if filter_col:
+        where.append(sql.SQL("{}::text = %(fval)s").format(sql.Identifier(filter_col)))
+    cur = sql.SQL("{c} >= {lo} AND {c} < {hi}").format(c=clock, lo=lo, hi=hi)
+    prev = sql.SQL("{c} >= {plo} AND {c} < {phi}").format(c=clock, plo=plo, phi=phi)
+    return sql.SQL(
+        "SELECT coalesce(sum(t) FILTER (WHERE is_cur), 0) AS cur, "
+        "coalesce(sum(t) FILTER (WHERE is_prev), 0) AS prev, "
+        "count(*) FILTER (WHERE is_cur) AS cur_rows "
+        "FROM (SELECT ({total}) AS t, ({cur}) AS is_cur, ({prev}) AS is_prev FROM {tbl} WHERE {where}) q"
+    ).format(
+        total=total, cur=cur, prev=prev, tbl=sql.Identifier(schema, table),
+        where=sql.SQL(" AND ").join(sql.SQL("({})").format(w) for w in where),
+    )
+
+
+def kpi_tally(
+    datasource_id: int | None,
+    table: str,
+    ts_col: str,
+    cols: list[str],
+    *,
+    array_mode: str,
+    filter_col: str | None,
+    filter_val: str | None,
+    start: datetime,
+    end: datetime,
+    prev_start: datetime,
+    prev_end: datetime,
+    valid_max: float,
+) -> dict[str, float]:
+    """{cur, prev, cur_rows}: the picked columns summed over the two ranges."""
+    with _tables._table_source_conn(datasource_id) as (conn, schema):
+        columns = _tables._table_columns(conn, schema, table)
+        query = kpi_tally_query(columns, schema, table, ts_col, cols, array_mode, filter_col)
+        params = {"lo": start, "hi": end, "plo": prev_start, "phi": prev_end, "vmax": valid_max}
+        if filter_col:
+            params["fval"] = filter_val
+        with conn.transaction():
+            conn.execute(sql.SQL("SET LOCAL statement_timeout = {}").format(sql.Literal(KPI_STATEMENT_TIMEOUT_MS)))
+            row = conn.execute(query, params).fetchone()
+    return {"cur": float(row["cur"]), "prev": float(row["prev"]), "cur_rows": int(row["cur_rows"])}
 
 
 def _clock_terms(columns: dict[str, str], ts_col: str):

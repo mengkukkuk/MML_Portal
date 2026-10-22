@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   inheritBinding, defaultKpiPanel, buildKpiSavePayload, draftFromPanel, panelWithDraft,
-  workingHoursFrom, KPI_DEFAULTS,
+  workingHoursFrom, KPI_DEFAULTS, cleanKpi,
 } from './kpiPayload.js'
 
 const LAST = {
@@ -67,4 +67,27 @@ test('working hours need two valid, different clocks and a day', () => {
   assert.equal(workingHoursFrom('7:00', '17:00', [1]), null)
   assert.equal(workingHoursFrom('07:00', '07:00', [1]), null)
   assert.equal(workingHoursFrom('07:00', '17:00', []), null)
+})
+
+test('a new block inherits the picked columns, and a Loss meter stays on defect cost', () => {
+  const picked = { ...LAST, options: { kpi: { ...LAST.options.kpi, defect_cols: ['defect_array'], filter_col: 'code', filter_val: 'CAM001-13' } } }
+  const b = inheritBinding([picked], 681)
+  assert.deepEqual(b.kpi.defect_cols, ['defect_array'])
+  assert.equal(b.kpi.filter_val, 'CAM001-13')
+  const p = defaultKpiPanel('lossmeter', { binding: b, layout: { x: 0, y: 0, w: 4, h: 6 }, dashboardId: 2 })
+  assert.equal(p.options.kpi.mode, 'defects')
+  assert.deepEqual(p.options.kpi.defect_cols, ['defect_array'])
+  assert.equal(KPI_DEFAULTS.defect_cols, null)
+})
+
+test('column picks are posted only while they are in use', () => {
+  const idle = cleanKpi({ ...KPI_DEFAULTS, ts_col: 'recorded_at' })
+  for (const k of ['defect_cols', 'array_mode', 'filter_col', 'filter_val']) assert.equal(k in idle, false, k)
+  const used = cleanKpi({ ...KPI_DEFAULTS, defect_cols: ['defect_array'], array_mode: 'first', filter_col: 'code', filter_val: 'A' })
+  assert.deepEqual([used.defect_cols, used.array_mode, used.filter_col, used.filter_val], [['defect_array'], 'first', 'code', 'A'])
+  assert.equal('array_mode' in cleanKpi({ ...KPI_DEFAULTS, defect_cols: ['x'] }), false)
+  const p = defaultKpiPanel('andon', { binding: { datasource_id: 1, table_name: 't', kpi: {} }, layout: {}, dashboardId: 1 })
+  assert.equal('defect_cols' in p.options.kpi, false)
+  const saved = buildKpiSavePayload({ id: 1, title: 'x', chart_type: 'lossmeter', options: {} }, draftFromPanel({ title: 'x', options: { kpi: {} } }))
+  assert.equal('defect_cols' in saved.options.kpi, false)
 })

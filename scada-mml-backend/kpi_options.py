@@ -32,10 +32,26 @@ KPI_POLL_INTERVALS = frozenset({30, 60, 600, 1800, 3600})
 
 LOSSMETER_MODES = ("defects", "lost", "total")
 
+# How a numeric array column reads when the Loss meter counts picked columns:
+# "sum" adds every element (a per-type tally such as [15, 20, 0, 0, 0]), "first"
+# takes element 1 (a newest-first series, or a wide table's [value, setpoint, ...]).
+ARRAY_MODES = ("sum", "first")
+MAX_DEFECT_COLS = 40
+
 KPI_DEFAULTS: dict[str, Any] = {
     "ts_col": None,
     "location": None,
+    # Legacy machine detection for wide tables (CAM001-13-count_1, ...). No longer
+    # edited in the inspector: it only decides what a table with such columns
+    # does when `defect_cols` is not set.
     "slots": {"speed": "count_1", "defects": "defect_*"},
+    # The Loss meter's explicit binding: count these columns (any numeric,
+    # numeric-array or flag column), optionally only on rows where `filter_col`
+    # reads `filter_val`. None leaves the wide-table detection in charge.
+    "defect_cols": None,
+    "array_mode": "sum",
+    "filter_col": None,
+    "filter_val": None,
     "exclude_families": [],
     "period": "today",
     "compare": True,
@@ -122,6 +138,21 @@ def normalize_kpi_options(raw: Any) -> dict[str, Any]:
     for name, rule in slots.items():
         if not isinstance(rule, str) or not _RULE.match(rule):
             raise KpiOptionsError(f"options.kpi.slots.{name} must be a column suffix such as count_1 or defect_*")
+    if o["defect_cols"] is not None:
+        cols = o["defect_cols"]
+        if (not isinstance(cols, list) or not cols or len(cols) > MAX_DEFECT_COLS
+                or any(not isinstance(c, str) or not c for c in cols)):
+            raise KpiOptionsError(
+                f"options.kpi.defect_cols must list 1 to {MAX_DEFECT_COLS} column names, or be null")
+        o["defect_cols"] = list(dict.fromkeys(cols))
+    if o["array_mode"] not in ARRAY_MODES:
+        raise KpiOptionsError(f"options.kpi.array_mode must be one of: {', '.join(ARRAY_MODES)}")
+    if o["filter_col"] is not None and (not isinstance(o["filter_col"], str) or not o["filter_col"]):
+        raise KpiOptionsError("options.kpi.filter_col must be a column name or null")
+    if o["filter_val"] is not None and not isinstance(o["filter_val"], str):
+        raise KpiOptionsError("options.kpi.filter_val must be text or null")
+    if (o["filter_col"] is None) != (o["filter_val"] is None):
+        raise KpiOptionsError("options.kpi.filter_col and filter_val go together")
     if not isinstance(o["exclude_families"], list) or any(not isinstance(f, str) for f in o["exclude_families"]):
         raise KpiOptionsError("options.kpi.exclude_families must be a list of family names")
     if o["period"] not in PERIODS:
@@ -130,6 +161,10 @@ def normalize_kpi_options(raw: Any) -> dict[str, Any]:
         raise KpiOptionsError("options.kpi.compare must be true or false")
     if o["mode"] not in LOSSMETER_MODES:
         raise KpiOptionsError(f"options.kpi.mode must be one of: {', '.join(LOSSMETER_MODES)}")
+    if o["defect_cols"] is not None and o["mode"] != "defects":
+        raise KpiOptionsError(
+            "options.kpi: picked columns count defects only — Production lost and Total loss "
+            "need a machine table with a per-minute output column")
     o["cost_per_piece"] = _number("cost_per_piece", o["cost_per_piece"], 0, 1e9, nullable=True)
     if not isinstance(o["targets"], dict):
         raise KpiOptionsError("options.kpi.targets must map family names to pieces per minute")
@@ -163,6 +198,43 @@ def normalize_kpi_options(raw: Any) -> dict[str, Any]:
     return o
 
 
+def counts_picked_columns(options: dict[str, Any], chart_type: str | None) -> bool:
+    """Whether this block reads explicitly picked columns rather than detected machines.
+
+    Only the Loss meter does: the other blocks judge machines through speed
+    columns, which a defect tally cannot stand in for.
+    """
+    return chart_type == "lossmeter" and options.get("defect_cols") is not None
+
+
+def bind_picked(options: dict[str, Any], describe: dict[str, Any]) -> dict[str, Any]:
+    """{ts_col, defect_cols, filter} — the picked columns checked against the table.
+
+    Numeric, numeric-array and flag columns can be counted; a text column can
+    only filter rows. Raises KpiOptionsError naming the column and why, so the
+    inspector can say what to change.
+    """
+    ts_col = options.get("ts_col")
+    if not ts_col or ts_col not in describe.get("datetime_columns", describe.get("ts_columns", [])):
+        raise KpiOptionsError("Choose the table's time column (options.kpi.ts_col) in block settings")
+    types = describe.get("column_types", {})
+    countable = (set(describe.get("value_columns", [])) | set(describe.get("array_value_columns", []))
+                 | set(describe.get("bool_columns", [])))
+    for col in options["defect_cols"]:
+        if col not in types:
+            raise KpiOptionsError(f"options.kpi.defect_cols: {col!r} is not a column of this table")
+        if col not in countable:
+            kind = types[col]
+            hint = " — use it in \"Only count rows where\" instead" if col in describe.get("text_columns", []) else ""
+            raise KpiOptionsError(f"options.kpi.defect_cols: {col!r} ({kind}) cannot be counted{hint}")
+    flt = None
+    if options.get("filter_col") is not None:
+        if options["filter_col"] not in describe.get("filter_columns", []):
+            raise KpiOptionsError(f"options.kpi.filter_col: {options['filter_col']!r} cannot filter rows")
+        flt = (options["filter_col"], options["filter_val"])
+    return {"ts_col": ts_col, "defect_cols": list(options["defect_cols"]), "filter": flt}
+
+
 def bind_families(
     options: dict[str, Any],
     describe: dict[str, Any],
@@ -178,7 +250,7 @@ def bind_families(
     """
     ts_col = options.get("ts_col")
     if not ts_col or ts_col not in describe.get("datetime_columns", describe.get("ts_columns", [])):
-        raise KpiOptionsError("options.kpi.ts_col must be a timestamp column of the table")
+        raise KpiOptionsError("Choose the table's time column (options.kpi.ts_col) in block settings")
     numeric = set(describe.get("value_columns", [])) | set(describe.get("array_value_columns", []))
     names = [c for c in describe.get("column_types", {}) if c in numeric]
     if location_tags is not None:
@@ -198,7 +270,8 @@ def bind_families(
         })
     if not families:
         raise KpiOptionsError(
-            f"No machine in this table has a column ending in -{options['slots']['speed']}"
+            "This table has no per-machine output columns (like CAM001-13-count_1). "
+            "The Loss meter can count picked defect columns instead; the other blocks need machine columns."
         )
     return families
 

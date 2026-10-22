@@ -81,3 +81,25 @@
   width: 50%;
   margin-right: 0;
 }
+
+.pick {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  min-width: 0;
+}
+
+.pick__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pick__badge {
+  flex: none;
+  color: var(--fg-muted);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.72rem;
+}

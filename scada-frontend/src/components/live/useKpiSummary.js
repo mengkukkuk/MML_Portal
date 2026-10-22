@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { fetchKpiSummary, previewKpi } from '@/api/kpi'
+import { cleanKpi } from '@/pages/live/kpiPayload'
 
 /**
  * useKpiSummary — one management block's figures, polled at the panel's own
@@ -26,7 +27,7 @@ export function useKpiSummary(panel, { draft = null, refreshSignal = 0 } = {}) {
       : ['kpi-summary', panel.id, panel.options?.kpi, panel.table_name, panel.datasource_id, refreshSignal],
     queryFn: () => (previewing
       ? previewKpi({ chart_type: panel.chart_type, table_name: debounced.table_name,
-        datasource_id: debounced.datasource_id, kpi: debounced.kpi })
+        datasource_id: debounced.datasource_id, kpi: cleanKpi(debounced.kpi) })
       : fetchKpiSummary(panel.id)),
     enabled: bound,
     refetchInterval: previewing ? false : Math.max(30, panel.poll_interval_seconds || 60) * 1000,

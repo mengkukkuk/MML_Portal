@@ -39,7 +39,8 @@ import kpi_engine as engine
 from auth import can_see_cost, get_current_user, require_admin
 from kpi_cache import CACHE, TARGET_WINDOW
 from kpi_options import (
-    KPI_CHART_TYPES, KpiOptionsError, bind_families, bind_sensors, line_family, normalize_kpi_options,
+    KPI_CHART_TYPES, KpiOptionsError, bind_families, bind_picked, bind_sensors, counts_picked_columns,
+    line_family, normalize_kpi_options,
 )
 from licensing import require_valid_license
 from panels import location_tags
@@ -196,6 +197,61 @@ def _aware(t: Any, tz) -> datetime | None:
     return t if t.tzinfo else t.replace(tzinfo=tz)
 
 
+def summarize_picked(table: str, datasource_id: int | None, kpi: dict[str, Any], cols: dict[str, Any],
+                     now: datetime | None = None) -> dict[str, Any]:
+    """The Loss meter's summary when it counts picked columns instead of machines.
+
+    Defects are the picked columns summed over the rows stamped in the period —
+    nothing is derived per minute, so there are no machines, stops or targets,
+    and the summary carries only what the Loss meter reads.
+    """
+    try:
+        bound = bind_picked(kpi, cols)
+    except KpiOptionsError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    now = now or _now()
+    start, prev_start, end = engine.period_bounds(kpi["period"], now)
+    prev_end = prev_start + (end - start)
+    flt_col, flt_val = bound["filter"] or (None, None)
+    tally = _fetch_errors(lambda: db.kpi_tally(
+        datasource_id, table, bound["ts_col"], bound["defect_cols"], array_mode=kpi["array_mode"],
+        filter_col=flt_col, filter_val=flt_val, start=start, end=end, prev_start=prev_start,
+        prev_end=prev_end, valid_max=kpi["valid_max"]))
+
+    def figures(defects: float) -> dict[str, float]:
+        return {"pieces": 0.0, "defects": defects, "good": 0.0, "stop_loss": 0.0, "slow_loss": 0.0,
+                "pending": 0.0, "potential": 0.0, "lost": 0.0}
+
+    price = kpi["cost_per_piece"]
+    totals = figures(tally["cur"])
+    out: dict[str, Any] = {
+        "generated_at": now,
+        "period": {"name": kpi["period"], "start": start, "end": end,
+                   "full_end": _period_end(kpi["period"], start),
+                   "elapsed_min": int((end - start).total_seconds() // 60)},
+        "scope": "columns",
+        "line_family": None,
+        "families": [],
+        "totals": totals,
+        "rows_in_period": tally["cur_rows"],
+        "unscheduled_min": 0,
+        "cost_per_piece": price,
+        "plan": None,
+        "settings": {"max_loss_stop_min": kpi["max_loss_stop_min"], "run_ratio": kpi["run_ratio"],
+                     "working_hours": kpi["working_hours"], "mode": "defects", "metrics": kpi["metrics"],
+                     "flat_min": kpi["flat_min"]},
+        "metrics": {"defects": tally["cur"]},
+    }
+    if (b := _baht(totals, price)) is not None:
+        out["totals"]["baht"] = b
+        out["metrics"]["baht"] = {"cost_total": tally["cur"] * price}
+    if kpi["compare"]:
+        out["compare"] = figures(tally["prev"])
+        if (b := _baht(out["compare"], price)) is not None:
+            out["compare"]["baht"] = b
+    return out
+
+
 def summarize(
     table: str | None,
     datasource_id: int | None,
@@ -223,6 +279,8 @@ def summarize(
     except psycopg.Error as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                             detail=f"Could not reach the selected connection: {_first_line(e)}")
+    if counts_picked_columns(kpi, chart_type):
+        return summarize_picked(table, datasource_id, kpi, cols)
     loc_tags = location_tags(kpi.get("location"), datasource_id)
     try:
         families = bind_families(kpi, cols, loc_tags)
