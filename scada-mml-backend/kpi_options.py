@@ -38,6 +38,14 @@ LOSSMETER_MODES = ("defects", "lost", "total")
 ARRAY_MODES = ("sum", "first")
 MAX_DEFECT_COLS = 40
 
+# How the machine blocks read an explicit output column: "rate" is pieces per
+# minute (what a wide table's count_1 holds), "total" a running counter that only
+# goes up — pieces are its positive change between readings.
+VALUE_KINDS = ("rate", "total")
+# One machine per distinct value of the machine column; past this the column is
+# not a machine name (a timestamp, a batch id) and the block says so.
+MAX_MACHINES = 64
+
 KPI_DEFAULTS: dict[str, Any] = {
     "ts_col": None,
     "location": None,
@@ -49,6 +57,13 @@ KPI_DEFAULTS: dict[str, Any] = {
     # numeric-array or flag column), optionally only on rows where `filter_col`
     # reads `filter_val`. None leaves the wide-table detection in charge.
     "defect_cols": None,
+    # The machine blocks' explicit binding: each distinct value of `machine_col`
+    # is a machine (None: the whole table is one), whose output is `output_col`.
+    # Set, it replaces the wide-table detection; `defect_cols` then name the
+    # defect columns read per machine, in the same unit.
+    "machine_col": None,
+    "output_col": None,
+    "value_kind": "rate",
     "array_mode": "sum",
     "filter_col": None,
     "filter_val": None,
@@ -145,6 +160,11 @@ def normalize_kpi_options(raw: Any) -> dict[str, Any]:
             raise KpiOptionsError(
                 f"options.kpi.defect_cols must list 1 to {MAX_DEFECT_COLS} column names, or be null")
         o["defect_cols"] = list(dict.fromkeys(cols))
+    for name in ("machine_col", "output_col"):
+        if o[name] is not None and (not isinstance(o[name], str) or not o[name]):
+            raise KpiOptionsError(f"options.kpi.{name} must be a column name or null")
+    if o["value_kind"] not in VALUE_KINDS:
+        raise KpiOptionsError(f"options.kpi.value_kind must be one of: {', '.join(VALUE_KINDS)}")
     if o["array_mode"] not in ARRAY_MODES:
         raise KpiOptionsError(f"options.kpi.array_mode must be one of: {', '.join(ARRAY_MODES)}")
     if o["filter_col"] is not None and (not isinstance(o["filter_col"], str) or not o["filter_col"]):
@@ -161,10 +181,10 @@ def normalize_kpi_options(raw: Any) -> dict[str, Any]:
         raise KpiOptionsError("options.kpi.compare must be true or false")
     if o["mode"] not in LOSSMETER_MODES:
         raise KpiOptionsError(f"options.kpi.mode must be one of: {', '.join(LOSSMETER_MODES)}")
-    if o["defect_cols"] is not None and o["mode"] != "defects":
+    if o["defect_cols"] is not None and o["output_col"] is None and o["mode"] != "defects":
         raise KpiOptionsError(
-            "options.kpi: picked columns count defects only — Production lost and Total loss "
-            "need a machine table with a per-minute output column")
+            "options.kpi: picked defect columns alone count defects only — choose an output "
+            "column to measure Production lost and Total loss")
     o["cost_per_piece"] = _number("cost_per_piece", o["cost_per_piece"], 0, 1e9, nullable=True)
     if not isinstance(o["targets"], dict):
         raise KpiOptionsError("options.kpi.targets must map family names to pieces per minute")
@@ -204,7 +224,20 @@ def counts_picked_columns(options: dict[str, Any], chart_type: str | None) -> bo
     Only the Loss meter does: the other blocks judge machines through speed
     columns, which a defect tally cannot stand in for.
     """
-    return chart_type == "lossmeter" and options.get("defect_cols") is not None
+    return (chart_type == "lossmeter" and options.get("defect_cols") is not None
+            and options.get("output_col") is None)
+
+
+def columns_layout(options: dict[str, Any]) -> dict[str, Any] | None:
+    """How the machine blocks read an explicitly bound table, or None for wide-table detection.
+
+    Part of every bucket's identity (cache key) and of the SQL that makes them.
+    """
+    if not options.get("output_col"):
+        return None
+    flt = (options["filter_col"], options["filter_val"]) if options.get("filter_col") else None
+    return {"machine_col": options.get("machine_col"), "value_kind": options.get("value_kind", "rate"),
+            "filter": flt}
 
 
 def bind_picked(options: dict[str, Any], describe: dict[str, Any]) -> dict[str, Any]:
@@ -235,13 +268,62 @@ def bind_picked(options: dict[str, Any], describe: dict[str, Any]) -> dict[str, 
     return {"ts_col": ts_col, "defect_cols": list(options["defect_cols"]), "filter": flt}
 
 
+def _bind_columns(
+    options: dict[str, Any],
+    describe: dict[str, Any],
+    machine_values: list[str] | None,
+    table: str,
+) -> list[dict[str, Any]]:
+    """The machines of an explicitly bound table: one per value of the machine column.
+
+    Every machine reads the same output and defect columns; `machine_values` are
+    the machine column's distinct values (the caller reads them), or ignored when
+    the whole table is one machine, which is then named after the table.
+    """
+    types = describe.get("column_types", {})
+    numeric = set(describe.get("value_columns", [])) | set(describe.get("array_value_columns", []))
+    out = options["output_col"]
+    if out not in types:
+        raise KpiOptionsError(f"options.kpi.output_col: {out!r} is not a column of this table")
+    if out not in numeric:
+        raise KpiOptionsError(f"options.kpi.output_col: {out!r} ({types[out]}) is not a number or numeric array")
+    defects = list(options.get("defect_cols") or [])
+    for col in defects:
+        if col not in types:
+            raise KpiOptionsError(f"options.kpi.defect_cols: {col!r} is not a column of this table")
+        if col not in numeric:
+            raise KpiOptionsError(f"options.kpi.defect_cols: {col!r} ({types[col]}) is not a number or numeric array")
+    machine = options.get("machine_col")
+    if machine is not None and machine not in describe.get("filter_columns", []):
+        raise KpiOptionsError(f"options.kpi.machine_col: {machine!r} cannot name machines")
+    if options.get("filter_col") is not None and options["filter_col"] not in describe.get("filter_columns", []):
+        raise KpiOptionsError(f"options.kpi.filter_col: {options['filter_col']!r} cannot filter rows")
+    excluded = set(options.get("exclude_families") or [])
+    if machine is None:
+        keys = [table]
+    else:
+        keys = list(machine_values or [])
+        if len(keys) > MAX_MACHINES:
+            raise KpiOptionsError(
+                f"{machine!r} has more than {MAX_MACHINES} different values, so it does not name machines — "
+                "choose another column, or narrow the rows with \"Only rows where\"")
+    families = [{"key": k, "speed": out, "defects": defects} for k in keys if k not in excluded]
+    if not families:
+        raise KpiOptionsError("No machines to show: the machine column has no values in this table")
+    return families
+
+
 def bind_families(
     options: dict[str, Any],
     describe: dict[str, Any],
     location_tags: set[str] | None = None,
+    machine_values: list[str] | None = None,
+    table: str = "table",
 ) -> list[dict[str, Any]]:
-    """[{key, speed, defects}] — the machines this block reads, detected from columns.
+    """[{key, speed, defects}] — the machines this block reads.
 
+    With `output_col` set the table is bound explicitly (`_bind_columns`);
+    otherwise machines are detected from `<machine>-<suffix>` column names.
     `describe` is `db.describe_table(...)`. Only numeric value and numeric array
     columns can feed a slot. `location_tags`, when given, narrows the columns to
     the tags at the block's location. A family without a speed column is not a
@@ -251,6 +333,8 @@ def bind_families(
     ts_col = options.get("ts_col")
     if not ts_col or ts_col not in describe.get("datetime_columns", describe.get("ts_columns", [])):
         raise KpiOptionsError("Choose the table's time column (options.kpi.ts_col) in block settings")
+    if options.get("output_col"):
+        return _bind_columns(options, describe, machine_values, table)
     numeric = set(describe.get("value_columns", [])) | set(describe.get("array_value_columns", []))
     names = [c for c in describe.get("column_types", {}) if c in numeric]
     if location_tags is not None:
@@ -270,8 +354,9 @@ def bind_families(
         })
     if not families:
         raise KpiOptionsError(
-            "This table has no per-machine output columns (like CAM001-13-count_1). "
-            "The Loss meter can count picked defect columns instead; the other blocks need machine columns."
+            "This table has no per-machine columns (like CAM001-13-count_1). "
+            "Choose its Output column (and Machine column) in block settings; "
+            "the Loss meter can also just count picked defect columns."
         )
     return families
 
@@ -289,6 +374,8 @@ def bind_sensors(options: dict[str, Any], describe: dict[str, Any], families: li
     ))
     if location_tags is not None:
         numeric = [c for c in numeric if c in location_tags]
+    if options.get("sensors") is None and options.get("output_col"):
+        return []   # an explicitly bound table has no machine columns to subtract: sensors are chosen
     if options.get("sensors") is not None:
         bad = [c for c in options["sensors"] if c not in numeric]
         if bad:

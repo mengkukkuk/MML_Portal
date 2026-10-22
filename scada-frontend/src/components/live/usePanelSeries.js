@@ -4,6 +4,7 @@ import { colorAt } from '@/utils/seriesPalette'
 import { DEFAULT_BOOL_LABELS } from '@/utils/columnKinds'
 import { seriesAlerts } from '@/utils/alertConditions'
 import { GENERIC_VIZ_TYPES, HEADER_VALUE_VIZ_TYPES } from './options'
+import { deriveSeriesSpecs } from './seriesModel'
 
 // Poll interval selector — values are seconds, kept in sync with backend whitelist.
 export const POLL_INTERVALS = [
@@ -97,34 +98,25 @@ export function usePanelSeries(panel, { filterOverride = null } = {}) {
       }))
     }
     if (isTable) {
-      const vcs = tableValueCols
-      const fvs = tableHasFilter ? effectiveFilters : [null]
-      const multiVc = vcs.length > 1
-      // The admin's saved display name (options.columnLabels), keyed exactly
-      // like a series' unit: by column when unfiltered, by filter value when
-      // filtered -- whichever one is the actual series identity and would
-      // otherwise be printed raw.
-      const colLabels = opts.columnLabels
-      const nameFor = (k) => (colLabels && colLabels[k]) || k
-      const specs = []
-      for (const vc of vcs) {
-        for (const fv of fvs) {
-          // Encode (vc, fv) into a stable key. JSON encoding is
-          // collision-safe against value strings containing separators.
-          const key = JSON.stringify([vc, fv])
-          const unitKey = fv != null ? fv : vc
-          const label = multiVc && fv != null ? `${nameFor(vc)} · ${nameFor(fv)}` : nameFor(unitKey)
-          specs.push({ key, label, valueCol: vc, filterVal: fv, unitKey })
-        }
-      }
-      return specs
+      // Column x series value x array slot, with display names, unsplit columns
+      // and text flags applied -- see seriesModel for the rules.
+      return deriveSeriesSpecs({
+        metric: panel.metric,
+        valueCols: Array.isArray(opts.value_cols) ? opts.value_cols : [],
+        filterCol: panel.filter_col,
+        filters: effectiveFilters,
+        unsplitCols: opts.unsplitCols,
+        arraySlots: opts.arraySlots,
+        columnLabels: opts.columnLabels,
+        textCols: opts.textCols,
+      })
     }
     // Device source: a single series keyed by its metric.
     return panel.metric
       ? [{ key: panel.metric, label: panel.metric, valueCol: panel.metric, filterVal: null, unitKey: panel.metric }]
       : []
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isTag, isTable, opts.tags, opts.columnLabels, panel.tag_name, panel.metric, tableValueCols, tableHasFilter, effectiveFilters])
+  }, [isTag, isTable, opts.tags, opts.columnLabels, opts.unsplitCols, opts.arraySlots, opts.textCols, opts.value_cols, panel.tag_name, panel.metric, panel.filter_col, effectiveFilters])
 
   // Legacy alias: the bare series keys — folded into the deep-watch Query key.
   const seriesTags = useMemo(() => seriesSpecs.map((s) => s.key), [seriesSpecs])
@@ -165,11 +157,23 @@ export function buildSeriesList(
   { seriesPoints, seriesLatest, seriesLimits, seriesPanelCols, unitFor, deviceUnit, boolCols, boolLabels },
 ) {
   const flags = new Set(boolCols || [])
-  return seriesSpecs.map((s, i) => ({
+  // Palette steps are handed out to drawn series only. A word has no line to
+  // colour, and counting it would shift every series after it off the swatch
+  // the editor showed -- the renderers index the palette by position in the
+  // text-free list (LivePanel's plotList), which this keeps in step.
+  let drawn = 0
+  return seriesSpecs.map((s) => ({
     key: s.key,
     label: s.label,
-    color: colorAt(i),
+    color: s.isText ? 'var(--fg)' : colorAt(drawn++),
     valueCol: s.valueCol,
+    // Which array slot this line reads (null for a scalar column), how an alert
+    // condition names it, and whether it is a word rather than a number.
+    slot: s.slot ?? null,
+    varName: s.varName ?? s.valueCol,
+    isText: !!s.isText,
+    // Drawn once although a series column is set: its row is shared, not its own.
+    unsplit: !!s.unsplit,
     // Row identity (source, filter value): alert conditions are judged per row.
     filterVal: s.filterVal ?? null,
     datasourceId: s.datasourceId ?? null,

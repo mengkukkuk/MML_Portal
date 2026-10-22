@@ -61,6 +61,9 @@ export const critColor = () => cssVar('--crit', '#ef4444')
  */
 export function fmtValue(v, decimals, labels) {
   if (v == null) return '—'
+  // A text column's reading is already the thing to print. Without this, "12.5"
+  // from a text column would be regrouped like a measurement.
+  if (typeof v === 'string') return v
   if (labels && (v === 0 || v === 1)) return labels[v]
   return isDigits(v) ? groupDigits(v, decimals) : `${v}`
 }
@@ -72,6 +75,7 @@ export function fmtValue(v, decimals, labels) {
  * never coerces into an accidental 0 cut-off.
  */
 export function thresholdColor(v, base, warn, crit) {
+  if (typeof v !== 'number') return base
   if (crit != null && v >= crit) return CRIT_COLOR
   if (warn != null && v >= warn) return WARN_COLOR
   return base

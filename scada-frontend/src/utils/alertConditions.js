@@ -131,14 +131,36 @@ export function seriesAlerts(conditions, seriesList) {
   const out = {}
   if (!Array.isArray(conditions) || !conditions.length) return out
 
+  // What a condition calls a series: its column, or `column[i]` for one slot of
+  // an array column (several lines share one column, so the column can't tell
+  // them apart).
+  const nameOf = (s) => s.varName ?? s.valueCol
+  const addTo = (g, s) => {
+    g.series.push(s)
+    if (s.latest) g.vars[nameOf(s)] = s.latest.value
+    for (const [col, v] of Object.entries(s.panelCols || {})) g.vars[panelVarKey(col)] = v
+  }
+
   const rows = new Map()
+  const shared = []
   for (const s of seriesList || []) {
+    // A column drawn once although a series column is set has no row of its
+    // own to be judged on; it joins every row below instead.
+    if (s.unsplit) { shared.push(s); continue }
     const id = JSON.stringify([s.datasourceId ?? null, s.filterVal ?? null])
     let g = rows.get(id)
     if (!g) { g = { vars: {}, series: [] }; rows.set(id, g) }
-    g.series.push(s)
-    if (s.latest) g.vars[s.valueCol] = s.latest.value
-    for (const [col, v] of Object.entries(s.panelCols || {})) g.vars[panelVarKey(col)] = v
+    addTo(g, s)
+  }
+  for (const s of shared) {
+    const ds = s.datasourceId ?? null
+    let targets = [...rows.entries()].filter(([id]) => JSON.parse(id)[0] === ds).map(([, g]) => g)
+    if (!targets.length) {
+      const g = { vars: {}, series: [] }
+      rows.set(JSON.stringify([ds, null]), g)
+      targets = [g]
+    }
+    for (const g of targets) addTo(g, s)
   }
 
   for (const { vars, series } of rows.values()) {
@@ -147,14 +169,14 @@ export function seriesAlerts(conditions, seriesList) {
       const refs = new Set(conditionRefs(cond))
       const level = levelOf(cond)
       for (const s of series) {
-        if (!refs.has(s.valueCol)) continue
+        if (!refs.has(nameOf(s))) continue
         const prev = out[s.key]
         const text = prev ? `${prev.text}\n${conditionText(cond)}` : conditionText(cond)
         if (prev && ALERT_LEVELS.indexOf(prev.level) >= ALERT_LEVELS.indexOf(level)) {
           prev.text = text
           continue
         }
-        const hit = (cond.rows || []).find((r) => r.lhs === s.valueCol && resolveRow(r, vars).met)
+        const hit = (cond.rows || []).find((r) => r.lhs === nameOf(s) && resolveRow(r, vars).met)
         out[s.key] = {
           level,
           op: hit ? hit.op : null,

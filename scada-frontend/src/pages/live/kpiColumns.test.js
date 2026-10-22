@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { columnChoices, whyNotCounted, picksArray, filterChoices } from './kpiColumns.js'
+import { columnChoices, usableAs, whyNotUsable, picksArray, filterChoices, numericColumns } from './kpiColumns.js'
 
 // camera_defect_logs, as /schema/columns describes it
 const LOGS = {
@@ -15,6 +15,7 @@ const LOGS = {
     defect_array: 'int4[]', created_at: 'timestamptz', updated_at: 'timestamptz', payload: 'jsonb',
   },
 }
+const byName = (cols) => Object.fromEntries(columnChoices(cols).map((c) => [c.name, c]))
 
 test('every column of the table is listed once, with its type badge', () => {
   const all = columnChoices(LOGS)
@@ -22,20 +23,27 @@ test('every column of the table is listed once, with its type badge', () => {
   assert.equal(all.find((c) => c.name === 'defect_array').badge, 'int4[]')
 })
 
-test('numbers, arrays and flags can be counted; text, time and the rest cannot', () => {
-  const by = Object.fromEntries(columnChoices({ ...LOGS, bool_columns: ['alarm_active'] }).map((c) => [c.name, c]))
-  for (const n of ['camera_id', 'defect_array', 'alarm_active']) assert.equal(by[n]?.countable, true, n)
-  for (const n of ['code', 'created_at', 'payload', 'id']) assert.equal(by[n].countable, false, n)
+test('machine blocks read numbers and numeric arrays; a defect tally also reads flags', () => {
+  const by = byName({ ...LOGS, bool_columns: ['alarm_active'] })
+  for (const n of ['camera_id', 'defect_array']) {
+    assert.equal(usableAs(by[n], 'number'), true, n)
+    assert.equal(usableAs(by[n], 'count'), true, n)
+  }
+  assert.equal(usableAs(by.alarm_active, 'number'), false)
+  assert.equal(usableAs(by.alarm_active, 'count'), true)
+  for (const n of ['code', 'created_at', 'payload', 'id']) {
+    assert.equal(usableAs(by[n], 'number'), false, n)
+    assert.equal(usableAs(by[n], 'count'), false, n)
+  }
   assert.equal(by.defect_array.group, 'Arrays')
   assert.equal(by.payload.group, 'Other')
 })
 
-test('an uncountable column says why', () => {
-  const by = Object.fromEntries(columnChoices(LOGS).map((c) => [c.name, c]))
-  assert.equal(whyNotCounted(by.defect_array), '')
-  assert.match(whyNotCounted(by.code), /pick rows/)
-  assert.match(whyNotCounted(by.created_at), /clock/)
-  assert.match(whyNotCounted(by.payload), /Not a number/)
+test('an unusable column says why', () => {
+  const by = byName(LOGS)
+  assert.match(whyNotUsable(by.code), /name machines or pick rows/)
+  assert.match(whyNotUsable(by.created_at), /clock/)
+  assert.match(whyNotUsable(by.payload), /Not a number/)
 })
 
 test('the array rule matters only when an array is picked', () => {
@@ -45,9 +53,14 @@ test('the array rule matters only when an array is picked', () => {
   assert.equal(picksArray(choices, null), false)
 })
 
-test('rows are picked by text, flag or id columns — never a clock', () => {
+test('machines and rows are named by text, flag or id columns — never a clock', () => {
   assert.deepEqual(filterChoices(LOGS), ['id', 'code', 'name', 'location'])
   assert.deepEqual(filterChoices(null), [])
+})
+
+test('sensors are chosen among the numeric columns', () => {
+  assert.deepEqual(numericColumns(LOGS), ['camera_id', 'batch_id', 'defect_array'])
+  assert.deepEqual(numericColumns(undefined), [])
 })
 
 test('a table that describes nothing lists nothing', () => {

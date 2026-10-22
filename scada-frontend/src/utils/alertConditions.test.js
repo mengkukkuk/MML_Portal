@@ -115,3 +115,35 @@ test('no conditions or no readings means no alerts', () => {
   const noData = { ...tag('T', 1), latest: null }
   assert.deepEqual(seriesAlerts([cond('warning', r('>', 'value', 0))], [noData]), {})
 })
+
+test('a condition names one slot of an array column by its varName', () => {
+  const slot = (i, value) => ({
+    key: `slot${i}`, valueCol: 'reading', varName: `reading[${i}]`, filterVal: 'A',
+    datasourceId: null, latest: { value },
+  })
+  const c = cond('critical', { lhs: 'reading[0]', op: '>', rhsType: 'series', rhs: 'reading[2]' })
+  const out = seriesAlerts([c], [slot(0, 9), slot(1, 4), slot(2, 5)])
+  assert.deepEqual(Object.keys(out).sort(), ['slot0', 'slot2'])
+  assert.equal(out.slot0.limit, 5)
+})
+
+test('an unsplit column is visible to every series row it is shared with', () => {
+  const dev = (filterVal, value) => ({
+    key: filterVal, valueCol: 'reading', filterVal, datasourceId: null, latest: { value },
+  })
+  const setpoint = {
+    key: 'sp', valueCol: 'setpoint', filterVal: null, unsplit: true, datasourceId: null, latest: { value: 100 },
+  }
+  const c = cond('warning', { lhs: 'reading', op: '>', rhsType: 'series', rhs: 'setpoint' })
+  const out = seriesAlerts([c], [dev('A', 120), dev('B', 80), setpoint])
+  assert.deepEqual(Object.keys(out).sort(), ['A', 'sp'])
+  assert.equal(out.A.limit, 100)
+})
+
+test('an unsplit column alone still forms a row', () => {
+  const sp = {
+    key: 'sp', valueCol: 'setpoint', filterVal: null, unsplit: true, datasourceId: null, latest: { value: 7 },
+  }
+  const out = seriesAlerts([cond('warning', { lhs: 'setpoint', op: '>', rhsType: 'value', rhs: 5 })], [sp])
+  assert.deepEqual(Object.keys(out), ['sp'])
+})

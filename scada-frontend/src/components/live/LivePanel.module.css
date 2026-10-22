@@ -364,6 +364,20 @@
   flex-shrink: 0;
 }
 
+/* A text column's latest word, beside the chart it accompanies: label muted,
+   word in the full ink, so "Mode  AUTO" reads as a pair rather than one phrase. */
+.panel__chip--text {
+  font-variant-numeric: normal;
+}
+
+.panel__chiplabel {
+  color: var(--fg-muted);
+  max-width: 12ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .panel__error {
   color: #f5a524;
   margin: 0;
@@ -514,6 +528,12 @@
   line-height: 1.1;
   letter-spacing: 0.01em;
   text-shadow: 0 0 26px color-mix(in srgb, currentColor 30%, transparent);
+}
+
+/* A word is wider than a number at the same size, so it steps down to fit. */
+.panel__statnum--text {
+  font-size: calc(clamp(16px, min(18cqh, 9cqw), 30px) * var(--text-scale, 1));
+  font-variant-numeric: normal;
 }
 
 .panel__stat--multi .panel__statnum {

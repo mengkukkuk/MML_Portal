@@ -173,14 +173,21 @@ def _validate(body: PanelIn) -> None:
                        f"{str(e).strip().splitlines()[0] if str(e).strip() else 'connection error'}",
             )
         # Booleans count as values: they arrive from /schema/series as 0/1 and
-        # draw a step line. Kept out of `value_columns` upstream so the editor
-        # can still tell a flag from a measurement, so the union is spelled
+        # draw a step line. Numeric arrays are values too -- each listed slot of
+        # one is its own line -- and so is text, which a Stat or Table prints as
+        # the latest word. All three are kept out of `value_columns` upstream so
+        # the editor can tell them from a measurement, so the union is spelled
         # here rather than widened there.
-        pickable = set(cols["value_columns"]) | set(cols.get("bool_columns", []))
+        pickable = (
+            set(cols["value_columns"])
+            | set(cols.get("bool_columns", []))
+            | set(cols.get("array_value_columns", []))
+            | set(cols.get("text_columns", []))
+        )
         if body.metric not in pickable:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"metric must be a numeric or boolean column of {body.table_name!r}",
+                detail=f"metric must be a numeric, boolean, array or text column of {body.table_name!r}",
             )
         if body.filter_col and body.filter_col not in cols["filter_columns"]:
             raise HTTPException(
@@ -195,8 +202,9 @@ def _validate(body: PanelIn) -> None:
         # Extra value columns ride in options.value_cols so the panel can chart
         # several columns from the same table as separate series. The primary
         # column stays in `metric` for back-compat; each extra must also be a
-        # valid numeric or boolean column.
-        extra = body.options.get("value_cols") if isinstance(body.options, dict) else None
+        # valid value column.
+        options = body.options if isinstance(body.options, dict) else {}
+        extra = options.get("value_cols")
         if extra is not None:
             if not isinstance(extra, list) or any(not isinstance(c, str) for c in extra):
                 raise HTTPException(
@@ -207,9 +215,49 @@ def _validate(body: PanelIn) -> None:
                 if c not in pickable:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"options.value_cols[{c!r}] is not a numeric or boolean "
-                               f"column of {body.table_name!r}",
+                        detail=f"options.value_cols[{c!r}] is not a numeric, boolean, array or "
+                               f"text column of {body.table_name!r}",
                     )
+        _validate_column_options(options)
+
+
+def _validate_column_options(options: dict) -> None:
+    """Shape of the per-column options the Live editor writes beside value_cols.
+
+    `unsplitCols` / `textCols` are lists of column names; `arraySlots` maps an
+    array column to the slots it draws, `[{"index": int >= 0, "name"?: str}]`.
+    The tile reads these without further checks, so a malformed one is refused
+    here rather than blanking the panel later.
+    """
+    for key in ("unsplitCols", "textCols"):
+        value = options.get(key)
+        if value is not None and (
+            not isinstance(value, list) or any(not isinstance(c, str) for c in value)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"options.{key} must be a list of column names",
+            )
+    slots_by_col = options.get("arraySlots")
+    if slots_by_col is None:
+        return
+    bad = HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="options.arraySlots must map a column to a list of {index, name} slots",
+    )
+    if not isinstance(slots_by_col, dict):
+        raise bad
+    for slots in slots_by_col.values():
+        if not isinstance(slots, list):
+            raise bad
+        for slot in slots:
+            index = slot.get("index") if isinstance(slot, dict) else None
+            name = slot.get("name") if isinstance(slot, dict) else None
+            if (
+                not isinstance(index, int) or isinstance(index, bool) or index < 0
+                or (name is not None and not isinstance(name, str))
+            ):
+                raise bad
 
 
 def _validate_kpi(body: PanelIn) -> None:
@@ -253,12 +301,19 @@ def _validate_kpi(body: PanelIn) -> None:
         if counts_picked_columns(kpi, body.chart_type):
             body.metric = bind_picked(kpi, cols)["defect_cols"][0]
         else:
-            families = bind_families(kpi, cols, location_tags(kpi.get("location"), body.datasource_id))
+            families = bind_families(kpi, cols, location_tags(kpi.get("location"), body.datasource_id),
+                                     _machine_values(body.table_name, body.datasource_id, kpi), body.table_name)
             body.metric = families[0]["speed"]
     except KpiOptionsError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     body.ts_col = kpi["ts_col"]
     body.filter_col = None
+
+
+def _machine_values(table: str, datasource_id: int | None, kpi: dict) -> list[str] | None:
+    """The machine column's distinct values for an explicitly bound table, else None."""
+    from kpi import machine_values
+    return machine_values(table, datasource_id, kpi)
 
 
 def location_tags(location: str | None, datasource_id: int | None) -> set[str] | None:

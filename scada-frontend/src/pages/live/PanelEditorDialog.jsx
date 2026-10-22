@@ -20,6 +20,8 @@ import AccordionSummary from '@mui/material/AccordionSummary'
 import AccordionDetails from '@mui/material/AccordionDetails'
 import Chip from '@mui/material/Chip'
 import IconButton from '@mui/material/IconButton'
+import Checkbox from '@mui/material/Checkbox'
+import Tooltip from '@mui/material/Tooltip'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import CloseIcon from '@mui/icons-material/Close'
 import ShowChartOutlinedIcon from '@mui/icons-material/ShowChartOutlined'
@@ -34,7 +36,9 @@ import GridOnOutlinedIcon from '@mui/icons-material/GridOnOutlined'
 import ScatterPlotOutlinedIcon from '@mui/icons-material/ScatterPlotOutlined'
 import ViewTimelineOutlinedIcon from '@mui/icons-material/ViewTimelineOutlined'
 import CandlestickChartOutlinedIcon from '@mui/icons-material/CandlestickChartOutlined'
-import { fetchSchemaTables, fetchSchemaColumns, fetchSchemaValues } from '@/api/schema'
+import {
+  fetchSchemaTables, fetchSchemaColumns, fetchSchemaValues, fetchSchemaLatest,
+} from '@/api/schema'
 import { fetchCameraLinkOptions } from '@/api/cameras'
 import { createPanel, updatePanel } from '@/api/panels'
 import { apiErrorMessage } from '@/api/client'
@@ -49,6 +53,9 @@ import {
   VIZ_TYPE_META, PARAM_SCHEMA, POLL_INTERVAL_OPTIONS, CONNECTORS,
   defaultOptions, TEXT_SIZE_KEYS, toNullableNumber, legacyBinding, buildPanelPayload,
 } from './panelPayload'
+import {
+  deriveSeriesSpecs, slotKey, slotsOf, isDefaultSlots, cleanSlots,
+} from '@/components/live/seriesModel'
 import ParamFields from './ParamFields'
 import styles from './PanelEditorDialog.module.css'
 
@@ -80,20 +87,22 @@ const EMPTY_COLS = {
 // What may be bound as a panel's value. Numeric first — it is what a tile
 // usually means — with flags offered beside it, drawn as a 0/1 step line.
 // Numeric-array readings (a value bundled with its setpoint and limits, per
-// db.py's _NUMERIC_ARRAY_UDTS) are offered last: some plant tables carry no
-// scalar numeric columns at all, only these, and without them the picker for
-// such a table showed nothing to select. A tile still draws one scalar line,
-// so `usePanelPolling` reads only the measured slot (index 0) out of the
-// array it gets back — the same convention Reports' EnvelopeTrend uses. Text
-// is still absent: nothing on this page can draw it.
-const VALUE_KINDS = ['value_columns', 'bool_columns', 'array_value_columns']
+// db.py's _NUMERIC_ARRAY_UDTS) come next: some plant tables carry no scalar
+// numeric columns at all, only these. An array column draws slot 0 unless its
+// row lists other slots (see ArraySlots) — each listed slot is its own line.
+// Text is last: a Stat or Table prints the latest word, and a chart shows it as
+// a chip above the plot (seriesModel's `isText`).
+const VALUE_KINDS = ['value_columns', 'bool_columns', 'array_value_columns', 'text_columns']
 // A gauge setpoint has to be a number: flags are left out.
 const SETPOINT_KINDS = ['value_columns', 'array_value_columns']
 
 // Options that only mean something against a measurement. Hidden -- not
-// cleared -- when every bound column is a flag: a stored warn on a panel
+// cleared -- when every bound column is a flag or a word: a stored warn on a panel
 // someone later re-points at a real reading should still be there.
 const BOOL_HIDDEN_PARAMS = new Set(['warn', 'crit', 'decimals'])
+
+// The chart types that print a word. Every other type needs at least one number.
+const TEXT_FRIENDLY = new Set(['stat', 'table'])
 
 function blankValues() {
   return {
@@ -106,6 +115,8 @@ function blankValues() {
     gaugeSeries: {},
     boolLabels: {},
     columnLabels: {},
+    unsplitCols: [],
+    arraySlots: {},
     filter_col: null,
     filters: [],
     ts_col: null,
@@ -169,9 +180,39 @@ export default function PanelEditorDialog({
   const unitsMap = watch('units') || {}
   const boolLabelsMap = watch('boolLabels') || {}
   const columnLabelsMap = watch('columnLabels') || {}
+  const unsplitCols = watch('unsplitCols') || []
+  const arraySlotsMap = watch('arraySlots') || {}
 
   const allValueCols = useMemo(() => [metric, ...valueCols].filter(Boolean), [metric, valueCols])
-  const conditionSeriesOptions = allValueCols
+  // Which of the bound columns are words / arrays, read off the live catalogue.
+  const textCols = useMemo(
+    () => allValueCols.filter((c) => (schemaCols.text_columns || []).includes(c)),
+    [allValueCols, schemaCols],
+  )
+  const arrayCols = useMemo(
+    () => new Set(allValueCols.filter((c) => (schemaCols.array_value_columns || []).includes(c))),
+    [allValueCols, schemaCols],
+  )
+  // "Not split by series" is only a choice once a series column has several
+  // value columns to be set apart from.
+  const canUnsplit = !!filterCol && allValueCols.length > 1
+  // Every line this binding will draw: the single place the editor asks "what
+  // are the series called", for units, gauge overrides and conditions alike.
+  const editorSpecs = useMemo(() => deriveSeriesSpecs({
+    metric,
+    valueCols,
+    filterCol,
+    filters,
+    unsplitCols: canUnsplit ? unsplitCols : [],
+    arraySlots: arraySlotsMap,
+    columnLabels: columnLabelsMap,
+    textCols,
+  }), [metric, valueCols, filterCol, filters, canUnsplit, unsplitCols, arraySlotsMap, columnLabelsMap, textCols])
+  // A condition compares numbers, so words are not offered; a slot is named col[i].
+  const conditionSeriesOptions = useMemo(
+    () => [...new Set(editorSpecs.filter((sp) => !sp.isText).map((sp) => sp.varName))],
+    [editorSpecs],
+  )
 
   const valueGroups = useMemo(
     () => groupColumns(schemaCols, VALUE_KINDS),
@@ -208,10 +249,11 @@ export default function PanelEditorDialog({
     () => allValueCols.filter((c) => (schemaCols.bool_columns || []).includes(c)),
     [allValueCols, schemaCols],
   )
-  // Warn/crit compare a reading against a limit. Against a flag there is no
-  // limit to set -- every threshold is either always or never crossed -- so the
-  // fields come off rather than sitting there inviting a rule that cannot fire.
-  const allBool = boolCols.length > 0 && boolCols.length === allValueCols.length
+  // Warn/crit compare a reading against a limit. Against a flag or a word there
+  // is no limit to set -- every threshold is either always or never crossed --
+  // so the fields come off rather than sitting there inviting a rule that cannot fire.
+  const allBool = allValueCols.length > 0
+    && boolCols.length + textCols.length === allValueCols.length
   const currentSchema = useMemo(
     () => (PARAM_SCHEMA[chartType] || [])
       .filter((f) => !(allBool && BOOL_HIDDEN_PARAMS.has(f.key))),
@@ -294,8 +336,27 @@ export default function PanelEditorDialog({
     }
     setValue('filters', newFilters)
 
+    // Per-column options survive only for columns still bound (and, for slots,
+    // still arrays).
+    const bound = new Set([newMetric, ...newValueCols].filter(Boolean))
+    const nextUnsplit = (getValues('unsplitCols') || []).filter((c) => bound.has(c))
+    setValue('unsplitCols', nextUnsplit)
+    const arrayNames = new Set(cols.array_value_columns || [])
+    const curSlots = getValues('arraySlots') || {}
+    const nextSlots = {}
+    for (const k of Object.keys(curSlots)) if (bound.has(k) && arrayNames.has(k)) nextSlots[k] = curSlots[k]
+    setValue('arraySlots', nextSlots)
+
     // Drop unit/gauge declarations whose series no longer exist.
     const liveKeys = new Set([newMetric, ...newValueCols, ...newFilters].filter(Boolean))
+    for (const sp of deriveSeriesSpecs({
+      metric: newMetric,
+      valueCols: newValueCols,
+      filterCol: newFilterCol,
+      filters: newFilters,
+      unsplitCols: newFilterCol ? nextUnsplit : [],
+      arraySlots: nextSlots,
+    })) liveKeys.add(sp.unitKey)
     const curUnits = getValues('units') || {}
     const nextUnits = {}
     for (const k of Object.keys(curUnits)) if (liveKeys.has(k)) nextUnits[k] = curUnits[k]
@@ -325,6 +386,7 @@ export default function PanelEditorDialog({
           // eslint-disable-next-line no-unused-vars
           tags: _t, filters: _f, value_cols: _v, mathExpr: _m, units: _u, gaugeSeries: _g, conditions: _c, layout: _l,
           boolCols: _bc, boolLabels: _bl, columnLabels: _cl,
+          unsplitCols: _uc, arraySlots: _as, textCols: _tc,
           ...vizOpts
         } = panel.options || {}
         const chart_type = panel.chart_type === 'line' ? 'timeseries' : panel.chart_type
@@ -336,6 +398,8 @@ export default function PanelEditorDialog({
           gaugeSeries: { ...(panel.options?.gaugeSeries || {}) },
           boolLabels: { ...(panel.options?.boolLabels || {}) },
           columnLabels: { ...(panel.options?.columnLabels || {}) },
+          unsplitCols: [...(panel.options?.unsplitCols || [])],
+          arraySlots: JSON.parse(JSON.stringify(panel.options?.arraySlots || {})),
           mathExpr: panel.options?.mathExpr || '',
           conditions: JSON.parse(JSON.stringify(panel.options?.conditions || [])),
           window_minutes: panel.window_minutes,
@@ -419,27 +483,55 @@ export default function PanelEditorDialog({
     const c = firstUnusedValueCol()
     if (c) setValue('value_cols', [...valueCols, c])
   }
+  // Everything a column carried that is not part of the binding itself: its
+  // unit, display name, "not split" flag and array slots (with their units).
+  // Called once a column is no longer bound anywhere in the panel.
+  function dropColumnState(col, stillBound) {
+    if (!col || stillBound.has(col)) return
+    setUnit(col, null)
+    setColumnLabel(col, null)
+    setValue('unsplitCols', (getValues('unsplitCols') || []).filter((c) => c !== col))
+    const slots = { ...(getValues('arraySlots') || {}) }
+    const units = { ...(getValues('units') || {}) }
+    for (const sl of slots[col] || []) delete units[slotKey(col, sl.index)]
+    for (const k of Object.keys(units)) if (k.startsWith(`${col}[`)) delete units[k]
+    setValue('units', units)
+    delete slots[col]
+    setValue('arraySlots', slots)
+  }
   function updateValueCol(i, val) {
     const cols = [...valueCols]
+    const prev = cols[i]
     cols[i] = val
     setValue('value_cols', cols)
+    dropColumnState(prev, new Set([metric, ...cols].filter(Boolean)))
   }
   function removeValueCol(i) {
     const cols = [...valueCols]
     const col = cols[i]
     cols.splice(i, 1)
     setValue('value_cols', cols)
-    const stillUsed = new Set([metric, ...cols].filter(Boolean))
-    if (col && !stillUsed.has(col)) {
-      setUnit(col, null)
-      setColumnLabel(col, null)
-    }
+    dropColumnState(col, new Set([metric, ...cols].filter(Boolean)))
+  }
+  function setUnsplit(col, on) {
+    const cur = getValues('unsplitCols') || []
+    setValue('unsplitCols', on ? [...new Set([...cur, col])] : cur.filter((c) => c !== col))
+  }
+  // The slot list is saved only when it says something: the default (slot 0,
+  // unnamed) is what an absent entry already means.
+  function setColumnSlots(col, slots) {
+    const next = { ...arraySlotsMap }
+    if (isDefaultSlots(slots)) delete next[col]
+    else next[col] = cleanSlots(slots)
+    setValue('arraySlots', next)
   }
   // A flag reads 0 or 1. A dial still scaled 0-100 would pin the needle at
   // the floor forever and look exactly like a dead signal, so picking one
   // rescales the tile to the range it actually reports.
   function onMetricChange(col) {
+    const prev = metric
     setValue('metric', col)
+    dropColumnState(prev, new Set([col, ...valueCols].filter(Boolean)))
     if (!(schemaCols.bool_columns || []).includes(col)) return
     const opts = getValues('options') || {}
     if ('min' in opts) setValue('options.min', 0)
@@ -500,7 +592,7 @@ export default function PanelEditorDialog({
 
   // --- gauge per-series overrides ----------------------------------------
   const gaugeSeriesKeys = chartType === 'gauge'
-    ? (filterCol ? filters.filter(Boolean) : allValueCols)
+    ? [...new Set(editorSpecs.filter((sp) => !sp.isText).map((sp) => sp.unitKey))]
     : []
 
   function setGaugeSeriesField(key, field, value) {
@@ -574,9 +666,10 @@ export default function PanelEditorDialog({
   async function onSubmit(values) {
     setSaveError('')
     const result = buildPanelPayload({
-      // `boolCols` is derived from the live catalogue rather than typed, so it
-      // is not an RHF field -- it joins the form only here, on the way out.
-      form: { ...values, boolCols }, editingPanel, activeDashboardId, panelsLength, nextLayout,
+      // `boolCols` and `textCols` are derived from the live catalogue rather
+      // than typed, so they are not RHF fields -- they join the form only here,
+      // on the way out.
+      form: { ...values, boolCols, textCols }, editingPanel, activeDashboardId, panelsLength, nextLayout,
     })
     if (!result.ok) { setSaveError(result.error); return }
     try {
@@ -591,6 +684,94 @@ export default function PanelEditorDialog({
     } catch (e) {
       setSaveError(apiErrorMessage(e, 'Failed to save panel.'))
     }
+  }
+
+  // One bound value column: its select, display name, unit, and -- beneath, in
+  // the same indented column -- the options that only apply to its kind.
+  // `i` is the column's position in the whole bound list (metric first).
+  function renderValueRow(col, i) {
+    const isMetric = i === 0
+    const isText = textCols.includes(col)
+    const isArray = arrayCols.has(col)
+    const unsplit = canUnsplit && unsplitCols.includes(col)
+    const mapped = isArray && !isDefaultSlots(arraySlotsMap[col])
+    // Palette steps count drawn series only, matching buildSeriesList.
+    const drawnBefore = allValueCols.slice(0, i).filter((x) => !textCols.includes(x)).length
+    const onPick = isMetric ? onMetricChange : (v) => updateValueCol(i - 1, v)
+    return (
+      <div key={`${i}:${col}`} className={styles.taglistGroup}>
+        <div className={styles.taglistRow}>
+          <span
+            className={styles.swatch}
+            style={{ background: isText ? 'var(--fg-muted)' : colorAt(drawnBefore) }}
+          />
+          <ColumnSelect
+            className={styles.taglistSelect}
+            value={col}
+            onChange={onPick}
+            groups={valueGroups}
+            labelFor={labelForColumn}
+            searchable
+          />
+          {/* The column's own name only ever reaches the legend when
+              there is no filter (it *is* the series), or when more
+              than one column is charted (it prefixes the filter
+              value). A single filtered column's name never shows --
+              the field is hidden rather than left to edit nothing. */}
+          {(!filterCol || allValueCols.length > 1) && (
+            <TextField
+              size="small"
+              className={styles.taglistName}
+              placeholder="Display name"
+              value={columnLabelsMap[col] || ''}
+              onChange={(e) => setColumnLabel(col, e.target.value)}
+            />
+          )}
+          {/* A unit follows the series value when there is a filter, so the
+              column's own picker shows only where the column is the series:
+              unfiltered, or drawn once. A word has none, and a mapped array
+              keeps one per slot. */}
+          {(!filterCol || unsplit) && !isText && !mapped && (
+            <UnitPicker className={styles.taglistUnit} value={unitsMap[col] || ''} onChange={(v) => setUnit(col, v)} />
+          )}
+          {isMetric
+            ? <span className={styles.removePlaceholder} />
+            : (
+              <IconButton size="small" title="Remove value" onClick={() => removeValueCol(i - 1)}>
+                <CloseIcon fontSize="inherit" />
+              </IconButton>
+            )}
+        </div>
+        {canUnsplit && (
+          <Tooltip title="Draw one line for this column instead of one per series value" placement="bottom-start">
+            <label className={styles.subOption}>
+              <Checkbox
+                size="small"
+                className={styles.subOptionBox}
+                checked={unsplit}
+                onChange={(e) => setUnsplit(col, e.target.checked)}
+              />
+              Don&apos;t split by series
+            </label>
+          </Tooltip>
+        )}
+        {isArray && (
+          <ArraySlots
+            col={col}
+            slots={slotsOf(arraySlotsMap, col)}
+            onChange={(next) => setColumnSlots(col, next)}
+            unitsMap={unitsMap}
+            onUnit={setUnit}
+            sampleFilter={filterCol && !unsplit ? (filters[0] ?? null) : null}
+            filterCol={filterCol}
+            table={tableName}
+            tsCol={watch('ts_col')}
+            datasourceId={datasourceId}
+            startColor={drawnBefore}
+          />
+        )}
+      </div>
+    )
   }
 
   return (
@@ -635,66 +816,29 @@ export default function PanelEditorDialog({
               <div className={styles.field}>
                 <span className={styles.fieldLabel}>Value column</span>
                 <div className={styles.taglist}>
-                  <div className={styles.taglistRow}>
-                    <span className={styles.swatch} style={{ background: colorAt(0) }} />
-                    <ColumnSelect
-                      className={styles.taglistSelect}
-                      value={metric}
-                      onChange={onMetricChange}
-                      groups={valueGroups}
-                      labelFor={labelForColumn}
-                      searchable
-                    />
-                    {/* The column's own name only ever reaches the legend when
-                        there is no filter (it *is* the series), or when more
-                        than one column is charted (it prefixes the filter
-                        value). A single filtered column's name never shows --
-                        the field is hidden rather than left to edit nothing. */}
-                    {(!filterCol || allValueCols.length > 1) && (
-                      <TextField
-                        size="small"
-                        className={styles.taglistName}
-                        placeholder="Display name"
-                        value={columnLabelsMap[metric] || ''}
-                        onChange={(e) => setColumnLabel(metric, e.target.value)}
-                      />
-                    )}
-                    {!filterCol && (
-                      <UnitPicker className={styles.taglistUnit} value={unitsMap[metric] || ''} onChange={(v) => setUnit(metric, v)} />
-                    )}
-                    <span className={styles.removePlaceholder} />
-                  </div>
-                  {valueCols.map((c, i) => (
-                    // eslint-disable-next-line react/no-array-index-key
-                    <div key={i} className={styles.taglistRow}>
-                      <span className={styles.swatch} style={{ background: colorAt(i + 1) }} />
-                      <ColumnSelect
-                        className={styles.taglistSelect}
-                        value={c}
-                        onChange={(v) => updateValueCol(i, v)}
-                        groups={valueGroups}
-                        labelFor={labelForColumn}
-                        searchable
-                      />
-                      {(!filterCol || allValueCols.length > 1) && (
-                        <TextField
-                          size="small"
-                          className={styles.taglistName}
-                          placeholder="Display name"
-                          value={columnLabelsMap[c] || ''}
-                          onChange={(e) => setColumnLabel(c, e.target.value)}
-                        />
-                      )}
-                      {!filterCol && (
-                        <UnitPicker className={styles.taglistUnit} value={unitsMap[c] || ''} onChange={(v) => setUnit(c, v)} />
-                      )}
-                      <IconButton size="small" title="Remove value" onClick={() => removeValueCol(i)}>
-                        <CloseIcon fontSize="inherit" />
-                      </IconButton>
-                    </div>
-                  ))}
+                  {/* The first row is always there, empty or not: it is the picker. */}
+                  {[metric ?? null, ...valueCols].map((c, i) => renderValueRow(c, i))}
                   <Button size="small" onClick={addValueCol}>+ Value</Button>
                 </div>
+                {/* What "Don't split by series" costs, said once beside the
+                    list rather than on every row. */}
+                {canUnsplit && (
+                  <p className={styles.hint}>
+                    &quot;Don&apos;t split by series&quot; reads the whole table, not one series value. Best for a
+                    column that holds the same value on every row; on a table with one row per
+                    device, its history mixes every device.
+                  </p>
+                )}
+                {canUnsplit && allValueCols.every((c) => unsplitCols.includes(c)) && (
+                  <p className={styles.hint}>
+                    Every column is unsplit, so the series values below have no effect.
+                  </p>
+                )}
+                {textCols.length > 0 && !TEXT_FRIENDLY.has(chartType) && (
+                  <p className={styles.hint}>
+                    Text shows as a chip above this chart. Stat and Table print it in full.
+                  </p>
+                )}
               </div>
 
               {boolCols.length > 0 && (
@@ -1161,6 +1305,114 @@ function SetpointColumnPicker({
         >
           <CloseIcon fontSize="inherit" />
         </IconButton>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The slots of one array column, each its own line.
+ *
+ * An array column carries several readings per row (a measured value with its
+ * setpoint and limits). Which slot means what is not in the schema, so each is
+ * named here by hand: tick the slots to draw, type what each is called.
+ *
+ * The slot count is read off one live row so the list starts out complete and
+ * each slot shows its current value -- which is also how you tell [2] is the
+ * upper limit. When the table has no row yet, or the read fails, the slots
+ * already saved are shown and `Add index` takes a number by hand.
+ */
+function ArraySlots({
+  col, slots, onChange, unitsMap, onUnit, sampleFilter, filterCol, table, tsCol, datasourceId,
+  startColor,
+}) {
+  const [draft, setDraft] = useState('')
+  const sample = useQuery({
+    queryKey: ['pde-array-sample', datasourceId ?? null, table, col, filterCol || null, sampleFilter, tsCol || null],
+    queryFn: () => fetchSchemaLatest({
+      table, valueCol: col, filterCol, filterVal: sampleFilter, tsCol, datasourceId,
+    }),
+    enabled: !!table && !!col,
+    staleTime: 30_000,
+    retry: false,
+  })
+  const reading = (sample.data?.readings || []).find((r) => Array.isArray(r.value))?.value
+  const checked = new Map(slots.map((sl) => [sl.index, sl]))
+  const shown = [...new Set([
+    ...Array.from({ length: reading?.length || 0 }, (_, i) => i),
+    ...slots.map((sl) => sl.index),
+    0,
+  ])].sort((a, b) => a - b)
+  // The palette position of each drawn slot, so the swatch matches its line.
+  let drawn = startColor
+
+  function toggle(index, on) {
+    if (on) onChange([...slots, { index }])
+    else if (slots.length > 1) onChange(slots.filter((sl) => sl.index !== index))
+  }
+  function rename(index, name) {
+    onChange(slots.map((sl) => (sl.index === index ? { ...sl, name } : sl)))
+  }
+  function addIndex() {
+    const n = Number(draft)
+    if (!Number.isInteger(n) || n < 0 || checked.has(n)) return
+    onChange([...slots, { index: n }])
+    setDraft('')
+  }
+
+  return (
+    <div className={styles.slots} role="group" aria-label={`Slots of ${col}`}>
+      <span className={styles.slotsHead}>Plot these positions in the array</span>
+      {shown.map((index) => {
+        const sl = checked.get(index)
+        const on = !!sl
+        const color = on ? colorAt(drawn++) : 'transparent'
+        const live = reading?.[index]
+        return (
+          <div key={index} className={`${styles.slotRow} ${on ? '' : styles.slotRowOff}`}>
+            <Checkbox
+              size="small"
+              checked={on}
+              disabled={on && slots.length === 1}
+              onChange={(e) => toggle(index, e.target.checked)}
+              slotProps={{ input: { 'aria-label': `Plot [${index}]` } }}
+            />
+            <span className={styles.slotSwatch} style={{ background: color }} />
+            <span className={styles.slotIndex}>[{index}]</span>
+            <span className={styles.slotLive} title="Latest value">
+              {live == null ? '\u2014' : String(typeof live === 'number' ? Math.round(live * 1000) / 1000 : live)}
+            </span>
+            {on && (
+              <TextField
+                size="small"
+                className={styles.slotName}
+                placeholder="Name"
+                value={sl?.name || ''}
+                onChange={(e) => rename(index, e.target.value)}
+              />
+            )}
+            {on && (
+              <UnitPicker
+                className={styles.taglistUnit}
+                value={unitsMap[slotKey(col, index)] || ''}
+                onChange={(v) => onUnit(slotKey(col, index), v)}
+              />
+            )}
+          </div>
+        )
+      })}
+      <div className={styles.slotAdd}>
+        <TextField
+          size="small"
+          type="number"
+          className={styles.slotAddInput}
+          placeholder="Index"
+          value={draft}
+          slotProps={{ htmlInput: { min: 0, step: 1, 'aria-label': 'Array index to add' } }}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addIndex() } }}
+        />
+        <Button size="small" onClick={addIndex} disabled={draft === ''}>Add index</Button>
       </div>
     </div>
   )

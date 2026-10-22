@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   inheritBinding, defaultKpiPanel, buildKpiSavePayload, draftFromPanel, panelWithDraft,
-  workingHoursFrom, KPI_DEFAULTS, cleanKpi,
+  workingHoursFrom, KPI_DEFAULTS, cleanKpi, isDefectTally,
 } from './kpiPayload.js'
 
 const LAST = {
@@ -90,4 +90,40 @@ test('column picks are posted only while they are in use', () => {
   assert.equal('defect_cols' in p.options.kpi, false)
   const saved = buildKpiSavePayload({ id: 1, title: 'x', chart_type: 'lossmeter', options: {} }, draftFromPanel({ title: 'x', options: { kpi: {} } }))
   assert.equal('defect_cols' in saved.options.kpi, false)
+})
+
+test('blocks that need machines do not inherit a picked-columns binding', () => {
+  const picked = { id: 20, source: 'kpi', datasource_id: 681, table_name: 'camera_defect', options: { kpi: {
+    ts_col: 'updated_at', defect_cols: ['max_defect'], period: 'month' } } }
+  const machines = { ...LAST, id: 10 }
+  // the newest block is a picked Loss meter: an Andon falls back to the machine block under it
+  const a = inheritBinding([machines, picked], 569, 'andon')
+  assert.equal(a.table_name, 'sensor_log1')
+  assert.equal(a.kpi.defect_cols, undefined)
+  // with no machine block at all it starts unbound, so the inspector opens instead of the server refusing
+  assert.deepEqual(inheritBinding([picked], 569, 'waterfall'), { datasource_id: 569, table_name: null, kpi: {} })
+  // a Loss meter keeps the picks, and so does a caller that names no type
+  assert.deepEqual(inheritBinding([machines, picked], 569, 'lossmeter').kpi.defect_cols, ['max_defect'])
+  assert.equal(inheritBinding([machines, picked], 569).table_name, 'camera_defect')
+})
+
+test('an output column makes a binding every block can inherit and keeps the Loss meter off the tally', () => {
+  const bound = { id: 30, source: 'kpi', datasource_id: 682, table_name: 'pressure1log', options: { kpi: {
+    ts_col: 'timestamp', output_col: 'value', machine_col: 'tag_name', value_kind: 'total', defect_cols: ['setpoint'] } } }
+  assert.equal(isDefectTally(bound.options.kpi), false)
+  assert.equal(isDefectTally({ defect_cols: ['x'] }), true)
+  const b = inheritBinding([bound], 569, 'andon')
+  assert.equal(b.table_name, 'pressure1log')
+  assert.deepEqual([b.kpi.output_col, b.kpi.machine_col, b.kpi.value_kind, b.kpi.defect_cols],
+    ['value', 'tag_name', 'total', ['setpoint']])
+})
+
+test('output settings are posted only while an output column is in use', () => {
+  const idle = cleanKpi({ ...KPI_DEFAULTS, machine_col: 'tag_name', value_kind: 'total' })
+  for (const k of ['output_col', 'machine_col', 'value_kind']) assert.equal(k in idle, false, k)
+  const used = cleanKpi({ ...KPI_DEFAULTS, output_col: 'value', machine_col: 'tag_name', value_kind: 'total' })
+  assert.deepEqual([used.output_col, used.machine_col, used.value_kind], ['value', 'tag_name', 'total'])
+  const defaults = cleanKpi({ ...KPI_DEFAULTS, output_col: 'value' })
+  assert.equal('machine_col' in defaults, false)
+  assert.equal('value_kind' in defaults, false)
 })

@@ -27,6 +27,7 @@ the browser.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
@@ -39,8 +40,8 @@ import kpi_engine as engine
 from auth import can_see_cost, get_current_user, require_admin
 from kpi_cache import CACHE, TARGET_WINDOW
 from kpi_options import (
-    KPI_CHART_TYPES, KpiOptionsError, bind_families, bind_picked, bind_sensors, counts_picked_columns,
-    line_family, normalize_kpi_options,
+    KPI_CHART_TYPES, MAX_MACHINES, KpiOptionsError, bind_families, bind_picked, bind_sensors,
+    columns_layout, counts_picked_columns, line_family, normalize_kpi_options,
 )
 from licensing import require_valid_license
 from panels import location_tags
@@ -60,6 +61,11 @@ RESPONSE_WINDOW = timedelta(hours=4)
 # Timeline resolution per period: fine enough to see a stop, few enough points to draw.
 TIMELINE_MIN = {"today": 5, "week": 60, "month": 360}
 HOURLY_MIN = {"today": 60, "week": 1440, "month": 1440}
+
+NO_READINGS_NOTICE = (
+    "No readings in this period. A table that keeps only the latest row per machine cannot show "
+    "run and stop — use a log table that adds a row for every reading."
+)
 
 WANTS = {
     "timeline": {"pace", "hourly"},
@@ -197,6 +203,32 @@ def _aware(t: Any, tz) -> datetime | None:
     return t if t.tzinfo else t.replace(tzinfo=tz)
 
 
+_MACHINE_TTL_S = 300
+_machine_cache: dict[tuple, tuple[float, list[str]]] = {}
+
+
+def machine_values(table: str, datasource_id: int | None, kpi: dict[str, Any]) -> list[str] | None:
+    """The machine column's distinct values, or None when the table is one machine.
+
+    One more than MAX_MACHINES are asked for, so a column with too many values
+    is recognised (and refused by `bind_families`) instead of silently cut.
+    Kept five minutes: the machines of a table change rarely, and finding them
+    scans the table.
+    """
+    col = kpi.get("machine_col")
+    if not col or not kpi.get("output_col"):
+        return None
+    key = (datasource_id, table, col)
+    hit = _machine_cache.get(key)
+    if hit and time.monotonic() - hit[0] < _MACHINE_TTL_S:
+        return hit[1]
+    values = _fetch_errors(lambda: db.distinct_column_values(table, col, MAX_MACHINES + 1, datasource_id))
+    if len(_machine_cache) > 256:
+        _machine_cache.clear()
+    _machine_cache[key] = (time.monotonic(), values)
+    return values
+
+
 def summarize_picked(table: str, datasource_id: int | None, kpi: dict[str, Any], cols: dict[str, Any],
                      now: datetime | None = None) -> dict[str, Any]:
     """The Loss meter's summary when it counts picked columns instead of machines.
@@ -282,8 +314,9 @@ def summarize(
     if counts_picked_columns(kpi, chart_type):
         return summarize_picked(table, datasource_id, kpi, cols)
     loc_tags = location_tags(kpi.get("location"), datasource_id)
+    layout = columns_layout(kpi)
     try:
-        families = bind_families(kpi, cols, loc_tags)
+        families = bind_families(kpi, cols, loc_tags, machine_values(table, datasource_id, kpi), table)
         line_fam = line_family(kpi, families) if kpi["scope"] == "line" else None
         sensors = bind_sensors(kpi, cols, families, loc_tags) if "sensors" in want else []
     except KpiOptionsError as e:
@@ -302,12 +335,16 @@ def summarize(
         fetch_from = min(fetch_from, trend_start - pad)
 
     ts_col = kpi["ts_col"]
-    binding = (datasource_id, table, ts_col, kpi["stop_threshold"], kpi["valid_max"], kpi["sample_sec"])
+    layout_key = None if layout is None else (
+        layout["machine_col"], layout["value_kind"], layout["filter"])
+    binding = (datasource_id, table, ts_col, kpi["stop_threshold"], kpi["valid_max"], kpi["sample_sec"],
+               layout_key)
 
     def fetch(fams, lo, hi):
         return db.kpi_minute_buckets(
             datasource_id, table, ts_col, fams, lo, hi,
             stop_threshold=kpi["stop_threshold"], valid_max=kpi["valid_max"], sample_sec=kpi["sample_sec"],
+            layout=layout,
         )
 
     buckets = _fetch_errors(lambda: CACHE.buckets(binding, families, fetch_from, end, fetch))
@@ -408,6 +445,11 @@ def summarize(
     }
     if (b := _baht(totals, price)) is not None:
         out["totals"]["baht"] = b
+    if layout is not None and not any(start <= b["minute"] < end for series in buckets.values() for b in series):
+        # An explicitly bound table with nothing in the period reads as a wall of "No data". Say why:
+        # the usual cause is a table that keeps only each machine's latest row, which has no history
+        # to judge run and stop from.
+        out["notice"] = NO_READINGS_NOTICE
 
     if kpi["compare"]:
         prev_end = prev_start + elapsed
@@ -561,7 +603,8 @@ def summarize(
                 n = sum((b.get("parts") or [0] * len(fam["defects"]))[j]
                         for b in buckets.get(fam["key"], []) if start <= b["minute"] < end)
                 if n > 0:
-                    items.append({"item": f"{fam['key']} · {col[len(fam['key']) + 1:]}",
+                    kind = col[len(fam["key"]) + 1:] if col.startswith(f"{fam['key']}-") else col
+                    items.append({"item": f"{fam['key']} · {kind}",
                                   "family": fam["key"], "column": col, "defects": n})
         items.sort(key=lambda x: -x["defects"])
         total = sum(x["defects"] for x in items)

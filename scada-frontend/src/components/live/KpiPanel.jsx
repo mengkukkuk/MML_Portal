@@ -188,6 +188,7 @@ export default function KpiPanel({
           <p className={styles.panel__error}>{apiErrorMessage(query.error, 'Failed to load figures.')}</p>
         )}
         {bound && query.isPending && !summary && <p className={blockStyles.empty}>{tr('Loading…')}</p>}
+        {bound && summary?.notice && <p className={blockStyles.notice}>{tr(summary.notice)}</p>}
         {bound && summary && Block && <Block summary={summary} mode={kpi.mode} />}
       </div>
     </article>

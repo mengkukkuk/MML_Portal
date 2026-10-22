@@ -349,7 +349,7 @@ export default function LivePage() {
     const at = slot || { ...nextLayoutSlot(layout), ...size }
     try {
       const created = await createPanel(defaultKpiPanel(type, {
-        binding: inheritBinding(panels, primaryDatasourceId),
+        binding: inheritBinding(panels, primaryDatasourceId, type),
         layout: { x: at.x, y: at.y, w: at.w, h: at.h },
         dashboardId: activeDashboardId,
         position: panels.length,

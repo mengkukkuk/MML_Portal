@@ -10,7 +10,6 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 import CloseIcon from '@mui/icons-material/Close'
 import EChart from '@/components/charts/EChart'
 import { fetchSchemaValues } from '@/api/schema'
-import { colorAt } from '@/utils/seriesPalette'
 import {
   usePanelSeries, buildSeriesList, computeSeriesAlerts, POLL_INTERVALS, TIME_RANGES,
 } from './usePanelSeries'
@@ -100,6 +99,12 @@ export default function LivePanel({
     [specs, seriesPoints, seriesLatest, seriesLimits, seriesPanelCols, unitFor, unit, opts.boolCols, opts.boolLabels],
   )
   const isMulti = seriesList.length > 1
+  // Words (text columns) have no line, bar or dial to draw: charts and gauges
+  // take the numeric series only, and the words ride in the header as chips.
+  // Stat and Table print every series, words included.
+  const plotList = useMemo(() => seriesList.filter((s) => !s.isText), [seriesList])
+  const textList = useMemo(() => seriesList.filter((s) => s.isText), [seriesList])
+  const plotMulti = plotList.length > 1
 
   // Alerts per series ({ [key]: { level, op, limit, text } }), each series
   // judged on its own row; recomputed each poll via the hydrated seriesList.
@@ -108,8 +113,8 @@ export default function LivePanel({
   const headerAlerts = vizType === 'gauge' ? [] : seriesList.filter((s) => seriesAlertMap[s.key])
 
   // Single-value header (first/only series).
-  const firstLatest = seriesList[0]?.latest || null
-  const headerUnit = seriesList[0]?.unit || ''
+  const firstLatest = plotList[0]?.latest || null
+  const headerUnit = plotList[0]?.unit || ''
 
   // One shared ECharts option object for the 9 "generic" viz types — pure
   // function, no hooks, memoized so <EChart notMerge> doesn't diff a fresh
@@ -121,8 +126,8 @@ export default function LivePanel({
   const textScale = textScaleOf(opts.textSize)
 
   const option = useMemo(
-    () => (isGeneric ? scaleFonts(buildGenericOption(vizType, seriesList, opts), textScale) : null),
-    [isGeneric, vizType, seriesList, opts, textScale],
+    () => (isGeneric ? scaleFonts(buildGenericOption(vizType, plotList, opts), textScale) : null),
+    [isGeneric, vizType, plotList, opts, textScale],
   )
 
   const tableRows = useMemo(() => buildTableRows(seriesList, opts), [seriesList, opts])
@@ -279,20 +284,26 @@ export default function LivePanel({
 
       <div className={styles.panel__meta}>
         {showHeaderValue && (
-          isMulti ? (
-            seriesList.map((s, i) => (
+          plotMulti ? (
+            plotList.map((s) => (
               <span key={s.key} className={styles.panel__chip}>
-                <span className={styles.panel__chipdot} style={{ background: colorAt(i) }} />
+                <span className={styles.panel__chipdot} style={{ background: s.color }} />
                 {s.latest ? fmtValue(s.latest.value, opts.decimals, s.labels) : '—'}{s.unit ? ` ${s.unit}` : ''}
               </span>
             ))
           ) : (
             <>
-              <span className={styles.panel__num}>{firstLatest ? fmtValue(firstLatest.value, opts.decimals, seriesList[0]?.labels) : '—'}</span>
+              <span className={styles.panel__num}>{firstLatest ? fmtValue(firstLatest.value, opts.decimals, plotList[0]?.labels) : '—'}</span>
               <span className={styles.panel__unit}>{headerUnit}</span>
             </>
           )
         )}
+        {vizType !== 'stat' && vizType !== 'table' && textList.map((s) => (
+          <span key={s.key} className={`${styles.panel__chip} ${styles['panel__chip--text']}`} title={s.label}>
+            <span className={styles.panel__chiplabel}>{s.label}</span>
+            {s.latest ? fmtValue(s.latest.value) : '—'}
+          </span>
+        ))}
       </div>
 
       {error && <p className={styles.panel__error}>{error}</p>}
@@ -316,23 +327,23 @@ export default function LivePanel({
 
       {vizType === 'stat' && (
         <div className={`${styles.panel__stat} ${isMulti ? styles['panel__stat--multi'] : ''}`}>
-          {seriesList.map((s, i) => (
+          {seriesList.map((s) => (
             <div key={s.key} className={styles.panel__statrow}>
               <div
-                className={styles.panel__statnum}
-                style={{ color: s.latest ? thresholdColor(s.latest.value, colorAt(i), opts.warn, opts.crit) : 'var(--fg)' }}
+                className={`${styles.panel__statnum} ${s.isText ? styles['panel__statnum--text'] : ''}`}
+                style={{ color: s.latest ? thresholdColor(s.latest.value, s.color, opts.warn, opts.crit) : 'var(--fg)' }}
               >
                 {s.latest ? fmtValue(s.latest.value, opts.decimals, s.labels) : '—'}
                 <span className={styles.panel__statunit}>{s.unit}</span>
               </div>
               {isMulti && (
-                <span className={styles.panel__statlabel} style={{ color: colorAt(i) }}>{s.label}</span>
+                <span className={styles.panel__statlabel} style={{ color: s.color }}>{s.label}</span>
               )}
-              {opts.sparkline !== false && !isMulti && (
+              {opts.sparkline !== false && !isMulti && !s.isText && (
                 <EChart
                   key={`stat-${s.key}`}
                   className={styles.panel__spark}
-                  option={buildStatSparklineOption(s, i)}
+                  option={buildStatSparklineOption(s, 0)}
                 />
               )}
             </div>
@@ -346,8 +357,8 @@ export default function LivePanel({
             <thead>
               <tr>
                 <th>Time</th>
-                {seriesList.map((s, i) => (
-                  <th key={s.key} style={{ color: isMulti ? colorAt(i) : undefined }}>
+                {seriesList.map((s) => (
+                  <th key={s.key} style={{ color: isMulti ? s.color : undefined }}>
                     {s.label}{s.unit ? ` (${s.unit})` : ''}
                   </th>
                 ))}
@@ -375,18 +386,18 @@ export default function LivePanel({
       )}
 
       {vizType === 'gauge' && (
-        <div className={`${styles.panel__minis} ${isMulti ? styles['panel__minis--multi'] : ''}`}>
-          {seriesList.map((s, i) => {
+        <div className={`${styles.panel__minis} ${plotMulti ? styles['panel__minis--multi'] : ''}`}>
+          {plotList.map((s, i) => {
             const alert = seriesAlertMap[s.key] || null
             return (
               <div key={s.key} className={styles.panel__minicell} title={alert?.text}>
                 <EChart
                   key={`gauge-${s.key}`}
                   className={styles.panel__minichart}
-                  option={scaleFonts(buildGaugeOption(s, i, opts, isMulti, alert), textScale)}
+                  option={scaleFonts(buildGaugeOption(s, i, opts, plotMulti, alert), textScale)}
                 />
-                {isMulti && (
-                  <span className={styles.panel__minilabel} style={{ color: colorAt(i) }}>{s.label}</span>
+                {plotMulti && (
+                  <span className={styles.panel__minilabel} style={{ color: s.color }}>{s.label}</span>
                 )}
                 {alert && (
                   <span className={styles.panel__srOnly} role="status">

@@ -20,7 +20,7 @@ from . import tables as _tables
 
 __all__ = [
     "KPI_STATEMENT_TIMEOUT_MS", "_kpi_value", "kpi_event_rows", "kpi_minute_buckets", "kpi_minute_query",
-    "kpi_sensor_minutes", "kpi_sensor_query", "kpi_tally", "kpi_tally_query",
+    "kpi_minute_query_long", "kpi_sensor_minutes", "kpi_sensor_query", "kpi_tally", "kpi_tally_query",
 ]
 
 # A cold month over the VPN must fail loudly rather than pin a worker.
@@ -32,6 +32,38 @@ def _kpi_value(columns: dict[str, str], col: str) -> sql.Composable:
     if columns[col].startswith("_"):
         return sql.SQL("({}[1])::float8").format(sql.Identifier(col))
     return sql.SQL("({})::float8").format(sql.Identifier(col))
+
+
+def _family_aggs(i: int, sp: sql.Composable, df: sql.Composable, parts: list[sql.Composable],
+                 member: sql.Composable | None = None) -> list[sql.Composable]:
+    """The per-minute aggregates of family `i`, from its speed, defect and per-defect columns.
+
+    `member`, when given, restricts every aggregate to the rows that belong to
+    the family — the machine column names it in a long table, where one row
+    holds one machine's reading rather than every machine's side by side.
+    """
+    def only(cond: sql.Composable) -> sql.Composable:
+        return sql.SQL("{} AND {}").format(member, cond) if member is not None else cond
+
+    valid = only(sql.SQL("{} BETWEEN 0 AND %(vmax)s").format(sp))
+    running = only(sql.SQL("{sp} > %(stop)s AND {sp} <= %(vmax)s").format(sp=sp))
+    stopped = only(sql.SQL("{} BETWEEN 0 AND %(stop)s").format(sp))
+    aggs = [
+        sql.SQL("coalesce(sum(cov) FILTER (WHERE {}), 0) AS {}").format(valid, sql.Identifier(f"valid_{i}")),
+        sql.SQL("coalesce(sum(cov) FILTER (WHERE {}), 0) AS {}").format(stopped, sql.Identifier(f"stop_{i}")),
+        sql.SQL("coalesce(sum({sp}) FILTER (WHERE {r}), 0) AS {out}").format(
+            sp=sp, r=running, out=sql.Identifier(f"ssum_{i}")),
+        sql.SQL("count(*) FILTER (WHERE {r}) AS {out}").format(r=running, out=sql.Identifier(f"sn_{i}")),
+        sql.SQL("coalesce(sum({sp} * cov / 60) FILTER (WHERE {v}), 0) AS {out}").format(
+            sp=sp, v=valid, out=sql.Identifier(f"pcs_{i}")),
+        sql.SQL("coalesce(sum({df} * cov / 60) FILTER (WHERE {v}), 0) AS {out}").format(
+            df=df, v=valid, out=sql.Identifier(f"def_{i}")),
+    ]
+    return aggs + [
+        sql.SQL("coalesce(sum({df} * cov / 60) FILTER (WHERE {v}), 0) AS {out}").format(
+            df=part, v=valid, out=sql.Identifier(f"part_{i}_{j}"))
+        for j, part in enumerate(parts)
+    ]
 
 
 def kpi_minute_query(
@@ -73,25 +105,8 @@ def kpi_minute_query(
         # each defect column on its own too, for the Pareto (which camera, which type)
         for j, term in enumerate(defect_terms if fam["defects"] else []):
             picks.append(sql.SQL("({}) AS {}").format(term, sql.Identifier(f"df_{i}_{j}")))
-        valid = sql.SQL("{} BETWEEN 0 AND %(vmax)s").format(sp)
-        running = sql.SQL("{sp} > %(stop)s AND {sp} <= %(vmax)s").format(sp=sp)
-        aggs += [
-            sql.SQL("coalesce(sum(cov) FILTER (WHERE {}), 0) AS {}").format(valid, sql.Identifier(f"valid_{i}")),
-            sql.SQL("coalesce(sum(cov) FILTER (WHERE {sp} BETWEEN 0 AND %(stop)s), 0) AS {out}").format(
-                sp=sp, out=sql.Identifier(f"stop_{i}")),
-            sql.SQL("coalesce(sum({sp}) FILTER (WHERE {r}), 0) AS {out}").format(
-                sp=sp, r=running, out=sql.Identifier(f"ssum_{i}")),
-            sql.SQL("count(*) FILTER (WHERE {r}) AS {out}").format(r=running, out=sql.Identifier(f"sn_{i}")),
-            sql.SQL("coalesce(sum({sp} * cov / 60) FILTER (WHERE {v}), 0) AS {out}").format(
-                sp=sp, v=valid, out=sql.Identifier(f"pcs_{i}")),
-            sql.SQL("coalesce(sum({df} * cov / 60) FILTER (WHERE {v}), 0) AS {out}").format(
-                df=df, v=valid, out=sql.Identifier(f"def_{i}")),
-        ]
-        aggs += [
-            sql.SQL("coalesce(sum({df} * cov / 60) FILTER (WHERE {v}), 0) AS {out}").format(
-                df=sql.Identifier(f"df_{i}_{j}"), v=valid, out=sql.Identifier(f"part_{i}_{j}"))
-            for j in range(len(fam["defects"]))
-        ]
+        aggs += _family_aggs(
+            i, sp, df, [sql.Identifier(f"df_{i}_{j}") for j in range(len(fam["defects"]))])
 
     return sql.SQL(
         "WITH r AS (SELECT {picks} FROM {tbl} "
@@ -110,6 +125,92 @@ def kpi_minute_query(
     )
 
 
+def kpi_minute_query_long(
+    columns: dict[str, str],
+    schema: str,
+    table: str,
+    ts_col: str,
+    families: list[dict[str, Any]],
+    layout: dict[str, Any],
+) -> sql.Composed:
+    """The bucket query for a *long* table: one row per reading, the machine named in a column.
+
+    Every family shares the output and defect columns (`families[0]`); a family
+    is the rows whose `layout["machine_col"]` equals its key (all rows when the
+    table is one machine). The gap to the previous reading is measured within a
+    machine — rows of other machines interleave — and each family's aggregates
+    only see its own rows, so the buckets come out exactly as `kpi_minute_query`'s.
+
+    `layout["value_kind"]` "rate" reads the columns as pieces per minute;
+    "total" reads running counters, whose positive change over the covered time is
+    the rate, so a counter reset or glitch counts as nothing. Parameters, by name:
+    the wide query's, plus mkeys and mk_<i> (a family's machine value) and, with a
+    row filter, fval.
+    """
+    first = families[0]
+    machine_col, kind, flt = layout.get("machine_col"), layout.get("value_kind", "rate"), layout.get("filter")
+    used = [ts_col, first["speed"], *first["defects"], *([machine_col] if machine_col else []),
+            *([flt[0]] if flt else [])]
+    for col in used:
+        if col not in columns:
+            raise ValueError(f"Unknown column {col!r} in {table!r}")
+    ts, clock, lo, hi = _clock_terms(columns, ts_col)
+    machine = sql.SQL("({})::text").format(sql.Identifier(machine_col)) if machine_col else sql.SQL("'x'::text")
+
+    value_cols = [first["speed"], *first["defects"]]
+    picks = [sql.SQL("{} AS ts").format(ts), sql.SQL("{} AS m").format(machine)]
+    picks += [sql.SQL("{} AS {}").format(_kpi_value(columns, c), sql.Identifier(f"v_{k}"))
+              for k, c in enumerate(value_cols)]
+    lags = [sql.SQL("lag({v}) OVER w AS {p}").format(v=sql.Identifier(f"v_{k}"), p=sql.Identifier(f"p_{k}"))
+            for k in range(len(value_cols))] if kind == "total" else []
+
+    def rate(k: int) -> sql.Composable:
+        v, p = sql.Identifier(f"v_{k}"), sql.Identifier(f"p_{k}")
+        if kind == "total":
+            return sql.SQL("CASE WHEN {v} >= {p} THEN ({v} - {p}) / cov * 60 END").format(v=v, p=p)
+        return v
+
+    rates = [sql.SQL("{} AS {}").format(rate(k), sql.Identifier(f"r_{k}")) for k in range(len(value_cols))]
+    defect_terms = [
+        sql.SQL("CASE WHEN {r} BETWEEN 0 AND %(vmax)s THEN {r} ELSE 0 END").format(r=sql.Identifier(f"r_{k}"))
+        for k in range(1, len(value_cols))
+    ] or [sql.SQL("0")]
+    d_extra = [sql.SQL("({}) AS df").format(sql.SQL(" + ").join(defect_terms))]
+    d_extra += [sql.SQL("({}) AS {}").format(t, sql.Identifier(f"df_{j}")) for j, t in enumerate(defect_terms)
+                if first["defects"]]
+
+    aggs = []
+    for i, fam in enumerate(families):
+        member = sql.SQL("m = %(mk_{})s").format(sql.SQL(str(i)))
+        aggs += _family_aggs(i, sql.Identifier("r_0"), sql.Identifier("df"),
+                             [sql.Identifier(f"df_{j}") for j in range(len(first["defects"]))], member)
+
+    where = [sql.SQL("{c} >= {lo_pad} AND {c} < {hi}").format(
+        c=clock, lo_pad=sql.SQL("{} - make_interval(secs => %(cap_s)s)").format(lo), hi=hi)]
+    if machine_col:
+        where.append(sql.SQL("{} = ANY(%(mkeys)s::text[])").format(machine))
+    if flt:
+        where.append(sql.SQL("{}::text = %(fval)s").format(sql.Identifier(flt[0])))
+    return sql.SQL(
+        "WITH r AS (SELECT {picks} FROM {tbl} WHERE {where}), "
+        "c AS (SELECT *, extract(epoch FROM ts - lag(ts) OVER w) AS delta{lags} FROM r "
+        "WINDOW w AS (PARTITION BY m ORDER BY ts)), "
+        "k AS (SELECT *, CASE WHEN delta <= %(cap_s)s THEN delta ELSE %(sample_s)s END AS cov "
+        "FROM c WHERE delta IS NOT NULL AND ts >= %(lo)s), "
+        "d AS (SELECT *, {rates} FROM k), "
+        "e AS (SELECT *, {d_extra} FROM d) "
+        "SELECT date_trunc('minute', ts) AS minute, {aggs} FROM e GROUP BY 1 ORDER BY 1"
+    ).format(
+        picks=sql.SQL(", ").join(picks),
+        tbl=sql.Identifier(schema, table),
+        where=sql.SQL(" AND ").join(where),
+        lags=sql.SQL("").join(sql.SQL(", {}").format(l) for l in lags),
+        rates=sql.SQL(", ").join(rates),
+        d_extra=sql.SQL(", ").join(d_extra),
+        aggs=sql.SQL(", ").join(aggs),
+    )
+
+
 def kpi_minute_buckets(
     datasource_id: int | None,
     table: str,
@@ -121,8 +222,12 @@ def kpi_minute_buckets(
     stop_threshold: float = 0.0,
     valid_max: float,
     sample_sec: float = 10.0,
+    layout: dict[str, Any] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """{family key: [bucket, ...]} for minutes in [start, end).
+
+    `layout` (kpi_options.columns_layout) says the table is long — read by
+    `kpi_minute_query_long` — rather than wide.
 
     Only minutes with at least one row come back; kpi_engine.minute_grid fills
     the rest as gap.
@@ -131,13 +236,22 @@ def kpi_minute_buckets(
         return {}
     with _tables._table_source_conn(datasource_id) as (conn, schema):
         columns = _tables._table_columns(conn, schema, table)
-        query = kpi_minute_query(columns, schema, table, ts_col, families)
+        params = {
+            "lo": start, "hi": end, "cap_s": 3 * sample_sec, "sample_s": sample_sec,
+            "stop": stop_threshold, "vmax": valid_max,
+        }
+        if layout:
+            query = kpi_minute_query_long(columns, schema, table, ts_col, families, layout)
+            params["mkeys"] = [fam["key"] for fam in families]
+            params.update({f"mk_{i}": fam["key"] if layout.get("machine_col") else "x"
+                           for i, fam in enumerate(families)})
+            if layout.get("filter"):
+                params["fval"] = layout["filter"][1]
+        else:
+            query = kpi_minute_query(columns, schema, table, ts_col, families)
         with conn.transaction():
             conn.execute(sql.SQL("SET LOCAL statement_timeout = {}").format(sql.Literal(KPI_STATEMENT_TIMEOUT_MS)))
-            rows = conn.execute(query, {
-                "lo": start, "hi": end, "cap_s": 3 * sample_sec, "sample_s": sample_sec,
-                "stop": stop_threshold, "vmax": valid_max,
-            }).fetchall()
+            rows = conn.execute(query, params).fetchall()
     out: dict[str, list[dict[str, Any]]] = {fam["key"]: [] for fam in families}
     for row in rows:
         for i, fam in enumerate(families):

@@ -16,8 +16,9 @@ import { fetchSchemaTables, fetchSchemaColumns } from '@/api/schema'
 import { fetchTagLocations } from '@/api/tags'
 import { useKpiSummary } from '@/components/live/useKpiSummary'
 import { fmtPieces, METRIC_META } from '@/components/live/kpiView'
-import { workingHoursFrom, KPI_METRIC_KEYS, MAX_STRIP_METRICS } from './kpiPayload'
-import LossColumns from './LossColumns'
+import { workingHoursFrom, isDefectTally, KPI_METRIC_KEYS, MAX_STRIP_METRICS } from './kpiPayload'
+import BlockColumns from './BlockColumns'
+import { numericColumns } from './kpiColumns'
 import styles from './KpiInspector.module.css'
 
 const WEEKDAYS = [
@@ -62,7 +63,10 @@ export default function KpiInspector({
   const open = !!panel && !!draft
   const kpi = draft?.kpi || {}
   // A new connection or table starts over: column picks belong to one table.
-  const COLUMN_PICKS = { defect_cols: null, array_mode: 'sum', filter_col: null, filter_val: null }
+  const COLUMN_PICKS = {
+    machine_col: null, output_col: null, value_kind: 'rate', defect_cols: null, array_mode: 'sum',
+    filter_col: null, filter_val: null,
+  }
   const setKpi = (patch) => onDraft({ ...draft, kpi: { ...draft.kpi, ...patch } })
 
   const tablesQuery = useQuery({
@@ -100,8 +104,14 @@ export default function KpiInspector({
   if (!open) return null
 
   // Counting picked columns leaves no machines, stops or plan to configure.
-  const tally = panel.chart_type === 'lossmeter' && kpi.defect_cols != null
+  const tally = panel.chart_type === 'lossmeter' && isDefectTally(kpi)
   const families = summary?.families || []
+  // Sensors are the table's leftover numeric columns; on an explicitly bound table nothing is
+  // left over by name, so every numeric column is offered and the user ticks the ones to watch.
+  const sensorKeys = [...new Set([
+    ...(summary?.sensors || []).map((x) => x.key), ...(kpi.sensors || []),
+    ...(kpi.output_col ? numericColumns(columnsQuery.data) : []),
+  ])]
   const familyKeys = [...new Set([...families.map((f) => f.key), ...(kpi.exclude_families || [])])].sort()
   const hours = kpi.working_hours
   const setHours = (patch) => {
@@ -140,16 +150,15 @@ export default function KpiInspector({
             onChange={(e) => setKpi({ ts_col: e.target.value || null })}>
             {tsColumns.map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
           </TextField>
-          {!tally && locations.length > 0 && (
+          {!tally && !kpi.output_col && locations.length > 0 && (
             <TextField select size="small" label={tr('Location')} value={kpi.location ?? ''}
               onChange={(e) => setKpi({ location: e.target.value || null })}>
               <MenuItem value="">{tr('All locations')}</MenuItem>
               {locations.map((l) => <MenuItem key={l} value={l}>{l}</MenuItem>)}
             </TextField>
           )}
-          {panel.chart_type === 'lossmeter' && (
-            <LossColumns draft={draft} columns={columnsQuery.data} summary={summary} setKpi={setKpi} />
-          )}
+          <BlockColumns draft={draft} columns={columnsQuery.data} summary={summary} setKpi={setKpi}
+            lossmeter={panel.chart_type === 'lossmeter'} />
         </section>
 
         {!tally && (
@@ -194,9 +203,9 @@ export default function KpiInspector({
         {['sensors', 'response', 'kpistrip', 'kpitrend'].includes(panel.chart_type) && (
           <section className={styles.section}>
             <h3 className={styles.section__title}>{tr('Sensors')}</h3>
-            {(summary?.sensors || []).length > 0 && (
+            {sensorKeys.length > 0 && (
               <div className={styles.days}>
-                {[...new Set([...(summary.sensors || []).map((x) => x.key), ...(kpi.sensors || [])])].map((key) => {
+                {sensorKeys.map((key) => {
                   const chosen = kpi.sensors ?? (summary.sensors || []).map((x) => x.key)
                   return (
                     <FormControlLabel key={key} className={styles.metric}

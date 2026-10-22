@@ -529,3 +529,10 @@
 }
 .pareto__bar--hot { background: var(--crit); }
 .pareto__val { color: var(--fg-muted); font-size: 0.7rem; }
+
+.notice {
+  margin: 0 0 var(--space-2);
+  color: var(--warn, #b26a00);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}

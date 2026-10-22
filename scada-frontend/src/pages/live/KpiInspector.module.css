@@ -82,6 +82,12 @@
   margin-right: 0;
 }
 
+.hint {
+  margin-top: calc(var(--space-1) * -1);
+  color: var(--fg-muted);
+  font-size: 0.74rem;
+}
+
 .pick {
   display: flex;
   align-items: baseline;

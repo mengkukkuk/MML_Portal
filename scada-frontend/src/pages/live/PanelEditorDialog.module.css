@@ -98,6 +98,100 @@
   flex-shrink: 0;
 }
 
+/* A value column and what hangs off it: the row itself, then its checkbox and
+   (for an array) its slot strip, indented to sit under the column select. */
+.taglistGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.subOption {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  margin-left: 10px; /* swatch width + gap, so it lines up under the select */
+  font-size: 12px;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.subOptionBox {
+  padding: 2px 6px 2px 0 !important;
+}
+
+/* --- array slots: one row per position in the array ---------------------- */
+/* The left rule ties the strip to the column above it. */
+.slots {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 4px 14px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
+.slotsHead {
+  font-size: 11px;
+  color: var(--fg-muted);
+  letter-spacing: 0.02em;
+}
+
+.slotRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.slotRowOff .slotIndex,
+.slotRowOff .slotLive {
+  opacity: 0.55;
+}
+
+.slotSwatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.slotIndex {
+  flex: 0 0 28px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg);
+}
+
+/* The slot's current reading: fixed width and right-aligned so a column of
+   them lines up by digit. */
+.slotLive {
+  flex: 0 0 92px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slotName {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.slotAdd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.slotAddInput {
+  width: 90px;
+}
+
 /* --- visualization picker ------------------------------------------------ */
 .sectionLabel {
   font-size: 12px;

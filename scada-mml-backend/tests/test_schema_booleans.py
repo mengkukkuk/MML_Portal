@@ -218,11 +218,14 @@ def test_a_boolean_is_a_valid_extra_series(described_cols):
     panels._validate(_panel("temperature", options={"value_cols": ["enabled"]}))
 
 
-def test_a_text_column_is_still_not_a_panel_metric(described_cols):
-    # The Live path plots; it never gained the text branch mimic has.
+def test_a_text_column_is_a_panel_metric_but_a_timestamp_is_not(described_cols):
+    # A Stat or Table prints the latest word, so text can be bound; the editor
+    # refuses to save it against a chart that has nothing numeric to draw.
+    panels._validate(_panel("code"))
+    panels._validate(_panel("temperature", options={"value_cols": ["code"]}))
     with pytest.raises(Exception) as e:
-        panels._validate(_panel("code"))
-    assert "numeric or boolean" in str(e.value)
+        panels._validate(_panel("recorded_at"))
+    assert "numeric, boolean, array or text" in str(e.value)
 
 
 def test_a_boolean_is_a_valid_symbol_binding(described_cols):

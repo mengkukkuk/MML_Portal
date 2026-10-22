@@ -9,6 +9,7 @@ import {
 } from '@/utils/sourceHealth'
 import { gaugeLimitColsFor } from './options/gauge'
 import { panelColumnRefs } from '@/utils/alertConditions'
+import { groupBySource, pickSlot } from './seriesModel'
 
 const POLL_RETRY_DELAY_MS = 4000
 // Stable identity for panels with no setpoint columns, so seriesList memo holds.
@@ -147,9 +148,12 @@ async function pollFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinu
   }
 
   if (isTable) {
-    const results = await Promise.allSettled(seriesSpecs.map((s) => fetchSchemaLatest({
-      table: panel.table_name, valueCol: s.valueCol, filterCol: panel.filter_col,
-      filterVal: s.filterVal, tsCol: panel.ts_col, datasourceId: panel.datasource_id,
+    // One read per (column, series value): the slots of an array column all
+    // come out of the same row.
+    const groups = groupBySource(seriesSpecs)
+    const results = await Promise.allSettled(groups.map((g) => fetchSchemaLatest({
+      table: panel.table_name, valueCol: g.valueCol, filterCol: panel.filter_col,
+      filterVal: g.filterVal, tsCol: panel.ts_col, datasourceId: panel.datasource_id,
     })))
     const sampleT = Date.now()
     const points = { ...prevPoints }
@@ -158,7 +162,7 @@ async function pollFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinu
     let anyOk = false
     let anyFailed = false
     results.forEach((res, i) => {
-      const spec = seriesSpecs[i]
+      const group = groups[i]
       if (res.status !== 'fulfilled') {
         anyFailed = true
         // See the isTag branch above: a total outage across every selected
@@ -166,23 +170,28 @@ async function pollFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinu
         // per-source report still rides along in the error body.
         const errSources = sourcesFromError(res.reason)
         if (errSources) sourceLists.push(errSources)
-        console.error('[live-panel] series fetch failed:', spec.key, res.reason)
+        console.error('[live-panel] series fetch failed:', group.valueCol, group.filterVal, res.reason)
         return
       }
       sourceLists.push(res.value.sources)
       for (const row of res.value.readings) {
         if (row.value == null) continue
-        anyOk = true
-        const value = applyExpr(mathFn, arrayValueOf(row.value))
-        // Real history tables carry a row timestamp; append only when it
-        // advances. Current-state tables (no ts_col) sample at wall-clock so
-        // steady values still move the line forward.
-        const t = panel.ts_col && row.ts ? new Date(row.ts).getTime() : sampleT
-        const key = seriesKey(spec.key, row.datasource_id)
-        const arr = points[key] || []
-        const lastT = arr.length ? arr[arr.length - 1][0] : -1
-        if (t > lastT) points[key] = trimWindow([...arr, [t, value]], rangeMinutes)
-        latest[key] = { value, ts: row.ts || new Date(sampleT).toISOString() }
+        for (const spec of group.members) {
+          const raw = pickSlot(row.value, spec.slot)
+          if (raw == null) continue
+          anyOk = true
+          // A word is kept as written; the expression is arithmetic.
+          const value = spec.isText ? raw : applyExpr(mathFn, raw)
+          // Real history tables carry a row timestamp; append only when it
+          // advances. Current-state tables (no ts_col) sample at wall-clock so
+          // steady values still move the line forward.
+          const t = panel.ts_col && row.ts ? new Date(row.ts).getTime() : sampleT
+          const key = seriesKey(spec.key, row.datasource_id)
+          const arr = points[key] || []
+          const lastT = arr.length ? arr[arr.length - 1][0] : -1
+          if (t > lastT) points[key] = trimWindow([...arr, [t, value]], rangeMinutes)
+          latest[key] = { value, ts: row.ts || new Date(sampleT).toISOString() }
+        }
       }
     })
     const sources = mergeSources(sourceLists)
@@ -256,10 +265,12 @@ async function seedFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinu
     if (!panel.ts_col) {
       return pollFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinutes, prev: emptyPrev })
     }
+    // One history read per (column, series value), shared by an array column's slots.
+    const groups = groupBySource(seriesSpecs)
     const results = await Promise.allSettled(
-      seriesSpecs.map((s) => fetchSchemaSeries({
-        table: panel.table_name, valueCol: s.valueCol, tsCol: panel.ts_col,
-        filterCol: panel.filter_col, filterVal: s.filterVal, minutes: rangeMinutes,
+      groups.map((g) => fetchSchemaSeries({
+        table: panel.table_name, valueCol: g.valueCol, tsCol: panel.ts_col,
+        filterCol: panel.filter_col, filterVal: g.filterVal, minutes: rangeMinutes,
         datasourceId: panel.datasource_id,
       })),
     )
@@ -274,12 +285,18 @@ async function seedFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinu
       }
       sourceLists.push(res.value.sources)
       for (const one of res.value.series) {
-        const key = seriesKey(seriesSpecs[i].key, one.datasource_id)
-        const arr = one.points.map((p) => [new Date(p.ts).getTime(), applyExpr(mathFn, arrayValueOf(p.value))])
-        points[key] = arr
-        if (arr.length) {
-          const last = one.points[one.points.length - 1]
-          latest[key] = { value: applyExpr(mathFn, arrayValueOf(last.value)), ts: last.ts }
+        for (const spec of groups[i].members) {
+          const key = seriesKey(spec.key, one.datasource_id)
+          // History is numeric only (the server drops words), so a text series
+          // lands here empty and is filled by the latest-row fallback below.
+          const arr = one.points
+            .map((p) => [new Date(p.ts).getTime(), pickSlot(p.value, spec.slot)])
+            .filter(([, v]) => v != null)
+            .map(([t, v]) => [t, applyExpr(mathFn, v)])
+          points[key] = arr
+          if (arr.length) {
+            latest[key] = { value: arr[arr.length - 1][1], ts: new Date(arr[arr.length - 1][0]).toISOString() }
+          }
         }
       }
     })
@@ -289,28 +306,32 @@ async function seedFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinu
 
     // Stale-source fallback: any series with no windowed history falls back
     // to its latest reading, so a quiet source shows its last value instead
-    // of blank. Fetched once per configured spec (not per expanded series) —
-    // one request already answers for every source.
-    const emptyBases = seriesSpecs.filter(
-      (base) => specs.some((s) => s.baseKey === base.key && !points[s.key].length),
+    // of blank. Fetched once per (column, series value) — one request already
+    // answers for every source and every slot.
+    const emptyGroups = groups.filter(
+      (g) => g.members.some((m) => specs.some((s) => s.baseKey === m.key && !points[s.key].length)),
     )
-    if (emptyBases.length) {
+    if (emptyGroups.length) {
       const fallbacks = await Promise.allSettled(
-        emptyBases.map((s) => fetchSchemaLatest({
-          table: panel.table_name, valueCol: s.valueCol, filterCol: panel.filter_col,
-          filterVal: s.filterVal, tsCol: panel.ts_col, datasourceId: panel.datasource_id,
+        emptyGroups.map((g) => fetchSchemaLatest({
+          table: panel.table_name, valueCol: g.valueCol, filterCol: panel.filter_col,
+          filterVal: g.filterVal, tsCol: panel.ts_col, datasourceId: panel.datasource_id,
         })),
       )
       fallbacks.forEach((res, j) => {
         if (res.status !== 'fulfilled') return
         for (const row of res.value.readings) {
           if (row.value == null) continue
-          const key = seriesKey(emptyBases[j].key, row.datasource_id)
-          if (points[key]?.length) continue
-          const v = applyExpr(mathFn, arrayValueOf(row.value))
-          const t = row.ts ? new Date(row.ts).getTime() : Date.now()
-          points[key] = [[t, v]]
-          latest[key] = { value: v, ts: row.ts || new Date(t).toISOString() }
+          for (const spec of emptyGroups[j].members) {
+            const key = seriesKey(spec.key, row.datasource_id)
+            if (points[key]?.length) continue
+            const raw = pickSlot(row.value, spec.slot)
+            if (raw == null) continue
+            const v = spec.isText ? raw : applyExpr(mathFn, raw)
+            const t = row.ts ? new Date(row.ts).getTime() : Date.now()
+            points[key] = [[t, v]]
+            latest[key] = { value: v, ts: row.ts || new Date(t).toISOString() }
+          }
         }
       })
     }
@@ -374,27 +395,38 @@ async function seedFetch({ panel, seriesSpecs, isTag, isTable, mathFn, rangeMinu
  * manual fallback for one poll.
  */
 async function fetchGaugeLimits({ panel, seriesSpecs, mathFn, limitCols, prevLimits }) {
-  const jobs = []
+  // One read per (limit column, series value): every slot of an array column
+  // shares the row, so each read answers all of them.
+  const jobs = new Map()
   seriesSpecs.forEach((spec, i) => {
+    if (spec.isText) return
     const cols = limitCols[i]
-    if (cols?.warnCol) jobs.push({ spec, field: 'warn', col: cols.warnCol })
-    if (cols?.critCol) jobs.push({ spec, field: 'crit', col: cols.critCol })
+    for (const [field, col] of [['warn', cols?.warnCol], ['crit', cols?.critCol]]) {
+      if (!col) continue
+      const id = JSON.stringify([col, spec.filterVal])
+      let job = jobs.get(id)
+      if (!job) { job = { col, filterVal: spec.filterVal, targets: [] }; jobs.set(id, job) }
+      job.targets.push({ spec, field })
+    }
   })
-  if (!jobs.length) return {}
+  if (!jobs.size) return {}
 
-  const results = await Promise.allSettled(jobs.map((j) => fetchSchemaLatest({
+  const list = [...jobs.values()]
+  const results = await Promise.allSettled(list.map((j) => fetchSchemaLatest({
     table: panel.table_name, valueCol: j.col, filterCol: panel.filter_col,
-    filterVal: j.spec.filterVal, tsCol: panel.ts_col, datasourceId: panel.datasource_id,
+    filterVal: j.filterVal, tsCol: panel.ts_col, datasourceId: panel.datasource_id,
   })))
   const limits = {}
   const prev = prevLimits || {}
   results.forEach((res, i) => {
-    const { spec, field } = jobs[i]
+    const { targets } = list[i]
     if (res.status !== 'fulfilled') {
-      // Carry every source's previous value for this series/field.
-      for (const [k, v] of Object.entries(prev)) {
-        if (JSON.parse(k)[1] === spec.key && v[field] != null) {
-          limits[k] = { ...limits[k], [field]: v[field] }
+      // Carry every source's previous value for each series/field.
+      for (const { spec, field } of targets) {
+        for (const [k, v] of Object.entries(prev)) {
+          if (JSON.parse(k)[1] === spec.key && v[field] != null) {
+            limits[k] = { ...limits[k], [field]: v[field] }
+          }
         }
       }
       return
@@ -402,8 +434,10 @@ async function fetchGaugeLimits({ panel, seriesSpecs, mathFn, limitCols, prevLim
     for (const row of res.value.readings) {
       const raw = arrayValueOf(row.value)
       if (raw == null || !Number.isFinite(Number(raw))) continue
-      const key = seriesKey(spec.key, row.datasource_id)
-      limits[key] = { ...limits[key], [field]: applyExpr(mathFn, Number(raw)) }
+      for (const { spec, field } of targets) {
+        const key = seriesKey(spec.key, row.datasource_id)
+        limits[key] = { ...limits[key], [field]: applyExpr(mathFn, Number(raw)) }
+      }
     }
   })
   return limits
@@ -420,28 +454,42 @@ async function fetchGaugeLimits({ panel, seriesSpecs, mathFn, limitCols, prevLim
  */
 async function fetchPanelColumns({ panel, seriesSpecs, mathFn, cols, prev }) {
   if (!cols.length) return {}
-  const jobs = []
-  for (const spec of seriesSpecs) for (const col of cols) jobs.push({ spec, col })
+  // One read per (column, series value), however many slots draw from that row.
+  const jobs = new Map()
+  for (const spec of seriesSpecs) {
+    if (spec.isText) continue
+    for (const col of cols) {
+      const id = JSON.stringify([col, spec.filterVal])
+      let job = jobs.get(id)
+      if (!job) { job = { col, filterVal: spec.filterVal, specs: [] }; jobs.set(id, job) }
+      job.specs.push(spec)
+    }
+  }
 
-  const results = await Promise.allSettled(jobs.map((j) => fetchSchemaLatest({
+  const list = [...jobs.values()]
+  const results = await Promise.allSettled(list.map((j) => fetchSchemaLatest({
     table: panel.table_name, valueCol: j.col, filterCol: panel.filter_col,
-    filterVal: j.spec.filterVal, tsCol: panel.ts_col, datasourceId: panel.datasource_id,
+    filterVal: j.filterVal, tsCol: panel.ts_col, datasourceId: panel.datasource_id,
   })))
   const out = {}
   const prevCols = prev || {}
   results.forEach((res, i) => {
-    const { spec, col } = jobs[i]
+    const { col, specs } = list[i]
     if (res.status !== 'fulfilled') {
-      for (const [k, v] of Object.entries(prevCols)) {
-        if (JSON.parse(k)[1] === spec.key && v[col] != null) out[k] = { ...out[k], [col]: v[col] }
+      for (const spec of specs) {
+        for (const [k, v] of Object.entries(prevCols)) {
+          if (JSON.parse(k)[1] === spec.key && v[col] != null) out[k] = { ...out[k], [col]: v[col] }
+        }
       }
       return
     }
     for (const row of res.value.readings) {
       const raw = arrayValueOf(row.value)
       if (raw == null || !Number.isFinite(Number(raw))) continue
-      const key = seriesKey(spec.key, row.datasource_id)
-      out[key] = { ...out[key], [col]: applyExpr(mathFn, Number(raw)) }
+      for (const spec of specs) {
+        const key = seriesKey(spec.key, row.datasource_id)
+        out[key] = { ...out[key], [col]: applyExpr(mathFn, Number(raw)) }
+      }
     }
   })
   return out

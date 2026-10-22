@@ -1,4 +1,7 @@
 import { compileExpr } from '@/utils/mathExpr'
+import {
+  deriveSeriesSpecs, hasPlottableSeries, pruneArraySlots,
+} from '@/components/live/seriesModel'
 import { KPI_MIN_SIZE } from './kpiPayload'
 
 /**
@@ -185,11 +188,16 @@ export function seriesCount(panel) {
     return panel.tag_name ? 1 : 0
   }
   if (panel.source === 'table') {
-    const extras = panel.options?.value_cols
-    const valueCols = 1 + (Array.isArray(extras) ? extras.filter(Boolean).length : 0)
-    const filters = panel.options?.filters
-    const hasFilter = !!panel.filter_col && Array.isArray(filters) && filters.length > 0
-    return valueCols * (hasFilter ? filters.length : 1)
+    const o = panel.options || {}
+    return deriveSeriesSpecs({
+      metric: panel.metric,
+      valueCols: Array.isArray(o.value_cols) ? o.value_cols : [],
+      filterCol: panel.filter_col,
+      filters: Array.isArray(o.filters) ? o.filters : [],
+      unsplitCols: o.unsplitCols,
+      arraySlots: o.arraySlots,
+      textCols: o.textCols,
+    }).length
   }
   return 1
 }
@@ -272,6 +280,15 @@ export function appendLayoutItem(layout, panel) {
 
 // --- save-payload builders --------------------------------------------------
 
+// Options this module derives from the binding on every save.
+const COLUMN_OPTION_KEYS = ['unsplitCols', 'arraySlots', 'textCols']
+
+function stripColumnOptions(options) {
+  const out = { ...(options || {}) }
+  for (const k of COLUMN_OPTION_KEYS) delete out[k]
+  return out
+}
+
 /**
  * Validate + assemble the full panel payload the editor's Save button sends
  * to createPanel/updatePanel. Mirrors LivePage.vue's save() (lines 478-567)
@@ -294,11 +311,40 @@ export function buildPanelPayload({
   const compiled = compileExpr(form.mathExpr)
   if (!compiled.ok) return { ok: false, error: `Expression: ${compiled.error}` }
 
+  const allValueCols = [form.metric, ...(form.value_cols || [])].filter(Boolean)
+  const bound = new Set(allValueCols)
+
+  // The three per-column options, reduced to what is still true of this binding.
+  // "Not split by series" only means something with a series column and a second
+  // column to contrast with; a text flag only while the column is still bound.
+  const unsplitCols = form.filter_col && allValueCols.length > 1
+    ? (form.unsplitCols || []).filter((c) => bound.has(c))
+    : []
+  const arraySlots = pruneArraySlots(form.arraySlots, allValueCols)
+  const textCols = (form.textCols || []).filter((c) => bound.has(c))
+
+  // Every line the tile will draw. Units, gauge overrides and condition names
+  // are keyed off these rather than guessed from the column list.
+  const specs = deriveSeriesSpecs({
+    metric: form.metric,
+    valueCols: form.value_cols || [],
+    filterCol: form.filter_col,
+    filters: form.filters || [],
+    unsplitCols,
+    arraySlots,
+    columnLabels: form.columnLabels,
+    textCols,
+  })
+  if (!hasPlottableSeries(form.chart_type, specs)) {
+    const label = VIZ_TYPE_META.find((v) => v.value === form.chart_type)?.label || form.chart_type
+    return { ok: false, error: `Text can't be drawn as a ${label.toLowerCase()}. Use Stat or Table, or add a numeric column.` }
+  }
+
   // Prune incomplete conditions: a row needs lhs, op and a non-empty rhs; a
   // condition needs at least one surviving row. The first surviving row
   // carries no connector.
-  const allValueCols = [form.metric, ...(form.value_cols || [])].filter(Boolean)
-  const known = new Set(allValueCols)
+  // A condition names a column, or `column[i]` for one slot of an array column.
+  const known = new Set([...allValueCols, ...specs.map((sp) => sp.varName)])
   const cleanConditions = []
   for (const c of form.conditions || []) {
     const rows = []
@@ -320,7 +366,7 @@ export function buildPanelPayload({
 
   // Per-series display units: keyed by filter value when filtered, else by
   // value column. Pruned to the active keys so stale cross-mode keys don't ride.
-  const unitKeys = form.filter_col ? (form.filters || []) : allValueCols
+  const unitKeys = [...new Set(specs.map((sp) => sp.unitKey))]
   const unitMap = {}
   for (const k of unitKeys) if (form.units?.[k]) unitMap[k] = form.units[k]
 
@@ -367,8 +413,13 @@ export function buildPanelPayload({
     window_minutes: form.window_minutes,
     chart_type: form.chart_type,
     options: {
-      ...form.options,
+      // The three options below are rebuilt from the form each save; if they
+      // rode in through form.options too, one the user just cleared would come back.
+      ...stripColumnOptions(form.options),
       filters: [...(form.filters || [])],
+      ...(unsplitCols.length ? { unsplitCols } : {}),
+      ...(Object.keys(arraySlots).length ? { arraySlots } : {}),
+      ...(textCols.length ? { textCols } : {}),
       ...((form.value_cols || []).length ? { value_cols: [...form.value_cols] } : {}),
       ...(Object.keys(unitMap).length ? { units: unitMap } : {}),
       ...(Object.keys(gaugeMap).length ? { gaugeSeries: gaugeMap } : {}),

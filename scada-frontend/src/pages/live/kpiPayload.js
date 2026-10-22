@@ -42,7 +42,11 @@ export const KPI_DEFAULTS = Object.freeze({
   ts_col: null,
   location: null,
   slots: { speed: 'count_1', defects: 'defect_*' },
-  // The Loss meter's picked columns; null leaves per-machine column detection in charge.
+  // Explicit column binding; null / absent leaves per-machine column detection in charge.
+  // `output_col` + `machine_col` bind every machine block; `defect_cols` alone is the Loss meter's tally.
+  machine_col: null,
+  output_col: null,
+  value_kind: 'rate',
   defect_cols: null,
   array_mode: 'sum',
   filter_col: null,
@@ -75,10 +79,20 @@ export const KPI_DEFAULTS = Object.freeze({
  */
 export function cleanKpi(kpi) {
   const out = { ...kpi }
+  if (out.output_col == null) { delete out.output_col; delete out.machine_col; delete out.value_kind }
+  else {
+    if (out.machine_col == null) delete out.machine_col
+    if (out.value_kind === 'rate') delete out.value_kind
+  }
   if (out.defect_cols == null) { delete out.defect_cols; delete out.array_mode }
   else if (out.array_mode === 'sum') delete out.array_mode
   if (out.filter_col == null) { delete out.filter_col; delete out.filter_val }
   return out
+}
+
+/** The Loss meter counting picked defect columns, with no output column to judge machines by. */
+export function isDefectTally(kpi) {
+  return kpi?.defect_cols != null && kpi?.output_col == null
 }
 
 /** Smallest grid size (cols × rows) each block stays readable at. */
@@ -126,7 +140,7 @@ const DEFAULT_TITLES = {
  * read the same line apply the same loss rules — a target typed on the Andon
  * board must not leave the waterfall judging "slow" against the auto target. */
 const INHERITED_KPI_KEYS = [
-  'ts_col', 'location', 'slots', 'defect_cols', 'array_mode', 'filter_col', 'filter_val', 'exclude_families', 'period', 'compare', 'cost_per_piece',
+  'ts_col', 'location', 'slots', 'machine_col', 'output_col', 'value_kind', 'defect_cols', 'array_mode', 'filter_col', 'filter_val', 'exclude_families', 'period', 'compare', 'cost_per_piece',
   'targets', 'run_ratio', 'stop_threshold', 'min_stop_sec', 'valid_max', 'max_loss_stop_min',
   'working_hours', 'sample_sec', 'scope', 'line_family', 'plan_pieces', 'sensors', 'flat_min',
 ]
@@ -137,10 +151,18 @@ const INHERITED_KPI_KEYS = [
  * board is usually about one line), else the operator's primary datasource
  * with no table yet. The Loss meter's `mode` is the block's own and is not
  * inherited.
+ *
+ * Only the Loss meter can read a table by counting picked defect columns. Any
+ * other block judges machines — by per-machine columns or an output column — so
+ * for those `type` skips a block that only tallies defects: copying its table
+ * would make the server refuse the new block. It falls back to the newest
+ * machine-bound one, or to unbound.
  */
-export function inheritBinding(panels, primaryDatasourceId = null) {
+export function inheritBinding(panels, primaryDatasourceId = null, type = null) {
+  const needsMachines = type != null && type !== 'lossmeter'
   const last = [...(panels || [])]
     .filter((p) => isKpiPanel(p) && p.table_name)
+    .filter((p) => !(needsMachines && isDefectTally(p.options?.kpi)))
     .sort((a, b) => b.id - a.id)[0]
   if (!last) return { datasource_id: primaryDatasourceId ?? null, table_name: null, kpi: {} }
   const k = last.options?.kpi || {}

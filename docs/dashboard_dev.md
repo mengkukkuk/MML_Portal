@@ -237,7 +237,21 @@ output series:
   advance.
 - **`source: 'table'`** — cartesian of `options.value_cols[]` × `options.filters[]`
   (with `filter_col`). With a `ts_col` it seeds real history; without one it behaves
-  like the tag source.
+  like the tag source. The cartesian is built by `deriveSeriesSpecs()`
+  (`components/live/seriesModel.js`), shared by the tile, the grid's min-size
+  estimate and the editor. Three per-column options reshape it:
+  - `options.unsplitCols[]` — a value column drawn once, not per series value. It reads
+    the newest row of the whole table (`filter_val` null), so it suits a column that
+    holds the same value on every row. Only offered with a `filter_col` and ≥ 2 columns.
+  - `options.arraySlots{col: [{index, name?}]}` — an array column draws one line per
+    listed slot, named by hand. Absent = slot 0 only, identical to the old behaviour.
+    Alert conditions name a slot `col[i]`. Slots share one read per (column, series value).
+  - `options.textCols[]` — text columns (derived from the catalogue on save). A Stat or
+    Table prints the latest word; other chart types show it as a chip above the plot and
+    refuse to save if there is no numeric series. `/schema/series` drops text, so history
+    accumulates client-side from polling.
+  `panels.py` accepts text / array columns as `metric` / `value_cols` and shape-checks
+  these three options (`_validate_column_options`).
 - **`source: 'device'`** — single series from `device_id` + `metric` on
   `public.sensor_readings`.
 
