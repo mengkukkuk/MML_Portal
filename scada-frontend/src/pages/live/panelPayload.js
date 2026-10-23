@@ -30,6 +30,7 @@ export const TAG_FIELD_TO_COL = { current_value: 'current_value_tag' }
 // different label lengths for the same whitelist of seconds.
 export const POLL_INTERVAL_OPTIONS = [
   { value: 5, label: '5 seconds' },
+  { value: 10, label: '10 seconds' },
   { value: 30, label: '30 seconds' },
   { value: 60, label: '1 minute' },
   { value: 600, label: '10 minutes' },
@@ -399,6 +400,9 @@ export function buildPanelPayload({
   const layoutOpt = editingPanel
     ? (editingPanel.options?.layout ? { layout: editingPanel.options.layout } : {})
     : { layout: nextLayout }
+  // A tile's pages are board structure, not a setting of this editor: an edit
+  // keeps them, or the other panels would drop back onto the grid.
+  const pagesOpt = editingPanel?.options?.pages ? { pages: editingPanel.options.pages } : {}
 
   const payload = {
     title: form.title.trim(),
@@ -429,6 +433,7 @@ export function buildPanelPayload({
       ...extraOpts,
       ...condOpts,
       ...layoutOpt,
+      ...pagesOpt,
     },
     poll_interval_seconds: form.poll_interval_seconds,
     dashboard_id: activeDashboardId,
@@ -444,6 +449,14 @@ export function buildPanelPayload({
  * options.layout — no schema change, no editor round-trip needed.
  */
 export function buildLayoutSavePayload(panel, layout, activeDashboardId) {
+  return buildOptionsPatchPayload(panel, { layout }, activeDashboardId)
+}
+
+/**
+ * The same full payload with any options keys replaced — a layout, or a
+ * tile's page list (panelStack.js) — everything else round-tripped as stored.
+ */
+export function buildOptionsPatchPayload(panel, patch, activeDashboardId) {
   return {
     title: panel.title,
     source: panel.source || 'device',
@@ -456,7 +469,7 @@ export function buildLayoutSavePayload(panel, layout, activeDashboardId) {
     metric: panel.metric,
     window_minutes: panel.window_minutes,
     chart_type: panel.chart_type === 'line' ? 'timeseries' : panel.chart_type,
-    options: { ...(panel.options || {}), layout },
+    options: { ...(panel.options || {}), ...patch },
     poll_interval_seconds: panel.poll_interval_seconds,
     dashboard_id: panel.dashboard_id ?? activeDashboardId,
     position: panel.position,
@@ -467,6 +480,8 @@ export function buildLayoutSavePayload(panel, layout, activeDashboardId) {
 export function buildDuplicatePayload(panel, title, { activeDashboardId, panelsLength, nextLayout }) {
   const clonedOptions = JSON.parse(JSON.stringify(panel.options || {}))
   clonedOptions.layout = nextLayout
+  // The copy is one tile: the original keeps its pages (a page has one host).
+  delete clonedOptions.pages
   return {
     title,
     source: panel.source || 'device',

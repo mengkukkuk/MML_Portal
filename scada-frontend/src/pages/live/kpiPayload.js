@@ -35,12 +35,17 @@ export function isKpiPanel(panel) {
   return panel?.source === 'kpi'
 }
 
-/** No 5 s: a ฿ figure jittering every five seconds tells the board nothing. */
-export const KPI_POLL_INTERVALS = [30, 60, 600, 1800, 3600]
+/** Every Live interval; see kpi_options.py on why a slow link wants 30 s or more. */
+export const KPI_POLL_INTERVALS = [5, 10, 30, 60, 600, 1800, 3600]
 
 export const KPI_DEFAULTS = Object.freeze({
   ts_col: null,
   location: null,
+  // The Response board's incident location (a response role's location); null = every
+  // location. The block's own choice: not in INHERITED_KPI_KEYS.
+  response_location: null,
+  // The Response board lists alerts from this level up; lower ones are only counted.
+  alert_min_severity: 'warn',
   slots: { speed: 'count_1', defects: 'defect_*' },
   // Explicit column binding; null / absent leaves per-machine column detection in charge.
   // `output_col` + `machine_col` bind every machine block; `defect_cols` alone is the Loss meter's tally.
@@ -87,6 +92,8 @@ export function cleanKpi(kpi) {
   if (out.defect_cols == null) { delete out.defect_cols; delete out.array_mode }
   else if (out.array_mode === 'sum') delete out.array_mode
   if (out.filter_col == null) { delete out.filter_col; delete out.filter_val }
+  if (out.response_location == null) delete out.response_location
+  if (out.alert_min_severity == null || out.alert_min_severity === 'warn') delete out.alert_min_severity
   return out
 }
 
@@ -131,7 +138,7 @@ const DEFAULT_TITLES = {
   pace: 'Making the plan?',
   hourly: 'Defect rate by hour',
   sensors: 'Sensor status',
-  response: 'Incidents and response',
+  response: 'Alerts and who must act',
   kpitrend: '7-day trend',
   pareto: 'Where defects come from',
 }
@@ -247,4 +254,27 @@ export function workingHoursFrom(start, end, days) {
   const ok = (v) => /^([01]\d|2[0-3]):[0-5]\d$/.test(v || '')
   if (!ok(start) || !ok(end) || start === end || !days?.length) return null
   return { start, end, days: [...new Set(days)].sort() }
+}
+
+/** Blocks whose incidents can be narrowed to one location (kpi.py's WANTS["response"]). */
+export const RESPONSE_LOCATION_TYPES = Object.freeze(['response', 'kpistrip'])
+
+const squashPlace = (text) => String(text ?? '').replace(/\s+/g, '').toLowerCase()
+
+/**
+ * The places a Response board can be narrowed to: the response roles'
+ * locations, then `seen` — the locations the alerts themselves carry, so a
+ * place spelled unlike its rule ("L13" against "Line 13") can still be picked.
+ * Each spelling once (case and spaces ignored, as the server matches), without
+ * blank or `global` — those mean every location, which is the picker's own
+ * "All locations".
+ */
+export function responseLocations(roles, seen = []) {
+  const found = new Map()
+  for (const place of [...(roles || []).map((r) => r?.location), ...(seen || [])]) {
+    const key = squashPlace(String(place ?? '').trim())
+    if (!key || key === 'global' || found.has(key)) continue
+    found.set(key, String(place).trim())
+  }
+  return [...found.values()].sort((a, b) => a.localeCompare(b))
 }

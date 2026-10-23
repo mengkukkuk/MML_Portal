@@ -9,6 +9,7 @@ import { deriveSeriesSpecs } from './seriesModel'
 // Poll interval selector — values are seconds, kept in sync with backend whitelist.
 export const POLL_INTERVALS = [
   { value: 5, label: '5s' },
+  { value: 10, label: '10s' },
   { value: 30, label: '30s' },
   { value: 60, label: '1m' },
   { value: 600, label: '10m' },

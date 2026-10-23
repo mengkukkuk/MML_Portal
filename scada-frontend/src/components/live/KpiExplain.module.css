@@ -1,0 +1,90 @@
+/* The ⓘ popover of a management block. Rides on the gear popover's frosted
+   paper (LivePanel.module.css .gearpopPaper); only the content is styled here. */
+.explain {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: min(380px, calc(100vw - 48px));
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+
+.explain:lang(th) {
+  font-family: var(--font-thai), var(--font-sans);
+}
+
+.explain__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.explain__question {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.explain__lang {
+  display: inline-flex;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.explain__langbtn {
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 11px;
+  background: transparent;
+  border: 0;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.explain__langbtn--on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.explain__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.explain__heading {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.explain__list {
+  margin: 0;
+  padding-left: 1.1em;
+  color: var(--fg-muted);
+}
+
+.explain__list--formula {
+  color: var(--fg);
+}
+
+.explain__list li + li {
+  margin-top: 2px;
+}
+
+.explain__why p {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}

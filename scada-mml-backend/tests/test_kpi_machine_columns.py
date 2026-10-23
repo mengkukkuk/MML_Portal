@@ -221,6 +221,7 @@ def test_a_bound_table_with_nothing_in_the_period_says_why(stubbed, monkeypatch)
 
     monkeypatch.setattr(db, "kpi_minute_buckets", one_bucket)
     kpi_cache.CACHE.clear()
+    kpi._MINUTE_MEMO.clear()
     assert "notice" not in kpi.summarize("camera_defect", 681, {**k, "defect_cols": ["setpoint"]},
                                          chart_type="andon", now=NOW)
 

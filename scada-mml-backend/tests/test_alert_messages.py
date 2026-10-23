@@ -257,6 +257,19 @@ def test_a_rule_with_no_conditions_is_the_catch_all():
     assert db.match_response_role(RULES[:3], location=None) is None
 
 
+def test_global_is_a_catch_all_like_blank():
+    rules = [{**RULES[1]}, {**RULES[3], "location": " Global "}]
+    assert db.match_response_role(rules, location="Line 13")["code"] == "l13-sup"
+    assert db.match_response_role(rules, location="Line 2")["code"] == "op"
+    assert db.match_response_role(rules, location=None)["code"] == "op"
+    # the line's own rule beats a catch-all even when the catch-all is tried first
+    first = [{**RULES[3], "location": "global", "priority": 1}, RULES[1]]
+    assert db.match_response_role(first, location="Line 13")["code"] == "l13-sup"
+    assert db.match_response_role(first, location="Line 2")["code"] == "op"
+    # an alert located "global" is not a place of its own: the catch-all answers
+    assert db.match_response_role(first, location="global")["code"] == "op"
+
+
 def test_the_row_role_id_wins_over_every_rule():
     # Tagged with role_id 7 (the operator), though the Line 1 rule would say "it".
     for tag in ("7", " 7 ", "7.0", 7):

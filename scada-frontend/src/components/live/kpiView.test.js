@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   fmtPieces, fmtBaht, fmtDuration, lossMeterFigures, lossDelta, appendSpark,
-  waterfallBars, stripSegments, andonWord, stripTiles, hourlyBars, paceGeometry, trendDelta,
+  waterfallBars, stripSegments, andonWord, stripTiles, hourlyBars, paceGeometry, trendDelta, viaNote, eventWhen,
 } from './kpiView.js'
 
 const tr = (s, p = {}) => s.replace(/\{(\w+)\}/g, (_, k) => p[k])
@@ -139,4 +139,20 @@ test('trend delta knows which way is good', () => {
   const days = [{ y: 0.99, b: 5 }, { y: 0.98, b: 25 }]
   assert.equal(trendDelta(days, 'y').worse, true)
   assert.equal(trendDelta(days, 'b', false).worse, true)
+})
+
+test('response board: how an alert reached its owner', () => {
+  assert.deepEqual(viaNote({ via: 'location', location: 'Line 13' }), ['rule for {l}', { l: 'Line 13' }, null])
+  assert.equal(viaNote({ via: 'catch_all', location: 'L13' })[2], 'warn')
+  assert.equal(viaNote({ via: 'catch_all', location: null })[0], 'global rule')
+  assert.equal(viaNote({ via: 'tag' })[0], 'set on the alert row')
+  assert.equal(viaNote({ via: null })[2], 'bad')
+})
+
+test('response board: one time for one alert, a range for a run', () => {
+  const one = eventWhen({ start: '2026-10-19T00:31:00+07:00', end: '2026-10-19T00:31:00+07:00', count: 1 }, false, 'en-GB')
+  const run = eventWhen({ start: '2026-10-19T00:31:00+07:00', end: '2026-10-19T00:34:00+07:00', count: 5 }, false, 'en-GB')
+  assert.ok(!one.includes('–'))
+  assert.ok(run.includes('–') && run.startsWith(one))
+  assert.equal(eventWhen(null), '—')
 })

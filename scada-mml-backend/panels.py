@@ -53,7 +53,7 @@ VALID_CHART_TYPES = {
 VALID_SOURCES = {"device", "tag", "table", "kpi"}
 
 # Poll-interval whitelist (seconds) — mirrors the frontend selector.
-VALID_POLL_INTERVALS = {5, 30, 60, 600, 1800, 3600}
+VALID_POLL_INTERVALS = {5, 10, 30, 60, 600, 1800, 3600}
 
 
 # --- Schemas ---------------------------------------------------------------

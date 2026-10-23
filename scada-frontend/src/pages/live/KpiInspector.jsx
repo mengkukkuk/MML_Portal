@@ -14,9 +14,12 @@ import { useTranslation } from '@/i18n'
 import { apiErrorMessage } from '@/api/client'
 import { fetchSchemaTables, fetchSchemaColumns } from '@/api/schema'
 import { fetchTagLocations } from '@/api/tags'
+import { fetchResponseRoles } from '@/api/alerts'
 import { useKpiSummary } from '@/components/live/useKpiSummary'
-import { fmtPieces, METRIC_META } from '@/components/live/kpiView'
-import { workingHoursFrom, isDefectTally, KPI_METRIC_KEYS, MAX_STRIP_METRICS } from './kpiPayload'
+import { fmtPieces, METRIC_META, SEVERITY_LABELS } from '@/components/live/kpiView'
+import {
+  workingHoursFrom, isDefectTally, KPI_METRIC_KEYS, MAX_STRIP_METRICS, RESPONSE_LOCATION_TYPES, responseLocations,
+} from './kpiPayload'
 import BlockColumns from './BlockColumns'
 import { numericColumns } from './kpiColumns'
 import styles from './KpiInspector.module.css'
@@ -84,6 +87,12 @@ export default function KpiInspector({
     queryFn: () => fetchTagLocations(draft?.datasource_id ?? null),
     enabled: open,
   })
+  const wantsPlace = RESPONSE_LOCATION_TYPES.includes(panel?.chart_type)
+  const rolesQuery = useQuery({
+    queryKey: ['response-roles'],
+    queryFn: fetchResponseRoles,
+    enabled: open && wantsPlace,
+  })
   const summaryQuery = useKpiSummary(panel || { id: 0, chart_type: 'andon' }, { draft: open ? draft : null })
   const summary = summaryQuery.data
 
@@ -92,6 +101,10 @@ export default function KpiInspector({
   const locations = useMemo(
     () => [...new Set((locationsQuery.data || []).map((r) => r.location).filter(Boolean))].sort(),
     [locationsQuery.data],
+  )
+  const places = useMemo(
+    () => responseLocations(rolesQuery.data, summary?.alerts?.locations),
+    [rolesQuery.data, summary?.alerts?.locations],
   )
 
   // Pick the clock column automatically when the table has exactly one.
@@ -200,7 +213,31 @@ export default function KpiInspector({
           </section>
         )}
 
-        {['sensors', 'response', 'kpistrip', 'kpitrend'].includes(panel.chart_type) && (
+        {wantsPlace && (
+          <section className={styles.section}>
+            <h3 className={styles.section__title}>{tr(panel.chart_type === 'response' ? 'Alerts' : 'Incidents')}</h3>
+            <TextField select size="small" label={tr(panel.chart_type === 'response' ? 'Alert location' : 'Incident location')}
+              value={kpi.response_location ?? ''}
+              helperText={tr(panel.chart_type === 'response' ? 'Only alerts at this location'
+                : 'Only incidents on tags at this location, and its response role')}
+              slotProps={{ select: { displayEmpty: true }, inputLabel: { shrink: true } }}
+              onChange={(e) => setKpi({ response_location: e.target.value || null })}>
+              <MenuItem value="">{tr('All locations')}</MenuItem>
+              {places.map((l) => <MenuItem key={l} value={l}>{l}</MenuItem>)}
+              {kpi.response_location && !places.includes(kpi.response_location) && (
+                <MenuItem value={kpi.response_location}>{kpi.response_location}</MenuItem>
+              )}
+            </TextField>
+            {panel.chart_type === 'response' && (
+              <TextField select size="small" label={tr('Show from level')} value={kpi.alert_min_severity || 'warn'}
+                onChange={(e) => setKpi({ alert_min_severity: e.target.value })}>
+                {Object.entries(SEVERITY_LABELS).map(([k, label]) => <MenuItem key={k} value={k}>{tr(label)}</MenuItem>)}
+              </TextField>
+            )}
+          </section>
+        )}
+
+        {['sensors', 'kpistrip', 'kpitrend'].includes(panel.chart_type) && (
           <section className={styles.section}>
             <h3 className={styles.section__title}>{tr('Sensors')}</h3>
             {sensorKeys.length > 0 && (

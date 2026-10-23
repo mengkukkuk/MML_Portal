@@ -122,9 +122,12 @@ def sensor_source(ds, table, ts_col, cols, lo, hi, **kw):
 @pytest.fixture(autouse=True)
 def _stubs(monkeypatch):
     kpi_cache.CACHE.clear()
+    kpi._MINUTE_MEMO.clear()
     monkeypatch.setattr(db, "describe_table", lambda table, ds=None: DESCRIBE)
     monkeypatch.setattr(db, "kpi_minute_buckets", lambda ds, t, ts, fams, lo, hi, **kw: machine_source(fams, lo, hi))
     monkeypatch.setattr(db, "kpi_sensor_minutes", sensor_source)
+    monkeypatch.setattr(db, "tag_locations", lambda datasource_id=None: [])
+    monkeypatch.setattr(db, "get_alert_source", lambda: None)
     monkeypatch.setattr(db, "list_response_roles", lambda: [
         {"role_id": 3, "code": "MT", "name_th": "ช่างซ่อม", "name_en": "Maintenance", "location": None}])
     monkeypatch.setattr(db, "kpi_event_rows", lambda ds, tags, lo, hi, limit=500: [
@@ -188,12 +191,41 @@ def test_sensors_risk_and_blind_time():
 
 
 def test_response_pairs_incidents_with_the_first_change():
-    s = run("response")
+    s = run("kpistrip")
     (inc,) = s["incidents"]
     assert inc["tag"] == "Temp1" and inc["minutes"] == 10
     assert inc["response_min"] == 11 and inc["by"] == "somchai"
     assert inc["role"]["code"] == "MT"
     assert s["metrics"]["avg_response_min"] == 11 and s["metrics"]["incidents"] == 1
+
+
+def test_response_location_keeps_that_locations_incidents_and_role(monkeypatch):
+    monkeypatch.setattr(db, "list_response_roles", lambda: [
+        {"role_id": 1, "code": "L13", "name_th": "หัวหน้าไลน์ 13", "name_en": "Line 13 supervisor",
+         "location": "Line 13"},
+        {"role_id": 2, "code": "L2", "name_th": "หัวหน้าไลน์ 2", "name_en": "Line 2 supervisor",
+         "location": "Line 2"},
+        {"role_id": 3, "code": "MT", "name_th": "ช่างซ่อม", "name_en": "Maintenance", "location": "global"}])
+    # no variables_tag: Temp1's location comes from its logged change ("Line 13")
+    here = run("kpistrip", sensors=["Temp1"], response_location="line13")
+    (inc,) = here["incidents"]
+    assert inc["role"]["code"] == "L13" and inc["location"] == "line13"
+    assert here["settings"]["response_location"] == "line13"
+    assert [c["tag"] for c in here["changes"]] == ["Temp1"]
+    elsewhere = run("kpistrip", sensors=["Temp1"], response_location="Line 2")
+    assert elsewhere["incidents"] == [] and elsewhere["changes"] == []
+    assert elsewhere["metrics"]["incidents"] == 0 and elsewhere["metrics"]["avg_response_min"] is None
+    # global = every location; the role then follows the tag's own place
+    every = run("kpistrip", sensors=["Temp1"], response_location="global")
+    assert every["settings"]["response_location"] is None
+    assert every["incidents"][0]["role"]["code"] == "L13"
+
+
+def test_variables_tag_says_where_a_tag_is(monkeypatch):
+    monkeypatch.setattr(db, "tag_locations", lambda datasource_id=None: [
+        {"tag_name": "Temp1", "location": "Line 2"}])
+    assert run("kpistrip", sensors=["Temp1"], response_location="Line 13")["incidents"] == []
+    assert len(run("kpistrip", sensors=["Temp1"], response_location="Line 2")["incidents"]) == 1
 
 
 def test_seven_day_trend():
@@ -216,3 +248,115 @@ def test_pareto_by_camera_and_type():
 def test_operator_sees_no_money_in_new_sections():
     s = kpi.for_user(run("pareto"), {"role": "operator"})
     assert "baht" not in repr(s) and "cost_per_piece" not in repr(s)
+
+
+# --- the Response board: alert messages and who must act -------------------------------
+
+ALERT_SOURCE = {"datasource_id": 9, "datasource_name": "plant", "table_name": "alert_messages", "ts_col": "created_at",
+                "message_col": "message", "severity_col": "severity", "match_col": "location",
+                "match_filter": "location", "role_col": "role_id"}
+ROLES = [
+    {"role_id": 2, "code": "automation", "name_th": "ทีมระบบอัตโนมัติ", "name_en": "Automation team",
+     "location": "global"},
+    {"role_id": 1, "code": "L-13-sup", "name_th": "หัวหน้าไลน์ 13", "name_en": "Line 13 supervisor",
+     "location": "Line 13"},
+    {"role_id": 4, "code": "maint", "name_th": "ช่างซ่อมบำรุง", "name_en": "Maintenance", "location": "global"},
+]
+
+
+def alert(minute, message, severity="crit", location="Line 13", role=None):
+    day = NOW.replace(hour=0, minute=0, second=0, microsecond=0)
+    return {"ts": day + timedelta(hours=8, minutes=minute), "message": message, "severity": severity,
+            "match_value": location, "role_value": role}
+
+
+@pytest.fixture
+def alerts(monkeypatch):
+    rows = [
+        alert(0, "Check speed: 8,197 pcs/min — outside 7,000–8,000"),
+        alert(1, "Check speed: 8,243 pcs/min — outside 7,000–8,000"),
+        alert(2, "Check speed: 8,311 pcs/min — outside 7,000–8,000"),
+        alert(30, "Check speed: 8,100 pcs/min — outside 7,000–8,000"),   # a new event: 28 min later
+        alert(3, "Check defect trend: rising", "warn"),
+        alert(4, "Check defect rate: OK", "info"),
+        alert(5, "Mold change", "warn", location="L13"),                 # spelled unlike its rule
+        alert(6, "Hold lot 4471", "2", location="Line 13", role="4"),    # the row names its role
+        alert(7, "Belt slip", "warn", location="Line 2"),
+    ]
+    monkeypatch.setattr(db, "get_alert_source", lambda: ALERT_SOURCE)
+    monkeypatch.setattr(db, "read_alert_messages",
+                        lambda src, lo, hi, values, limit: sorted(rows, key=lambda r: r["ts"], reverse=True)[:limit])
+    monkeypatch.setattr(db, "list_response_roles", lambda: ROLES)
+    return rows
+
+
+def test_board_groups_repeats_into_events_and_routes_each(alerts):
+    b = run("response")["alerts"]
+    assert b["available"] and b["min_severity"] == "warn"
+    assert b["alerts"] == {"crit": 5, "warn": 3, "info": 1}
+    assert b["shown_alerts"] == 8                       # the info row is counted, not listed
+    speed = [e for e in b["events"] if e["kind"] == "Check speed"]
+    assert [e["count"] for e in speed] == [1, 3]        # newest first; 28 min apart is two events
+    assert speed[1]["message"].startswith("Check speed: 8,311") and "first_message" in speed[1]
+    route = {e["message"]: (e["role"]["code"], e["via"]) for e in b["events"]}
+    assert route["Check defect trend: rising"] == ("L-13-sup", "location")
+    assert route["Mold change"] == ("automation", "catch_all")
+    assert route["Hold lot 4471"] == ("maint", "tag")
+    assert route["Belt slip"] == ("automation", "catch_all")
+
+
+def test_board_names_locations_no_rule_claims(alerts):
+    b = run("response")["alerts"]
+    assert b["locations"] == ["L13", "Line 13", "Line 2"]
+    assert b["unmatched"] == ["L13", "Line 2"]
+    assert b["catch_all"]["code"] == "automation"
+    # the location filter narrows the events, never the places offered
+    assert run("response", response_location="Line 2")["alerts"]["locations"] == b["locations"]
+
+
+def test_board_counts_per_role_worst_first(alerts):
+    rows = run("response")["alerts"]["by_role"]
+    assert rows[0]["role"]["code"] == "L-13-sup" and rows[0]["crit"] == 2 and rows[0]["warn"] == 1
+    assert {r["role"]["code"]: r["events"] for r in rows} == {"L-13-sup": 3, "automation": 2, "maint": 1}
+
+
+def test_board_location_and_severity_filters(alerts):
+    line13 = run("response", response_location="line 13")["alerts"]
+    assert {e["location"] for e in line13["events"]} == {"Line 13"}
+    assert line13["alerts"]["warn"] == 1                # Line 2 and "L13" rows are not this place's
+    crit = run("response", alert_min_severity="crit")["alerts"]
+    assert {e["severity"] for e in crit["events"]} == {"crit"}
+    everything = run("response", alert_min_severity="info")["alerts"]
+    assert any(e["severity"] == "info" for e in everything["events"])
+
+
+def test_board_without_a_source_or_reachable_table(monkeypatch):
+    assert run("response")["alerts"] == {"configured": False, "available": False, "reason": "not_configured"}
+    monkeypatch.setattr(db, "get_alert_source", lambda: ALERT_SOURCE)
+
+    def missing(*a, **kw):
+        raise ValueError("Column not found: created_at")
+    monkeypatch.setattr(db, "read_alert_messages", missing)
+    b = run("response")["alerts"]
+    assert b["available"] is False and b["reason"] == "missing" and b["table"] == "alert_messages"
+
+
+def test_response_board_no_longer_reads_sensors():
+    s = run("response")
+    assert "sensors" not in s and "incidents" not in s
+
+
+def test_one_computation_per_block_per_minute(monkeypatch):
+    calls = []
+    real = kpi.summarize
+    monkeypatch.setattr(kpi, "summarize", lambda *a, **kw: calls.append(kw["now"]) or real(*a, **kw))
+    kpi._MINUTE_MEMO.clear()
+    opts = {**OPTS}
+    first = kpi.minute_summary("t", 5, opts, "andon", now=NOW)
+    again = kpi.minute_summary("t", 5, opts, "andon", now=NOW + timedelta(seconds=25))
+    assert again is first and len(calls) == 1                     # same minute: the poll is free
+    kpi.minute_summary("t", 5, {**opts, "run_ratio": 0.7}, "andon", now=NOW)
+    kpi.minute_summary("t", 5, opts, "waterfall", now=NOW)
+    assert len(calls) == 3                                         # another setting or block type
+    kpi.minute_summary("t", 5, opts, "andon", now=NOW + timedelta(minutes=1))
+    assert len(calls) == 4                                         # the next minute recomputes

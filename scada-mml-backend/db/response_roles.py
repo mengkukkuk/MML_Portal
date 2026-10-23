@@ -3,7 +3,8 @@
 Each row is one rule — a role (its code, its Thai/English names and the
 `role_id` alert writers tag a row with) and the condition under which an
 untagged alert is that role's to handle: its location. The condition is
-optional; a rule without one is the catch-all. Rules are tried by `priority`
+optional; a rule without one — or with the location `global` — is a catch-all,
+used only when no rule names the alert's location. Within each, rules are tried by `priority`
 (lower first, then id) and the first that fits wins.
 
 Severity is deliberately not a condition. How loud an alert is says nothing
@@ -34,6 +35,9 @@ __all__ = [
     "init_response_roles_table",
     "list_response_roles",
     "match_response_role",
+    "route_response_role",
+    "is_any_location",
+    "same_location",
     "update_response_role",
 ]
 
@@ -151,6 +155,21 @@ def _squash(text: str | None) -> str:
     return "".join((text or "").split()).casefold()
 
 
+# A rule location that means "every location". Blank always did; `global` is
+# what plants type for it, and read literally it matched nothing at all.
+ANY_LOCATION = "global"
+
+
+def is_any_location(location: str | None) -> bool:
+    """Blank or `global`: a location condition that every location meets."""
+    return _squash(location) in ("", ANY_LOCATION)
+
+
+def same_location(a: str | None, b: str | None) -> bool:
+    """Whether two location spellings name the same place (see `_squash`)."""
+    return _squash(a) == _squash(b)
+
+
 def _ref(rule: dict[str, Any]) -> dict[str, Any]:
     return {"id": rule.get("role_id"), "code": rule["code"],
             "name_th": rule["name_th"], "name_en": rule["name_en"]}
@@ -179,6 +198,23 @@ def match_response_role(
     as a `role_id` first, then as a `code`; a tag that names no role is shown as
     written (with no id), since the writer clearly meant someone.
     """
+    return route_response_role(rules, location=location, explicit=explicit)[0]
+
+
+def route_response_role(
+    rules: list[dict[str, Any]],
+    *,
+    location: str | None,
+    explicit: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """`match_response_role`'s role, and how it was reached.
+
+    The second value is "tag" (the row named its role), "location" (a rule for
+    the alert's location), "catch_all" (a blank or `global` rule — nobody claims
+    that location) or None (no rule fits). The Response board shows it so a
+    supervisor can see *why* an alert is theirs, and spot a location spelled
+    differently from its rule, which silently lands on the catch-all.
+    """
     tag = str(explicit).strip() if explicit is not None else ""
     if tag:
         wanted = _role_id(tag)
@@ -187,12 +223,17 @@ def match_response_role(
             or next((r for r in rules if r["code"].casefold() == tag.casefold()), None)
         )
         if named:
-            return _ref(named)
-        return {"id": None, "code": tag, "name_th": tag, "name_en": tag}
+            return _ref(named), "tag"
+        return {"id": None, "code": tag, "name_th": tag, "name_en": tag}, "tag"
 
+    # A rule naming the alert's own location beats a catch-all, whatever their
+    # priorities: a `global` team at priority 10 must not take every line's
+    # alerts from the line's own supervisor. Catch-alls answer what no location
+    # rule claims; priority orders the rules within each group.
     where = _squash(location)
-    for r in rules:
-        if r.get("location") and _squash(r["location"]) != where:
-            continue
-        return _ref(r)
-    return None
+    if where and not is_any_location(location):
+        own = next((r for r in rules if _squash(r.get("location")) == where), None)
+        if own:
+            return _ref(own), "location"
+    catch_all = next((r for r in rules if is_any_location(r.get("location"))), None)
+    return (_ref(catch_all), "catch_all") if catch_all else (None, None)

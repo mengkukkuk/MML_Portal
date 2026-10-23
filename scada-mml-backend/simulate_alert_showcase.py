@@ -32,12 +32,19 @@ Usage (datasource 569 "Mengkukkuk" is the local mmldata, schema vision_data):
     python simulate_alert_showcase.py --datasource 569 --seed 24 --live   # then keep going
     python simulate_alert_showcase.py --datasource 569 --seed 24 --live --tick-alerts
     python simulate_alert_showcase.py --datasource 569 --purge            # remove it all
+    python simulate_alert_showcase.py --datasource 569 --live --maint-role 4   # stops tagged for role 4
 
 Then Settings -> Alert messages (one source for every trend): connection =
 the one written to here, table alert_messages, time created_at, message
 message, severity severity, follows Location on location. Reports: table
 sensor_log1, reading CAM001-13-count_1, time recorded_at. Pointing the source
 here moves it off any real alert table — set it back afterwards.
+
+``--maint-role ID`` tags the stop alerts ("Line 13 stopped" / "restarted") with
+that Response-role ID in ``role_id`` — the way an analysis job that knows a
+stop is a maintenance call would — so a Response board shows rows routed by
+their own tag beside rows routed by location. It takes effect once the alert
+source's Role ID column is set to ``role_id``.
 """
 import argparse
 import random
@@ -59,6 +66,8 @@ SOURCE = "showcase"
 STEP = timedelta(seconds=10)
 
 LOCATION = "L13"
+# Alerts a --maint-role tags: a stop is the maintenance team's call.
+MAINT_PREFIXES = ("Line 13 stopped", "Line 13 restarted")
 CAMERA = "CAM001-13"
 SPEED = f"{CAMERA}-count_1"
 DEFECT = f"{CAMERA}-defect_1"
@@ -318,14 +327,30 @@ def write_rows(conn, schema: str, rows: list[tuple]) -> None:
             cp.write_row(row)
 
 
-def write_alerts(conn, schema: str, alerts: list[tuple]) -> None:
+def role_of(message: str, maint_role: int | None) -> int | None:
+    """The role_id an alert is tagged with: `maint_role` for a stop, else none (routed by location)."""
+    return maint_role if maint_role is not None and message.startswith(MAINT_PREFIXES) else None
+
+
+def write_alerts(conn, schema: str, alerts: list[tuple], maint_role: int | None = None) -> None:
     if not alerts:
         return
     conn.cursor().executemany(sql.SQL(
-        "INSERT INTO {t} (created_at, message, severity, location, code, source) "
-        "VALUES (%s, %s, %s, %s, %s, %s)"
+        "INSERT INTO {t} (created_at, message, severity, location, code, source, role_id) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s)"
     ).format(t=sql.Identifier(schema, "alert_messages")),
-        [(ts, msg, sev, LOCATION, CAMERA, SOURCE) for ts, msg, sev in alerts])
+        [(ts, msg, sev, LOCATION, CAMERA, SOURCE, role_of(msg, maint_role)) for ts, msg, sev in alerts])
+
+
+def tag_existing(conn, schema: str, maint_role: int) -> int:
+    """Tag this script's stop alerts already written, so a backfill matches the live feed."""
+    n = conn.execute(sql.SQL(
+        "UPDATE {t} SET role_id = %s WHERE source = %s AND ({cond})"
+    ).format(t=sql.Identifier(schema, "alert_messages"),
+             cond=sql.SQL(" OR ").join(sql.SQL("message LIKE %s") for _ in MAINT_PREFIXES)),
+        [maint_role, SOURCE, *(f"{p}%" for p in MAINT_PREFIXES)]).rowcount
+    conn.commit()
+    return n
 
 
 def purge(conn, schema: str) -> None:
@@ -351,7 +376,7 @@ def last_row_time(conn, schema: str) -> datetime | None:
 
 
 def seed(conn, schema: str, hours: int, line: Line, analyzer: Analyzer,
-         ticker: Ticker | None = None) -> datetime:
+         ticker: Ticker | None = None, maint_role: int | None = None) -> datetime:
     """Backfill `hours` up to now; returns the time of the last row written.
 
     With a `ticker`, the last TICK_HISTORY of it gets the per-row checks too.
@@ -372,14 +397,14 @@ def seed(conn, schema: str, hours: int, line: Line, analyzer: Analyzer,
         t += STEP
     alerts += shift_notes(start, end)
     write_rows(conn, schema, rows)
-    write_alerts(conn, schema, alerts)
+    write_alerts(conn, schema, alerts, maint_role)
     conn.commit()
     print(f"seeded {len(rows)} rows and {len(alerts)} alerts, {start:%H:%M} -> {end:%H:%M} UTC")
     return t - STEP
 
 
 def run_live(conn, schema: str, line: Line, analyzer: Analyzer, after: datetime | None,
-             ticker: Ticker | None = None) -> None:
+             ticker: Ticker | None = None, maint_role: int | None = None) -> None:
     """One row every 10 s, analysed as it is written — the two tables in step."""
     t = (after or datetime.now(timezone.utc).replace(microsecond=0)) + STEP
     print("live: one row every 10 s (Ctrl+C to stop)", flush=True)
@@ -396,7 +421,7 @@ def run_live(conn, schema: str, line: Line, analyzer: Analyzer, after: datetime 
             alerts += shift_notes(t, t)
         try:
             write_rows(conn, schema, [(t, speed, defect)])
-            write_alerts(conn, schema, alerts)
+            write_alerts(conn, schema, alerts, maint_role)
             conn.commit()
         except psycopg.errors.UndefinedTable:
             # Purged (or dropped) while running: nothing left to keep in step.
@@ -416,6 +441,8 @@ def main() -> None:
     parser.add_argument("--random-seed", type=int, default=13, help="Make the scripted line repeatable")
     parser.add_argument("--tick-alerts", action="store_true",
                         help="Also write one condition-check message per row (every 10 s)")
+    parser.add_argument("--maint-role", type=int, metavar="ROLE_ID",
+                        help="Tag stop alerts with this Response-role ID (also tags ones already written)")
     plant_cli.add_target_args(parser)
     args = parser.parse_args()
     if not (args.seed or args.live or args.purge):
@@ -429,11 +456,13 @@ def main() -> None:
         ensure_tables(conn, args.schema)
         line, analyzer = Line(random.Random(args.random_seed)), Analyzer()
         ticker = Ticker() if args.tick_alerts else None
-        after = (seed(conn, args.schema, args.seed, line, analyzer, ticker) if args.seed
+        if args.maint_role is not None:
+            print(f"tagged {tag_existing(conn, args.schema, args.maint_role)} stop alerts with role {args.maint_role}")
+        after = (seed(conn, args.schema, args.seed, line, analyzer, ticker, args.maint_role) if args.seed
                  else last_row_time(conn, args.schema))
         if args.live:
             try:
-                run_live(conn, args.schema, line, analyzer, after, ticker)
+                run_live(conn, args.schema, line, analyzer, after, ticker, args.maint_role)
             except KeyboardInterrupt:
                 print("stopped")
 

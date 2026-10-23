@@ -26,15 +26,18 @@ the browser.
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
 import psycopg
+from psycopg_pool import PoolTimeout
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
+import alert_events
 import db
 import kpi_engine as engine
 from auth import can_see_cost, get_current_user, require_admin
@@ -58,6 +61,12 @@ STRIP_WINDOW = timedelta(hours=24)
 TREND_DAYS = 7
 # How long after an incident began a parameter change still counts as its response.
 RESPONSE_WINDOW = timedelta(hours=4)
+# Alert rows the Response board reads per period, newest first. A writer that
+# logs every ten seconds fills a week with ~60k rows; past this the oldest are
+# left out and `truncated` says so.
+MAX_ALERT_ROWS = 5000
+# Events the board sends; the per-role counts still cover every event.
+MAX_ALERT_EVENTS = 100
 # Timeline resolution per period: fine enough to see a stop, few enough points to draw.
 TIMELINE_MIN = {"today": 5, "week": 60, "month": 360}
 HOURLY_MIN = {"today": 60, "week": 1440, "month": 1440}
@@ -69,8 +78,12 @@ NO_READINGS_NOTICE = (
 
 WANTS = {
     "timeline": {"pace", "hourly"},
-    "sensors": {"sensors", "response", "kpistrip", "kpitrend"},
-    "response": {"response", "kpistrip"},
+    "sensors": {"sensors", "kpistrip", "kpitrend"},
+    # sensor incidents paired with parameter changes: the KPI strip's incident and
+    # response-time tiles
+    "response": {"kpistrip"},
+    # the Response board: the plant's alert messages and who has to act on them
+    "alerts": {"response"},
     "trend": {"kpitrend"},
     "pareto": {"pareto"},
 }
@@ -227,6 +240,94 @@ def machine_values(table: str, datasource_id: int | None, kpi: dict[str, Any]) -
         _machine_cache.clear()
     _machine_cache[key] = (time.monotonic(), values)
     return values
+
+
+def _tag_places(datasource_id: int | None, changes: list[dict[str, Any]]) -> dict[str, str]:
+    """Each tag's location: variables_tag when the plant keeps one, else where its changes were logged.
+
+    A Response board filtered to one location keeps the incidents on that
+    location's tags. A sensor has no location of its own in the table it is read
+    from, so the plant's tag list says where it is; a plant without one still
+    logs a location with every parameter change, and the latest says it.
+    """
+    places: dict[str, str] = {}
+    for c in changes:
+        if c.get("tag") and c.get("location"):
+            places[c["tag"]] = c["location"]
+    try:
+        rows = db.tag_locations(datasource_id=datasource_id)
+    except (ValueError, psycopg.Error):
+        rows = []
+    for r in rows:
+        if r.get("tag_name") and r.get("location"):
+            places[r["tag_name"]] = r["location"]
+    return places
+
+
+def alert_board(kpi: dict[str, Any], start: datetime, end: datetime) -> dict[str, Any]:
+    """The Response board: the plant's alert messages in [start, end) as events, and who must act.
+
+    Reads the one alert source set in Settings (alert_messages.py), whatever
+    table the block's figures come from. Each alert is routed by the response
+    roles: the row's own role tag first, else the rule for its location, else a
+    catch-all — and `via` says which, so an alert that only reached the
+    catch-all because its location is spelled differently from its rule ("L13"
+    against "Line 13") is visible rather than quietly mis-assigned. Never an
+    error for "nothing to show": no source or an unreachable one answers with
+    `available: false` and a reason, as the report trend does.
+    """
+    source = db.get_alert_source()
+    if source is None:
+        return {"configured": False, "available": False, "reason": "not_configured"}
+    base = {"configured": True, "table": source["table_name"], "connection": source.get("datasource_name"),
+            "routed_by": source.get("match_filter"), "role_col": source.get("role_col")}
+    try:
+        rows = db.read_alert_messages(source, start, end, [], MAX_ALERT_ROWS + 1)
+    except ValueError as e:
+        return {**base, "available": False, "reason": "missing", "detail": _first_line(e)}
+    except (psycopg.Error, PoolTimeout) as e:
+        return {**base, "available": False, "reason": "unreachable", "detail": _first_line(e)}
+    try:
+        rules = db.list_response_roles()
+    except psycopg.Error:
+        rules = []
+
+    located = source.get("match_filter") == "location"
+    where = kpi["response_location"]
+    floor = kpi["alert_min_severity"]
+    alerts, counts = [], {s: 0 for s in alert_events.SEVERITIES}
+    # every place the alerts name, and those no rule names (they reach a catch-all)
+    places: dict[str, str | None] = {}
+    for r in rows[:MAX_ALERT_ROWS]:
+        if r.get("ts") is None or not (r.get("message") or "").strip() or r["ts"] >= end:
+            continue
+        place = r.get("match_value") if located else None
+        if place and place.strip() and place.strip() not in places:
+            places[place.strip()] = db.route_response_role(rules, location=place)[1]
+        if where is not None and not db.same_location(place, where):
+            continue
+        severity = db.severity_of(r.get("severity"))
+        counts[severity] += 1
+        if not alert_events.at_least(severity, floor):
+            continue
+        role, via = db.route_response_role(rules, location=place, explicit=r.get("role_value"))
+        alerts.append({"ts": r["ts"], "message": r["message"].strip(), "severity": severity,
+                       "location": place, "role": role, "via": via})
+    events = alert_events.group_events(alerts)
+    return {
+        **base, "available": True,
+        "min_severity": floor,
+        "alerts": counts,
+        "shown_alerts": len(alerts),
+        "events": events[:MAX_ALERT_EVENTS],
+        "event_count": len(events),
+        "by_role": alert_events.by_role(events),
+        "locations": sorted(places),
+        "unmatched": sorted(p for p, via in places.items() if via != "location"),
+        # who an unmatched location's alerts go to (None: nobody — they are unassigned)
+        "catch_all": db.route_response_role(rules, location=None)[0],
+        "truncated": len(rows) > MAX_ALERT_ROWS,
+    }
 
 
 def summarize_picked(table: str, datasource_id: int | None, kpi: dict[str, Any], cols: dict[str, Any],
@@ -441,7 +542,7 @@ def summarize(
         "plan": plan,
         "settings": {"max_loss_stop_min": kpi["max_loss_stop_min"], "run_ratio": kpi["run_ratio"],
                      "working_hours": hours, "mode": kpi["mode"], "metrics": kpi["metrics"],
-                     "flat_min": kpi["flat_min"]},
+                     "flat_min": kpi["flat_min"], "response_location": kpi["response_location"]},
     }
     if (b := _baht(totals, price)) is not None:
         out["totals"]["baht"] = b
@@ -543,6 +644,11 @@ def summarize(
             at = _aware(e.get("at_date_time"), tz)
             changes.append({"tag": e.get("tag_name"), "at": at, "by": e.get("who"), "event": e.get("event"),
                             "location": e.get("location")})
+        where = kpi["response_location"]
+        tag_place = _tag_places(datasource_id, changes)
+        if where is not None:
+            incident_list = [x for x in incident_list if db.same_location(tag_place.get(x["tag"]), where)]
+            changes = [c for c in changes if db.same_location(c["location"], where)]
         for inc in incident_list:
             reply = next((c for c in changes
                           if c["tag"] == inc["tag"] and c["at"] and inc["start"] <= c["at"] <= inc["start"] + RESPONSE_WINDOW),
@@ -550,13 +656,17 @@ def summarize(
             inc["response_min"] = round((reply["at"] - inc["start"]).total_seconds() / 60) if reply else None
             inc["by"] = reply["by"] if reply else None
             inc["action"] = reply["event"] if reply else None
-            role = db.match_response_role(rules, location=kpi.get("location") or (reply or {}).get("location"))
-            inc["role"] = role
+            inc["location"] = where or tag_place.get(inc["tag"])
+            place = where or kpi.get("location") or (reply or {}).get("location") or inc["location"]
+            inc["role"] = db.match_response_role(rules, location=place)
         incident_list.sort(key=lambda x: x["start"])
         answered = [x["response_min"] for x in incident_list if x.get("response_min") is not None]
         avg_response = sum(answered) / len(answered) if answered else None
         out["incidents"] = incident_list
         out["changes"] = [c for c in changes if c["at"] and c["at"] >= start][-50:]
+
+    if "alerts" in want:
+        out["alerts"] = alert_board(kpi, start, end)
 
     # --- headline metrics (the KPI strip) ----------------------------------------------
     metrics: dict[str, Any] = {
@@ -618,6 +728,39 @@ def summarize(
     return out
 
 
+# A block's summary for the current minute, shared by every poll inside it.
+_MINUTE_MEMO: dict[tuple, tuple[datetime, dict[str, Any]]] = {}
+_MINUTE_MEMO_MAX = 256
+
+
+def minute_summary(table: str | None, datasource_id: int | None, raw_options: Any,
+                   chart_type: str | None, now: datetime | None = None) -> dict[str, Any]:
+    """`summarize`, computed at most once per block per minute.
+
+    Every figure stops at the start of the current minute (`period_bounds`: the
+    open minute is still being written), and so does the alert board, so a
+    block's answer cannot change until the next minute begins. A board polling
+    every 5 or 10 s then costs one computation per block per minute rather than
+    one per poll — 10 blocks at ~0.5 s each would otherwise outrun a 5 s poll.
+    The key is the block's whole binding, so a changed setting is a new entry.
+    Errors are not kept: the next poll tries again.
+    """
+    now = now or _now()
+    minute = now.replace(second=0, microsecond=0)
+    key = (table, datasource_id, json.dumps(raw_options, sort_keys=True, default=str), chart_type)
+    hit = _MINUTE_MEMO.get(key)
+    if hit and hit[0] == minute:
+        return hit[1]
+    out = summarize(table, datasource_id, raw_options, now=now, chart_type=chart_type)
+    if len(_MINUTE_MEMO) >= _MINUTE_MEMO_MAX:
+        for k in [k for k, (m, _) in _MINUTE_MEMO.items() if m != minute]:
+            del _MINUTE_MEMO[k]
+        if len(_MINUTE_MEMO) >= _MINUTE_MEMO_MAX:
+            _MINUTE_MEMO.clear()
+    _MINUTE_MEMO[key] = (minute, out)
+    return out
+
+
 def for_user(summary: dict[str, Any], user: dict) -> dict[str, Any]:
     """`summary` as `user` may see it."""
     if can_see_cost(user):
@@ -633,8 +776,8 @@ def get_summary(panel_id: int = Query(..., ge=1), user: dict = Depends(get_curre
     if panel.get("source") != "kpi":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Not a management block")
     options = panel.get("options") or {}
-    return for_user(summarize(panel.get("table_name"), panel.get("datasource_id"), options.get("kpi"),
-                              chart_type=panel.get("chart_type")), user)
+    return for_user(minute_summary(panel.get("table_name"), panel.get("datasource_id"), options.get("kpi"),
+                                   panel.get("chart_type")), user)
 
 
 @router.post("/preview")

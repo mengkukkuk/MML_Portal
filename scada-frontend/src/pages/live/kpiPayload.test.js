@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   inheritBinding, defaultKpiPanel, buildKpiSavePayload, draftFromPanel, panelWithDraft,
-  workingHoursFrom, KPI_DEFAULTS, cleanKpi, isDefectTally,
+  workingHoursFrom, KPI_DEFAULTS, cleanKpi, isDefectTally, responseLocations, RESPONSE_LOCATION_TYPES, KPI_POLL_INTERVALS,
 } from './kpiPayload.js'
 
 const LAST = {
@@ -126,4 +126,34 @@ test('output settings are posted only while an output column is in use', () => {
   const defaults = cleanKpi({ ...KPI_DEFAULTS, output_col: 'value' })
   assert.equal('machine_col' in defaults, false)
   assert.equal('value_kind' in defaults, false)
+})
+
+test('response locations: role locations once each, without blank or global', () => {
+  const roles = [
+    { location: 'Line 13' }, { location: ' line13 ' }, { location: 'global' }, { location: ' Global ' },
+    { location: null }, { location: '' }, { location: 'Line 2' },
+  ]
+  assert.deepEqual(responseLocations(roles), ['Line 13', 'Line 2'])
+  assert.deepEqual(responseLocations(undefined), [])
+})
+
+test('the response location is the block’s own, never inherited', () => {
+  assert.equal(KPI_DEFAULTS.response_location, null)
+  assert.ok(RESPONSE_LOCATION_TYPES.includes('response') && RESPONSE_LOCATION_TYPES.includes('kpistrip'))
+})
+
+test('response locations also offer the spellings the alerts carry', () => {
+  assert.deepEqual(responseLocations([{ location: 'Line 13' }, { location: 'global' }], ['L13', 'line 13', null]),
+    ['L13', 'Line 13'])
+})
+
+test('the default severity floor is not posted', () => {
+  assert.equal('alert_min_severity' in cleanKpi({ alert_min_severity: 'warn' }), false)
+  assert.equal(cleanKpi({ alert_min_severity: 'crit' }).alert_min_severity, 'crit')
+})
+
+test('management blocks offer every Live interval, 5 and 10 s included', () => {
+  // usePanelSeries.js POLL_INTERVALS and panelPayload.js POLL_INTERVAL_OPTIONS carry
+  // the same seconds; they import React / @-paths, so node --test cannot load them here
+  assert.deepEqual(KPI_POLL_INTERVALS, [5, 10, 30, 60, 600, 1800, 3600])
 })

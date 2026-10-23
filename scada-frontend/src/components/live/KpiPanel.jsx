@@ -12,6 +12,7 @@ import { apiErrorMessage } from '@/api/client'
 import { KPI_POLL_INTERVALS } from '@/pages/live/kpiPayload'
 import { POLL_INTERVALS } from './usePanelSeries'
 import { useKpiSummary } from './useKpiSummary'
+import KpiExplain from './KpiExplain'
 import LossMeter from './blocks/LossMeter'
 import AndonBoard from './blocks/AndonBoard'
 import LossWaterfall from './blocks/LossWaterfall'
@@ -65,6 +66,9 @@ export default function KpiPanel({
   onDelete,
   onPollIntervalChange,
   onUpdated,
+  // A stacked tile's pager and page actions (PanelStack); absent on an ordinary tile.
+  pager = null,
+  pageActions = null,
 }) {
   const tr = useTranslation()
   const shown = draft ? { ...panel, title: draft.title } : panel
@@ -105,6 +109,7 @@ export default function KpiPanel({
         </div>
 
         <div className={styles.panel__actions}>
+          {pager}
           <span
             className={`${styles.panel__live} ${query.isFetching ? styles['panel__live--busy'] : ''}`}
             title={`Live · refreshing every ${pollLabel}`}
@@ -112,6 +117,7 @@ export default function KpiPanel({
             <span className={styles.panel__livedot} />
             {pollLabel}
           </span>
+          {bound && <KpiExplain chartType={panel.chart_type} kpi={kpi} />}
           <button
             type="button"
             className={`${styles.panel__gear} ${gearOpen ? styles['panel__gear--active'] : ''}`}
@@ -162,6 +168,7 @@ export default function KpiPanel({
                   </button>
                 </>
               )}
+              {pageActions?.(closeGear)}
             </div>
           </Popover>
         </div>
@@ -174,6 +181,8 @@ export default function KpiPanel({
             {summary?.scope === 'line' && summary.line_family
               ? ` · ${tr('one line, paced by {f}', { f: summary.line_family })}`
               : machines ? ` · ${tr('{n} machines', { n: machines })}` : ''}
+            {summary?.settings?.response_location && panel.chart_type === 'response'
+              ? ` · ${tr('alerts at {l}', { l: summary.settings.response_location })}` : ''}
           </span>
         </div>
       )}

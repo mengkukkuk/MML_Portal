@@ -302,3 +302,34 @@ export function trendDelta(days, key, goodUp = true) {
   if (last == null || prev == null) return { last, prev, worse: false }
   return { last, prev, worse: goodUp ? last < prev : last > prev }
 }
+
+// --- Response board: alert events and who must act ----------------------------------
+
+/** Severity words (i18n keys), worst first. */
+export const SEVERITY_LABELS = Object.freeze({ crit: 'Critical', warn: 'Warning', info: 'Info' })
+
+/**
+ * How an event reached its owner, as [i18n key, params, tone]. A catch-all
+ * with a location is flagged: that location has no rule of its own, which is
+ * usually a spelling the rules do not know ("L13" against "Line 13").
+ */
+export function viaNote(ev) {
+  const l = ev?.location
+  switch (ev?.via) {
+    case 'tag': return ['set on the alert row', {}, null]
+    case 'location': return ['rule for {l}', { l }, null]
+    case 'catch_all':
+      return l ? ['no rule for {l} · global', { l }, 'warn'] : ['global rule', {}, null]
+    default: return ['no rule matches', {}, 'bad']
+  }
+}
+
+/** "09:12" for one alert, "09:12–09:34" for a run of them; the date once the period spans days. */
+export function eventWhen(ev, withDate, locale = []) {
+  if (!ev?.start) return '—'
+  const t = (iso, date) => new Date(iso).toLocaleString(locale, {
+    ...(date ? { day: 'numeric', month: 'numeric' } : {}), hour: '2-digit', minute: '2-digit',
+  })
+  const first = t(ev.start, withDate)
+  return ev.count > 1 && ev.end && ev.end !== ev.start ? `${first}–${t(ev.end, false)}` : first
+}

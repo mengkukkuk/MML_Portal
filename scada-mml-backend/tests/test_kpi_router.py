@@ -50,6 +50,7 @@ def fake_source(families, lo, hi):
 @pytest.fixture(autouse=True)
 def _stubs(monkeypatch):
     kpi_cache.CACHE.clear()
+    kpi._MINUTE_MEMO.clear()
     monkeypatch.setattr(db, "describe_table", lambda table, ds=None: DESCRIBE)
     monkeypatch.setattr(db, "get_panel", lambda i: PANEL if i == 7 else ({"id": 8, "source": "table"} if i == 8 else None))
     monkeypatch.setattr(db, "kpi_minute_buckets", lambda ds, t, ts, fams, lo, hi, **k: fake_source(fams, lo, hi))

@@ -62,7 +62,7 @@ def test_unbound_block_saves_without_a_table():
 
 
 @pytest.mark.parametrize("over, msg", [
-    ({"poll_interval_seconds": 5}, "poll every"),
+    ({"poll_interval_seconds": 15}, "must be one of"),
     ({"source": "table"}, "use source 'kpi'"),
     ({"chart_type": "gauge"}, "use source 'kpi'"),
     ({"options": {"kpi": {"ts_col": "recorded_at", "period": "year"}}}, "period"),
@@ -110,14 +110,22 @@ def test_operator_list_has_no_price(monkeypatch):
     assert seen["options"]["kpi"]["cost_per_piece"] == 12
 
 
-def test_manager_may_change_poll_but_not_to_5_on_a_block(monkeypatch):
+def test_manager_may_change_poll_to_any_live_interval_on_a_block(monkeypatch):
     monkeypatch.setattr(db, "get_panel", lambda i: PANEL)
     monkeypatch.setattr(db, "update_panel_poll_interval", lambda i, s: {**PANEL, "poll_interval_seconds": s})
     assert auth.require_operator_or_admin(MANAGER) is MANAGER
     out = panels.update_poll_interval(9, panels.PollIntervalIn(poll_interval_seconds=30), user=OPERATOR)
     assert "cost_per_piece" not in out["options"]["kpi"]
+    for fast in (5, 10):
+        out = panels.update_poll_interval(9, panels.PollIntervalIn(poll_interval_seconds=fast), user=MANAGER)
+        assert out["poll_interval_seconds"] == fast
     with pytest.raises(HTTPException):
-        panels.update_poll_interval(9, panels.PollIntervalIn(poll_interval_seconds=5), user=MANAGER)
+        panels.update_poll_interval(9, panels.PollIntervalIn(poll_interval_seconds=15), user=MANAGER)
+
+
+def test_a_block_can_be_created_polling_every_5_or_10_seconds():
+    for fast in (5, 10):
+        assert panels.create_panel(body(poll_interval_seconds=fast), _admin=ADMIN)  # not refused
 
 
 def test_manager_is_a_valid_role_but_not_an_admin():

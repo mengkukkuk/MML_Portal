@@ -536,3 +536,72 @@
   font-size: 0.78rem;
   line-height: 1.35;
 }
+
+/* --- Response board: alert events and who must act ---------------------------------- */
+.rb {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.rb__owners {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rb__owner {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 3px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+}
+
+.rb__ownername { font-weight: 600; }
+
+.rb__counts {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.rb__pill {
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.rb__pill--crit { background: color-mix(in srgb, var(--crit) 18%, transparent); color: var(--crit); }
+.rb__pill--warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.rb__pill--info { background: color-mix(in srgb, var(--fg-muted) 14%, transparent); color: var(--fg-muted); }
+
+.rb__msg {
+  max-width: 0;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rb__times {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rb__via {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--fg-muted);
+}

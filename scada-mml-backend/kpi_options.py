@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from db.response_roles import is_any_location
 from kpi_engine import PERIODS
 from name_families import group_by_family, resolve_slot
 
@@ -26,9 +27,10 @@ KPI_METRICS = (
 )
 MAX_STRIP_METRICS = 6
 
-# No 5 s here: a ฿ figure that jitters every five seconds tells the board
-# nothing, and each poll reads the plant database over the VPN.
-KPI_POLL_INTERVALS = frozenset({30, 60, 600, 1800, 3600})
+# Every Live interval. 5 and 10 s are for a board watched on the floor; each poll
+# recomputes the block's summary (only new minutes cross the link — kpi_cache.py),
+# so a slow plant link or a long period is better served by 30 s or more.
+KPI_POLL_INTERVALS = frozenset({5, 10, 30, 60, 600, 1800, 3600})
 
 LOSSMETER_MODES = ("defects", "lost", "total")
 
@@ -42,6 +44,8 @@ MAX_DEFECT_COLS = 40
 # minute (what a wide table's count_1 holds), "total" a running counter that only
 # goes up — pieces are its positive change between readings.
 VALUE_KINDS = ("rate", "total")
+# The Response board's severity floor, worst first (db.severity_of's words).
+ALERT_SEVERITIES = ("crit", "warn", "info")
 # One machine per distinct value of the machine column; past this the column is
 # not a machine name (a timestamp, a batch id) and the block says so.
 MAX_MACHINES = 64
@@ -49,6 +53,13 @@ MAX_MACHINES = 64
 KPI_DEFAULTS: dict[str, Any] = {
     "ts_col": None,
     "location": None,
+    # The Response board's (and KPI strip's) incident location: only incidents on
+    # tags at this place, answered by this place's response role. Picked from the
+    # response roles' locations; None — or `global` — is every location.
+    "response_location": None,
+    # The Response board's floor: alerts below it are counted but not listed. "warn"
+    # by default — an alert writer's "OK" checks would bury what needs a person.
+    "alert_min_severity": "warn",
     # Legacy machine detection for wide tables (CAM001-13-count_1, ...). No longer
     # edited in the inspector: it only decides what a table with such columns
     # does when `defect_cols` is not set.
@@ -147,6 +158,14 @@ def normalize_kpi_options(raw: Any) -> dict[str, Any]:
         raise KpiOptionsError("options.kpi.ts_col must be a column name")
     if o["location"] is not None and not isinstance(o["location"], str):
         raise KpiOptionsError("options.kpi.location must be text or null")
+    if o["response_location"] is not None and not isinstance(o["response_location"], str):
+        raise KpiOptionsError("options.kpi.response_location must be text or null")
+    if o["response_location"] is not None and is_any_location(o["response_location"]):
+        o["response_location"] = None
+    elif o["response_location"] is not None:
+        o["response_location"] = o["response_location"].strip()
+    if o["alert_min_severity"] not in ALERT_SEVERITIES:
+        raise KpiOptionsError(f"options.kpi.alert_min_severity must be one of {', '.join(ALERT_SEVERITIES)}")
     slots = o["slots"]
     if not isinstance(slots, dict) or set(slots) != {"speed", "defects"}:
         raise KpiOptionsError("options.kpi.slots must be {speed, defects}")
