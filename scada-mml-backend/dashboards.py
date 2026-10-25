@@ -25,12 +25,17 @@ class DashboardOut(BaseModel):
     id: int
     title: str
     position: int
+    page_count: int = 1
     created_at: datetime
 
 
 class DashboardIn(BaseModel):
     title: str = Field(..., min_length=1)
     position: int = 0
+
+
+class DashboardPagesIn(BaseModel):
+    page_count: int = Field(..., ge=1, le=db.MAX_DASHBOARD_PAGES)
 
 
 @router.get("", response_model=list[DashboardOut])
@@ -46,6 +51,15 @@ def create_dashboard(body: DashboardIn, _admin: dict = Depends(require_admin)):
 @router.put("/{dashboard_id}", response_model=DashboardOut)
 def update_dashboard(dashboard_id: int, body: DashboardIn, _admin: dict = Depends(require_admin)):
     dash = db.update_dashboard(dashboard_id, body.title.strip())
+    if dash is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")
+    return dash
+
+
+@router.patch("/{dashboard_id}/pages", response_model=DashboardOut)
+def set_dashboard_pages(dashboard_id: int, body: DashboardPagesIn, _admin: dict = Depends(require_admin)):
+    """How many pages the board has (the Live page's arrows). Panels keep their own page."""
+    dash = db.set_dashboard_pages(dashboard_id, body.page_count)
     if dash is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard not found")
     return dash

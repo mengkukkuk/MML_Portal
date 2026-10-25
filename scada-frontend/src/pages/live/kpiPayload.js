@@ -181,7 +181,7 @@ export function inheritBinding(panels, primaryDatasourceId = null, type = null) 
 }
 
 /** A complete create payload for a block of `type` dropped at `layout`. */
-export function defaultKpiPanel(type, { binding, layout, dashboardId, position }) {
+export function defaultKpiPanel(type, { binding, layout, dashboardId, position, page = 0 }) {
   const kpi = cleanKpi({
     ...KPI_DEFAULTS,
     ...(binding?.kpi || {}),
@@ -202,7 +202,8 @@ export function defaultKpiPanel(type, { binding, layout, dashboardId, position }
     poll_interval_seconds: 60,
     dashboard_id: dashboardId,
     position: position ?? 0,
-    options: { kpi, layout },
+    // `page`: the dashboard page in view (boardPages.js); the first page is left implicit
+    options: { kpi, layout, ...(page ? { page } : {}) },
   }
 }
 

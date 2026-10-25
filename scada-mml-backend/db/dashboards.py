@@ -6,12 +6,18 @@ from . import pool as _pool
 
 __all__ = [
     "_DASH_COLS",
+    "MAX_DASHBOARD_PAGES",
     "create_dashboard",
     "delete_dashboard",
     "init_dashboards_table",
     "list_dashboards",
+    "set_dashboard_pages",
     "update_dashboard",
 ]
+
+# A board's pages (the Live page's arrows): panels say which one they sit on in
+# options.page. More than this is a second dashboard, not a longer one.
+MAX_DASHBOARD_PAGES = 12
 
 def init_dashboards_table() -> None:
     """Create the dashboards table and link panels to it. Idempotent.
@@ -28,6 +34,11 @@ def init_dashboards_table() -> None:
                 position   INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )"""
+        )
+        # Added after the table first shipped: every existing board is one page.
+        conn.execute(
+            "ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS page_count "
+            "INTEGER NOT NULL DEFAULT 1"
         )
         conn.execute(
             "ALTER TABLE dashboard_panels ADD COLUMN IF NOT EXISTS dashboard_id "
@@ -50,7 +61,7 @@ def init_dashboards_table() -> None:
         conn.commit()
 
 
-_DASH_COLS = "id, title, position, created_at"
+_DASH_COLS = "id, title, position, page_count, created_at"
 
 
 def list_dashboards() -> list[dict[str, Any]]:
@@ -79,6 +90,23 @@ def update_dashboard(dashboard_id: int, title: str) -> dict[str, Any] | None:
         row = conn.execute(
             f"UPDATE dashboards SET title = %s WHERE id = %s RETURNING {_DASH_COLS}",
             (title, dashboard_id),
+        ).fetchone()
+        conn.commit()
+    return row
+
+
+def set_dashboard_pages(dashboard_id: int, page_count: int) -> dict[str, Any] | None:
+    """Set how many pages a dashboard has. Returns None if no such dashboard.
+
+    Panels are not touched: one whose options.page is past the last page is
+    shown on the last page, so shrinking a board can hide no panel.
+    """
+    if not 1 <= page_count <= MAX_DASHBOARD_PAGES:
+        raise ValueError(f"page_count must be between 1 and {MAX_DASHBOARD_PAGES}")
+    with _pool.get_connection() as conn:
+        row = conn.execute(
+            f"UPDATE dashboards SET page_count = %s WHERE id = %s RETURNING {_DASH_COLS}",
+            (page_count, dashboard_id),
         ).fetchone()
         conn.commit()
     return row

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  fmtPieces, fmtBaht, fmtDuration, lossMeterFigures, lossDelta, appendSpark,
+  fmtPieces, fmtBaht, fmtDuration, lossMeterFigures, lossDelta, appendSpark, fmtCompact,
   waterfallBars, stripSegments, andonWord, stripTiles, hourlyBars, paceGeometry, trendDelta, viaNote, eventWhen,
 } from './kpiView.js'
 
@@ -155,4 +155,14 @@ test('response board: one time for one alert, a range for a run', () => {
   assert.ok(!one.includes('–'))
   assert.ok(run.includes('–') && run.startsWith(one))
   assert.equal(eventWhen(null), '—')
+})
+
+test('short counts: k and M with two decimals, small numbers as they are', () => {
+  assert.equal(fmtCompact(987), '987')
+  assert.equal(fmtCompact(234567), '234.57 k')
+  assert.equal(fmtCompact(1234567), '1.23 M')
+  assert.equal(fmtCompact(2500000000), '2.50 B')
+  assert.equal(fmtCompact(999995), '1.00 M')       // never "1000.00 k"
+  assert.equal(fmtCompact(-234567), '-234.57 k')
+  assert.equal(fmtCompact(null), '—')
 })

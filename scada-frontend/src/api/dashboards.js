@@ -8,7 +8,7 @@ import { apiClient } from './client'
 
 export async function fetchDashboards() {
   const { data } = await apiClient.get('/dashboards')
-  return data // [{ id, title, position, created_at }]
+  return data // [{ id, title, position, page_count, created_at }]
 }
 
 export async function createDashboard(dashboard) {
@@ -23,4 +23,10 @@ export async function updateDashboard(id, dashboard) {
 
 export async function deleteDashboard(id) {
   await apiClient.delete(`/dashboards/${id}`)
+}
+
+/** How many pages the board has (the Live page's arrows); admin only. */
+export async function setDashboardPages(id, pageCount) {
+  const { data } = await apiClient.patch(`/dashboards/${id}/pages`, { page_count: pageCount })
+  return data
 }

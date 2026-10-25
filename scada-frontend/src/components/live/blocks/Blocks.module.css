@@ -359,6 +359,37 @@
   position: relative;
   flex: 1 1 0;
   min-width: 0;
+  container-type: inline-size;
+}
+
+/* Above each bar: its defects (k / M) and, beneath, the rate its height shows. */
+.hr__val {
+  position: absolute;
+  left: 0;
+  right: 0;
+  margin-bottom: 3px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.15;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.hr__val strong { font-weight: 600; color: var(--fg); }
+.hr__val strong.tone--bad { color: var(--crit); }
+
+.hr__rate {
+  font-size: 0.62rem;
+  color: var(--fg-muted);
+}
+
+/* An hourly bar is too narrow for two numbers: the count stays, the rate is in the tooltip. */
+@container (max-width: 44px) {
+  .hr__rate { display: none; }
+  .hr__val { font-size: 0.6rem; }
 }
 
 .hr__bar {

@@ -301,7 +301,7 @@ function stripColumnOptions(options) {
  * layout is preserved as-is).
  */
 export function buildPanelPayload({
-  form, editingPanel, activeDashboardId, panelsLength, nextLayout,
+  form, editingPanel, activeDashboardId, panelsLength, nextLayout, page = 0,
 }) {
   if (!form.title?.trim()) return { ok: false, error: 'Title is required.' }
   if (!form.table_name || !form.metric) return { ok: false, error: 'Pick a table and a value column.' }
@@ -400,9 +400,11 @@ export function buildPanelPayload({
   const layoutOpt = editingPanel
     ? (editingPanel.options?.layout ? { layout: editingPanel.options.layout } : {})
     : { layout: nextLayout }
-  // A tile's pages are board structure, not a setting of this editor: an edit
-  // keeps them, or the other panels would drop back onto the grid.
-  const pagesOpt = editingPanel?.options?.pages ? { pages: editingPanel.options.pages } : {}
+  // The dashboard page it sits on is board structure, not an editor setting:
+  // an edit keeps it; a new panel lands on the page in view.
+  const pageOpt = editingPanel
+    ? (editingPanel.options?.page ? { page: editingPanel.options.page } : {})
+    : (page ? { page } : {})
 
   const payload = {
     title: form.title.trim(),
@@ -433,7 +435,7 @@ export function buildPanelPayload({
       ...extraOpts,
       ...condOpts,
       ...layoutOpt,
-      ...pagesOpt,
+      ...pageOpt,
     },
     poll_interval_seconds: form.poll_interval_seconds,
     dashboard_id: activeDashboardId,
@@ -453,8 +455,8 @@ export function buildLayoutSavePayload(panel, layout, activeDashboardId) {
 }
 
 /**
- * The same full payload with any options keys replaced — a layout, or a
- * tile's page list (panelStack.js) — everything else round-tripped as stored.
+ * The same full payload with any options keys replaced — everything else
+ * round-tripped as stored.
  */
 export function buildOptionsPatchPayload(panel, patch, activeDashboardId) {
   return {
@@ -477,11 +479,12 @@ export function buildOptionsPatchPayload(panel, patch, activeDashboardId) {
 }
 
 /** Duplicate-panel payload (mirrors LivePage.vue's confirmDuplicate, lines 655-671). */
-export function buildDuplicatePayload(panel, title, { activeDashboardId, panelsLength, nextLayout }) {
+export function buildDuplicatePayload(panel, title, { activeDashboardId, panelsLength, nextLayout, page = 0 }) {
   const clonedOptions = JSON.parse(JSON.stringify(panel.options || {}))
   clonedOptions.layout = nextLayout
-  // The copy is one tile: the original keeps its pages (a page has one host).
-  delete clonedOptions.pages
+  // the copy lands on the page in view, beside the original
+  if (page) clonedOptions.page = page
+  else delete clonedOptions.page
   return {
     title,
     source: panel.source || 'device',

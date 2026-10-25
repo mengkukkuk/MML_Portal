@@ -19,6 +19,7 @@ import {
   thresholdColor, fmtValue, textScaleOf, scaleFonts, alertPillText, gaugeParamsFor,
 } from './options'
 import styles from './LivePanel.module.css'
+import MoveToPage from './MoveToPage'
 
 /**
  * LivePanel — a single self-polling tile in the Live dashboard grid.
@@ -49,6 +50,8 @@ export default function LivePanel({
   onDelete,
   onPollIntervalChange,
   onUpdated,
+  // { page, count, onMove(n) } on a dashboard with several pages (admin), else null.
+  pageMove = null,
 }) {
   // Time-range selector — view-only preference, not persisted to the panel
   // record, so any viewer can widen/narrow their own window independently.
@@ -277,6 +280,7 @@ export default function LivePanel({
                   </button>
                 </>
               )}
+              {canManage && <MoveToPage move={pageMove} onDone={closeGear} />}
             </div>
           </Popover>
         </div>

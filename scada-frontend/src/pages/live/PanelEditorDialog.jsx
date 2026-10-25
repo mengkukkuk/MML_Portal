@@ -148,6 +148,8 @@ export default function PanelEditorDialog({
   activeDashboardId,
   panelsLength,
   nextLayout,
+  // The dashboard page in view — where a new panel lands (boardPages.js).
+  page = 0,
   datasources,
   // Chart type a new panel starts as — set when the type was picked in the
   // Live page's block palette.
@@ -669,7 +671,7 @@ export default function PanelEditorDialog({
       // `boolCols` and `textCols` are derived from the live catalogue rather
       // than typed, so they are not RHF fields -- they join the form only here,
       // on the way out.
-      form: { ...values, boolCols, textCols }, editingPanel, activeDashboardId, panelsLength, nextLayout,
+      form: { ...values, boolCols, textCols }, editingPanel, activeDashboardId, panelsLength, nextLayout, page,
     })
     if (!result.ok) { setSaveError(result.error); return }
     try {

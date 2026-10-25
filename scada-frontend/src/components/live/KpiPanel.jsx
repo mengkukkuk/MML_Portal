@@ -37,6 +37,7 @@ const BLOCKS = {
   pareto: DefectPareto,
 }
 import styles from './LivePanel.module.css'
+import MoveToPage from './MoveToPage'
 import blockStyles from './blocks/Blocks.module.css'
 
 const KPI_POLL_CHOICES = POLL_INTERVALS.filter((it) => KPI_POLL_INTERVALS.includes(it.value))
@@ -66,9 +67,8 @@ export default function KpiPanel({
   onDelete,
   onPollIntervalChange,
   onUpdated,
-  // A stacked tile's pager and page actions (PanelStack); absent on an ordinary tile.
-  pager = null,
-  pageActions = null,
+  // { page, count, onMove(n) } on a dashboard with several pages (admin), else null.
+  pageMove = null,
 }) {
   const tr = useTranslation()
   const shown = draft ? { ...panel, title: draft.title } : panel
@@ -109,7 +109,6 @@ export default function KpiPanel({
         </div>
 
         <div className={styles.panel__actions}>
-          {pager}
           <span
             className={`${styles.panel__live} ${query.isFetching ? styles['panel__live--busy'] : ''}`}
             title={`Live · refreshing every ${pollLabel}`}
@@ -168,7 +167,7 @@ export default function KpiPanel({
                   </button>
                 </>
               )}
-              {pageActions?.(closeGear)}
+              {canManage && <MoveToPage move={pageMove} onDone={closeGear} />}
             </div>
           </Popover>
         </div>

@@ -98,3 +98,32 @@
   color: var(--fg-muted);
   margin: 0;
 }
+
+/* The board's name and its pages, side by side: which board, which part of it. */
+.boardRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+/* One page of the board. Arriving from the right when moving on, from the left
+   when going back — the grid reads as one long board seen a screen at a time. */
+.stage {
+  animation: stage-in 260ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.stage[data-dir='next'] { --from: 48px; }
+.stage[data-dir='prev'] { --from: -48px; }
+.stage[data-dir='none'] { animation: none; }
+
+@keyframes stage-in {
+  from { opacity: 0; transform: translateX(var(--from, 0)); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage { animation: none; }
+}
+
+.emptyLine { margin: 0 0 var(--space-2); }

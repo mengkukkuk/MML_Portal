@@ -157,3 +157,9 @@ test('management blocks offer every Live interval, 5 and 10 s included', () => {
   // the same seconds; they import React / @-paths, so node --test cannot load them here
   assert.deepEqual(KPI_POLL_INTERVALS, [5, 10, 30, 60, 600, 1800, 3600])
 })
+
+test('a new block lands on the dashboard page in view', () => {
+  const at = { x: 0, y: 0, w: 6, h: 9 }
+  assert.equal(defaultKpiPanel('andon', { binding: {}, layout: at, dashboardId: 3, position: 0, page: 2 }).options.page, 2)
+  assert.equal('page' in defaultKpiPanel('andon', { binding: {}, layout: at, dashboardId: 3, position: 0 }).options, false)
+})

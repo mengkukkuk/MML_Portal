@@ -22,13 +22,18 @@ import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import {
   fetchPanels, createPanel, updatePanel, deletePanel, updatePollInterval,
 } from '@/api/panels'
-import { fetchDashboards } from '@/api/dashboards'
+import { fetchDashboards, setDashboardPages } from '@/api/dashboards'
 import { fetchDatasources } from '@/api/datasources'
 import { apiErrorMessage } from '@/api/client'
 import {
   layoutFromPanels, nextLayoutSlot, appendLayoutItem, panelMinSize,
-  buildLayoutSavePayload, buildDuplicatePayload,
+  buildLayoutSavePayload, buildDuplicatePayload, buildOptionsPatchPayload,
 } from './panelPayload'
+import {
+  pageCount, clampPage, panelsOnPage, stepPage, shiftAfterRemoving, pageFromQuery, firstFreeSlot,
+  DEFAULT_AUTOPLAY_SECONDS, AUTOPLAY_SECONDS,
+} from './boardPages'
+import BoardPager from './BoardPager'
 import PanelEditorDialog from './PanelEditorDialog'
 import BlockPalette from './BlockPalette'
 import KpiInspector from './KpiInspector'
@@ -124,6 +129,10 @@ export default function LivePage() {
   // --- active dashboard resolution (?dashboard=<id>, else first board) -----
   const [activeDashboardId, setActiveDashboardId] = useState(null)
   const initializedRef = useRef(false)
+  // The page of the board in view (0-based; ?page= is 1-based) and which way
+  // the last move went, for the slide.
+  const [activePage, setActivePage] = useState(0)
+  const [pageDir, setPageDir] = useState(0)
 
   useEffect(() => {
     // Wait for a successful list, not merely a finished request: on a reload the
@@ -135,6 +144,7 @@ export default function LivePage() {
     const fromQuery = dashboards.find((d) => d.id === qid)
     const next = fromQuery ? fromQuery.id : (dashboards[0]?.id ?? null)
     setActiveDashboardId(next)
+    if (fromQuery) setActivePage(pageFromQuery(searchParams.get('page')) ?? 0)
     if (next != null) {
       const p = new URLSearchParams(searchParams)
       p.set('dashboard', String(next))
@@ -160,9 +170,12 @@ export default function LivePage() {
   function selectDashboard(id) {
     if (id == null || id === activeDashboardId) return
     setActiveDashboardId(id)
+    setActivePage(0)
+    setPageDir(0)
     setEditMode(false)
     const p = new URLSearchParams(searchParams)
     p.set('dashboard', String(id))
+    p.delete('page')
     setSearchParams(p, { replace: true })
   }
 
@@ -178,6 +191,13 @@ export default function LivePage() {
     queryClient.setQueryData(['live-panels', activeDashboardId], (old) => (old ? updater(old) : old))
   }
 
+  // --- pages of the board (boardPages.js) ---------------------------------------
+  const activeDashboard = dashboards.find((d) => d.id === activeDashboardId) || null
+  const pages = pageCount(activeDashboard)
+  const page = clampPage(activePage, pages)
+  const pagePanels = useMemo(() => panelsOnPage(panels, page, pages), [panels, page, pages])
+  const onPage = useMemo(() => new Set(pagePanels.map((p) => String(p.id))), [pagePanels])
+
   // --- react-grid-layout geometry -------------------------------------------
   // Rebuilt from panels.options.layout exactly once per dashboard switch (via
   // layoutDashboardRef), never on a background panels refetch for the SAME
@@ -191,16 +211,18 @@ export default function LivePage() {
     // same reload race) has no panels, and locking the board to that empty
     // layout left the grid blank once the real panels arrived.
     if (!panelsQuery.isSuccess) return
-    if (layoutDashboardRef.current === activeDashboardId) return
-    layoutDashboardRef.current = activeDashboardId
-    setLayout(layoutFromPanels(panels))
+    // One layout per page: each page is its own grid, laid out on its own.
+    const key = `${activeDashboardId}:${page}`
+    if (layoutDashboardRef.current === key) return
+    layoutDashboardRef.current = key
+    setLayout(layoutFromPanels(pagePanels))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeDashboardId, panelsQuery.isSuccess, panels])
+  }, [activeDashboardId, panelsQuery.isSuccess, panels, page])
 
   // Per-item drag/resize floor, computed fresh each render from the current
   // panels list (min size depends on chart_type + series count).
   const gridLayouts = useMemo(() => {
-    const withConstraints = layout.map((it) => {
+    const withConstraints = layout.filter((it) => onPage.has(it.i)).map((it) => {
       const panel = panels.find((p) => String(p.id) === it.i)
       const min = panelMinSize(panel)
       return { ...it, minW: min.w, minH: min.h }
@@ -210,7 +232,7 @@ export default function LivePage() {
     // drop the per-item minW/minH, so resize floors silently stopped applying
     // outside lg.
     return Object.fromEntries(EDITABLE_BREAKPOINTS.map((bp) => [bp, withConstraints]))
-  }, [layout, panels])
+  }, [layout, panels, onPage])
 
   // --- column gate (zero layout writes at any 1-column breakpoint) ----------
   // Gate on the column count RGL reports, not the breakpoint name: a saved
@@ -245,7 +267,7 @@ export default function LivePage() {
     // effect has laid out the new board, so a report that would drop every
     // tile of the board on screen is ignored rather than allowed to blank it.
     const next = newLayout.map((it) => ({ i: it.i, x: it.x, y: it.y, w: it.w, h: it.h }))
-    const onBoard = new Set(panels.map((p) => String(p.id)))
+    const onBoard = onPage
     setLayout((prev) => (
       !next.some((it) => onBoard.has(it.i)) && prev.some((it) => onBoard.has(it.i)) ? prev : next
     ))
@@ -353,6 +375,7 @@ export default function LivePage() {
         layout: { x: at.x, y: at.y, w: at.w, h: at.h },
         dashboardId: activeDashboardId,
         position: panels.length,
+        page,
       }))
       patchPanels((old) => [...old, created])
       setLayout((prev) => appendLayoutItem(prev.filter((it) => it.i !== DROP_ID), created))
@@ -431,7 +454,7 @@ export default function LivePage() {
     setDuplicating(true)
     try {
       const payload = buildDuplicatePayload(duplicateTarget, title, {
-        activeDashboardId, panelsLength: panels.length, nextLayout: nextLayoutSlot(layout),
+        activeDashboardId, panelsLength: panels.length, nextLayout: nextLayoutSlot(layout), page,
       })
       const created = await createPanel(payload)
       patchPanels((old) => [...old, created])
@@ -472,6 +495,137 @@ export default function LivePage() {
     }
   }
 
+  // --- pages: move between them, add, delete, move a panel ---------------------------
+  function goPage(next, dir) {
+    const target = clampPage(next, pages)
+    if (target === page) return
+    if (editMode) saveLayout(layout) // a page is its own grid: keep this one's unsaved drags
+    setPageDir(dir)
+    setActivePage(target)
+    const p = new URLSearchParams(searchParams)
+    if (target > 0) p.set('page', String(target + 1))
+    else p.delete('page')
+    setSearchParams(p, { replace: true })
+  }
+
+  function patchDashboard(updated) {
+    queryClient.setQueryData(['dashboards'], (old) => (old || []).map((d) => (d.id === updated.id ? updated : d)))
+  }
+
+  const [pagesBusy, setPagesBusy] = useState(false)
+  async function addPage() {
+    if (!activeDashboard) return
+    setPagesBusy(true)
+    try {
+      patchDashboard(await setDashboardPages(activeDashboard.id, pages + 1))
+      setPageDir(1)
+      setActivePage(pages)
+      const p = new URLSearchParams(searchParams)
+      p.set('page', String(pages + 1))
+      setSearchParams(p, { replace: true })
+      notify(`Page ${pages + 1} added.`)
+    } catch (e) {
+      notify(apiErrorMessage(e, 'Failed to add the page.'), 'error')
+    } finally {
+      setPagesBusy(false)
+    }
+  }
+
+  // Only an empty page is deleted; the pages after it move down one.
+  async function deletePage() {
+    if (!activeDashboard || pages <= 1 || pagePanels.length) return
+    setPagesBusy(true)
+    try {
+      const moved = await Promise.all(shiftAfterRemoving(panels, page, pages).map(({ panel, page: to }) => (
+        updatePanel(panel.id, buildOptionsPatchPayload(panel, { page: to }, activeDashboardId)))))
+      const byId = new Map(moved.map((u) => [u.id, u]))
+      patchPanels((old) => old.map((p) => byId.get(p.id) || p))
+      patchDashboard(await setDashboardPages(activeDashboard.id, pages - 1))
+      notify(`Page ${page + 1} deleted.`)
+      goPage(Math.max(0, page - 1), -1)
+    } catch (e) {
+      notify(apiErrorMessage(e, 'Failed to delete the page.'), 'error')
+    } finally {
+      setPagesBusy(false)
+    }
+  }
+
+  // "−": the last page goes; its panels move to the page before, into the
+  // first gaps that fit them there, so removing a page never removes a panel.
+  async function removeLastPage() {
+    if (!activeDashboard || pages <= 1) return
+    const last = pages - 1
+    const there = layoutFromPanels(panelsOnPage(panels, last - 1, pages))
+    const moves = panelsOnPage(panels, last, pages).map((panel) => {
+      const size = panel.options?.layout || {}
+      const slot = firstFreeSlot(there, size.w || 6, size.h || 9, GRID_COLS.lg)
+      there.push({ i: String(panel.id), ...slot })
+      return { panel, slot }
+    })
+    setPagesBusy(true)
+    try {
+      if (editMode && page === last) await saveLayout(layout)
+      const moved = await Promise.all(moves.map(({ panel, slot }) => updatePanel(
+        panel.id, buildOptionsPatchPayload(panel, { page: last - 1, layout: slot }, activeDashboardId))))
+      const byId = new Map(moved.map((u) => [u.id, u]))
+      patchPanels((old) => old.map((p) => byId.get(p.id) || p))
+      patchDashboard(await setDashboardPages(activeDashboard.id, last))
+      layoutDashboardRef.current = undefined // the page before may have gained panels: lay it out again
+      if (page >= last) {
+        // switched directly, not via goPage: this page's layout was saved above
+        setPageDir(-1)
+        setActivePage(last - 1)
+        const p = new URLSearchParams(searchParams)
+        if (last - 1 > 0) p.set('page', String(last))
+        else p.delete('page')
+        setSearchParams(p, { replace: true })
+      }
+      notify(moves.length
+        ? `Page ${last + 1} removed — ${moves.length} panel(s) moved to page ${last}.`
+        : `Page ${last + 1} removed.`)
+    } catch (e) {
+      notify(apiErrorMessage(e, 'Failed to remove the page.'), 'error')
+    } finally {
+      setPagesBusy(false)
+    }
+  }
+
+  // To another page, into the first gap that fits it there, at the size it has.
+  async function moveToPage(panel, to) {
+    const there = layoutFromPanels(panelsOnPage(panels, to, pages))
+    const size = layout.find((it) => it.i === String(panel.id)) || panel.options?.layout || {}
+    const slot = firstFreeSlot(there, size.w || 6, size.h || 9, GRID_COLS.lg)
+    try {
+      const updated = await updatePanel(panel.id, buildOptionsPatchPayload(panel, { page: to, layout: slot }, activeDashboardId))
+      patchPanels((old) => old.map((p) => (p.id === updated.id ? updated : p)))
+      setLayout((prev) => prev.filter((it) => it.i !== String(panel.id)))
+      notify(`"${panel.title}" moved to page ${to + 1}.`)
+    } catch (e) {
+      notify(apiErrorMessage(e, 'Failed to move the panel.'), 'error')
+    }
+  }
+
+  // --- slideshow: per viewer, remembered in this browser ----------------------------
+  const [autoplay, setAutoplay] = useState(() => {
+    try { return globalThis.localStorage?.getItem('mml.live.autoplay') === '1' } catch { return false }
+  })
+  const [autoplaySeconds, setAutoplaySeconds] = useState(() => {
+    try {
+      const v = Number(globalThis.localStorage?.getItem('mml.live.autoplaySeconds'))
+      return AUTOPLAY_SECONDS.includes(v) ? v : DEFAULT_AUTOPLAY_SECONDS
+    } catch { return DEFAULT_AUTOPLAY_SECONDS }
+  })
+  function chooseAutoplay(on) {
+    setAutoplay(on)
+    try { globalThis.localStorage?.setItem('mml.live.autoplay', on ? '1' : '0') } catch { /* still works this visit */ }
+  }
+  function chooseAutoplaySeconds(sec) {
+    setAutoplaySeconds(sec)
+    try { globalThis.localStorage?.setItem('mml.live.autoplaySeconds', String(sec)) } catch { /* still works this visit */ }
+  }
+  // Resting the pointer on the board pauses it, so a table can be read to the end.
+  const [boardHover, setBoardHover] = useState(false)
+
   // --- per-panel poll interval (operators may do this too) ----------------------
   async function handlePollIntervalChange(panel, seconds) {
     if (!canChangePollInterval) return
@@ -490,13 +644,33 @@ export default function LivePage() {
     <div className={styles.page}>
       <header className={styles.bar}>
         <div className={styles.titleWrap}>
-          <DashboardSwitcher
-            dashboards={dashboards}
-            activeDashboardId={activeDashboardId}
-            switching={panelsQuery.isFetching}
-            canManage={canManage}
-            onSelect={selectDashboard}
-          />
+          <div className={styles.boardRow}>
+            <DashboardSwitcher
+              dashboards={dashboards}
+              activeDashboardId={activeDashboardId}
+              switching={panelsQuery.isFetching}
+              canManage={canManage}
+              onSelect={selectDashboard}
+            />
+            {activeDashboard && (
+              <BoardPager
+                page={page}
+                count={pages}
+                onGo={goPage}
+                canManage={canManage}
+                onAddPage={addPage}
+                onRemovePage={removeLastPage}
+                lastPageFilled={panelsOnPage(panels, pages - 1, pages).length}
+                adding={pagesBusy}
+                autoplay={autoplay}
+                onAutoplay={chooseAutoplay}
+                seconds={autoplaySeconds}
+                onSeconds={chooseAutoplaySeconds}
+                paused={boardHover || editMode || editorOpen || !!inspectorPanel || !!duplicateTarget || !!deleteTarget}
+                onAutoplayTurn={() => goPage(stepPage(page, 1, pages), 1)}
+              />
+            )}
+          </div>
           <p className={styles.sub}>Real-time machine panels · per-panel poll interval</p>
         </div>
 
@@ -542,13 +716,36 @@ export default function LivePage() {
         <BlockPalette onAdd={(type) => addBlock(type)} onDragType={setDragType} />
       )}
 
+      {!loadError && !loading && panels.length > 0 && !pagePanels.length && !editMode && (
+        <div className={styles.empty}>
+          <p className={styles.emptyLine}>
+            Page {page + 1} is empty.{' '}
+            {canManage
+              ? 'Add a panel here, or move one from its gear menu.'
+              : 'An admin has not put any panels on it yet.'}
+          </p>
+          {canManage && pages > 1 && (
+            <Button size="small" color="error" loading={pagesBusy} onClick={deletePage}>
+              Delete page {page + 1}
+            </Button>
+          )}
+        </div>
+      )}
+
       {!loadError && !loading && !panels.length && !editMode && (
         <p className={styles.empty}>
           No panels yet. {canManage ? 'Click "Add panel" to create one.' : "An admin hasn't configured any panels."}
         </p>
       )}
 
-      {!loadError && !loading && (panels.length > 0 || editMode) && (
+      {!loadError && !loading && (pagePanels.length > 0 || editMode) && (
+        <div
+          key={`${activeDashboardId}:${page}`}
+          className={styles.stage}
+          data-dir={pageDir > 0 ? 'next' : pageDir < 0 ? 'prev' : 'none'}
+          onPointerEnter={() => setBoardHover(true)}
+          onPointerLeave={() => setBoardHover(false)}
+        >
         <ResponsiveGridLayout
           className={`${styles.grid} ${editMode ? styles.gridEditing : ''}`}
           layouts={gridLayouts}
@@ -568,9 +765,12 @@ export default function LivePage() {
           onWidthChange={handleWidthChange}
           onLayoutChange={handleLayoutChange}
         >
-          {layout.map((item) => {
+          {layout.filter((item) => onPage.has(item.i)).map((item) => {
             const panel = panels.find((p) => String(p.id) === item.i)
             if (!panel) return null
+            const pageMove = canManage && pages > 1
+              ? { page, count: pages, onMove: (to) => moveToPage(panel, to) }
+              : null
             if (isKpiPanel(panel)) {
               return (
                 <div key={item.i}>
@@ -586,6 +786,7 @@ export default function LivePage() {
                     onDelete={openDelete}
                     onPollIntervalChange={handlePollIntervalChange}
                     onUpdated={handlePanelUpdated}
+                    pageMove={pageMove}
                   />
                 </div>
               )
@@ -604,11 +805,13 @@ export default function LivePage() {
                   onDelete={openDelete}
                   onPollIntervalChange={handlePollIntervalChange}
                   onUpdated={handlePanelUpdated}
+                  pageMove={pageMove}
                 />
               </div>
             )
           })}
         </ResponsiveGridLayout>
+        </div>
       )}
 
       <PanelEditorDialog
@@ -617,6 +820,7 @@ export default function LivePage() {
         activeDashboardId={activeDashboardId}
         panelsLength={panels.length}
         nextLayout={nextLayoutSlot(layout)}
+        page={page}
         datasources={datasources}
         initialChartType={editorChartType}
         onClose={() => setEditorOpen(false)}

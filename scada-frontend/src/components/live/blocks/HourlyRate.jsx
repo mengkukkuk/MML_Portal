@@ -1,9 +1,11 @@
 import { useMemo } from 'react'
 import { useTranslation } from '@/i18n'
-import { hourlyBars, fmtPieces } from '../kpiView'
+import { hourlyBars, fmtPieces, fmtCompact } from '../kpiView'
 import styles from './Blocks.module.css'
 
 const pct = (v, d = 1) => (v == null ? '—' : `${(v * 100).toFixed(d)}%`)
+// The tallest bar's share of the column: the rest is headroom for its labels.
+const TOP = 72
 
 /**
  * HourlyRate — the defect rate per hour (per day for a week or month), red
@@ -31,11 +33,18 @@ export default function HourlyRate({ summary }) {
     <>
       <div className={styles.hr} role="img"
         aria-label={shown.map((b) => `${label(b.start)} ${pct(b.rate)}`).join(', ')}>
-        {avgShare != null && <div className={styles.hr__avg} style={{ bottom: `${avgShare * 85}%` }} />}
+        {avgShare != null && <div className={styles.hr__avg} style={{ bottom: `${avgShare * TOP}%` }} />}
         {shown.map((b) => (
           <div key={b.start} className={styles.hr__col} title={b.empty ? '' : `${pct(b.rate, 2)} · ${fmtPieces(b.defects)} / ${fmtPieces(b.pieces)}`}>
             <div className={`${styles.hr__bar} ${b.above ? styles['hr__bar--above'] : ''} ${b.empty ? styles['hr__bar--empty'] : ''}`}
-              style={{ height: `${b.share * 85}%` }} />
+              style={{ height: `${b.share * TOP}%` }} />
+            {!b.empty && (
+              // defects in the bucket, then the rate the bar's height shows
+              <span className={styles.hr__val} style={{ bottom: `${b.share * TOP}%` }}>
+                <strong className={b.above ? styles['tone--bad'] : undefined}>{fmtCompact(b.defects)}</strong>
+                <span className={styles.hr__rate}>{pct(b.rate, 2)}</span>
+              </span>
+            )}
             <span className={styles.hr__lbl}>{label(b.start)}</span>
           </div>
         ))}

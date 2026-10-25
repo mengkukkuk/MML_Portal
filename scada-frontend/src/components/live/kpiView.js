@@ -333,3 +333,21 @@ export function eventWhen(ev, withDate, locale = []) {
   const first = t(ev.start, withDate)
   return ev.count > 1 && ev.end && ev.end !== ev.start ? `${first}–${t(ev.end, false)}` : first
 }
+
+/**
+ * Short counts for tight labels: 987 stays 987, 234,567 → "234.57 k",
+ * 1,234,567 → "1.23 M", past a billion "B" — two decimals once shortened.
+ */
+export function fmtCompact(n) {
+  if (n == null || !Number.isFinite(n)) return '—'
+  const abs = Math.abs(n)
+  const sign = n < 0 ? '-' : ''
+  if (abs < 1e3) return `${sign}${groupDigits(Math.round(abs))}`
+  for (const [size, unit] of [[1e9, 'B'], [1e6, 'M'], [1e3, 'k']]) {
+    // 999,995 rounds to "1000.00 k": step up to the next unit instead
+    if (abs >= size || (size > 1e3 && Number((abs / (size / 1e3)).toFixed(2)) >= 1000)) {
+      return `${sign}${(abs / size).toFixed(2)} ${unit}`
+    }
+  }
+  return `${sign}${abs}`
+}
