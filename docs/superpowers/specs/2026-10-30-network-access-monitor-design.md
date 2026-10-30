@@ -54,7 +54,7 @@ booting or serving; it degrades to "monitor not running" on the page.
 | Log layout | `<ACCESS_LOG_ROOT>/YYYY-MM-DD/conn_monitor.log`, folder = day the session **started**. Line format is the existing `Key: Value \| Key: Value`. |
 | Range semantics | A session matches `[from, to]` if it overlaps it. Folders from `from - 1 day` to `to` are scanned (sessions are filed by start day). Range capped at 31 days. |
 | Identity | Remote IP + computer name (static names file → cache → NBT/reverse DNS in background). |
-| Access | `require_admin` + `require_valid_license`. Route `/access`, sidebar item "Access" next to Accounts. |
+| Access | `require_admin` + `require_valid_license`. Shown as the "Access" view of the Accounts page (`/accounts?view=access`, Users / Access toggle); `/access` redirects there. No separate sidebar item. |
 | Timestamps | Naive server-local ISO strings, same convention as `report_engine`. |
 | Single process | The monitor assumes one API process (NSSM runs one uvicorn). |
 

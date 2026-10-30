@@ -18,7 +18,6 @@ import SettingsOutlined from '@mui/icons-material/SettingsOutlined'
 import PersonOutlined from '@mui/icons-material/PersonOutlined'
 import AccountTreeOutlined from '@mui/icons-material/AccountTreeOutlined'
 import AssessmentOutlined from '@mui/icons-material/AssessmentOutlined'
-import SecurityOutlined from '@mui/icons-material/SecurityOutlined'
 
 const LoginPage = lazy(() => import('../pages/LoginPage.jsx'))
 const ResetPasswordPage = lazy(() => import('../pages/ResetPasswordPage.jsx'))
@@ -32,7 +31,6 @@ const ReportPage = lazy(() => import('../pages/reports/ReportPage.jsx'))
 const ReportBuilderPage = lazy(() => import('../pages/reports/ReportBuilderPage.jsx'))
 const SettingsPage = lazy(() => import('../pages/SettingsPage.jsx'))
 const AccountsPage = lazy(() => import('../pages/AccountsPage.jsx'))
-const AccessPage = lazy(() => import('../pages/AccessPage.jsx'))
 const NotFoundPage = lazy(() => import('../pages/NotFoundPage.jsx'))
 
 // Wraps a lazily-loaded page component in a Suspense boundary. fallback is
@@ -127,10 +125,11 @@ export const router = createBrowserRouter(
               element: page(AccountsPage),
               handle: { title: 'Accounts', icon: PersonOutlined, requiresRole: 'admin' },
             },
+            // Network access now lives inside Accounts (toggle: Users / Access);
+            // keep the old URL working for bookmarks.
             {
               path: 'access',
-              element: page(AccessPage),
-              handle: { title: 'Access', icon: SecurityOutlined, requiresRole: 'admin' },
+              element: <Navigate to="/accounts?view=access" replace />,
             },
           ],
         },

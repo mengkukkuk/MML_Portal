@@ -13,7 +13,6 @@ import SettingsOutlined from '@mui/icons-material/SettingsOutlined'
 import PersonOutlined from '@mui/icons-material/PersonOutlined'
 import AccountTreeOutlined from '@mui/icons-material/AccountTreeOutlined'
 import AssessmentOutlined from '@mui/icons-material/AssessmentOutlined'
-import SecurityOutlined from '@mui/icons-material/SecurityOutlined'
 import { useAuthStore } from '@/stores/auth'
 import { useLicenseStore } from '@/stores/license'
 import MmlLogo from '@/components/MmlLogo/MmlLogo.jsx'
@@ -61,7 +60,6 @@ export default function AppSidebar({ collapsed, onToggle }) {
       ? [
           ...visibleItems,
           { path: '/accounts', title: 'Accounts', Icon: PersonOutlined },
-          { path: '/access', title: 'Access', Icon: SecurityOutlined },
         ]
       : visibleItems
 

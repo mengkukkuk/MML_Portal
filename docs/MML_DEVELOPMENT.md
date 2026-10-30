@@ -172,7 +172,7 @@ C:\dev\
 │   │   ├── i18n\                 # EN/TH UI strings (messages.js, useTranslation) — see i18n/README.md
 │   │   ├── pages\                # Top-level: LoginPage, ResetPasswordPage (public);
 │   │   │                           DevicesPage, AlarmsPage, EventPage, SettingsPage,
-│   │   │                           AccountsPage (admin), AccessPage (admin), ActivateLicensePage, NotFoundPage;
+│   │   │                           AccountsPage (admin; Users / Access toggle, views in accounts/), ActivateLicensePage, NotFoundPage;
 │   │   │                           ap/ (APPage — A&P prototype on fixtures),
 │   │   │                           live/ (LivePage, PanelEditorDialog, DashboardSwitcher, etc.),
 │   │   │                           monitor/ (MonitorPage, MimicCanvas, CameraRail/CameraLightbox, view/ + hooks/, etc.),
@@ -986,7 +986,7 @@ curl -s -X POST http://localhost:8088/api/auth/login `
 ### 7.17 `/api/access` — network access monitor (admin only)
 
 Who reached the machine hosting MML Portal — web traffic through IIS (443/80) and Remote Desktop
-(3389) — and for how long. Backs the **Access** page (`/access`). Every route needs an admin token
+(3389) — and for how long. Backs the **Access** view of the Accounts page (`/accounts?view=access`; `/access` redirects there). Every route needs an admin token
 and a valid licence. Ported from the standalone `conn_monitor_py`.
 
 The monitor (`access_monitor.py`) runs inside the API process: every `NETACCESS_INTERVAL_SECONDS`

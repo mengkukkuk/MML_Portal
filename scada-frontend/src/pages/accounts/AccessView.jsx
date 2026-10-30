@@ -10,10 +10,11 @@ import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker'
 import { fetchAccessActive, fetchAccessHistory, fetchAccessStatus } from '@/api/access'
 import { apiErrorMessage } from '@/api/client'
 import { useTranslation } from '@/i18n'
-import styles from './AccessPage.module.css'
+import styles from './AccessView.module.css'
 
 /**
- * AccessPage — who reached this host, and for how long (route: /access, admin only).
+ * AccessView — the "Access" view of the Accounts page (route: /accounts?view=access, admin only):
+ * who reached this host, and for how long.
  * Backed by the network-access monitor in the API process: web traffic through IIS
  * and Remote Desktop. "Connected now" polls every few seconds and its durations tick
  * on the client against the server's clock; history is a time-range query over the
@@ -74,7 +75,7 @@ function ProtocolTag({ protocol }) {
   return <span className={`${styles.tag} ${cls}`}>{protocol}</span>
 }
 
-export default function AccessPage() {
+export default function AccessView() {
   const tr = useTranslation()
 
   const [preset, setPreset] = useState('today') // null = custom range
@@ -189,7 +190,6 @@ export default function AccessPage() {
     <div className={styles.page}>
       <header className={styles.head}>
         <div>
-          <h1 className={styles.title}>{tr('Network access')}</h1>
           <div className={styles.sub}>
             <span className={`${styles.dot} ${monitorOk ? styles.dotOn : styles.dotOff}`} />
             {monitorState}
