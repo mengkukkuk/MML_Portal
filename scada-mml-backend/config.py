@@ -239,3 +239,28 @@ STATIC_DIR = os.getenv(
     "STATIC_DIR",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "static"),
 )
+
+# --- Network access monitor (Access page) ---
+# Polls inbound TCP on this host and logs who connected. Prefixed NETACCESS_, not
+# ACCESS_, because ACCESS_EXPIRE_MIN above is the JWT lifetime.
+def _flag(name: str, default: str) -> bool:
+    return os.getenv(name, default).strip().lower() not in ("", "0", "false", "no", "off")
+
+NETACCESS_ENABLED = _flag("NETACCESS_ENABLED", "1")
+# port:label:grace_seconds, comma separated. 8088 is deliberately absent: behind
+# IIS/ARR the API only ever sees 127.0.0.1. Web gets a long grace because browsers
+# drop and reopen connections; RDP keeps the short one the standalone monitor used.
+NETACCESS_PORTS = os.getenv("NETACCESS_PORTS", "443:HTTPS:120,80:HTTP:120,3389:RDP:10")
+# Keep only remote IPs starting with one of these (comma separated); empty = all.
+NETACCESS_REMOTE_IP_PREFIXES = tuple(
+    p.strip() for p in os.getenv("NETACCESS_REMOTE_IP_PREFIXES", "").split(",") if p.strip()
+)
+NETACCESS_INTERVAL_SECONDS = float(os.getenv("NETACCESS_INTERVAL_SECONDS", "3"))
+NETACCESS_IGNORE_LOOPBACK = _flag("NETACCESS_IGNORE_LOOPBACK", "1")
+NETACCESS_LOG_ROOT = os.getenv(
+    "NETACCESS_LOG_ROOT",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "conn_monitor"),
+)
+# Optional "IP  computer name" table; blank = rely on the cache and auto-resolve.
+NETACCESS_NAMES_FILE = os.getenv("NETACCESS_NAMES_FILE", "")
+NETACCESS_AUTO_RESOLVE_NAMES = _flag("NETACCESS_AUTO_RESOLVE_NAMES", "1")

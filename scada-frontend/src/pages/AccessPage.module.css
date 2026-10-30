@@ -1,0 +1,242 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.sub {
+  color: var(--fg-muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: var(--fg-dim);
+}
+
+.dotOn {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent);
+}
+
+.dotOff {
+  background: var(--crit);
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-3);
+}
+
+.stat {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+}
+
+.statLabel {
+  color: var(--fg-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.statValue {
+  font-size: 24px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.statSub {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tools {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.filters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.chips {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.range {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.sep {
+  color: var(--fg-muted);
+}
+
+.liveBadge {
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.table th,
+.table td {
+  padding: var(--space-2) var(--space-4);
+  text-align: left;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.table th {
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.live {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.note {
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.empty {
+  padding: var(--space-4);
+  color: var(--fg-muted);
+}
+
+.foot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border-soft);
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.tagHTTPS {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+}
+
+.tagHTTP {
+  background: rgba(6, 182, 212, 0.15);
+  color: #22d3ee;
+}
+
+.tagRDP {
+  background: rgba(124, 58, 237, 0.2);
+  color: #a78bfa;
+}
+
+/* The tag colours above are tuned for dark faceplates; paper is the light theme. */
+:global(:root[data-theme='paper']) .tagHTTPS {
+  background: rgba(5, 150, 105, 0.14);
+  color: #047857;
+}
+
+:global(:root[data-theme='paper']) .tagHTTP {
+  background: rgba(8, 145, 178, 0.14);
+  color: #0e7490;
+}
+
+:global(:root[data-theme='paper']) .tagRDP {
+  background: rgba(109, 40, 217, 0.12);
+  color: #6d28d9;
+}

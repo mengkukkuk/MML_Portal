@@ -141,6 +141,7 @@ The single most important split in this codebase.
 | `plant_cli.py` | Shared `--datasource` / `--dsn` target resolution for the CLI helpers below (they write plant tables, so localhost would be wrong) |
 | `simulate_data.py` | Standalone CLI that writes synthetic time-series into a plant's `sensor_readings` |
 | `simulate_events.py` | Standalone CLI that writes machine state transitions and alarms into a plant's `event_logs`/`alarm_logs` for report demos |
+| `access.py` / `access_monitor.py` / `access_log.py` / `access_names.py` | Network access monitor (admin-only `/access` page): polls inbound TCP on this host (IIS 443/80, RDP 3389) inside the API process, turns it into sessions with a per-port grace, appends one line per ended session to `logs\conn_monitor\YYYY-MM-DD\conn_monitor.log`, and serves active/history via `/api/access/*`. Configured by `NETACCESS_*` in `.env` (not `ACCESS_*`, which is the JWT lifetime) |
 | `sch_vision_data.sql` | Reference DDL for a **camera datasource's** schema: `cameras` (`defect_labels text[]`), `camera_defect` (`defect_array integer[]`), the `camera_defect_logs` historian and its batch-rollover trigger, plus a `v_camera_defect_live` view. Run by an operator against the vision database, never by the app. Its `vision_data2` schema name is only an example — the app reads whatever `datasources.db_schema` says |
 
 Password hash format: `scrypt$<salt_hex>$<digest_hex>` (no third-party wheel needed for Python 3.14).

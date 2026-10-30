@@ -132,6 +132,10 @@ C:\dev\
 │   ├── events.py                 # /api/events router — read public.event_logs
 │   ├── alarms.py                 # /api/alarms router — read/acknowledge public.alarm_logs
 │   ├── reports.py                # /api/reports router — templates CRUD, report generation
+│   ├── access.py                 # /api/access router (admin) + monitor start/stop — who reached this host
+│   ├── access_monitor.py         # Inbound-TCP poller: sessions per (port, remote IP), grace, crash recovery
+│   ├── access_log.py             # Daily conn_monitor.log files, range reads, state.json
+│   ├── access_names.py           # IP → computer name (names file → cache → nbtstat / reverse DNS)
 │   ├── report_engine.py          # Report analysis: state intervals, KPIs, Pareto, etc.
 │   ├── mailer.py                 # Brevo HTTP API → SMTP fallback → log-only reset delivery
 │   ├── seed_users.py             # Creates/migrates users table + seeds mock users
@@ -161,14 +165,14 @@ C:\dev\
 │   │   │                           readings.js, tags.js, panels.js,
 │   │   │                           dashboards.js, datasources.js, mimic.js,
 │   │   │                           mimicAssets.js, events.js, schema.js, reports.js,
-│   │   │                           cameras.js, license.js, health.js,
+│   │   │                           cameras.js, license.js, health.js, access.js,
 │   │   │                           latestBatcher.js (coalesces latest reads → POST /schema/latest/batch)
 │   │   ├── stores\               # Zustand: auth.js, connection.js, license.js, settings.js,
 │   │   │                           datasourceSelection.js (mirror of the server-side header selection)
 │   │   ├── i18n\                 # EN/TH UI strings (messages.js, useTranslation) — see i18n/README.md
 │   │   ├── pages\                # Top-level: LoginPage, ResetPasswordPage (public);
 │   │   │                           DevicesPage, AlarmsPage, EventPage, SettingsPage,
-│   │   │                           AccountsPage (admin), ActivateLicensePage, NotFoundPage;
+│   │   │                           AccountsPage (admin), AccessPage (admin), ActivateLicensePage, NotFoundPage;
 │   │   │                           ap/ (APPage — A&P prototype on fixtures),
 │   │   │                           live/ (LivePage, PanelEditorDialog, DashboardSwitcher, etc.),
 │   │   │                           monitor/ (MonitorPage, MimicCanvas, CameraRail/CameraLightbox, view/ + hooks/, etc.),
@@ -978,6 +982,50 @@ current single-process deployment.
 curl -s -X POST http://localhost:8088/api/auth/login `
   -H "Content-Type: application/json" -d '{\"username\":\"admin\",\"password\":\"admin123\"}'
 ```
+
+### 7.17 `/api/access` — network access monitor (admin only)
+
+Who reached the machine hosting MML Portal — web traffic through IIS (443/80) and Remote Desktop
+(3389) — and for how long. Backs the **Access** page (`/access`). Every route needs an admin token
+and a valid licence. Ported from the standalone `conn_monitor_py`.
+
+The monitor (`access_monitor.py`) runs inside the API process: every `NETACCESS_INTERVAL_SECONDS`
+(3) it lists ESTABLISHED inbound TCP connections (`psutil`, `netstat` fallback), keeps the watched
+local ports, and reduces them to `(port, remote IP)` keys. A new key opens a session, a seen key
+refreshes `last_seen`, and a key missing for that port's **grace** closes it. The recorded end is
+`last_seen`, so grace is never counted as usage. It never blocks startup: if it cannot start,
+`/status` reports `running: false` and the page says so.
+
+| Method | Path | Query | Success response |
+|--------|------|-------|------------------|
+| GET | `/api/access/status` | — | `{enabled, running, since, interval_seconds, server_time, ports:[{port,label,grace_seconds}]}` |
+| GET | `/api/access/active` | — | `{server_time, sessions:[{computer_name, remote_ip, protocol, port, connected_since}]}` |
+| GET | `/api/access/history` | `start`, `end` (server-local ISO; default today 00:00 → now), `protocol?`, `q?`, `limit` (1–10000, default 5000) | `{start, end, rows, total, truncated, files}`; rows carry `computer_name, remote_ip, protocol, port, start, end, seconds, duration, note`. **400** if `end < start` or the range exceeds 31 days |
+
+`history` returns sessions that **overlap** the range, newest first. `total` is the true match count,
+so `truncated` can say "5000 of 7312" rather than clipping silently.
+
+**Log files.** One line per finished session, appended to
+`<NETACCESS_LOG_ROOT>\YYYY-MM-DD\conn_monitor.log` (default `scada-mml-backend\logs\conn_monitor`),
+filed under the day the session **started**. The monitor also keeps `state.json` (heartbeat + open
+sessions) there: after a crash or power cut, the next boot closes the orphans at
+`min(last_seen, heartbeat)` with the note `Interrupted (PC off or monitor stopped)`; a clean stop
+writes `Monitor stopped`.
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `NETACCESS_ENABLED` | `1` | Master switch. History stays readable when off. |
+| `NETACCESS_PORTS` | `443:HTTPS:120,80:HTTP:120,3389:RDP:10` | `port:label:grace_seconds`. Do not list the API port (8088): behind IIS/ARR it only sees 127.0.0.1. Web gets a long grace because browsers drop and reopen connections. |
+| `NETACCESS_REMOTE_IP_PREFIXES` | *(empty)* | Only record remote IPs with these prefixes; empty = all. |
+| `NETACCESS_INTERVAL_SECONDS` | `3` | Poll interval. |
+| `NETACCESS_IGNORE_LOOPBACK` | `1` | Skip 127.0.0.1 / ::1 (IIS↔API traffic, local browsing). |
+| `NETACCESS_LOG_ROOT` | `scada-mml-backend\logs\conn_monitor` | Where the daily folders live. |
+| `NETACCESS_NAMES_FILE` | *(empty)* | Optional `IP  computer name` table, reloaded when edited. Otherwise names come from an auto-resolved cache (`nbtstat`, then reverse DNS). |
+| `NETACCESS_AUTO_RESOLVE_NAMES` | `1` | Resolve unknown IPs in the background. |
+
+Limits worth knowing: identity is remote IP + computer name, **not** the portal login; the monitor
+assumes a single API process (a second worker would double-count); anything fronting IIS (CDN, extra
+proxy) hides the real client IP; there is no retention policy for the log folders.
 
 ---
 

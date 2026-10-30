@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+import access
 import alarms
 import alert_messages
 import auth
@@ -51,6 +52,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(access.router)
 app.include_router(users.router)
 app.include_router(readings.router)
 app.include_router(tags.router)
@@ -202,6 +204,7 @@ def _load_license() -> None:
 
 _tag_buffer_task: asyncio.Task | None = None
 _db_watch_task: asyncio.Task | None = None
+_access_task: asyncio.Task | None = None
 
 
 #: A source that fails this many polls in a row is parked. A plant database with
@@ -358,6 +361,29 @@ async def _db_watch_loop() -> None:
         delay = _DB_RETRY_MIN_S if healthy else min(delay * 2, _DB_RETRY_MAX_S)
         await asyncio.sleep(_DB_POLL_S if healthy else delay)
 
+async def _access_monitor_loop(monitor) -> None:
+    """Poll inbound connections for the Access page.
+
+    Logs a failing tick once per outage, not every interval: a permission
+    problem would otherwise write a traceback every 3 seconds forever.
+    """
+    try:
+        await asyncio.to_thread(monitor.prepare)
+    except Exception:
+        logger.exception("Access monitor could not recover/prepare - continuing")
+    failing = False
+    while True:
+        try:
+            await asyncio.to_thread(monitor.tick)
+            if failing:
+                logger.info("Access monitor recovered")
+            failing = False
+        except Exception:
+            if not failing:
+                logger.exception("Access monitor tick failed - will keep retrying")
+            failing = True
+        await asyncio.sleep(monitor.interval)
+
 _DB_POLL_S = 15          # steady-state health refresh
 _DB_RETRY_MIN_S = 5      # first retry after a failure
 _DB_RETRY_MAX_S = 60     # backoff ceiling during a long outage
@@ -365,15 +391,19 @@ _DB_RETRY_MAX_S = 60     # backoff ceiling during a long outage
 
 @app.on_event("startup")
 async def _start_background_tasks() -> None:
-    global _tag_buffer_task, _db_watch_task
+    global _tag_buffer_task, _db_watch_task, _access_task
     _tag_buffer_task = asyncio.create_task(_tag_buffer_loop())
     _db_watch_task = asyncio.create_task(_db_watch_loop())
+    monitor = access.start_monitor()  # never raises; None when disabled or unstartable
+    if monitor is not None:
+        _access_task = asyncio.create_task(_access_monitor_loop(monitor))
 
 @app.on_event("shutdown")
 async def _stop_background_tasks() -> None:
-    for task in (_tag_buffer_task, _db_watch_task):
+    for task in (_tag_buffer_task, _db_watch_task, _access_task):
         if task:
             task.cancel()
+    access.stop_monitor()
     db.close_all_pools()
 
 @app.exception_handler(psycopg.OperationalError)
