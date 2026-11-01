@@ -92,7 +92,7 @@ either via the one-shot installer or by hand, and production deployment behind I
 C:\dev\
 ├── scada-mml-backend\            # FastAPI backend
 │   ├── main.py                   # App factory: CORS (explicit origins, credentials=true),
-│   │                               mounts 15 routers, /health, calls db.init_*_table()
+│   │                               mounts 18 routers, /health, calls db.init_*_table()
 │   │                               on startup, runs on :8088
 │   ├── config.py                 # Loads .env (DB, JWT, account, Brevo, SMTP, cookie)
 │   ├── db/                       # psycopg 3 access layer, split by domain (pool, fanout,
@@ -132,6 +132,13 @@ C:\dev\
 │   ├── events.py                 # /api/events router — read public.event_logs
 │   ├── alarms.py                 # /api/alarms router — read/acknowledge public.alarm_logs
 │   ├── reports.py                # /api/reports router — templates CRUD, report generation
+│   ├── kpi.py                    # /api/kpi router — management-block summaries (+ admin preview)
+│   ├── kpi_engine.py             # Pure loss accounting: minute states, stop spans, losses, waterfall
+│   ├── kpi_cache.py              # Incremental process-local cache of KPI minute buckets
+│   ├── kpi_options.py            # options.kpi validation; KPI_CHART_TYPES, strip metrics
+│   ├── name_families.py          # Machine families from a wide table's column names
+│   ├── alert_messages.py         # /api/alerts router — alert source, response roles, messages
+│   ├── alert_events.py           # Pure grouping of repeated alert messages into events
 │   ├── access.py                 # /api/access router (admin) + monitor start/stop — who reached this host
 │   ├── access_monitor.py         # Inbound-TCP poller: sessions per (port, remote IP), grace, crash recovery
 │   ├── access_log.py             # Daily conn_monitor.log files, range reads, state.json
@@ -144,12 +151,14 @@ C:\dev\
 │   │                               below (they write plant tables, so localhost is wrong)
 │   ├── simulate_data.py          # Writes synthetic sensor_readings every 5s (CLI)
 │   ├── simulate_events.py        # Standalone CLI for injecting test events into event_logs
+│   ├── simulate_kpi_showcase.py  # Demo data for the management blocks (CLI)
+│   ├── simulate_alert_showcase.py # Demo alert_messages rows; --tick-alerts keeps writing (CLI)
 │   ├── _seed_alarms.py           # Dev helper: seed alarm_logs (ad-hoc, not shipped)
 │   ├── _probe_alarms.py          # Dev helper: inspect alarm schema (ad-hoc, not shipped)
 │   ├── install.ps1 + install.bat # One-shot interactive installer (self-elevates)
 │   ├── uninstall.ps1 + .bat      # Stop + remove the NSSM service
-│   ├── nssm.exe                  # Vendored NSSM binary used by install.ps1
-│   ├── init_db.sql               # Aspirational multi-schema reference design (not loaded today)
+│   ├── nssm.exe                  # NSSM binary used by install.ps1 (gitignored; supply it locally)
+│   ├── sch_localbase.sql         # Reference DDL for the app/config DB
 │   ├── tests\                    # pytest suite
 │   ├── requirements.txt          # Runtime deps only — this is what the installer bundles
 │   ├── requirements-dev.txt      # requirements.txt + pytest, for local dev/test
@@ -165,7 +174,7 @@ C:\dev\
 │   │   │                           readings.js, tags.js, panels.js,
 │   │   │                           dashboards.js, datasources.js, mimic.js,
 │   │   │                           mimicAssets.js, events.js, schema.js, reports.js,
-│   │   │                           cameras.js, license.js, health.js, access.js,
+│   │   │                           cameras.js, license.js, health.js, access.js, kpi.js, alerts.js,
 │   │   │                           latestBatcher.js (coalesces latest reads → POST /schema/latest/batch)
 │   │   ├── stores\               # Zustand: auth.js, connection.js, license.js, settings.js,
 │   │   │                           datasourceSelection.js (mirror of the server-side header selection)
@@ -174,12 +183,13 @@ C:\dev\
 │   │   │                           DevicesPage, AlarmsPage, EventPage, SettingsPage,
 │   │   │                           AccountsPage (admin; Users / Access toggle, views in accounts/), ActivateLicensePage, NotFoundPage;
 │   │   │                           ap/ (APPage — A&P prototype on fixtures),
-│   │   │                           live/ (LivePage, PanelEditorDialog, DashboardSwitcher, etc.),
+│   │   │                           live/ (LivePage, PanelEditorDialog, DashboardSwitcher, BoardPager, BlockPalette, KpiInspector, etc.),
 │   │   │                           monitor/ (MonitorPage, MimicCanvas, CameraRail/CameraLightbox, view/ + hooks/, etc.),
 │   │   │                           reports/ (ReportPage, ReportBuilderPage)
-│   │   ├── components\           # AppHeader, AppSidebar, ConnectionPill,
+│   │   ├── components\           # AppSidebar (+ SidebarAccount/Heading), ConnectionPill,
 │   │   │                           charts/EChart.jsx (echarts-for-react wrapper),
-│   │   │                           live/LivePanel.jsx, options/*.js, usePanelPolling.js, usePanelSeries.js,
+│   │   │                           live/LivePanel.jsx, KpiPanel.jsx + blocks/ (management blocks), MoveToPage,
+│   │   │                           options/*.js, usePanelPolling.js, usePanelSeries.js, useKpiSummary.js,
 │   │   │                           mimic/ (symbol components, hooks, utilities),
 │   │   │                           report/ (ReportFilterBar, ReportBlock, block types, etc.)
 │   │   ├── utils\                # mathExpr.js (safe transform evaluator),
@@ -352,8 +362,8 @@ These live in two different places, and which one a table belongs to is not a de
 
 | Where | Tables |
 |-------|--------|
-| **App/config DB** (hardcoded localhost, always reachable) | `users`, `user_datasource_selection`, `dashboards`, `dashboard_panels`, `datasources`, `camera_link_settings`, `mimic_layouts`, `mimic_assets`, `mimic_symbols`, `report_templates`, `report_settings` |
-| **Plant DB** (saved datasource connections) | `devices`, `sensor_readings`, `variables_tag`, `event_logs`, `alarm_logs`, `mmldatabuffer`; the configured camera source also supplies `cameras` and `camera_defect` |
+| **App/config DB** (hardcoded localhost, always reachable) | `users`, `user_datasource_selection`, `dashboards`, `dashboard_panels`, `datasources`, `camera_link_settings`, `mimic_layouts`, `mimic_assets`, `mimic_symbols`, `report_templates`, `report_settings`, `alert_source_settings`, `response_role`, `license_events` |
+| **Plant DB** (saved datasource connections) | `devices`, `sensor_readings`, `variables_tag`, `event_logs`, `alarm_logs`, `mmldatabuffer`; the configured camera source also supplies `cameras` and `camera_defect`; the configured alert source supplies an alert table such as `vision_data.alert_messages` (DDL in `sch_vision_data.sql`) |
 
 The app never creates the plant tables — it only reads them, through the `db_schema` recorded on
 the datasource row. A plant database missing one of them degrades that one feature for that one
@@ -628,7 +638,7 @@ require an admin token**.
 ```json
 {
   "title": "Compressor 1 pressure",
-  "source": "device",                   // 'device' | 'tag'
+  "source": "device",                   // 'device' | 'tag' | 'table' | 'kpi'
   "device_id": 2, "metric": "pressure", // for source='device'
   "tag_name": "Pressure1",              // for source='tag'
   "window_minutes": 15,                 // 1..1440 — series window
@@ -639,12 +649,16 @@ require an admin token**.
 }
 ```
 
-Chart types: `timeseries`, `line`, `bar`, `stat`, `gauge`, `bargauge`, `histogram`, `table`.
+Chart types: `timeseries`, `line`, `bar`, `stat`, `gauge`, `bargauge`, `histogram`, `table`, `pie`,
+`heatmap`, `scatter`, `statetimeline`, `candlestick`, plus the management blocks (`KPI_CHART_TYPES` in
+`kpi_options.py`): `lossmeter`, `andon`, `waterfall`, `kpistrip`, `hourly`, `pace`, `sensors`,
+`response`, `kpitrend`, `pareto`.
 
 Validation rules in `panels._validate`:
 - `chart_type ∈ VALID_CHART_TYPES`
-- `source ∈ {'device','tag'}`
-- `poll_interval_seconds ∈ {5, 30, 60, 600, 1800, 3600}`
+- `source ∈ {'device','tag','table','kpi'}`; a management-block chart type requires `source='kpi'` and
+  vice versa, and its `options.kpi` is validated by `kpi_options.py` (KPI blocks poll at ≥ 30 s)
+- `poll_interval_seconds` is one of the whitelisted Live intervals
 - `source='device'` requires `device_id` AND `metric`
 - `source='tag'` requires `tag_name` AND `metric ∈ db.tag_fields()` (a discovered numeric column)
 
@@ -653,11 +667,18 @@ Validation rules in `panels._validate`:
 Groups panels so the Live page can host multiple named boards. Reads are open to any authenticated
 user; writes (create/update/delete) require an admin token. Deleting a dashboard cascades to its panels.
 
+A board can have several **pages** (areas the Live header's arrows step through, with optional
+auto-slide). The dashboard stores only `page_count`; each panel stores its own page in
+`options.page` (0-based). A panel with no page is on the first; one past the last page is shown on
+the last, so shrinking a board never hides a panel (`pages/live/boardPages.js`). Admins move a
+panel with `MoveToPage`; `BoardPager` is the header control.
+
 | Method | Path                    | Body / Auth                                  | Success response |
 |--------|-------------------------|----------------------------------------------|------------------|
-| GET    | `/api/dashboards`       | Bearer                                       | `[{id, title, position, created_at}, ...]` ordered by position |
+| GET    | `/api/dashboards`       | Bearer                                       | `[{id, title, position, page_count, created_at}, ...]` ordered by position |
 | POST   | `/api/dashboards`       | Bearer admin + `{title, position?}`          | `201` + dashboard object |
 | PUT    | `/api/dashboards/{id}`  | Bearer admin + `{title, position?}`          | dashboard object; **404** if id missing |
+| PATCH  | `/api/dashboards/{id}/pages` | Bearer admin + `{page_count}` (1–12)    | dashboard object; **404** if id missing |
 | DELETE | `/api/dashboards/{id}`  | Bearer admin                                 | `204`; **404** if id missing |
 
 ### 7.7 `/api/schema` — generic table introspection (Bearer, any role)
@@ -959,31 +980,48 @@ the text and the public key compiled into `licensing.py`. `valid` → `grace` (f
 requires the `reports` entitlement. `verify_license.py <file>` runs the same check from the CLI
 (exit 0 = signed license, 1 = missing/unreadable) and is used by `install.ps1`.
 
-### 7.16 Errors
+### 7.16 `/api/kpi` — management blocks (Bearer, any role; preview requires admin; license required)
 
-- Bad credentials → `401 {"message": "Invalid username or password"}`.
-- Missing/expired/invalid access token → `401 {"detail": "..."}`.
-- Missing/invalid refresh cookie on `/refresh` → `401 {"detail": "..."}`.
-- Bad/expired/single-use-already-consumed reset token → `400 {"detail": "..."}`.
-- Admin-only route accessed by a non-admin → `403 {"detail": "Admin access required"}`.
-- Database unreachable → `503 {"detail": "Database unreachable - check the connection settings."}`.
+The figures behind the Live **management blocks** (`source='kpi'` panels). All accounting is in
+`kpi_engine.py` (pure, tested): a plant table is reduced to per-family **minute buckets**
+(`db/kpi.py`), each minute is classified No data / Stop / Run / Slow, and losses are derived so the
+waterfall balances by construction. Buckets do not depend on the target, so `kpi_cache.py` keeps
+them incrementally across target changes. Machine families come from the table's column names
+(`name_families.py`, same rule as the frontend `groupByFamily`); block settings live in
+`options.kpi` (`kpi_options.py`). Design notes: `docs/management-blocks-plan.md`.
 
-### 7.17 Tokens
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET  | `/api/kpi/summary?panel_id=` | Bearer | Summary for a saved block. **404** unknown panel, **400** if the panel is not a management block |
+| POST | `/api/kpi/preview` | admin | Same summary for an unsaved `{table_name, datasource_id, chart_type, options}` — backs `KpiInspector` while editing |
 
-HS256 JWTs. Each carries `sub` (user id), `type` (`access` / `refresh` / `reset`), `iat`, `exp`,
-`jti`; access tokens additionally carry `role`. Lifetimes are governed by `ACCESS_EXPIRE_MIN` /
-`REFRESH_EXPIRE_DAYS` / `RESET_EXPIRE_MIN`. Revocation lists are **in-memory** (refresh `jti`
-denylist, reset `jti` used-set) — they reset on service restart, which is acceptable for the
-current single-process deployment.
+Money (฿) figures are stripped server-side unless the role is in `auth.COST_ROLES` (`admin`,
+`manager`); the response says which with `cost_visible`. The Response board groups alert messages
+into **events** (`alert_events.py`: same location, severity, role and message kind — the text up to
+the first `:` — with no more than a set gap between rows). Demo data: `simulate_kpi_showcase.py`.
 
-### 7.18 Smoke test
+### 7.17 `/api/alerts` — alert messages and response roles (Bearer, any role; writes require admin; license required)
 
-```powershell
-curl -s -X POST http://localhost:8088/api/auth/login `
-  -H "Content-Type: application/json" -d '{\"username\":\"admin\",\"password\":\"admin123\"}'
-```
+One global **alert source** — the connection, table and columns a plant writes its alerts to —
+serves every trend, whichever connection its readings come from (stored in `alert_source_settings`).
+**Response roles** (`response_role`) say who acts on an alert: admin-kept rules (location → role,
+tried by `priority`; a rule with no location, or `global`, is a catch-all), overridden by a role the
+alert row itself carries when the source has a role column. Severity is deliberately not a rule
+condition.
 
-### 7.17 `/api/access` — network access monitor (admin only)
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET / PUT / DELETE | `/api/alerts/source` | GET any role, writes admin | `{datasource_id, table_name, ts_col, message_col, severity_col?, match_col?, match_filter?: location\|camera, role_col?}`; GET also says whether the table exists yet |
+| GET / POST | `/api/alerts/roles` | GET any role, POST admin | Rules `{code, name_th, name_en, location?, priority, role_id?}` |
+| PUT / DELETE | `/api/alerts/roles/{id}` | admin | Edit / remove a rule |
+| GET | `/api/alerts/messages` | any role | `start`, `end`, `location[]`, `camera[]`, `limit` → `{configured, available, reason?, messages:[{ts, message, severity: crit\|warn\|info, role}], truncated}` |
+
+`/messages` never errors for "nothing to show": no source, a missing table or an unreachable plant
+all answer 200 with `available: false` and a reason, so the report trend keeps its readings and just
+draws no flags. Identifiers go through the same `_safe_identifiers` gate as `/schema`. Configured in
+Settings; demo data: `simulate_alert_showcase.py` (`--tick-alerts` keeps writing them).
+
+### 7.18 `/api/access` — network access monitor (admin only)
 
 Who reached the machine hosting MML Portal — web traffic through IIS (443/80) and Remote Desktop
 (3389) — and for how long. Backs the **Access** view of the Accounts page (`/accounts?view=access`; `/access` redirects there). Every route needs an admin token
@@ -1027,6 +1065,30 @@ Limits worth knowing: identity is remote IP + computer name, **not** the portal 
 assumes a single API process (a second worker would double-count); anything fronting IIS (CDN, extra
 proxy) hides the real client IP; there is no retention policy for the log folders.
 
+### 7.19 Errors
+
+- Bad credentials → `401 {"message": "Invalid username or password"}`.
+- Missing/expired/invalid access token → `401 {"detail": "..."}`.
+- Missing/invalid refresh cookie on `/refresh` → `401 {"detail": "..."}`.
+- Bad/expired/single-use-already-consumed reset token → `400 {"detail": "..."}`.
+- Admin-only route accessed by a non-admin → `403 {"detail": "Admin access required"}`.
+- Database unreachable → `503 {"detail": "Database unreachable - check the connection settings."}`.
+
+### 7.20 Tokens
+
+HS256 JWTs. Each carries `sub` (user id), `type` (`access` / `refresh` / `reset`), `iat`, `exp`,
+`jti`; access tokens additionally carry `role`. Lifetimes are governed by `ACCESS_EXPIRE_MIN` /
+`REFRESH_EXPIRE_DAYS` / `RESET_EXPIRE_MIN`. Revocation lists are **in-memory** (refresh `jti`
+denylist, reset `jti` used-set) — they reset on service restart, which is acceptable for the
+current single-process deployment.
+
+### 7.21 Smoke test
+
+```powershell
+curl -s -X POST http://localhost:8088/api/auth/login `
+  -H "Content-Type: application/json" -d '{\"username\":\"admin\",\"password\":\"admin123\"}'
+```
+
 ---
 
 ## 8. Frontend — local development
@@ -1063,7 +1125,7 @@ npm run build        # outputs to dist\ (includes web.config from public\)
 | `/reports/:templateId`    | `ReportPage.jsx`          | required | Report for specific template |
 | `/reports/:templateId/edit` | `ReportBuilderPage.jsx`   | admin    | Report template editor |
 | `/settings`               | `SettingsPage.jsx`        | required | Profile / change-password |
-| `/accounts`               | `AccountsPage.jsx`        | admin    | User CRUD |
+| `/accounts`               | `AccountsPage.jsx`        | admin    | Users / Access toggle: user CRUD (`UsersView`) and the network access monitor (`AccessView`, `?view=access`; `/access` redirects here) |
 | *(any)*                   | `ActivateLicensePage.jsx` | required | Rendered by `App.jsx` in place of the shell while the license is `missing`/`blocked` |
 
 ### Live dashboard internals
@@ -1087,8 +1149,8 @@ Each `LivePanel` tile:
   Chart options are built per-type by `src/components/live/options/*.js` modules.
 - Reads `panel.options.transform` (a string like `value/10` or `sqrt(value)`) and runs it
   through `src/utils/mathExpr.js` — a safe recursive-descent evaluator that supports
-  `+ - * / ^`, function calls (`abs/sqrt/pow/min/max/floor/ceil/round`) and the identifier
-  `value`. There is no `eval`, no `Function`, no DOM access — invalid input is dropped.
+  `+ - * / ^`, function calls (`abs/sqrt/pow/min/max/floor/ceil/round`) and the single-letter
+  variables `a`, `b`, `c`, … (the readings, in the order they were selected). There is no `eval`, no `Function`, no DOM access — invalid input is dropped.
 - Per-panel **text size**: `options.titleSize` / `options.textSize` (`S`/`M`/`L`/`XL` = 0.85 / 1 / 1.25 / 1.5×).
   The step multiplies whatever size the tile's responsive logic already chose; `scaleFonts()`
   (`options/shared.js`) rewrites every `fontSize` in the finished ECharts option, and CSS handles the DOM text.
@@ -1100,6 +1162,13 @@ Each `LivePanel` tile:
   `POST /api/schema/latest/batch`, so a large dashboard or drawing costs one request per tick instead of N.
 - Shows "Updated h:mm:ss" after every successful poll via `usePanelPolling`'s timestamp.
 - Admins see Edit / Duplicate / Delete buttons (opens `PanelEditorDialog`); operators get read-only tiles.
+
+Management blocks (`source='kpi'`) render through `KpiPanel` and `components/live/blocks/`
+(`LossMeter`, `AndonBoard`, `LossWaterfall`, `KpiStrip`, `PlanPace`, `HourlyRate`, `SensorStrip`,
+`ResponseBoard`, `KpiTrend`, `DefectPareto`), fed whole by `useKpiSummary` → `GET /api/kpi/summary`.
+Admins add them from the Edit Layout `BlockPalette` and configure them in `KpiInspector`;
+`KpiExplain` shows how each figure was computed. A board with several pages shows only the current
+page's panels (`boardPages.js`, `BoardPager`, `MoveToPage`).
 
 The `PanelEditorDialog` lets admins create/update panels. `ParamFields` renders dynamic UI based
 on the panel's `source` type and `chart_type`.

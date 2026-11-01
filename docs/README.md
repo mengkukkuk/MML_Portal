@@ -83,17 +83,18 @@ C:\dev\
     │   ├── pages\                  ← page components:
     │   │  ├── LoginPage, ResetPasswordPage (public)
     │   │  ├── DevicesPage, AlarmsPage, EventPage, SettingsPage (authenticated)
-    │   │  ├── AccountsPage (admin-only)
+    │   │  ├── AccountsPage (admin-only; Users / Access network-monitor views)
     │   │  ├── ActivateLicensePage (replaces the shell when the license is missing/blocked)
     │   │  ├── ap/APPage (A&P prototype on fixture data)
-    │   │  ├── live/LivePage + supporting files
+    │   │  ├── live/LivePage + multi-page boards, management-block palette/inspector
     │   │  ├── monitor/MonitorPage + mimic editor, camera rail/lightbox, view/ + hooks/
     │   │  ├── reports/ReportPage, ReportBuilderPage
     │   │  └── NotFoundPage
     │   ├── components\             ← shared UI:
-    │   │  ├── AppHeader, AppSidebar, ConnectionPill
+    │   │  ├── AppSidebar, ConnectionPill
     │   │  ├── charts/EChart (generic ECharts wrapper)
-    │   │  ├── live/LivePanel + options/ (12 viz-type builders) + polling hooks
+    │   │  ├── live/LivePanel + options/ (viz-type builders) + polling hooks,
+    │   │  │   KpiPanel + blocks/ (management blocks: loss meter, andon, waterfall, …)
     │   │  ├── mimic/symbol library + hooks
     │   │  └── report/report blocks + signal-trend modules
     │   ├── utils\                  ← mathExpr.js (safe transform evaluator),

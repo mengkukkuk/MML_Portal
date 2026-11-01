@@ -85,6 +85,10 @@ The single most important split in this codebase.
   No explicit selection falls back to the lowest-id datasource, flagged `implicit: true`.
 - **The header selection overrides everything.** A panel's or symbol's stored
   `datasource_id` is not consulted for reads.
+- **Monitor cameras are a separate configured-source read.** The app DB stores only the
+  singleton `camera_link_settings` datasource choice. Camera identity and defect batches are
+  read from that datasource's `cameras` / `camera_defect` tables by stable camera code; they
+  do not follow the header selection and never fall back to local camera tables.
 - `datasources.password` is encrypted at rest (`security.encrypt_secret`/`decrypt_secret`,
   Fernet), **fail-closed**: a non-empty password cannot be saved without a valid key (`ENCRYPTION_KEY`, or `ENCRYPTION_KEY_FILE` — authoritative when set; the installer keeps it in ProgramData). A `fernet$`-prefixed value is ciphertext, anything
   else is legacy plaintext and is read back unchanged, so turning the key on later never
@@ -111,7 +115,7 @@ The single most important split in this codebase.
 ### Backend Layout
 | File | Role |
 |------|------|
-| `main.py` | FastAPI app factory, CORS middleware, 15 router mounts (auth, users, readings, tags, schema, panels, dashboards, datasources, mimic, events, alarms, reports, cameras, system, license), `init_*` table-creation calls on startup |
+| `main.py` | FastAPI app factory, CORS middleware, 18 router mounts (auth, access, users, readings, tags, schema, panels, kpi, dashboards, datasources, mimic, events, alarms, alerts, reports, cameras, system, license), `init_*` table-creation calls on startup |
 | `auth.py` | 8 auth endpoints (login, register, me, refresh, logout, change-password, forgot-password, reset-password) |
 | `users.py` | Admin CRUD at `/api/users` |
 | `readings.py` | `/api/readings/*` — devices, metrics, latest reading, sliding-window series (reads `public.sensor_readings`) |
@@ -132,6 +136,9 @@ The single most important split in this codebase.
 | `events.py` | `/api/events/*` — read-only event-log endpoints backing the Events page |
 | `alarms.py` | `/api/alarms/*` — read-only alarm-log endpoints with Acknowledge action for the Alarms page |
 | `reports.py` | `/api/reports/*` — OEE/MES reporting: template CRUD (admin token gates template writes), report runs, CSV/Excel export |
+| `kpi.py` / `kpi_engine.py` / `kpi_cache.py` / `kpi_options.py` | `/api/kpi/summary` (+ admin `/preview`) for the Live **management blocks**. `kpi_engine.py` is the pure loss accounting (minute states → stop spans → losses, waterfall balances by construction); `kpi_cache.py` keeps minute buckets incrementally; `kpi_options.py` validates `options.kpi`. Cost (฿) is stripped unless the role is in `auth.COST_ROLES` |
+| `alert_messages.py` / `alert_events.py` | `/api/alerts/*` — the one global alert source (`/source`), response roles (`/roles`, who acts on an alert: location rules or a role column on the alert row) and `/messages` for the report trend's flags (never errors for "nothing to show"). `alert_events.py` groups repeated messages into events for the Response board |
+| `name_families.py` | Machine families detected from a wide table's column names (same rule as the frontend `groupByFamily`) |
 | `report_engine.py` | Pure state-interval arithmetic — turns `public.event_logs` transitions into machine runtime/downtime/OEE metrics |
 | `security.py` | Password hashing via stdlib `hashlib.scrypt`, JWT sign/verify, and `encrypt_secret`/`decrypt_secret` (Fernet) for `datasources.password` at rest |
 | `db/` | Psycopg 3 access layer, a package split by domain (`pool`, `fanout`, `users`, `tags`, `tables`, `series`, `datasources`, `mimic`, `cameras`, `reports`, …) — all SQL lives here. `import db` and `db.<name>` still work: `db/__init__.py` re-exports every name and writes attribute assignments through to the owning module. Inside the package, cross-module calls are module-qualified (`_pool.get_connection()`), never `from .pool import …`. `get_connection()` is **always the localhost app DB**; plant SQL goes through the per-datasource pools and `fan_out`/`fan_out_rows`. Also dynamic `variables_tag` column discovery and table init helpers |
@@ -150,16 +157,16 @@ Password hash format: `scrypt$<salt_hex>$<digest_hex>` (no third-party wheel nee
 - `src/pages/` — root pages: `DevicesPage`, `AlarmsPage`, `EventPage`, `LoginPage`,
   `ResetPasswordPage`, `SettingsPage`, `AccountsPage` (admin-only; Users / Access toggle, views in `pages/accounts/`), `ActivateLicensePage` (rendered by `App.jsx` instead of the shell while the license is `missing`/`blocked`), `NotFoundPage`; plus subdirs:
   - `pages/ap/` — **`APPage`** (`/ap`, A&P analysis/prediction prototype; data is fixtures in `apFixtures.js`, not the API)
-  - `pages/live/` — **`LivePage`** (admin-managed live grid), `DashboardSwitcher`, `PanelEditorDialog`, `ParamFields`, `panelPayload.js`
+  - `pages/live/` — **`LivePage`** (admin-managed live grid), `DashboardSwitcher`, `BoardPager` (multi-page boards, `boardPages.js`), `PanelEditorDialog`, `ParamFields`, `panelPayload.js`, plus the management-block editor: `BlockPalette`, `KpiInspector`, `BlockColumns`, `kpiColumns.js`, `kpiPayload.js`
   - `pages/monitor/` — **`MonitorPage`** (interactive SCADA mimic), `MimicCanvas`, `MimicSwitcher`, `DetailRail`, `NodeInspector`, `EdgeInspector`, `SymbolPalette`, `SymbolBindingDialog`, `CustomSymbolDialog`, `WirePicker`, `CameraRail`/`CameraLightbox` (NG/OK film strip, zoom/pan/pinch), `KpiStrip`/`KpiBindingDialog`, `ProductionLogDrawer`, `defaultLayout.js`, `layoutDoc.js`; the page is split into `view/` (`MimicViewer`, `MimicEditor`, `OverviewPanel`, `AttentionStrip`, …) and `hooks/` (`useMimicDocument`, `useLayoutEdits`, `useEditLifecycle`, …), with pure helpers (`layoutOps.js`, `editorSession.js`, `monitorStatus.js`, …) unit-tested
   - `pages/reports/` — **`ReportPage`** (viewer), `ReportBuilderPage` (admin-only template editor); the signal trend lives in `components/report/` (`TrendRail`, `TrendToolbar`, `useTrendViewport`)
   - All guarded by `RequireAuth` element wrapper in `src/router/routes.jsx` (react-router-dom v7 `createBrowserRouter`)
 - `src/stores/` — Zustand stores: `auth`, `connection`, `license`, `settings` (per-browser prefs, e.g. default poll interval), `datasourceSelection` (mirror of the server-owned header selection; its `selectionKey` goes into query keys so a plant switch reseeds series)
 - `src/api/` — thin Axios wrappers per domain (`auth`, `users`, `devices`, `alarms`, `readings`, `tags`,
-  `panels`, `dashboards`, `datasources`, `schema`, `events`, `mimic`, `mimicAssets`, `reports`, `cameras`, `license`, `health`; `latestBatcher.js` coalesces per-binding latest reads within a 10 ms window into one `POST /schema/latest/batch`)
-- `src/components/` — shared UI: `AppHeader`, `AppSidebar`,
-  `ConnectionPill`, plus subdirs:
-  - `components/live/` — **`LivePanel`** (Grafana-style single-tile renderer), `usePanelPolling.js`, `usePanelSeries.js`, `options/*.js` (one ECharts option builder per viz type)
+  `panels`, `dashboards`, `datasources`, `schema`, `events`, `mimic`, `mimicAssets`, `reports`, `cameras`, `license`, `health`, `access`, `kpi`, `alerts`; `latestBatcher.js` coalesces per-binding latest reads within a 10 ms window into one `POST /schema/latest/batch`)
+- `src/components/` — shared UI: `AppSidebar` (the old `AppHeader` is folded into it, with `SidebarAccount` / `SidebarHeading`),
+  `ConnectionPill`, `ConnectionAlarm`, `DbStatusBanner`, `LicenseStatusBanner`, plus subdirs:
+  - `components/live/` — **`LivePanel`** (Grafana-style single-tile renderer), **`KpiPanel`** + `blocks/` (management blocks: LossMeter, AndonBoard, LossWaterfall, KpiStrip, PlanPace, HourlyRate, SensorStrip, ResponseBoard, KpiTrend, DefectPareto), `KpiExplain`, `MoveToPage`, `usePanelPolling.js`, `usePanelSeries.js`, `useKpiSummary.js`, `seriesModel.js`, `options/*.js` (one ECharts option builder per viz type)
   - `components/charts/` — `EChart.jsx` (echarts wrapper)
   - `components/mimic/` — symbol rendering: `symbols/` with per-device-type React components (Ats.jsx, Crah.jsx, Generator.jsx, Ups.jsx, Pdu.jsx, Rack.jsx, IpCamera.jsx, Lighting.jsx, ColdAisle.jsx, PcBased.jsx, CustomSymbol.jsx); plus `dynamics.js`, `wireTypes.jsx`, helpers (`deriveTag.js`, `useAssetUrl.js`, `useMimicPlant.js`, `useMockPlant.js`, `usePlantData.js`, `useValueTransition.js`, `tagStatus.js`, `mockPlant.js`), `InstrumentBubble.jsx`
   - `components/report/` — `ReportFilterBar.jsx`, `reportFormat.js`, `reportRange.js`, plus `blocks/` with KpiStrip, SummaryTable, AlarmSummary, DowntimePareto, StateTimeline, RawLogTable, ReportBlock, and the trend modules (`trendWindow`, `trendZoom`, `trendDetail`, `trendRefresh`, `trendParams`, `readingGroups`)
@@ -177,6 +184,9 @@ and each tile self-polls at one of the whitelisted intervals (5s, 30s, 1m, 10m,
   so new numeric columns appear after a service restart with no schema PR.
   Multi-tag panels (`panel.options.tags`) overlay several tags as separate
   coloured series in one tile.
+
+A dashboard can have several **pages** (`dashboards.page_count`, `PATCH /api/dashboards/{id}/pages`, max 12); each
+panel's page is `options.page` (0-based) and the header's `BoardPager` steps through them, optionally auto-sliding.
 
 - `source='kpi'` — a **management block** (`lossmeter` / `andon` / `waterfall` / `kpistrip` /
   `pace` / `hourly` / `sensors` / `response` / `kpitrend` / `pareto`; `scope: "line"` treats the

@@ -1,0 +1,98 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "MMLPortal — เส้นทางคำขอข้อมูลตั้งแต่เบราว์เซอร์ถึงโรงงาน",
+    "quality_profile": "showcase",
+    "output": "workflow-th.html",
+    "legend": {
+      "mode": "auto",
+      "entries": {
+        "frontend": { "label": "หน้าเว็บ (UI)" },
+        "backend": { "label": "บริการฝั่งเซิร์ฟเวอร์" },
+        "security": { "label": "ด่านตรวจสิทธิ์" },
+        "messagebus": { "label": "กู้คืนโทเค็น" },
+        "database": { "label": "ฐานข้อมูล" },
+        "external": { "label": "ผู้ใช้งาน" }
+      }
+    },
+    "views": [
+      {
+        "id": "read-path",
+        "label": "เส้นทางอ่านข้อมูลหลัก",
+        "focus": ["user", "spa", "iis", "api", "auth", "license", "fanout", "plantdb", "screen"],
+        "note": "ติดตามคำขอหนึ่งรายการ จากหน้าเว็บจนได้ข้อมูลจากทุกโรงงานกลับมาแสดงผล"
+      },
+      {
+        "id": "guards",
+        "label": "ด่านความปลอดภัย",
+        "focus": ["api", "auth", "license", "refresh", "spa"],
+        "note": "ทุกคำขอต้องผ่าน JWT และไลเซนส์ โทเค็นหมดอายุจะถูกรีเฟรชแล้วส่งซ้ำอัตโนมัติ"
+      },
+      {
+        "id": "two-databases",
+        "label": "ฐานข้อมูลสองฝั่ง",
+        "focus": ["auth", "appdb", "fanout", "plantdb"],
+        "note": "App DB เก็บการตั้งค่าเสมอ ส่วนข้อมูลโรงงานอ่านจากแหล่งที่ผู้ใช้เลือกเท่านั้น"
+      }
+    ]
+  },
+  "lanes": [
+    { "id": "ui", "label": "ผู้ใช้ · เบราว์เซอร์" },
+    { "id": "server", "label": "เซิร์ฟเวอร์ Windows (IIS + mml-api)" },
+    { "id": "guard", "label": "ด่านตรวจสิทธิ์", "variant": "exception" },
+    { "id": "data", "label": "ฐานข้อมูล" }
+  ],
+  "phases": [
+    { "id": "enter", "label": "เข้าใช้งาน", "fromCol": 0, "toCol": 1 },
+    { "id": "check", "label": "ผ่านด่านความปลอดภัย", "fromCol": 2, "toCol": 4, "variant": "security" },
+    { "id": "read", "label": "อ่านข้อมูลโรงงาน", "fromCol": 5, "toCol": 5, "variant": "emphasis" }
+  ],
+  "mainPath": ["user", "spa", "iis", "api", "auth", "license", "fanout", "plantdb"],
+  "nodes": [
+    { "id": "user", "lane": "ui", "col": 0, "type": "external", "label": "ผู้ใช้งาน", "sublabel": "operator / admin", "width": 140 },
+    { "id": "spa", "lane": "ui", "col": 1, "type": "frontend", "label": "React SPA", "sublabel": "Live · Monitor · รายงาน", "tag": "โทเค็นอยู่ในหน่วยความจำ", "width": 150 },
+    { "id": "screen", "lane": "ui", "col": 5, "type": "frontend", "label": "แสดงผลบนหน้าจอ", "sublabel": "กราฟ · KPI · แจ้งเตือน", "width": 150 },
+    { "id": "iis", "lane": "server", "col": 2, "type": "backend", "label": "IIS + ARR", "sublabel": "reverse proxy :443", "width": 140 },
+    { "id": "api", "lane": "server", "col": 3, "type": "backend", "label": "FastAPI :8088", "sublabel": "18 routers (NSSM)", "width": 140 },
+    { "id": "fanout", "lane": "server", "col": 5, "type": "backend", "label": "กระจายคำขอ (fan-out)", "sublabel": "thread pool ต่อแหล่งข้อมูล", "width": 150 },
+    { "id": "refresh", "lane": "guard", "col": 1, "type": "messagebus", "label": "รีเฟรชโทเค็น", "sublabel": "คุกกี้ HttpOnly", "width": 140 },
+    { "id": "auth", "lane": "guard", "col": 3, "type": "security", "label": "ตรวจ JWT + สิทธิ์", "sublabel": "role: admin / operator", "width": 140 },
+    { "id": "license", "lane": "guard", "col": 4, "type": "security", "label": "ตรวจไลเซนส์", "sublabel": "Ed25519 ออฟไลน์", "width": 140 },
+    { "id": "appdb", "lane": "data", "col": 3, "type": "database", "label": "App DB (localhost)", "sublabel": "ผู้ใช้ · แดชบอร์ด · ตั้งค่า", "width": 150 },
+    { "id": "plantdb", "lane": "data", "col": 5, "type": "database", "label": "ฐานข้อมูลโรงงาน", "sublabel": "sensor · tags · events · alerts", "tag": "N โรงงาน", "width": 150 }
+  ],
+  "edges": [
+    { "id": "open-page", "from": "user", "to": "spa", "label": "เปิดหน้าเว็บ" },
+    { "id": "call-api", "from": "spa", "to": "iis", "label": "/api/* + Bearer", "variant": "emphasis" },
+    { "id": "proxy", "from": "iis", "to": "api", "label": "proxy" },
+    { "id": "check-token", "from": "api", "to": "auth", "label": "ทุกคำขอ", "variant": "security" },
+    { "id": "check-license", "from": "auth", "to": "license", "label": "JWT ถูกต้อง", "variant": "security" },
+    { "id": "license-ok", "from": "license", "to": "fanout", "label": "ผ่าน", "variant": "emphasis" },
+    { "id": "query-plants", "from": "fanout", "to": "plantdb", "label": "SQL ขนานต่อโรงงาน", "variant": "emphasis" },
+    { "id": "return-rows", "from": "fanout", "to": "screen", "label": "JSON + sources[]", "role": "return", "variant": "emphasis" },
+    { "id": "read-selection", "from": "auth", "to": "appdb", "label": "แหล่งข้อมูลที่เลือก", "variant": "dashed" },
+    { "id": "token-expired", "from": "auth", "to": "refresh", "label": "401 หมดอายุ", "role": "error", "variant": "security" },
+    { "id": "replay", "from": "refresh", "to": "spa", "label": "ส่งคำขอซ้ำ", "role": "return", "variant": "dashed" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "หลักการสำคัญ",
+      "items": [
+        "App DB อยู่บน localhost เสมอ ล็อกอินและตั้งค่าได้แม้โรงงานล่ม",
+        "ข้อมูลโรงงานอ่านจากแหล่งที่ผู้ใช้เลือกในแถบด้านข้าง",
+        "ทุกแถวติดป้าย datasource_id เพื่อแยกว่าโรงงานไหนล้มเหลว"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "เมื่อมีปัญหา",
+      "items": [
+        "โทเค็นหมดอายุ → รีเฟรชครั้งเดียวแล้วส่งคำขอที่ค้างซ้ำ",
+        "ไลเซนส์ไม่ผ่าน → API ปฏิเสธ หน้าเว็บแสดงหน้าเปิดใช้งาน",
+        "โรงงานหนึ่งเชื่อมต่อไม่ได้ → ที่เหลือยังแสดงผลตามปกติ"
+      ]
+    }
+  ]
+}
