@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import ExpandMoreOutlined from '@mui/icons-material/ExpandMoreOutlined'
 import { formatValue } from '@/components/mimic/tagStatus'
 import { fmtStamp } from '@/utils/datetime'
 import { useLanguageStore, useTranslation } from '@/i18n'
@@ -28,22 +29,27 @@ function writeMode(mode) {
   } catch { /* private mode — the choice lasts for this visit only */ }
 }
 
+/** Whether the strip is unfolded. Same footing as the mode: a per-browser viewing preference. */
+const OPEN_KEY = 'monitor.attentionOpen'
+
+function readOpen() {
+  try {
+    return localStorage.getItem(OPEN_KEY) !== 'closed'
+  } catch {
+    return true
+  }
+}
+
+function writeOpen(open) {
+  try {
+    localStorage.setItem(OPEN_KEY, open ? 'open' : 'closed')
+  } catch { /* private mode — the fold lasts for this visit only */ }
+}
+
 /**
  * The attention strip under the sheet, in two views.
- *
- * การแจ้งเตือน (Notification, the default) — message boxes, one row each: a
- * title, then the newest row of a bound text column from the plant's own data.
- * Added, titled and commissioned in edit mode from the strip itself, see
- * noticeBox.js.
- *
- * สิ่งที่ต้องจัดการ (Things to handle) — every symbol on the sheet, the ones
- * needing a person first: alarm, then off-normal, then not connected, then the
- * healthy rest. Clicking an entry selects the symbol on the drawing.
- * `attention` comes from `rankAttention` (monitorStatus.js).
- *
- * While the notification is showing, the Things-to-handle button carries the
- * alarm count, so choosing the message view can never hide an alarm.
  */
+
 export default function AttentionStrip({
   attention, selectedId, onSelect,
   notices = [], tags = {}, noticeLogs = {}, editing = false,
@@ -51,38 +57,63 @@ export default function AttentionStrip({
 }) {
   const tr = useTranslation()
   const [mode, setMode] = useState(readMode)
+  const [open, setOpen] = useState(readOpen)
+  // Picking a view is asking to see it, so it unfolds a folded strip.
   const choose = (next) => {
     setMode(next)
     writeMode(next)
+    setOpen(true)
+    writeOpen(true)
+  }
+  const toggle = () => {
+    writeOpen(!open)
+    setOpen(!open)
   }
 
   const alarms = attention.crit + attention.warn
+  const foldLabel = tr(open ? 'Collapse attention view' : 'Expand attention view')
 
   return (
-    <section className={styles.strip} aria-label={tr('Attention view')}>
+    <section
+      className={`${styles.strip} ${open ? '' : styles.stripClosed}`}
+      aria-label={tr('Attention view')}
+    >
       <div className={styles.stripHead}>
-        <div className={styles.modeToggle} role="group" aria-label={tr('Attention view')}>
+        <div className={styles.stripBar}>
           <button
             type="button"
-            className={`${styles.modeBtn} ${mode === 'notice' ? styles.modeBtnOn : ''}`}
-            aria-pressed={mode === 'notice'}
-            onClick={() => choose('notice')}
+            className={`${styles.stripFold} ${open ? '' : styles.stripFoldClosed}`}
+            aria-expanded={open}
+            aria-controls="mimic-attention-body"
+            aria-label={foldLabel}
+            title={foldLabel}
+            onClick={toggle}
           >
-            {tr('Notification')}
+            <ExpandMoreOutlined fontSize="small" />
           </button>
-          <button
-            type="button"
-            className={`${styles.modeBtn} ${mode === 'handle' ? styles.modeBtnOn : ''}`}
-            aria-pressed={mode === 'handle'}
-            onClick={() => choose('handle')}
-          >
-            {tr('Things to handle')}
-            {mode === 'notice' && alarms > 0 && (
-              <span className={`${styles.modeBadge} ${attention.crit ? styles.modeBadgeCrit : styles.modeBadgeWarn}`}>
-                {alarms}
-              </span>
-            )}
-          </button>
+          <div className={styles.modeToggle} role="group" aria-label={tr('Attention view')}>
+            <button
+              type="button"
+              className={`${styles.modeBtn} ${mode === 'notice' ? styles.modeBtnOn : ''}`}
+              aria-pressed={mode === 'notice'}
+              onClick={() => choose('notice')}
+            >
+              {tr('Notification')}
+            </button>
+            <button
+              type="button"
+              className={`${styles.modeBtn} ${mode === 'handle' ? styles.modeBtnOn : ''}`}
+              aria-pressed={mode === 'handle'}
+              onClick={() => choose('handle')}
+            >
+              {tr('Monitoring')}
+              {mode === 'notice' && alarms > 0 && (
+                <span className={`${styles.modeBadge} ${attention.crit ? styles.modeBadgeCrit : styles.modeBadgeWarn}`}>
+                  {alarms}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
         {mode === 'handle' ? (
           <span className={styles.stripCounts}>
@@ -96,8 +127,8 @@ export default function AttentionStrip({
         ) : null}
       </div>
 
-      {mode === 'handle' ? (
-        <div className={styles.stripItems} role="group" aria-label={tr('All plant tags')}>
+      {!open ? null : mode === 'handle' ? (
+        <div id="mimic-attention-body" className={styles.stripItems} role="group" aria-label={tr('All plant tags')}>
           {attention.ordered.map(({ node, tag, rank }) => {
             const on = selectedId === node.id
             const tone = rank === 0 ? styles.chipCrit : rank === 1 ? styles.chipWarn : ''
@@ -148,11 +179,15 @@ function NoticeList({
   const language = useLanguageStore((s) => s.language)
 
   if (!notices.length && !editing) {
-    return <div className={styles.notice}><span className={styles.noticeEmpty}>{tr('No message boxes yet')}</span></div>
+    return (
+      <div id="mimic-attention-body" className={styles.notice}>
+        <span className={styles.noticeEmpty}>{tr('No message boxes yet')}</span>
+      </div>
+    )
   }
 
   return (
-    <div className={styles.notice}>
+    <div id="mimic-attention-body" className={styles.notice}>
       <div className={`${styles.noticeGrid} ${editing ? styles.noticeGridEdit : ''}`}>
         {notices.map((notice) => {
           const title = noticeTitle(notice, language)

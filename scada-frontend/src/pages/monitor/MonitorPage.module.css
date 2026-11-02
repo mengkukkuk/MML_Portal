@@ -729,6 +729,60 @@
   font-family: "IBM Plex Sans Condensed", var(--font-sans);
 }
 
+/* The fold control and the view toggle share one row of the head. */
+.stripBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Ghost: no box at rest, so it never competes with the toggle beside it. */
+.stripFold {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition: transform 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.stripFold:hover {
+  background: var(--bg-elev);
+  color: var(--fg);
+}
+
+.stripFold:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Down while open — it folds toward the bottom edge; up once folded. */
+.stripFoldClosed { transform: rotate(180deg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .stripFold { transition: none; }
+}
+
+/* Folded: the head is the whole strip — one slim row, no divider to a body
+ * that is not there. */
+.stripClosed .stripHead {
+  flex: 1 1 auto;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-3);
+  padding-block: var(--space-1);
+  border-right: 0;
+}
+
 .stripTitle {
   font-family: var(--font-thai);
   font-size: 13px;

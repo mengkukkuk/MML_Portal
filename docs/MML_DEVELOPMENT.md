@@ -1089,6 +1089,19 @@ curl -s -X POST http://localhost:8088/api/auth/login `
   -H "Content-Type: application/json" -d '{\"username\":\"admin\",\"password\":\"admin123\"}'
 ```
 
+**Testing without RDP (web only).** A dev PC without RDP (e.g. Windows Home) can still verify the
+monitor with HTTP traffic against `main.py`, which listens on `0.0.0.0:8088`:
+
+1. In `.env` set `NETACCESS_PORTS=8088:Web:30` (short grace so a session ends quickly) and restart
+   `main.py`. For a single-machine run also set `NETACCESS_IGNORE_LOOPBACK=0`; revert both afterwards.
+2. From another device on the LAN, open `http://<this-PC-LAN-IP>:8088/health` (allow inbound TCP 8088
+   for the Private profile in Windows Firewall if it is blocked). Vite's 5173 is not reachable from
+   other devices.
+3. Open `/accounts?view=access` as admin: the device appears under **Connected now** within ~3 s.
+   Close its tab; after the grace it moves to **History** and a line lands in
+   `logs\conn_monitor\<date>\conn_monitor.log`.
+4. Operator token on `/api/access/*` must return 403.
+
 ---
 
 ## 8. Frontend — local development

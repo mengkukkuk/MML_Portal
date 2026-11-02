@@ -435,9 +435,11 @@ export const messages = {
   'Paused. Click to refresh every {interval}.': 'หยุดชั่วคราว คลิกเพื่อรีเฟรชทุก {interval}',
   'Updated {time}': 'อัปเดต {time}',
   // Monitor — title block and the attention list.
-  'Things to handle': 'สิ่งที่ต้องจัดการ',
+  'Monitoring': 'มอนิเตอร์',
   'Notification': 'การแจ้งเตือน',
   'Attention view': 'มุมมองการแจ้งเตือน',
+  'Collapse attention view': 'ยุบมุมมองการแจ้งเตือน',
+  'Expand attention view': 'ขยายมุมมองการแจ้งเตือน',
   'No message source connected': 'ยังไม่ได้เชื่อมต่อแหล่งข้อความ',
   'Message source…': 'แหล่งข้อความ…',
   'Earlier': 'ก่อนหน้า',
