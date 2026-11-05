@@ -5,6 +5,7 @@ import {
 import {
   symbolDef, portPoint, bubbleSpec,
 } from '@/components/mimic/symbols'
+import { rendererFor } from '@/components/mimic/symbols/SkinnedSymbol'
 import InstrumentBubble, { BubbleOutline } from '@/components/mimic/InstrumentBubble'
 import {
   bubbleGeometry, bubbleHidden, bubbleShape, bubbleTextWidth,
@@ -929,7 +930,7 @@ const MimicCanvas = forwardRef(function MimicCanvas({
           // leave a hole whose wires ran to empty space; drawing the box keeps
           // the sheet readable and says plainly what is missing.
           if (!def) return <UnknownNode key={node.id} node={node} />
-          const { Component } = def
+          const Component = rendererFor(node, def)
           // Keyed by node id, not loop id: two symbols may legitimately watch
           // the same loop, and each still needs its own reading and its own
           // pulse.

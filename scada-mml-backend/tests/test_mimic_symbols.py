@@ -70,6 +70,8 @@ def symbol_body(asset_id, **over):
         (JPEG, "image/jpeg"),
         (WEBP, "image/webp"),
         (SVG, "image/svg+xml"),
+        (b"GIF87a" + b"\x00" * 16, "image/gif"),
+        (b"GIF89a" + b"\x00" * 16, "image/gif"),
         (b"\xef\xbb\xbf" + SVG, "image/svg+xml"),          # BOM first
         (b"<!-- a comment -->\n" + SVG, "image/svg+xml"),  # comment first
         (b'<?xml version="1.0"?>' + SVG, "image/svg+xml"),  # declaration first
@@ -83,7 +85,8 @@ def test_sniff_recognises_allowed_formats(data, expected):
     "data",
     [
         b"",
-        b"GIF89a" + b"\x00" * 16,      # a real image, but not one we accept
+        b"BM" + b"\x00" * 16,           # a real image (BMP), but not one we store
+        b"GIF9a" + b"\x00" * 16,        # a truncated GIF signature
         b"%PDF-1.7\n",
         b"MZ\x90\x00",                  # a Windows executable
         b"RIFF" + b"\x00" * 4 + b"AVI ",  # RIFF, but not WebP
@@ -98,6 +101,45 @@ def test_sniff_reads_contents_not_the_extension():
     """The whole point of the check: SVG markup in a .png stays SVG markup."""
     assert mimic._sniff_mime(SVG) == "image/svg+xml"
     assert mimic._sniff_mime(SVG) != "image/png"
+
+
+# --- node skins -------------------------------------------------------------
+# A skin is `node.options.image = {assetId}`: a reference, so it is checked like
+# one. Anything else under `options` is appearance data the server ignores.
+
+def _skinned(options):
+    return {"id": "n1", "type": "pump", "options": options}
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        {"id": "n1", "type": "pump"},                                  # no options at all
+        _skinned({"labelSize": 14}),                                    # options, no picture
+        _skinned({"image": None}),                                      # explicitly cleared
+        _skinned({"image": {"assetId": 7}}),                            # a stored asset
+    ],
+)
+def test_skin_accepts_absent_or_stored_pictures(node):
+    mimic._validate_skin(node, "doc.nodes[0]", {7})
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        {"assetId": 99},          # no such asset
+        {"assetId": "7"},         # right id, wrong type
+        {"assetId": True},        # bool is an int in Python; it is not an id
+        {"assetId": None},
+        {},
+        "7",
+    ],
+)
+def test_skin_rejects_dangling_or_malformed_pointers(image):
+    with pytest.raises(HTTPException) as err:
+        mimic._validate_skin(_skinned({"image": image}), "doc.nodes[0]", {7})
+    assert err.value.status_code == 400
+    assert "options.image" in err.value.detail
 
 
 def test_asset_headers_sandbox_direct_navigation():

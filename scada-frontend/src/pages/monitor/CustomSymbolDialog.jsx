@@ -9,11 +9,13 @@ import DeleteOutline from '@mui/icons-material/DeleteOutline'
 import { DYNAMICS, DYNAMIC_KINDS, newDynamic } from '@/components/mimic/symbols/dynamics'
 import { customDescriptor } from '@/components/mimic/symbols'
 import CustomSymbol from '@/components/mimic/symbols/CustomSymbol'
+import { SKIN_MAX_BYTES, formatSize, skinSizeProblem } from '@/components/mimic/symbolSkin'
 import { createMimicSymbol, uploadMimicAsset } from '@/api/mimicAssets'
 import { apiErrorMessage } from '@/api/client'
 import styles from './CustomSymbolDialog.module.css'
 
-const MAX_KB = 512
+// The server's ceiling for any uploaded picture, shared with the per-symbol skin.
+const MAX_BYTES = SKIN_MAX_BYTES
 
 /**
  * A tag that ticks, for the preview.
@@ -113,8 +115,9 @@ export default function CustomSymbolDialog({ open, container, onClose, onSaved }
   const pickFile = (f) => {
     setError(null)
     if (!f) return
-    if (f.size > MAX_KB * 1024) {
-      setError(`${f.name} is ${Math.round(f.size / 1024)} KB. The limit is ${MAX_KB} KB.`)
+    const tooBig = skinSizeProblem(f.name, f.size)
+    if (tooBig) {
+      setError(tooBig)
       return
     }
     setFile(f)
@@ -189,7 +192,7 @@ export default function CustomSymbolDialog({ open, container, onClose, onSaved }
                 : (
                   <span className={styles.dropHint}>
                     Drop an image here, or click to choose one
-                    <em>PNG, JPEG, WebP or SVG · up to {MAX_KB} KB</em>
+                    <em>PNG, JPEG, GIF, WebP or SVG · up to {formatSize(MAX_BYTES)}</em>
                   </span>
                 )}
             </button>
@@ -198,7 +201,7 @@ export default function CustomSymbolDialog({ open, container, onClose, onSaved }
               ref={inputRef}
               className={styles.hiddenInput}
               type="file"
-              accept="image/png,image/jpeg,image/webp,image/svg+xml"
+              accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
               onChange={(e) => pickFile(e.target.files?.[0])}
             />
 

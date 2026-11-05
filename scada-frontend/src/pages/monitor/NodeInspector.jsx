@@ -7,6 +7,7 @@ import { symbolDef, bubbleSpec, bubbleMoved } from '@/components/mimic/symbols'
 import { BUBBLE_SHAPES, bubbleHidden, bubbleShape } from '@/components/mimic/bubbleShape'
 import { LABEL_PLACES, labelPlace } from '@/components/mimic/labelPlacement'
 import SymbolOptions, { SymbolColour } from './SymbolOptions'
+import SymbolPicture from './SymbolPicture'
 import styles from './NodeInspector.module.css'
 
 /**
@@ -115,6 +116,12 @@ export default function NodeInspector({
           onTheme={onTheme}
         />
       )}
+
+      <SymbolPicture
+        node={node}
+        def={def}
+        onOptions={(patch) => onOptions(node.id, patch)}
+      />
 
       <div className={styles.section}>
         <div className={styles.sectionTitle}>Title</div>

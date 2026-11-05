@@ -334,6 +334,25 @@ def _validate_production_log(
         raise _bad(f"{where}: filter_col and filter_val must be set together")
 
 
+def _validate_skin(node: dict, where: str, asset_ids: set[int]) -> None:
+    """Check a node's picture, if it has one, points at a stored asset.
+
+    ``options`` is otherwise free-form appearance data the server never looks
+    inside. A skin is the exception for the same reason a custom node's
+    ``symbolId`` is: it is a reference, and a dangling one saves clean and then
+    draws an empty frame for every operator with nothing to say why.
+    """
+    options = node.get("options")
+    image = options.get("image") if isinstance(options, dict) else None
+    if image is None:
+        return
+    asset_id = image.get("assetId") if isinstance(image, dict) else None
+    if not isinstance(asset_id, int) or isinstance(asset_id, bool):
+        raise _bad(f"{where}: options.image needs an integer assetId")
+    if asset_id not in asset_ids:
+        raise _bad(f"{where}: options.image.assetId {asset_id} does not exist")
+
+
 def _validate(doc: dict) -> None:
     """Reject a document that could not be rendered or could not be polled."""
     nodes = doc.get("nodes")
@@ -359,6 +378,18 @@ def _validate(doc: dict) -> None:
     symbol_ids: set[int] = (
         {r["id"] for r in db.list_mimic_symbols()}
         if any(isinstance(n, dict) and n.get("type") == CUSTOM_NODE_TYPE for n in nodes)
+        else set()
+    )
+    # Same lazy read for pictures: ids only, no bytes, and only when some node
+    # actually carries one.
+    asset_ids: set[int] = (
+        {r["id"] for r in db.list_mimic_assets()}
+        if any(
+            isinstance(n, dict)
+            and isinstance(n.get("options"), dict)
+            and n["options"].get("image") is not None
+            for n in nodes
+        )
         else set()
     )
 
@@ -387,6 +418,7 @@ def _validate(doc: dict) -> None:
                 raise _bad(f"{where}: a custom symbol requires an integer symbolId")
             if symbol_id not in symbol_ids:
                 raise _bad(f"{where}: symbolId {symbol_id} is not in the symbol library")
+        _validate_skin(node, where, asset_ids)
         binding = node.get("binding")
         if binding is None:
             continue
@@ -564,7 +596,7 @@ def delete_layout(
 # An asset is one uploaded picture. It is served back through this API rather
 # than from a static directory so the file never becomes a URL the app cannot
 # revoke, and so the hardening headers below travel with every response.
-MAX_ASSET_BYTES = 512 * 1024
+MAX_ASSET_BYTES = 3 * 1024 * 1024
 
 # Declared content types an admin may upload. The declaration is not trusted —
 # _sniff_mime below has to agree with it.
@@ -572,6 +604,7 @@ ALLOWED_ASSET_MIMES = {
     "image/png",
     "image/jpeg",
     "image/webp",
+    "image/gif",
     "image/svg+xml",
 }
 
@@ -581,6 +614,8 @@ ALLOWED_ASSET_MIMES = {
 _MAGIC = (
     (b"\x89PNG\r\n\x1a\n", "image/png"),
     (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
 )
 
 
@@ -657,13 +692,14 @@ async def upload_asset(
         raise _bad("the uploaded file is empty")
     if len(data) > MAX_ASSET_BYTES:
         raise _bad(
-            f"image is {len(data) // 1024} KB; the limit is {MAX_ASSET_BYTES // 1024} KB"
+            f"image is {len(data) / (1024 * 1024):.1f} MB; "
+            f"the limit is {MAX_ASSET_BYTES // (1024 * 1024)} MB"
         )
 
     sniffed = _sniff_mime(data)
     if sniffed is None or sniffed not in ALLOWED_ASSET_MIMES:
         raise _bad(
-            "unsupported image format — use PNG, JPEG, WebP or SVG "
+            "unsupported image format — use PNG, JPEG, GIF, WebP or SVG "
             f"(this file's contents read as {sniffed or 'something else'})"
         )
     # The declared type is only ever allowed to *agree*. A mismatch means the

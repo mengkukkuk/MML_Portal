@@ -191,13 +191,19 @@ def init_mimic_symbols_table() -> None:
 def list_mimic_assets() -> list[dict[str, Any]]:
     """Every uploaded asset, without its bytes.
 
-    used_by counts the library symbols referencing it, so the picker can show at
-    a glance which uploads are actually in play and which are dead weight.
+    used_by counts the library symbols and the drawings' skinned nodes referencing
+    it, so the picker can show at a glance which uploads are actually in play and
+    which are dead weight.
     """
     with _pool.get_connection() as conn:
         rows = conn.execute(
             """SELECT a.id, a.name, a.mime, a.size_bytes, a.created_at,
-                      count(s.id)::int AS used_by
+                      count(s.id)::int + (
+                          SELECT count(*)::int FROM mimic_layouts l
+                          WHERE jsonb_path_exists(
+                              l.doc, '$.nodes[*].options.image ? (@.assetId == $id)',
+                              jsonb_build_object('id', a.id))
+                      ) AS used_by
             FROM mimic_assets a
             LEFT JOIN mimic_symbols s ON s.asset_id = a.id
             GROUP BY a.id
@@ -241,13 +247,22 @@ def insert_mimic_asset(
 
 
 def mimic_asset_users(asset_id: int) -> list[str]:
-    """Names of the library symbols standing in the way of a delete."""
+    """Names of what is standing in the way of a delete: library symbols that
+    draw with the image, and drawings with a node skinned by it."""
     with _pool.get_connection() as conn:
-        rows = conn.execute(
+        symbols = conn.execute(
             "SELECT name FROM mimic_symbols WHERE asset_id = %s ORDER BY name",
             (asset_id,),
         ).fetchall()
-    return [r["name"] for r in rows]
+        drawings = conn.execute(
+            """SELECT name FROM mimic_layouts
+            WHERE jsonb_path_exists(
+                doc, '$.nodes[*].options.image ? (@.assetId == $id)',
+                jsonb_build_object('id', %s::int))
+            ORDER BY name""",
+            (asset_id,),
+        ).fetchall()
+    return [r["name"] for r in symbols] + [f"drawing {r['name']}" for r in drawings]
 
 
 def delete_mimic_asset(asset_id: int) -> bool:

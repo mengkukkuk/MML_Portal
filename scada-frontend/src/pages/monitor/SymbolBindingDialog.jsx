@@ -14,6 +14,7 @@ import { groupByFamily } from '@/utils/nameFamilies'
 import { fetchSchemaTables, fetchSchemaColumns, fetchSchemaValues, fetchSchemaLatest, fromPrimarySource } from '@/api/schema'
 import { useDatasourceSelectionStore } from '@/stores/datasourceSelection'
 import { symbolDef } from '@/components/mimic/symbols'
+import { rendererFor } from '@/components/mimic/symbols/SkinnedSymbol'
 import InstrumentBubble from '@/components/mimic/InstrumentBubble'
 import { bubbleShape } from '@/components/mimic/bubbleShape'
 import { deriveTag } from '@/components/mimic/deriveTag'
@@ -416,6 +417,9 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
     binding: bindingFromForm(form, kind),
   } : null), [node, form, kind])
 
+  // Same choice the sheet makes, so a skinned symbol previews as its picture.
+  const Preview = previewNode && def ? rendererFor(previewNode, def) : null
+
   const previewTag = useMemo(() => {
     if (!previewNode || previewQuery.data?.value == null) return null
     const raw = previewQuery.data
@@ -805,7 +809,7 @@ export default function SymbolBindingDialog({ open, node, container, onClose, on
             <div className={styles.preview}>
               <svg viewBox={`0 0 ${vbW} ${vbH}`} className={styles.previewSvg} role="img" aria-label="Symbol preview">
                 <g transform={`translate(${pad} ${pad})`}>
-                  <def.Component node={previewNode} tag={previewTag} selected={false} />
+                  {Preview && <Preview node={previewNode} def={def} tag={previewTag} selected={false} />}
                 </g>
                 {bubble && (
                   <InstrumentBubble

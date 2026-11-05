@@ -1,5 +1,7 @@
 import { useCallback } from 'react'
 import { symbolDef } from '@/components/mimic/symbols'
+import { skinAssetId } from '@/components/mimic/symbolSkin'
+import { fetchMimicAssets } from '@/api/mimicAssets'
 import { createMimicExport, downloadJson, parseMimicImport } from '../editorFiles'
 import { editLock, migrateLayout } from '../layoutDoc'
 
@@ -50,11 +52,34 @@ export default function useMimicFiles({
         || !symbolDef(importedNodes.get(edge.to.node))?.ports?.[edge.to.port]
       ))
       if (badPort) throw new Error('The selected layout contains a wire attached to an unsupported symbol port.')
+
+      // A symbol's picture is an id into *this* server's uploads. An id from the
+      // file that is not here would be refused on save, so those symbols go back
+      // to their drawn artwork now rather than failing later with nothing on
+      // screen saying which symbol.
+      let dropped = 0
+      if (imported.nodes.some((node) => skinAssetId(node) != null)) {
+        const stored = new Set((await fetchMimicAssets()).map((asset) => asset.id))
+        imported.nodes = imported.nodes.map((node) => {
+          const id = skinAssetId(node)
+          if (id == null || stored.has(id)) return node
+          dropped += 1
+          return { ...node, options: { ...node.options, image: undefined } }
+        })
+      }
+
       commitLayout(imported)
       setSelectedId(null)
       setSelectedEdgeId(null)
       setImportOpen(false)
-      notify('Layout imported into the draft.', 'success')
+      if (dropped) {
+        notify(
+          `Layout imported. ${dropped} custom ${dropped === 1 ? 'picture is' : 'pictures are'} not on this server, so ${dropped === 1 ? 'that symbol shows' : 'those symbols show'} the drawn artwork instead.`,
+          'warning',
+        )
+      } else {
+        notify('Layout imported into the draft.', 'success')
+      }
     } catch (error) {
       notify(error.message || 'The selected file could not be imported.', 'error')
     } finally {
