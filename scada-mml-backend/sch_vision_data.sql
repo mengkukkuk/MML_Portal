@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS vision_data.cameras
     station_label  text,
     location       text,
     enabled        boolean DEFAULT true NOT NULL,
-    defect_labels  text[] DEFAULT ARRAY['defect_1', 'defect_2', 'defect_3', 'defect_4', 'defect_5']::text[],
+    defect_labels  text[] DEFAULT ARRAY['defect_1', 'defect_2', 'defect_3', 'defect_4', 'defect_5', 'defect_6']::text[],
     created_at     timestamptz DEFAULT now() NOT NULL,
     updated_at     timestamptz DEFAULT now() NOT NULL
 );
@@ -39,10 +39,10 @@ CREATE TABLE IF NOT EXISTS vision_data.camera_defect
     station_code  text,
     station_label text,
     location      text,
-    created_at    timestamptz DEFAULT now() NOT NULL,
+    created_at    timestamptz ,
     updated_at    timestamptz DEFAULT now() NOT NULL,
     batch_id      integer DEFAULT 0 NOT NULL,
-    defect_array  integer[] DEFAULT '{0,0,0,0,0}'::integer[],
+    defect_array  integer[] DEFAULT '{0,0,0,0,0,0}'::integer[],
     max_defect    integer generated always as (array_max(defect_array)) stored,
     image_path    text
 );
@@ -51,24 +51,6 @@ ALTER TABLE vision_data.camera_defect OWNER TO postgres;
 
 CREATE INDEX IF NOT EXISTS idx_camera_defect_code_batch
     ON vision_data.camera_defect (lower(code) ASC, batch_id DESC);
-
-CREATE OR REPLACE FUNCTION set_created_at()
-    RETURNS TRIGGER AS $$
-BEGIN
-    -- Check if batch_id was actually modified to a different value
-    IF NEW.batch_id IS DISTINCT FROM OLD.batch_id THEN
-        NEW.created_at = NOW();
-    END IF;
-
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- 2. Create the BEFORE UPDATE trigger on your table
-CREATE or replace TRIGGER trigger_set_created_at
-    BEFORE UPDATE OF batch_id ON vision_data.camera_defect
-    FOR EACH ROW
-EXECUTE FUNCTION set_created_at();
 
 -- 3. Table: camera_defect_logs (Historian Log)
 CREATE TABLE IF NOT EXISTS vision_data.camera_defect_logs
@@ -82,7 +64,7 @@ CREATE TABLE IF NOT EXISTS vision_data.camera_defect_logs
     location      text,
     batch_id      integer DEFAULT 0 NOT NULL,
     defect_array  integer[] NOT NULL,
-    created_at    timestamptz DEFAULT now() NOT NULL,
+    created_at    timestamptz ,
     updated_at    timestamptz DEFAULT now() NOT NULL
 );
 
@@ -93,7 +75,7 @@ create table vision_data.camera_batch_work
 (
     batch_id   bigint constraint camera_batch_work_pk primary key,
     status     text,
-    created_at timestamp with time zone default now(),
+    created_at timestamp with time zone ,
     updated_at timestamp with time zone default now(),
     camera_1   jsonb,
     camera_2   jsonb,
@@ -225,7 +207,9 @@ INSERT INTO vision_data.cameras (code, name, station_code, station_label, locati
 VALUES ('CAM001-13', 'Camera 1', 'STATION001', 'Station 1', 'Line 13', true),
        ('CAM002-13', 'Camera 2', 'STATION002', 'Station 2', 'Line 13', true),
        ('CAM003-13', 'Camera 3', 'STATION003', 'Station 3', 'Line 13', true),
-       ('CAM004-13', 'Camera 4', 'STATION004', 'Station 4', 'Line 13', true)
+       ('CAM004-13', 'Camera 4', 'STATION004', 'Station 4', 'Line 13', true),
+        ('CAM005-13', 'Camera 5', 'STATION005', 'Station 5', 'Line 13', true),
+        ('CAM006-13', 'Camera 6', 'STATION006', 'Station 6', 'Line 13', true)
 ON CONFLICT (code) DO NOTHING;
 
 -- insert to camera_defect
@@ -233,7 +217,9 @@ insert into vision_data.camera_defect (code, name, station_code, station_label, 
 VALUES ('CAM001-13', 'Camera 1', 'STATION001', 'Station 1', 'Line 13'),
        ('CAM002-13', 'Camera 2', 'STATION002', 'Station 2', 'Line 13'),
        ('CAM003-13', 'Camera 3', 'STATION003', 'Station 3', 'Line 13'),
-       ('CAM004-13', 'Camera 4', 'STATION004', 'Station 4', 'Line 13')
+       ('CAM004-13', 'Camera 4', 'STATION004', 'Station 4', 'Line 13'),
+        ('CAM005-13', 'Camera 5', 'STATION005', 'Station 5', 'Line 13'),
+        ('CAM006-13', 'Camera 6', 'STATION006', 'Station 6', 'Line 13')
 ON CONFLICT (code) DO NOTHING;
 
 -- defect speed and count speed table
@@ -241,7 +227,7 @@ CREATE TABLE camera_defect_speed (
      id BIGSERIAL PRIMARY KEY,
      code VARCHAR(50) NOT NULL unique,
      location text NOT NULL,
-     created_at TIMESTAMPTZ DEFAULT NOW(),
+     created_at TIMESTAMPTZ ,
      updated_at TIMESTAMPTZ DEFAULT NOW(),
      batch_id BIGINT default 0,
      defect_1 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(defect_1, 1) = 7 ),
@@ -255,30 +241,32 @@ CREATE TABLE camera_count_speed (
     id BIGSERIAL PRIMARY KEY,
     code VARCHAR(50) NOT NULL unique,
     location text NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ ,
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     batch_id BIGINT default 0,
-    count_total int generated always as ( count_spd1[1] ),
     count_spd1 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd1, 1) = 7 ),
-    count_spd2 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd2, 1) = 7 ),
-    count_spd3 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd3, 1) = 7 ),
-    count_spd4 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd4, 1) = 7 ),
-    count_spd5 INT[] default array[0, 0, 0, 0, 0, 0, 0]::INT[] check ( array_length(count_spd5, 1) = 7 )
+    count_total int generated always as ( count_spd1[1] ),
+    count_plc int default 0
+
 );
 
---INSERT
+--INSERT into defect & count speed
 INSERT INTO camera_defect_speed (code,location)
 VALUES  ('CAM001-13','Line 13'),
         ('CAM002-13','Line 13'),
         ('CAM003-13','Line 13'),
-        ('CAM004-13','Line 13')
+        ('CAM004-13','Line 13'),
+        ('CAM005-13','Line 13'),
+        ('CAM006-13','Line 13')
 ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO camera_count_speed (code,location)
 VALUES  ('CAM001-13','Line 13'),
         ('CAM002-13','Line 13'),
         ('CAM003-13','Line 13'),
-        ('CAM004-13','Line 13')
+        ('CAM004-13','Line 13'),
+        ('CAM005-13','Line 13'),
+        ('CAM006-13','Line 13')
 ON CONFLICT (code) DO NOTHING;
 
 CREATE OR REPLACE FUNCTION array_sum(arr int[])
@@ -290,7 +278,11 @@ $$ LANGUAGE sql IMMUTABLE STRICT;
 CREATE OR REPLACE FUNCTION calc_speed_in_time_dif(arr integer[])
     RETURNS integer AS $$
 SELECT CASE
-           WHEN arr IS NULL OR array_length(arr, 1) IS NULL OR array_length(arr, 1) < 2 THEN 0
+           WHEN arr IS NULL OR
+                array_length(arr, 1) IS NULL OR
+                array_length(arr, 1) < 2 OR
+                arr[array_length(arr, 1)] > arr[1]
+                THEN 0
            ELSE arr[1] - arr[array_length(arr, 1)]
            END;
 $$ LANGUAGE sql IMMUTABLE;
@@ -303,7 +295,9 @@ ALTER TABLE camera_defect_speed
                 calc_speed_in_time_dif(defect_2),
                 calc_speed_in_time_dif(defect_3),
                 calc_speed_in_time_dif(defect_4),
-                calc_speed_in_time_dif(defect_5)
+                calc_speed_in_time_dif(defect_5),
+                calc_speed_in_time_dif(defect_6)
+
                 ]
             ) STORED;
 
@@ -311,11 +305,7 @@ ALTER TABLE camera_count_speed
     ADD COLUMN speed_in_time INTEGER[]
         GENERATED ALWAYS AS (
             ARRAY[
-                calc_speed_in_time_dif(count_spd1),
-                calc_speed_in_time_dif(count_spd2),
-                calc_speed_in_time_dif(count_spd3),
-                calc_speed_in_time_dif(count_spd4),
-                calc_speed_in_time_dif(count_spd5)
+                calc_speed_in_time_dif(count_spd1)
                 ]
             )STORED;
 
@@ -331,6 +321,7 @@ BEGIN
         NEW.defect_3 := '{0,0,0,0,0,0,0}';
         NEW.defect_4 := '{0,0,0,0,0,0,0}';
         NEW.defect_5 := '{0,0,0,0,0,0,0}';
+        NEW.defect_6 := '{0,0,0,0,0,0,0}';
     END IF;
 
     RETURN NEW;
@@ -349,10 +340,7 @@ BEGIN
     IF (NEW.batch_id IS DISTINCT FROM OLD.batch_id) THEN
 
         NEW.count_spd1 := '{0,0,0,0,0,0,0}';
-        NEW.count_spd2 := '{0,0,0,0,0,0,0}';
-        NEW.count_spd3 := '{0,0,0,0,0,0,0}';
-        NEW.count_spd4 := '{0,0,0,0,0,0,0}';
-        NEW.count_spd5 := '{0,0,0,0,0,0,0}';
+        NEW.count_plc := 0 ;
     END IF;
 
     RETURN NEW;
@@ -377,6 +365,7 @@ create table vision_data.camera_defect_ratio
     defect_3_pct double precision         default 0.0,
     defect_4_pct double precision         default 0.0,
     defect_5_pct double precision         default 0.0,
+    defect_6_pct double precision         default 0.0,
     max_defect   integer                  default 0,
     count_total  integer                  default 0,
     count_plc    integer                  default 0,
@@ -398,7 +387,9 @@ begin
         defect_2_pct,
         defect_3_pct,
         defect_4_pct,
-        defect_5_pct
+        defect_5_pct,
+        defect_6_pct
+
     )
     select
         c.code::text as code,
@@ -422,7 +413,11 @@ begin
         case
             when c.speed_in_time[5] = 0 or c.speed_in_time[5] is null then 0
             else (coalesce(d.speed_in_time[5], 0)::double precision / c.speed_in_time[5]::double precision) * 100
-            end as defect_5_pct
+            end as defect_5_pct,
+        case
+            when c.speed_in_time[6] = 0 or c.speed_in_time[6] is null then 0
+            else (coalesce(d.speed_in_time[6], 0)::double precision / c.speed_in_time[6]::double precision) * 100
+            end as defect_6_pct
     from vision_data.camera_count_speed c
              left join vision_data.camera_defect_speed d on c.id = d.id
     where c.id = NEW.id
@@ -432,8 +427,8 @@ begin
                                  defect_2_pct = excluded.defect_2_pct,
                                  defect_3_pct = excluded.defect_3_pct,
                                  defect_4_pct = excluded.defect_4_pct,
-                                 defect_5_pct = excluded.defect_5_pct;
-
+                                 defect_5_pct = excluded.defect_5_pct,
+                                 defect_6_pct = excluded.defect_6_pct;
     return NEW;
 end;
 $$ language plpgsql;
@@ -481,7 +476,8 @@ BEGIN
                 count_plc = EXCLUDED.count_plc,
                 max_defect = EXCLUDED.max_defect;
 
-    RETURN NEW;
+        RETURN NEW;
+    end if;
 END;
 $$;
 
@@ -622,71 +618,188 @@ DO $$
     END;
 $$;
 
--- Alert messages: one row per alert an analysis job, an operator or the PLC
--- wants marked on the Reports signal trend. Read through Settings -> Alert
--- messages (table alert_messages, time created_at, message message, severity
--- severity, role column role_id, follows Location on location); see scada-mml-backend/alert_messages.py.
---   created_at  the moment the alert is about (places the flag), not when the job ran
---   message     one readable sentence, Thai or English; NULL rows are skipped
---   severity    'crit' | 'warn' | 'info' (also critical/alarm/high/2, warning/medium/1)
---   location    exactly the values of the report Location filter (vision_data.cameras.location)
---   code, batch_id, source  not read by the trend yet: camera, batch and writer, for tracing
---   role_id     optional: the id of the response role that must act (Settings ->
---               Response roles, ID column); set it and the role rules are skipped.
---               Not a foreign key: the roles live in the app database, not here.
-CREATE TABLE IF NOT EXISTS vision_data.alert_messages
+--SKU tables
+create table vision_data.sku_camerasetting
 (
-    id          bigserial PRIMARY KEY,
-    location    text,
-    created_at  timestamptz DEFAULT now() NOT NULL,
-    code        text,
-    message     text        NOT NULL,
-    severity    text        DEFAULT 'info' NOT NULL,
-    batch_id    integer     DEFAULT 0 NOT NULL,
-    source      text        DEFAULT 'analysis' NOT NULL,
-    role_id     integer
+    id                  integer generated always as identity
+        primary key,
+    sku                 varchar                             not null,
+    location            varchar                             not null,
+    version             integer   default 1                 not null,
+    created_at          timestamp default CURRENT_TIMESTAMP not null,
+    event_time          timestamp default CURRENT_TIMESTAMP not null,
+    threshold1          integer,
+    threshold2          integer,
+    filter_s1           integer,
+    filter_s2           integer,
+    stick_mm            double precision,
+    filter_mm           double precision,
+    tolerance_stick_mm  double precision,
+    edge1               varchar(100),
+    edge2               varchar(100),
+    edge3               varchar(100),
+    edge4               varchar(100),
+    tolerance_filter_mm double precision,
+    constraint sku_camerasetting_profile_key
+        unique (sku, location, version)
 );
 
-ALTER TABLE vision_data.alert_messages OWNER TO postgres;
+alter table vision_data.sku_camerasetting
+    owner to postgres;
 
--- The trend reads a time window, all lines or the filtered ones.
-CREATE INDEX IF NOT EXISTS idx_alert_messages_created_at
-    ON vision_data.alert_messages (created_at);
-CREATE INDEX IF NOT EXISTS idx_alert_messages_location_created_at
-    ON vision_data.alert_messages (location, created_at);
+--sku machine
+create table vision_data.sku_machine
+(
+    id                  integer generated always as identity (minvalue 0)
+        primary key,
+    sku                 varchar                                          not null,
+    datecode            varchar,
+    location            varchar                                          not null,
+    status_code         varchar(20) default 'pending'::character varying not null
+        constraint status_code_check
+            check ((status_code)::text = ANY
+                   (ARRAY [('pending'::character varying)::text, ('on process'::character varying)::text])),
+    start_at            timestamp,
+    stop_at             timestamp,
+    batch_id            integer,
+    threshold1          integer,
+    threshold2          integer,
+    filter_s1           integer,
+    filter_s2           integer,
+    stick_mm            double precision,
+    filter_mm           double precision,
+    tolerance_stick_mm  double precision,
+    edge1               varchar(100),
+    edge2               varchar(100),
+    calibration_data    json,
+    edge3               varchar(100),
+    edge4               varchar(100),
+    model_current       text,
+    tolerance_filter_mm double precision,
+    roll_change         boolean     default false,
+    roll_distance       integer,
+    status_image        text,
+    unique (sku, location)
+);
 
--- Insert guard. Writers are outside this app (the analysis team, an operator
--- tool, the PLC), and the three mistakes that make a flag silently vanish are
--- caught here instead of on the chart:
---   * a local time sent without its zone from a UTC session (Docker, utcnow())
---     lands hours in the future -> rejected, with the fix in the error
---   * ' L13 ' never matches the Location filter 'L13' -> location/code trimmed
---   * a blank message draws an empty flag -> rejected
--- Ten minutes of slack allows for a writer's clock running ahead.
--- Send times with an offset ('2026-10-18 14:00:00+07'), as timestamptz, or
--- SET TIME ZONE 'Asia/Bangkok' first; then a naive local time is read correctly.
-CREATE OR REPLACE FUNCTION vision_data.fn_alert_messages_guard()
-    RETURNS trigger AS $$
+alter table vision_data.sku_machine
+    owner to postgres;
+
+create index sku_machine_sku_location_batch_idx
+    on vision_data.sku_machine (sku, location, batch_id);
+
+create unique index sku_machine_one_active_per_location_idx
+    on vision_data.sku_machine (lower(btrim(location::text)))
+    where ((status_code)::text = 'on process'::text);
+
+--sku settings
+create table vision_data.sku_setting
+(
+    id           integer generated always as identity
+        primary key,
+    sku          varchar                             not null,
+    tag_name     varchar                             not null,
+    location     varchar                             not null,
+    version      integer   default 1                 not null
+        constraint sku_setting_version_check
+            check (version > 0),
+    zone_no      smallint                            not null
+        constraint sku_setting_zone_check
+            check (zone_no = ANY (ARRAY [1, 2])),
+    set_setpoint integer                             not null,
+    set_high     integer                             not null,
+    set_low      integer                             not null,
+    created_at   timestamp default CURRENT_TIMESTAMP not null,
+    event_time   timestamp default CURRENT_TIMESTAMP not null,
+    active       boolean   default true              not null,
+    constraint sku_setting_profile_tag_key
+        unique (location, sku, version, tag_name),
+    constraint sku_setting_names_check
+        check ((btrim((sku)::text) <> ''::text) AND (btrim((tag_name)::text) <> ''::text) AND
+               (btrim((location)::text) <> ''::text)),
+    constraint sku_setting_values_check
+        check ((set_low <= set_setpoint) AND (set_setpoint <= set_high))
+);
+
+alter table vision_data.sku_setting
+    owner to postgres;
+
+-- Set created_at function
+
+CREATE OR REPLACE FUNCTION set_created_at()
+    RETURNS TRIGGER AS $$
 BEGIN
-    NEW.message  := btrim(NEW.message);
-    IF NEW.message = '' THEN
-        RAISE EXCEPTION 'alert_messages.message is empty';
+    -- Check if batch_id was actually modified to a different value
+    IF NEW.batch_id IS DISTINCT FROM OLD.batch_id THEN
+        NEW.created_at = NOW();
     END IF;
-    NEW.severity := btrim(NEW.severity);
-    NEW.location := nullif(btrim(NEW.location), '');
-    NEW.code     := nullif(btrim(NEW.code), '');
-    IF NEW.created_at > now() + interval '10 minutes' THEN
-        RAISE EXCEPTION 'alert_messages.created_at % is in the future', NEW.created_at
-            USING HINT = 'Was a local time sent without its time zone? Send an offset '
-                         '(e.g. 2026-10-18 14:00:00+07) or SET TIME ZONE ''Asia/Bangkok'' first.';
-    END IF;
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trg_alert_messages_guard ON vision_data.alert_messages;
-CREATE TRIGGER trg_alert_messages_guard
-    BEFORE INSERT OR UPDATE ON vision_data.alert_messages
+-- Create trigger BEFORE UPDATE on tables
+CREATE or replace TRIGGER trigger_set_created_at
+    BEFORE UPDATE OF batch_id ON vision_data.camera_defect
     FOR EACH ROW
-EXECUTE FUNCTION vision_data.fn_alert_messages_guard();
+EXECUTE FUNCTION set_created_at();
+
+CREATE or replace TRIGGER trigger_set_created_at
+    BEFORE UPDATE OF batch_id ON vision_data.camera_defect_speed
+    FOR EACH ROW
+EXECUTE FUNCTION set_created_at();
+
+CREATE or replace TRIGGER trigger_set_created_at
+    BEFORE UPDATE OF batch_id ON vision_data.camera_count_speed
+    FOR EACH ROW
+EXECUTE FUNCTION set_created_at();
+
+
+--Alert messages
+-- CREATE TABLE IF NOT EXISTS vision_data.alert_messages
+-- (
+--     id          bigserial PRIMARY KEY,
+--     location    text,
+--     created_at  timestamptz DEFAULT now() NOT NULL,
+--     code        text,
+--     message     text        NOT NULL,
+--     severity    text        DEFAULT 'info' NOT NULL,
+--     batch_id    integer     DEFAULT 0 NOT NULL,
+--     source      text        DEFAULT 'analysis' NOT NULL,
+--     role_id     integer
+-- );
+--
+-- ALTER TABLE vision_data.alert_messages OWNER TO postgres;
+--
+-- -- The trend reads a time window, all lines or the filtered ones.
+-- CREATE INDEX IF NOT EXISTS idx_alert_messages_created_at
+--     ON vision_data.alert_messages (created_at);
+-- CREATE INDEX IF NOT EXISTS idx_alert_messages_location_created_at
+-- --     ON vision_data.alert_messages (location, created_at);
+-- CREATE OR REPLACE FUNCTION vision_data.fn_alert_messages_guard()
+--     RETURNS trigger AS $$
+-- BEGIN
+--     NEW.message  := btrim(NEW.message);
+--     IF NEW.message = '' THEN
+--         RAISE EXCEPTION 'alert_messages.message is empty';
+--     END IF;
+--     NEW.severity := btrim(NEW.severity);
+--     NEW.location := nullif(btrim(NEW.location), '');
+--     NEW.code     := nullif(btrim(NEW.code), '');
+--     IF NEW.created_at > now() + interval '10 minutes' THEN
+--         RAISE EXCEPTION 'alert_messages.created_at % is in the future', NEW.created_at
+--             USING HINT = 'Was a local time sent without its time zone? Send an offset '
+--                          '(e.g. 2026-10-18 14:00:00+07) or SET TIME ZONE ''Asia/Bangkok'' first.';
+--     END IF;
+--     RETURN NEW;
+-- END;
+-- $$ LANGUAGE plpgsql;
+--
+-- DROP TRIGGER IF EXISTS trg_alert_messages_guard ON vision_data.alert_messages;
+-- CREATE TRIGGER trg_alert_messages_guard
+--     BEFORE INSERT OR UPDATE ON vision_data.alert_messages
+--     FOR EACH ROW
+-- EXECUTE FUNCTION vision_data.fn_alert_messages_guard();
+
+
 
